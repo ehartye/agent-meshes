@@ -1,5 +1,5 @@
 import type { Project } from './core/types.ts';
-import { Group, Matrix4, Scene, SkinnedMesh } from 'three';
+import { Bone, Group, Matrix4, Scene, Skeleton, SkinnedMesh } from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { validateBytes } from 'gltf-validator';
 import type { ValidationReport } from 'gltf-validator';
@@ -13,6 +13,24 @@ export async function exportGLB(project: Project): Promise<Uint8Array> {
   const built = buildScene(clean);
   const scene = new Scene(); scene.name = clean.name; scene.add(built.root);
   try {
+    // glTF skins need one common skeleton root. A project may have several root bones (a chair
+    // whose every rod has its own bone), so gather them under one identity bone for the export.
+    const rootBones = [...built.bones.values()].filter(bone => !(bone.parent instanceof Bone));
+    if (rootBones.length > 1) {
+      const taken = new Set([...clean.bones.map(b => b.name), ...clean.parts.map(p => p.name)]);
+      let name = 'rig'; for (let i = 2; taken.has(name); i++) name = `rig_${i}`;
+      const common = new Bone(); common.name = name; built.root.add(common);
+      for (const bone of rootBones) common.attach(bone);
+      // GLTFExporter uses joint 0 as the skeleton root, so the common bone must lead every skin.
+      built.root.updateMatrixWorld(true);
+      const skeleton = new Skeleton([common, ...built.skeleton.bones]);
+      built.root.traverse(object => {
+        if (!(object instanceof SkinnedMesh)) return;
+        const indices = object.geometry.getAttribute('skinIndex');
+        for (let vertex = 0; vertex < indices.count; vertex++) for (let influence = 0; influence < 4; influence++) indices.setComponent(vertex, influence, indices.getComponent(vertex, influence) + 1);
+        object.bind(skeleton, object.matrixWorld);
+      });
+    }
     scene.updateMatrixWorld(true);
     const skins: SkinnedMesh[] = [];
     scene.traverse(object => { if (object instanceof SkinnedMesh) skins.push(object); });
