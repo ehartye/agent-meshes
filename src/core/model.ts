@@ -88,6 +88,13 @@ export class Editor {
   private past: Project[] = [];
   private future: Project[] = [];
   constructor(project: Project) { this.current = validateProject(project); }
+  static restore(value: unknown): Editor {
+    const state = z.object({ project: projectSchema, past: z.array(projectSchema).max(100), future: z.array(projectSchema).max(100) }).strict().parse(value);
+    const editor = new Editor(state.project);
+    editor.past = state.past.map(validateProject); editor.future = state.future.map(validateProject);
+    return editor;
+  }
+  snapshot() { return structuredClone({ project: this.current, past: this.past, future: this.future }); }
   get project(): Project { return structuredClone(this.current); }
   apply(operation: Operation): Project { return this.replace(applyOperation(this.current, operation)); }
   replace(project: Project): Project {
