@@ -9,9 +9,10 @@ for (const kind of ['biped', 'quadruped', 'insectoid', 'arachnid'] as const) {
     const project = createCreature(kind);
     expect(validateProject(JSON.parse(JSON.stringify(project)))).toEqual(project);
     expect(createCreature(kind)).toEqual(project);
-    const hips = project.bones.filter(b => /^leg_.*_hip$/.test(b.name));
+    const hips = project.bones.filter(b => /^leg_.*_(hip|coxa)$/.test(b.name));
     expect(hips).toHaveLength(creatureInfo[kind].legs);
     for (const hip of hips) {
+      if (kind === 'arachnid') continue; // The dedicated spider tests inspect all seven segments.
       const prefix = hip.name.slice(0, -4);
       expect(project.bones.find(b => b.name === `${prefix}_knee`)?.parent).toBe(hip.name);
       expect(project.bones.find(b => b.name === `${prefix}_ankle`)?.parent).toBe(`${prefix}_knee`);
@@ -24,7 +25,7 @@ for (const kind of ['biped', 'quadruped', 'insectoid', 'arachnid'] as const) {
     const project = createCreature(kind), built = buildScene(project);
     try {
       const mixer = new AnimationMixer(built.root); mixer.clipAction(built.clips[0]).play();
-      const ankles = [...built.bones.values()].filter(b => b.name.endsWith('_ankle'));
+      const ankles = [...built.bones.values()].filter(b => b.name.endsWith(kind === 'arachnid' ? '_tip' : '_ankle'));
       const clearance = Math.min(...ankles.map(b => b.getWorldPosition(new Vector3()).y));
       const peak = new Map(ankles.map(b => [b.name, 0]));
       for (let frame = 0; frame < 120; frame++) {
@@ -67,7 +68,7 @@ it('coordinates diagonal and tripod support groups, and swings biped arms agains
   const groups = {
     quadruped: ['leg_L_front_ankle', 'leg_R_rear_ankle'],
     insectoid: ['leg_L_1_ankle', 'leg_R_2_ankle', 'leg_L_3_ankle'],
-    arachnid: ['leg_L_1_ankle', 'leg_R_2_ankle', 'leg_L_3_ankle', 'leg_R_4_ankle'],
+    arachnid: ['leg_L_1_tip', 'leg_R_2_tip', 'leg_L_3_tip', 'leg_R_4_tip'],
   } as const;
   for (const kind of creatureKinds) {
     const built = buildScene(createCreature(kind));
@@ -81,7 +82,7 @@ it('coordinates diagonal and tripod support groups, and swings biped arms agains
           expect(position('elbow_R').z * position('leg_R_ankle').z).toBeLessThan(0);
         }
       } else {
-        const ankles = [...built.bones.keys()].filter(name => name.endsWith('_ankle'));
+        const ankles = [...built.bones.keys()].filter(name => name.endsWith(kind === 'arachnid' ? '_tip' : '_ankle'));
         const clearance = position(ankles[0]).y;
         for (const phase of [0.25, 0.75]) {
           mixer.setTime(phase * built.clips[0].duration); built.root.updateMatrixWorld(true);

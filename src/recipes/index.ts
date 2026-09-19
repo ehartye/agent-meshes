@@ -2,6 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import { validateProject } from '../core/model.ts';
 import type { Project, Vec3, Quat, GeometryKind, Track } from '../core/types.ts';
 import { footPath, solveLeg } from './gait.ts';
+import { createSpiderLeg } from './spider-leg.ts';
 
 export const creatureKinds = ['biped', 'quadruped', 'insectoid', 'arachnid'] as const;
 export type CreatureKind = typeof creatureKinds[number];
@@ -9,7 +10,7 @@ export const creatureInfo = {
   biped: { name: 'Copper courier', label: 'Biped', legs: 2, gait: 'walk', description: 'A small explorer with a big stride.', color: '#c88b3f' },
   quadruped: { name: 'Ember fox', label: 'Quadruped', legs: 4, gait: 'trot', description: 'Light feet, a full tail, and a curious face.', color: '#c16440' },
   insectoid: { name: 'Jade scarab', label: 'Insectoid', legs: 6, gait: 'tripod', description: 'Six legs move in two supporting tripods.', color: '#328f7d' },
-  arachnid: { name: 'Indigo weaver', label: 'Arachnid', legs: 8, gait: 'scuttle', description: 'Eight articulated legs carry a patterned shell.', color: '#686391' },
+  arachnid: { name: 'Indigo weaver', label: 'Arachnid', legs: 8, gait: 'scuttle', description: 'Eight legs, seven articulated segments each.', color: '#686391' },
 } as const;
 const identity: Quat = [0, 0, 0, 1];
 const V = (p: Vec3) => new Vector3(...p);
@@ -23,6 +24,7 @@ export function createCreature(kind: CreatureKind): Project {
   const info = creatureInfo[kind];
   const project: Project = { version: 1, name: info.name, parts: [], bones: [], clips: [] };
   const legs: Leg[] = [];
+  const spiderLegs: ReturnType<typeof createSpiderLeg>[] = [];
   const tracks: { bone: string; sample: (phase: number) => Quat }[] = [];
   function bone(name: string, position: Vec3, parent = 'root') {
     project.bones.push({ name, parent: name === 'root' ? null : parent, position, rotation: [...identity], pose: [...identity] });
@@ -118,7 +120,7 @@ export function createCreature(kind: CreatureKind): Project {
     const shell = insect ? '#308778' : '#70658d', highlight = insect ? '#75b6a0' : '#a08db5', dark = insect ? '#294c49' : '#34364f', gold = '#ddb768';
     const height = insect ? 0.65 : 0.60;
     part('abdomen', 'sphere', insect ? [0.85, 0.55, 1.10] : [0.99, 0.72, 1.02], [0, height + 0.05, -0.39], shell);
-    part('thorax', 'sphere', [0.59, 0.42, 0.59], [0, height, 0.30], dark);
+    part('thorax', 'sphere', insect ? [0.59, 0.42, 0.59] : [0.62, 0.45, 0.89], [0, height, insect ? 0.30 : 0.19], dark);
     bone('head', [0, height, 0.51]);
     part('head_shape', 'sphere', [0.56, 0.4, 0.43], [0, height + 0.04, 0.64], shell, 'head');
     if (insect) {
@@ -148,11 +150,15 @@ export function createCreature(kind: CreatureKind): Project {
     }
     const count = insect ? 3 : 4;
     for (const side of [-1, 1]) for (let i = 0; i < count; i++) {
+      if (!insect) {
+        const leg = createSpiderLeg(side, i); spiderLegs.push(leg); project.bones.push(...leg.bones); project.parts.push(...leg.parts);
+        continue;
+      }
       const s = side < 0 ? 'L' : 'R', t = i / (count - 1), z = 0.40 - t * 0.89, spread = 0.62 - t * 1.30;
       const hip: Vec3 = [side * 0.24, height - 0.05, z];
       const knee: Vec3 = [side * (0.76 + Math.sin(t * Math.PI) * 0.15), height + 0.10, z + spread * 0.50];
       const foot: Vec3 = [side * (1.05 + Math.sin(t * Math.PI) * 0.17), 0.045, z + spread];
-      leg({ name: `leg_${s}_${i + 1}`, hip, knee, foot, pole: [side, 0.7, 0], phase: (i + (side < 0 ? 0 : 1)) % 2 * 0.5, stride: insect ? 0.30 : 0.25, lift: 0.12, stance: insect ? 0.62 : 0.66 }, insect ? 0.09 : 0.085, shell, dark);
+      leg({ name: `leg_${s}_${i + 1}`, hip, knee, foot, pole: [side, 0.7, 0], phase: (i + (side < 0 ? 0 : 1)) % 2 * 0.5, stride: 0.30, lift: 0.12, stance: 0.62 }, 0.09, shell, dark);
       part(`hip_cover_${s}_${i + 1}`, 'sphere', [0.18, 0.16, 0.2], hip, highlight);
     }
     motion('head', [0, 1, 0], 0.035);
@@ -162,6 +168,7 @@ export function createCreature(kind: CreatureKind): Project {
   const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'quadruped' ? 0.018 : 0.01) * (1 - Math.cos(4 * Math.PI * t));
   const clipTracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }];
   for (const leg of legs) for (const joint of ['hip', 'knee', 'ankle']) clipTracks.push({ bone: `${leg.name}_${joint}`, property: 'rotation', keys: [] });
+  for (const leg of spiderLegs) for (const bone of leg.names) clipTracks.push({ bone, property: 'rotation', keys: [] });
   for (const { bone } of tracks) clipTracks.push({ bone, property: 'rotation', keys: [] });
   for (let frame = 0; frame <= samples; frame++) {
     const phase = frame === samples ? 0 : frame / samples, time = frame / samples * duration;
@@ -173,6 +180,7 @@ export function createCreature(kind: CreatureKind): Project {
       const pose = solveLeg(leg.hip, leg.knee, leg.foot, target, leg.pole);
       for (const value of [pose.upper, pose.lower, pose.ankle]) clipTracks[index++].keys.push({ time, value });
     }
+    for (const leg of spiderLegs) for (const value of leg.sample(phase, bob(phase))) clipTracks[index++].keys.push({ time, value });
     for (const { sample } of tracks) clipTracks[index++].keys.push({ time, value: sample(phase) });
   }
   // Avoid quaternion sign flips between adjacent samples without changing orientation.

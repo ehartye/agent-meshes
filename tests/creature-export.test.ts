@@ -30,8 +30,8 @@ for (const kind of creatureKinds) it(`${kind} survives save/reopen and exports t
   const built = buildScene(reopened);
   try {
     expect(loaded.animations.map(clip => clip.name)).toEqual(source.clips.map(clip => clip.name));
-    const names = source.parts.filter(part => part.binding && (/_upper$|_shin$|_foot$/.test(part.name) || part.binding.type === 'linear')).map(part => part.name);
-    const selected = [...new Set([source.parts[0].name, ...names.slice(0, 10)])];
+    const names = source.parts.filter(part => part.binding && (kind === 'arachnid' ? /^leg_.*_shell$/.test(part.name) : /_upper$|_shin$|_foot$/.test(part.name) || part.binding.type === 'linear')).map(part => part.name);
+    const selected = [...new Set([source.parts[0].name, ...(kind === 'arachnid' ? names : names.slice(0, 10))])];
     const originalMixer = new AnimationMixer(built.root), exportedMixer = new AnimationMixer(loaded.scene);
     originalMixer.clipAction(built.clips[0]).play(); exportedMixer.clipAction(loaded.animations[0]).play();
     const duration = source.clips[0].duration;
