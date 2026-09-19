@@ -31,7 +31,18 @@ try {
     gltf.scene.traverse(object => { if (object instanceof SkinnedMesh) skins.push(object); if (object.isBone) bones.push(object); });
     assert.equal(skins.length, project.parts.filter(part => part.binding).length);
     assert.equal(bones.length, project.bones.length);
-    assert.equal(bones.filter(bone => /^leg_.*_hip$/.test(bone.name)).length, creatureInfo[kind].legs);
+    assert.equal(bones.filter(bone => /^leg_.*_(hip|coxa)$/.test(bone.name)).length, creatureInfo[kind].legs);
+    if (kind === 'arachnid') {
+      for (const side of ['L', 'R']) for (const index of [1, 2, 3, 4]) {
+        let parent = 'root';
+        for (const segment of ['coxa', 'trochanter', 'femur', 'patella', 'tibia', 'metatarsus', 'tarsus']) {
+          const name = `leg_${side}_${index}_${segment}`;
+          assert.equal(gltf.scene.getObjectByName(name)?.parent?.name, parent, `${name}: missing anatomical hierarchy`);
+          assert.ok(skins.some(mesh => mesh.name === `${name}_shell`), `${name}: missing visible section`);
+          parent = name;
+        }
+      }
+    }
     assert.deepEqual(gltf.animations.map(clip => clip.name), project.clips.map(clip => clip.name));
     const weighted = skins.filter(mesh => { const weights = mesh.geometry.getAttribute('skinWeight'); return Array.from({ length: weights.count }, (_, i) => i).some(i => weights.getX(i) > 0 && weights.getY(i) > 0); });
     if (kind === 'biped' || kind === 'quadruped') assert.ok(weighted.length > 0, `${kind}: expected weighted surfaces`);
