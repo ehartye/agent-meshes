@@ -22,13 +22,16 @@ const rotation = (axis: Vec3, angle: number) => new Quaternion().setFromAxisAngl
 interface Leg { name: string; hip: Vec3; knee: Vec3; foot: Vec3; pole: Vec3; phase: number; stride: number; lift: number; stance: number }
 
 /** Recipes produce ordinary editable projects; the runtime has no creature-specific rig rules. */
-export interface CreatureOptions { /** Clips for equine or vulpine: any of walk, trot, gallop. Default walk and trot. */ gaits?: readonly string[] }
+export interface CreatureOptions {
+  /** Clips for equine or vulpine: any of walk, trot, gallop. Default walk and trot. */ gaits?: readonly string[];
+  /** Equine or vulpine only: blend every part into one smooth skin with lathe hooves. */ shell?: boolean;
+}
 export function createCreature(kind: CreatureKind | 'quadruped', options: CreatureOptions = {}): Project {
   if (kind === 'quadruped') kind = 'vulpine';
   if (!creatureKinds.includes(kind)) throw new Error(`Unknown creature recipe: ${kind}`);
   const info = creatureInfo[kind];
-  if (kind === 'equine' || kind === 'vulpine') return createQuadruped(kind, info.name, options.gaits);
-  if (options.gaits) throw new Error(`Gaits are only configurable for equine and vulpine, not ${kind}`);
+  if (kind === 'equine' || kind === 'vulpine') return createQuadruped(kind, info.name, options.gaits, { shell: options.shell });
+  if (options.gaits || options.shell) throw new Error(`Gaits and shells are only configurable for equine and vulpine, not ${kind}`);
   const project: Project = { version: 1, name: info.name, parts: [], bones: [], clips: [] };
   const legs: Leg[] = [];
   const spiderLegs: ReturnType<typeof createSpiderLeg>[] = [];

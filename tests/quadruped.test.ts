@@ -43,6 +43,34 @@ it('equine gallop is opt-in and has a suspension phase with all four hooves off 
   } finally { built.dispose(); }
 });
 
+it('equine shell option wraps the whole horse in one smooth skin with lathe hooves', () => {
+  const project = createCreature('equine', { gaits: ['walk', 'gallop'], shell: true });
+  expect(project.shells).toHaveLength(1);
+  // Eyes and nostrils stay separate so they read crisply on the smooth skin.
+  expect(project.shells![0].parts.sort()).toEqual(project.parts.map(p => p.name).filter(n => !/eye|glint|nostril/.test(n)).sort());
+  expect(project.parts.every(p => p.binding?.type === 'rigid')).toBe(true);
+  expect(project.parts.filter(p => p.name.endsWith('_foot')).every(p => p.geometry.type === 'lathe')).toBe(true);
+  expect(createCreature('equine').shells ?? []).toEqual([]);
+  const built = buildScene(project);
+  try {
+    const meshes: string[] = []; built.root.traverse(o => { if (o instanceof SkinnedMesh) meshes.push(o.name); });
+    expect(meshes).toContain('skin');
+    expect(meshes.filter(m => m !== 'skin').every(m => /eye|glint|nostril/.test(m))).toBe(true);
+    // The skin still follows the gallop: a hoof-owned vertex moves with its hoof bone.
+    const clip = built.clips.find(c => c.name === 'gallop')!;
+    const mixer = new AnimationMixer(built.root); mixer.clipAction(clip).play();
+    const skin = built.root.getObjectByName('skin') as SkinnedMesh;
+    const hoof = built.bones.get('leg_L_front_hoof')!;
+    const nearest = () => { const pos = skin.geometry.getAttribute('position'); let best = 0, bestD = Infinity; const h = hoof.getWorldPosition(new Vector3()); for (let i = 0; i < pos.count; i++) { const d = new Vector3().fromBufferAttribute(pos, i).distanceTo(h); if (d < bestD) { bestD = d; best = i; } } return best; };
+    mixer.setTime(0); built.root.updateMatrixWorld(true);
+    const index = nearest();
+    const vertex = () => skin.applyBoneTransform(index, new Vector3().fromBufferAttribute(skin.geometry.getAttribute('position'), index)).applyMatrix4(skin.matrixWorld);
+    const before = vertex();
+    mixer.setTime(clip.duration * 0.5); built.root.updateMatrixWorld(true); skin.skeleton.update();
+    expect(vertex().distanceTo(before)).toBeGreaterThan(0.05);
+  } finally { built.dispose(); }
+});
+
 it('rejects an unknown gait name', () => {
   expect(() => createCreature('vulpine', { gaits: ['walk', 'canter'] })).toThrow(/Unknown vulpine gait: canter/);
 });
