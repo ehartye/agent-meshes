@@ -14,6 +14,14 @@ Open the loopback URL printed by the server (normally http://127.0.0.1:3388). Ad
 
 Choose a creature in the left sidebar to load its model, rig and looping clip. Loading replaces the active project in one undoable action; save edits before moving between examples. Playback starts automatically unless reduced motion is enabled. Pause to inspect a pose, enable Skeleton → Show, or select a joint to edit it.
 
+The HAL9000 creature gallery is available on the private tailnet at **https://hal9000.taila5c443.ts.net:8459/**. It serves the four animated viewers, editable project downloads and GLB exports directly from `artifacts/creatures`; it does not expose the editing API. Its route is:
+
+```powershell
+tailscale serve --bg --https=8459 C:\Users\ehart\repos\agent-meshes\artifacts\creatures
+```
+
+For an editing server behind a trusted private reverse proxy, `serve --public-origin <https-origin>` permits that exact browser origin while other origins remain rejected. The server still binds to loopback. This option is implemented and tested, but the remote editor is not deployed on HAL9000: automatic approval review blocked starting its process. The gallery route above is live and verified. A future editor deployment should use a separate available port and retain the gallery route. Tailscale controls network access; the editor shares one active project with devices allowed to reach it. No boot service is installed for the editor.
+
 In another terminal:
 
 ```powershell

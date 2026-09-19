@@ -25,6 +25,20 @@ async function setup() {
   return { ...server, request };
 }
 describe('loopback authoring server', () => {
+  it('allows the explicitly configured proxy origin while rejecting other origins', async () => {
+    const publicOrigin = 'https://hal9000.example:8459';
+    const service = await createServer({ port: 0, publicOrigin }); servers.push(service);
+    for (const [origin, status] of [[publicOrigin, 200], [service.url, 200], ['https://unrelated.example', 403], ['https://hal9000.example:8460', 403]]) {
+      const response = await fetch(`${service.url}/api/new`, { method: 'POST', headers: { origin: String(origin), 'content-type': 'application/json' }, body: '{"name":"Remote"}' });
+      expect(response.status).toBe(status);
+    }
+    expect(service.server.address()).toMatchObject({ address: '127.0.0.1' });
+  });
+  it('rejects public origins with credentials, paths or non-HTTP protocols', async () => {
+    for (const publicOrigin of ['*', 'file:///tmp', 'https://user:secret@example.com', 'https://example.com/editor', 'https://example.com?query=1', 'https://example.com#fragment']) {
+      await expect(createServer({ port: 0, publicOrigin })).rejects.toThrow(/origin/i);
+    }
+  });
   it('shuts down promptly with an unfinished client request', async () => {
     const service = await createServer({ port: 0 });
     const received = new Promise<void>(resolve => service.server.once('request', () => resolve()));
