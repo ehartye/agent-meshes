@@ -109,6 +109,27 @@ Rendering requires the built workbench (`npm run build`) and Chromium (`npx play
 
 `node scripts/check-animated-build.mjs` exercises rendered builds and offline exported playback. `node scripts/check-animation-browser.mjs` then verifies scrubbing, key recording and pose editing in the workbench. These write ignored evidence under `artifacts/`.
 
+## Embedding a model in your own page
+
+`node scripts/agent-meshes.mjs viewer lib/mesh-viewer.js` writes the standalone viewer runtime: one script, no build step, no network. It defines `window.MeshViewer`. `preview.html` is built on the same runtime.
+
+```html
+<div id="stage" style="height:420px"></div>
+<script id="glb" type="text/plain">...base64 GLB...</script>
+<script src="lib/mesh-viewer.js"></script>
+<script>
+  MeshViewer.mount(document.getElementById('stage'), { glb: document.getElementById('glb').textContent }).then(viewer => {
+    viewer.setPose('head', { rotation: [0, 30, 0] });   // XYZ Euler degrees, offset from rest and any clip
+    viewer.setColor('body', '#e6a23c');
+    viewer.play('trot');
+  });
+</script>
+```
+
+`mount(container, options)` fills the container and follows its size. `glb` is bytes or a base64 string, which works from `file://` where `fetch` does not. Options: `autoplay` (default follows `prefers-reduced-motion`), `background` (`null` for transparent), `orbit`, `floor`, `view` (`front`, `side`, `top`, `perspective` or `{position, target}`).
+
+The viewer exposes the puppet by name: `bones`, `parts`, `clips`; `setPose(bone, {rotation?, position?})`, `getPose`, `resetPose(bone?)`; `setColor`, `getColor`, `setVisible`; `play(clip?)`, `pause`, `playing`, `clip`, `time`, `duration`, `speed`, `seek`; plus `view`, `frame`, `setBackground`, `screenshot`, `onFrame`, `resize`, `dispose`, and the underlying `renderer`, `scene`, `camera`, `controls`. Pose offsets compose on top of clip playback each frame. `node scripts/check-viewer-browser.mjs` verifies the runtime in Chromium.
+
 ## Five animated examples
 
 ```powershell

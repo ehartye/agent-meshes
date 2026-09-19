@@ -96,6 +96,12 @@ export async function main(args = process.argv): Promise<void> {
     const result = await verifyGLB(await readFile(file)); process.stdout.write(`${JSON.stringify(result)}\n`);
     if (!result.ok) process.exitCode = 1;
   });
+  program.command('viewer <file>').description('Write the standalone viewer runtime: one script defining window.MeshViewer.mount()').action(async file => {
+    const { viewerScript } = await import('./preview-html.ts');
+    const code = await viewerScript(); const output = resolve(file);
+    await mkdir(dirname(output), { recursive: true }); await writeFile(output, code);
+    process.stdout.write(`${JSON.stringify({ output, bytes: Buffer.byteLength(code) })}\n`);
+  });
   program.command('view <directory>').description('Render fixed views and animation contact sheets').action(async directory => {
     const project = await currentProject();
     const { captureProject } = await import('./capture.ts'); const output = resolve(directory);
