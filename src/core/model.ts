@@ -1,10 +1,8 @@
 import { z } from 'zod';
 import type { Project, Operation, PartInput, Part } from './types.ts';
+import { nameSchema, vec3Schema, quatSchema, boneSchema, bindingSchema, validateRig, applyRigOperation } from './rig.ts';
+export { nameSchema, vec3Schema, quatSchema } from './rig.ts';
 
-export const nameSchema = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,79}$/, 'Use a letter followed by letters, digits, dots, underscores or hyphens');
-export const vec3Schema = z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]);
-export const quatSchema = z.tuple([z.number().finite(), z.number().finite(), z.number().finite(), z.number().finite()])
-  .refine(q => Math.abs(Math.hypot(...q) - 1) < 0.001, 'Rotation must be a unit quaternion');
 const geometrySchema = z.object({
   type: z.enum(['box', 'sphere', 'cylinder', 'cone', 'capsule', 'group']),
   size: vec3Schema.refine(v => v.every(n => n > 0 && n <= 1000), 'Size must be positive and at most 1000'),
@@ -15,8 +13,9 @@ export const partSchema = z.object({
   position: vec3Schema, rotation: quatSchema,
   scale: vec3Schema.refine(v => v.every(n => n > 0 && n <= 1000), 'Scale must be positive'),
   parent: nameSchema.nullable(),
+  binding: bindingSchema.optional(),
 }).strict();
-export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000) }).strict();
+export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]) }).strict();
 
 export function checkHierarchy(items: { name: string; parent: string | null }[], label: string): void {
   const byName = new Map(items.map(item => [item.name, item]));
@@ -36,6 +35,8 @@ export function checkHierarchy(items: { name: string; parent: string | null }[],
 export function validateProject(value: unknown): Project {
   const project = projectSchema.parse(value);
   checkHierarchy(project.parts, 'part');
+  checkHierarchy(project.bones, 'bone');
+  validateRig(project);
   return project;
 }
 export function createProject(name: string): Project { return validateProject({ version: 1, name, parts: [] }); }
@@ -54,6 +55,7 @@ export function applyOperation(project: Project, operation: Operation): Project 
       const part = next.parts.find(p => p.name === operation.name);
       if (!part) throw new Error(`Unknown part: ${operation.name}`);
       const changes = partSchema.omit({ name: true }).partial().parse(operation.changes);
+      if (part.binding && changes.geometry) throw new Error('Unbind the part before changing its geometry');
       Object.assign(part, changes);
       break;
     }
@@ -63,6 +65,9 @@ export function applyOperation(project: Project, operation: Operation): Project 
       next.parts = next.parts.filter(p => p.name !== operation.name);
       break;
     }
+    case 'bone.add': case 'bone.update': case 'bone.remove': case 'bone.mirror':
+    case 'pose': case 'pose.reset': case 'bind': case 'unbind':
+      applyRigOperation(next, operation); break;
     default: throw new Error(`Unknown operation: ${(operation as { op: string }).op}`);
   }
   return validateProject(next);
