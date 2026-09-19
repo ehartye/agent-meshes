@@ -63,6 +63,14 @@ Geometry types are `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe`, `pri
 ]
 ```
 
+Separate primitives read as floating pieces on an animal or a figure. A **shell** blends a set of parts into one smooth surface that replaces them when rendered or exported:
+
+```json
+{"op":"shell.set","shell":{"name":"skin","parts":["body","neck","head","leg_upper","leg_lower","hoof"],"blend":0.12,"resolution":48}}
+```
+
+`blend` is how far two members reach toward each other before they merge, in meters; `resolution` is the number of grid cells along the longest axis (16 to 96). The shell takes its colors from the members that own each point, so a red head and a brown body fade into each other at the neck. Members must all be rigid-bound (the shell is then skinned, each point following the bones of the parts that own it) or all unbound (a static mesh). Members stay editable as parts; `shell.remove` shows them individually again. Lathe, prism and every primitive have a signed distance function, so all of them can be members.
+
 A part can be placed relative to a bone instead of the world: `{"op":"add","part":{"name":"ring","anchor":"hand","position":[0,-0.5,0],...}}` interprets `position` and `rotation` in the `hand` bone's rest frame and stores the world result, so a part meant to hang from a bone never needs the bone's world position copied by hand.
 
 The CLI prints JSON and exits nonzero on failures. `batch operations.json` applies an array of operations atomically, with one undo step. `open`, `save`, `undo`, and `redo` share the browser's active project. `--url` chooses an already-running server; identity checks prevent edits against an unrelated service. Run `node scripts/agent-meshes.mjs --help` for commands. Names start with a letter and contain letters, numbers, underscores, hyphens or dots. Transforms use meters and Y-up coordinates; rotations are unit quaternions `[x,y,z,w]`.

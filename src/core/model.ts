@@ -36,7 +36,31 @@ export const partSchema = z.object({
   parent: nameSchema.nullable(),
   binding: bindingSchema.optional(),
 }).strict();
-export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]) }).strict();
+export const shellSchema = z.object({
+  name: nameSchema, parts: z.array(nameSchema).min(1).max(200),
+  /** Blend radius in meters: how far two members reach toward each other before they merge. */
+  blend: z.number().positive().max(10),
+  /** Grid cells along the longest axis, 16 to 96. */
+  resolution: z.number().int().min(16).max(96),
+}).strict();
+export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]), shells: z.array(shellSchema).max(50).default([]) }).strict();
+function validateShells(project: Project): void {
+  const partNames = new Set(project.parts.map(p => p.name)), boneNames = new Set(project.bones.map(b => b.name)), seen = new Set<string>();
+  for (const shell of project.shells ?? []) {
+    if (seen.has(shell.name)) throw new Error(`Duplicate shell name: ${shell.name}`);
+    seen.add(shell.name);
+    if (partNames.has(shell.name) || boneNames.has(shell.name)) throw new Error(`Shell, part and bone names must be distinct: ${shell.name}`);
+    if (new Set(shell.parts).size !== shell.parts.length) throw new Error(`Shell ${shell.name} lists a part twice`);
+    for (const name of shell.parts) {
+      const part = project.parts.find(p => p.name === name);
+      if (!part) throw new Error(`Unknown shell part: ${name}`);
+      if (part.geometry.type === 'group') throw new Error(`Shell ${shell.name} cannot include group ${name}`);
+      if (part.binding && part.binding.type !== 'rigid') throw new Error(`Shell ${shell.name} member ${name} must be rigid-bound or unbound`);
+    }
+    const bound = shell.parts.filter(name => project.parts.find(p => p.name === name)!.binding);
+    if (bound.length && bound.length !== shell.parts.length) throw new Error(`Shell ${shell.name} mixes bound and unbound parts`);
+  }
+}
 
 export function checkHierarchy(items: { name: string; parent: string | null }[], label: string): void {
   const byName = new Map(items.map(item => [item.name, item]));
@@ -60,6 +84,7 @@ export function validateProject(value: unknown): Project {
   checkHierarchy(project.bones, 'bone');
   validateRig(project);
   validateAnimation(project);
+  validateShells(project);
   return project;
 }
 export function createProject(name: string): Project { return validateProject({ version: 1, name, parts: [] }); }
@@ -94,6 +119,7 @@ export function applyOperation(project: Project, operation: Operation): Project 
     case 'remove': {
       if (!next.parts.some(p => p.name === operation.name)) throw new Error(`Unknown part: ${operation.name}`);
       if (next.parts.some(p => p.parent === operation.name)) throw new Error('Remove or reparent child parts first');
+      for (const shell of next.shells ?? []) if (shell.parts.includes(operation.name)) throw new Error(`Part ${operation.name} belongs to shell ${shell.name}; remove it from the shell first`);
       next.parts = next.parts.filter(p => p.name !== operation.name);
       break;
     }
@@ -111,6 +137,16 @@ export function applyOperation(project: Project, operation: Operation): Project 
     case 'clip.remove':
       if (!next.clips.some(c => c.name === operation.name)) throw new Error(`Unknown clip: ${operation.name}`);
       next.clips = next.clips.filter(c => c.name !== operation.name); break;
+    case 'shell.set': {
+      const shell = shellSchema.parse(operation.shell);
+      next.shells ??= [];
+      const index = next.shells.findIndex(s => s.name === shell.name);
+      if (index < 0) next.shells.push(shell); else next.shells[index] = shell;
+      break;
+    }
+    case 'shell.remove':
+      if (!(next.shells ?? []).some(s => s.name === operation.name)) throw new Error(`Unknown shell: ${operation.name}`);
+      next.shells = (next.shells ?? []).filter(s => s.name !== operation.name); break;
     default: throw new Error(`Unknown operation: ${(operation as { op: string }).op}`);
   }
   return validateProject(next);
