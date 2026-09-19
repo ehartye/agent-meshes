@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { applyOperation, createProject, partSchema, projectSchema, validateProject } from './core/model.ts';
 import { bindingBones, bindingSchema, boneSchema, nameSchema, quatSchema } from './core/rig.ts';
 import { clipSchema } from './core/animation.ts';
+import { assemblyCopySchema } from './core/assembly.ts';
+import { poseTargetSchema } from './core/pose-target.ts';
 import type { BoneDef, Clip, Operation, Part, Project } from './core/types.ts';
 
 const partInputSchema = partSchema.omit({ geometry: true }).partial().required({ name: true })
@@ -10,6 +12,8 @@ const named = { name: nameSchema };
 
 /** Shape contracts reuse model schemas; state-dependent checks still run in applyOperation. */
 export const operationSchemas = {
+  'assembly.copy': assemblyCopySchema,
+  'pose.target': poseTargetSchema,
   add: z.object({ op: z.literal('add'), part: partInputSchema }).strict(),
   update: z.object({ op: z.literal('update'), ...named, changes: partSchema.omit({ name: true }).partial() }).strict(),
   remove: z.object({ op: z.literal('remove'), ...named }).strict(),
@@ -31,6 +35,8 @@ export function parseOperation(value: unknown): Operation {
 }
 
 const examples: Record<Operation['op'], Operation[]> = {
+  'assembly.copy': [{ op: 'assembly.copy', root: 'upper', prefix: 'right_', mirror: 'x', offset: [0, 0, 0], clips: true }],
+  'pose.target': [{ op: 'pose.target', chain: ['upper', 'middle', 'end'], target: [0.5, 0.2, 0], pole: [0.5, 1, 1], preserveEndOrientation: true }],
   add: [{ op: 'add', part: { name: 'body', geometry: { type: 'box', size: [1, 2, 1] }, position: [0, 1, 0] } }],
   update: [{ op: 'update', name: 'body', changes: { color: '#64b9c4' } }],
   remove: [{ op: 'remove', name: 'body' }],
@@ -59,6 +65,8 @@ const descriptions: Record<Operation['op'], string> = {
   unbind: 'Remove an existing part binding.',
   'clip.set': 'Create or replace an entire named clip. Every track must span zero through duration with strictly increasing key times.',
   'clip.remove': 'Remove an existing named clip.',
+  'assembly.copy': 'Copy a bone subtree with its bound parts and clip tracks under a prefix, optionally mirrored and offset in the root parent frame.',
+  'pose.target': 'Pose a three-bone parent-child chain with two-link IK so the end bone reaches a world-space target, bending toward the pole.',
 };
 
 export function capabilities() {
