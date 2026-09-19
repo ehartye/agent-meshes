@@ -1,6 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import type { BoneDef, Part, Quat, Vec3 } from '../core/types.ts';
-import { solveSpiderPose, spiderGait, spiderStep } from './spider-motion.ts';
+import { solveSpiderPose, spiderContact, spiderStep, spiderTarget } from './spider-motion.ts';
 
 export const spiderSegments = ['coxa', 'trochanter', 'femur', 'patella', 'tibia', 'metatarsus', 'tarsus'] as const;
 const vector = (p: Vec3) => new Vector3(...p);
@@ -38,10 +38,10 @@ export function createSpiderLeg(side: number, index: number) {
   }
   parts.push({ name: `${prefix}_contact`, geometry: { type: 'sphere', size: [0.051, 0.062, 0.063], segments: 8 }, position: rest[7], rotation: [...identity], scale: [1, 1, 1], parent: null, color: '#34364f', binding: { type: 'rigid', bone: `${prefix}_tip` } });
 
+  const contact = spiderContact(rest[0], rest[7]);
   function sample(phase: number, bob: number): Quat[] {
     const offset = spiderStep(phase, side, index);
-    const target = vector(rest[7]).add(new Vector3(offset[0], offset[1] - bob, offset[2]));
-    return solveSpiderPose(rest, tuple(target), Math.min(1, offset[1] / spiderGait.lift));
+    return solveSpiderPose(rest, spiderTarget(rest[0], contact, offset, bob));
   }
-  return { bones, parts, names, sample };
+  return { bones, parts, names, contact, sample };
 }
