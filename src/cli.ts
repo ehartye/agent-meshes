@@ -28,11 +28,12 @@ export async function main(args = process.argv): Promise<void> {
   };
   program.command('serve').description('Start the loopback authoring server')
     .option('--port <port>', 'Listening port', '3388').option('--project <file>', 'Project to open')
+    .option('--public-origin <origin>', 'Exact browser origin of a trusted reverse proxy')
     .action(async options => {
       const { createServer } = await import('./server.ts');
       const port = Number(options.port);
       if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer from 0 to 65535');
-      const server = await createServer({ port, projectPath: options.project });
+      const server = await createServer({ port, projectPath: options.project, publicOrigin: options.publicOrigin });
       process.stdout.write(`${JSON.stringify({ service: 'agent-meshes', url: server.url })}\n`);
       const shutdown = async () => { await server.close(); process.exitCode = 0; };
       process.once('SIGINT', shutdown);
