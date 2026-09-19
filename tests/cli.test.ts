@@ -33,7 +33,7 @@ it('edits and saves a project through the executable CLI', async () => {
   const glb = join(directory, 'asset.glb');
   expect(JSON.parse((await invoke('export', glb)).stdout).output).toBe(glb);
   expect(JSON.parse((await invoke('verify', glb)).stdout).ok).toBe(true);
-  await expect(invoke('op', '{"op":"remove","name":"missing"}')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('Error:') });
+  await expect(invoke('op', '{"op":"remove","name":"missing"}')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('"ok":false') });
 }, 30000); // Ten fresh Node processes can exceed five seconds on hosted Windows runners.
 
 it('refuses to edit a server that is not agent-meshes', async () => {
@@ -63,4 +63,20 @@ it('loads an editable creature recipe atomically and rejects unknown recipes', a
   await expect(invoke('recipe', 'unknown')).rejects.toMatchObject({ code: 1 });
   expect(JSON.parse((await invoke('state')).stdout).name).toBe('Jade scarab');
   expect(JSON.parse((await invoke('undo')).stdout).parts).toHaveLength(0);
+}, 30000);
+
+it('inspects and dry-runs a server workspace and preserves structured revision errors', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-cli-server-workspace-'));
+  const server = await createServer({ port: 0, workspacePath: directory });
+  cleanup.push(server.close, () => rm(directory, { recursive: true, force: true }));
+  const invoke = (...args: string[]) => cli('--url', server.url, ...args);
+  const file = join(directory, 'batch.json');
+  await writeFile(file, '[{"op":"add","part":{"name":"body"}}]');
+  expect(JSON.parse((await invoke('batch', file, '--dry-run')).stdout)).toMatchObject({ ok: true, revision: 0, changes: { parts: { added: ['body'] } } });
+  expect(JSON.parse((await invoke('inspect')).stdout)).toMatchObject({ counts: { parts: 0 }, workspace: { revision: 0, undo: 0 } });
+  await invoke('--expect-revision', '0', 'batch', file);
+  expect(JSON.parse((await invoke('inspect', 'body')).stdout)).toMatchObject({ selection: { kind: 'part' }, workspace: { revision: 1 } });
+  let failure: { stderr: string } | undefined;
+  try { await invoke('--expect-revision', '0', 'new', 'Stale'); } catch (error) { failure = error as { stderr: string }; }
+  expect(JSON.parse(failure!.stderr)).toMatchObject({ ok: false, error: { code: 'REVISION_CONFLICT', expected: 0, actual: 1 } });
 }, 30000);

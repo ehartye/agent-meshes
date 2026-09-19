@@ -2,6 +2,28 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+## Agent workspace
+
+Use a durable workspace without starting a server. Commands share the same validated authoring engine as the browser:
+
+```powershell
+node scripts/agent-meshes.mjs capabilities
+node scripts/agent-meshes.mjs --workspace .agent-meshes/fox recipe vulpine
+node scripts/agent-meshes.mjs --workspace .agent-meshes/fox inspect
+node scripts/agent-meshes.mjs --workspace .agent-meshes/fox inspect bone:leg_L_front_elbow
+node scripts/agent-meshes.mjs --workspace .agent-meshes/fox batch edits.json --dry-run
+node scripts/agent-meshes.mjs --workspace .agent-meshes/fox --expect-revision 1 batch edits.json
+node scripts/agent-meshes.mjs --workspace .agent-meshes/fox undo
+node scripts/agent-meshes.mjs --workspace .agent-meshes/fox redo
+node scripts/agent-meshes.mjs --workspace .agent-meshes/fox export fox.glb
+```
+
+`capabilities` returns versioned JSON schemas, defaults, constraints and operation examples without a running server. `inspect` summarizes named parts, bones, bindings and clip/key counts; `part:`, `bone:` and `clip:` selectors include one exact entity. A batch file contains an operation array. `--dry-run` runs the same state-dependent validation as a real batch, reports named additions/removals/changes, and leaves revision and undo history intact. Use its base revision with `--expect-revision` to reject edits planned against stale state.
+
+Workspace `state` and mutation responses contain `{project, revision, undo, redo}`. Each failure writes a JSON error record to stderr with a stable code, message, zero-based failing operation index and validation fields where available; failures exit nonzero. Workspace state lives in `workspace.sqlite`, using Node's bundled SQLite with transactions and crash recovery. Confirmed edits are committed before success is returned. Undo/redo survive commands and restarts, bounded to 20 steps and 16 MiB of history. Corrupt or unknown workspace state is rejected without replacement. Use current Node 24 LTS (tested 24.21) or Node 26 for clean machine-readable stderr; early Node 24 releases also print runtime experimental warnings. Project JSON remains the portable exchange format: use `save file.mesh.json` and `open file.mesh.json`.
+
+`--workspace <directory> serve` opens a live editor backed by the same workspace. CLI and browser changes share serialized database transactions; the editor observes external workspace revisions. `--workspace` and an explicit `--url` are mutually exclusive. `serve --project` is a separate, in-memory mode and cannot be combined with a workspace. Existing HTTP command responses keep their project shape; workspace servers additionally return the `x-agent-meshes-revision` header on mutations and project reads. `GET /api/workspace` reports durability/revision/history, `GET /api/capabilities` exposes contracts, and `POST /api/plan` accepts `{operations:[...]}` for a nonmutating dry run.
+
 Includes five editable, rigged low-poly characters: **Copper courier** (biped walk), **Amber horse** (equine walk/trot), **Ember fox** (vulpine walk/trot), **Jade scarab** (six-leg tripod gait), and **Indigo weaver** (eight-leg alternating gait). No Blender installation is needed.
 
 ```powershell
