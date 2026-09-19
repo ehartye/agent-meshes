@@ -1,0 +1,7 @@
+node_modules/
+dist-web/
+coverage/
+.agent-meshes/
+artifacts/
+*.log
+.worktrees/

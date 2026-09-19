@@ -1,0 +1,36 @@
+{
+  "name": "agent-meshes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Named-part 3D authoring, rigging and animation for coding agents",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "agent-meshes": "scripts/agent-meshes.mjs"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "vite build",
+    "start": "node src/cli.ts serve",
+    "dev": "vite --host 127.0.0.1"
+  },
+  "dependencies": {
+    "commander": "15.0.0",
+    "express": "5.2.1",
+    "three": "0.186.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.2",
+    "@types/three": "0.186.0",
+    "gltf-validator": "2.0.0-dev.3.10",
+    "playwright": "1.63.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.0",
+    "vitest": "5.0.1"
+  }
+}
