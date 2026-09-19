@@ -76,6 +76,7 @@ export function createCreature(kind: CreatureKind): Project {
       bone(`arm_${s}`, shoulder); bone(`elbow_${s}`, xyz(V(elbow).sub(V(shoulder))), `arm_${s}`);
       part(`shoulder_${s}`, 'sphere', [0.29, 0.3, 0.31], shoulder, gold, `arm_${s}`);
       segment(`sleeve_${s}`, shoulder, elbow, 0.2, teal, `arm_${s}`);
+      part(`elbow_joint_${s}`, 'sphere', [0.17, 0.17, 0.17], elbow, dark, `elbow_${s}`);
       segment(`forearm_${s}`, elbow, hand, 0.17, gold, `elbow_${s}`);
       part(`hand_${s}`, 'sphere', [0.21, 0.25, 0.21], hand, dark, `elbow_${s}`);
       motion(`arm_${s}`, [1, 0, 0], -side * 0.4, 0, 1, 0.25); motion(`elbow_${s}`, [1, 0, 0], 0.10, -0.16, 1, side < 0 ? 0 : 0.5);
