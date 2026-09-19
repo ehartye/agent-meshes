@@ -7,6 +7,46 @@ it('keeps quadruped as a compatibility alias for vulpine', () => {
   expect(createCreature('quadruped')).toEqual(createCreature('vulpine'));
 });
 
+it('equine gallop is opt-in and has a suspension phase with all four hooves off the ground', () => {
+  expect(createCreature('equine').clips.map(c => c.name)).toEqual(['walk', 'trot']);
+  const project = createCreature('equine', { gaits: ['walk', 'trot', 'gallop'] });
+  expect(project.clips.map(c => c.name)).toEqual(['walk', 'trot', 'gallop']);
+  const built = buildScene(project);
+  try {
+    const clip = built.clips.find(c => c.name === 'gallop')!;
+    const mixer = new AnimationMixer(built.root); mixer.clipAction(clip).play();
+    const feet = [...built.bones.values()].filter(b => /_hoof$/.test(b.name));
+    const rest = new Map(feet.map(b => [b.name, b.getWorldPosition(new Vector3())]));
+    const seek = (phase: number) => { mixer.setTime(phase * clip.duration); built.root.updateMatrixWorld(true); };
+    let airborne = 0; const touchdowns: string[] = []; let previousContact = new Set<string>();
+    for (let frame = 0; frame <= 240; frame++) {
+      seek(frame / 240);
+      const planted = new Set<string>();
+      for (const foot of feet) {
+        const p = foot.getWorldPosition(new Vector3()), base = rest.get(foot.name)!;
+        expect(p.y).toBeGreaterThanOrEqual(base.y - 0.0005);
+        if (p.y < base.y + 0.0001) planted.add(foot.name);
+      }
+      if (planted.size === 0) airborne++;
+      if (frame > 0) for (const name of planted) if (!previousContact.has(name)) touchdowns.push(name);
+      previousContact = planted;
+    }
+    // Muybridge's finding: a galloping horse leaves the ground for part of every stride.
+    expect(airborne).toBeGreaterThan(240 * 0.12);
+    expect(airborne).toBeLessThan(240 * 0.4);
+    // Transverse gallop, right lead: hind legs strike first, then the fore legs.
+    const order = touchdowns.slice(0, 4).map(name => name.replace(/^leg_|_hoof$/g, ''));
+    const first = order.indexOf('L_rear');
+    expect([...order.slice(first), ...order.slice(0, first)]).toEqual(['L_rear', 'R_rear', 'L_front', 'R_front']);
+    seek(0); const start = feet.map(f => f.getWorldPosition(new Vector3()));
+    seek(1 - 1e-6); feet.forEach((f, i) => expect(f.getWorldPosition(new Vector3()).distanceTo(start[i])).toBeLessThan(0.002));
+  } finally { built.dispose(); }
+});
+
+it('rejects an unknown gait name', () => {
+  expect(() => createCreature('vulpine', { gaits: ['walk', 'canter'] })).toThrow(/Unknown vulpine gait: canter/);
+});
+
 for (const species of ['equine', 'vulpine'] as const) {
   it(`${species} has anatomical fore and hind chains and both walk and trot`, () => {
     const project = createCreature(species);
