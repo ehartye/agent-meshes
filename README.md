@@ -2,7 +2,7 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
-Includes four editable, rigged low-poly characters: **Copper courier** (biped walk), **Ember fox** (quadruped trot), **Jade scarab** (six-leg tripod gait), and **Indigo weaver** (eight-leg alternating gait). No Blender installation is needed.
+Includes five editable, rigged low-poly characters: **Copper courier** (biped walk), **Amber horse** (equine walk/trot), **Ember fox** (vulpine walk/trot), **Jade scarab** (six-leg tripod gait), and **Indigo weaver** (eight-leg alternating gait). No Blender installation is needed.
 
 ```powershell
 npm ci
@@ -14,7 +14,7 @@ Open the loopback URL printed by the server (normally http://127.0.0.1:3388). Ad
 
 Choose a creature in the left sidebar to load its model, rig and looping clip. Loading replaces the active project in one undoable action; save edits before moving between examples. Playback starts automatically unless reduced motion is enabled. Pause to inspect a pose, enable Skeleton → Show, or select a joint to edit it.
 
-The HAL9000 creature gallery is available on the private tailnet at **https://hal9000.taila5c443.ts.net:8459/**. It serves the four animated viewers, editable project downloads and GLB exports directly from `artifacts/creatures`; it does not expose the editing API. Its route is:
+The HAL9000 creature gallery is available on the private tailnet at **https://hal9000.taila5c443.ts.net:8459/**. It serves the five animated viewers, editable project downloads and GLB exports directly from `artifacts/creatures`; it does not expose the editing API. Its route is:
 
 ```powershell
 tailscale serve --bg --https=8459 C:\Users\ehart\repos\agent-meshes\artifacts\creatures
@@ -87,7 +87,7 @@ Rendering requires the built workbench (`npm run build`) and Chromium (`npx play
 
 `node scripts/check-animated-build.mjs` exercises rendered builds and offline exported playback. `node scripts/check-animation-browser.mjs` then verifies scrubbing, key recording and pose editing in the workbench. These write ignored evidence under `artifacts/`.
 
-## Four animated examples
+## Five animated examples
 
 ```powershell
 npx playwright install chromium
@@ -96,19 +96,22 @@ npm run check:creatures
 node scripts/check-recipe-browser.mjs
 ```
 
-Open `artifacts/creatures/index.html` for the gallery, or a creature's `preview.html` for standalone offline playback. Each `artifacts/creatures/<kind>/` directory contains the editable `project.mesh.json`, animated `model.glb`, validation report, fixed views, and an eight-frame gait contact sheet. `artifacts/creature-sources/<kind>/` holds generated input and build config; copy that input to a new location to develop a variation without the recipe generator overwriting it. Artifacts are ignored by Git and rebuilt from the recipe source.
+Open `artifacts/creatures/index.html` for the gallery, or a creature's `preview.html` for standalone offline playback. Each `artifacts/creatures/<kind>/` directory contains the editable `project.mesh.json`, animated `model.glb`, validation report, fixed views, and an eight-frame contact sheet for each gait. `artifacts/creature-sources/<kind>/` holds generated input and build config; copy that input to a new location to develop a variation without the recipe generator overwriting it. Artifacts are ignored by Git and rebuilt from the recipe source.
 
 | Recipe / CLI name | Rig and motion |
 | --- | --- |
 | `biped` | Two legs, opposite arm swing, weighted upper legs, body bounce and head motion |
-| `quadruped` | Four legs in diagonal pairs, weighted upper legs, bobbing head and swaying tail |
+| `equine` | Shoulder/elbow/carpus and hip/stifle/hock chains, fetlocks/pasterns and hooves; walk and trot |
+| `vulpine` | Shoulder/elbow/wrist and hip/stifle/hock chains ending in paws; walk and trot |
 | `insectoid` | Six articulated legs; left-front/right-middle/left-rear form one tripod, the other three form its counterpart |
 | `arachnid` | Eight legs with seven anatomical segments each; constrained hinges, low recovery arcs and staggered footfalls |
 
-The deterministic recipes in `src/recipes/index.ts` generate ordinary project data. Leg rotations are baked at 60 samples/second; stance feet move uniformly backward for **in-place** locomotion, while lifted feet return forward. Biped, quadruped and insectoid use a two-link IK solver. The spider swings and lifts each leg primarily at the coxa next to the thorax. Five downstream joints retain their rest angles; one small patella adjustment maintains reach. Its wider, less fore/aft-splayed animated stance and hip-centred recovery arc reduce the need for leg bending. Root bob is compensated in the foot targets. Each clip has identical endpoint keys. The models travel forward when your game moves their root at the intended speed; the clips themselves do not contain forward root motion. For matching ground speed, use `stride / (stance fraction × clip duration)`: approximately 0.699 m/s, 0.796 m/s, 0.346 m/s and 0.223 m/s respectively.
+The deterministic recipes in `src/recipes/index.ts` generate ordinary project data. Leg rotations are baked at 60 samples/second (120 for quadrupeds); stance feet move uniformly backward for **in-place** locomotion, while lifted feet return forward. Biped and insectoid use a two-link IK solver. Quadrupeds solve the upper two links against articulated distal sections, with coupled recovery flex and level feet. The spider swings and lifts each leg primarily at the coxa next to the thorax. Five downstream joints retain their rest angles; one small patella adjustment maintains reach. Its wider, less fore/aft-splayed animated stance and hip-centred recovery arc reduce the need for leg bending. Root bob is compensated in the foot targets. Each clip has identical endpoint keys. The models travel forward when your game moves their root at the intended speed; the clips themselves do not contain forward root motion. For matching ground speed, use `stride / (stance fraction × clip duration)`: biped 0.699, horse walk/trot 0.365/1.071, fox walk/trot 0.347/0.938, insectoid 0.346 and arachnid 0.223 model units/second.
+
+Quadruped walks use four separate footfalls (left hind, left fore, right hind, right fore). Trots pair opposite diagonals with overlapping support. Each species has its own stride, cadence, clearance and body rise. These are stylized, authored cycles, not motion capture or a balance simulation. The command `recipe quadruped` remains an alias for `recipe vulpine`; existing saved projects are unchanged. Both clips are available in each preview’s animation selector.
 
 Each spider leg has **coxa → trochanter → femur → patella → tibia → metatarsus → tarsus**, with one named bone, rigid-bound visible section and animation track per segment. An additional unmeshed tip bone measures ground contact. The spider rig has 66 bones in total. All four leg pairs attach along the front body section (the thorax/prosoma), clear of the abdomen; a narrow pedicel connects the two body sections. Attachment tests check actual positions against the body shells. The sections remain independently editable, but the gait deliberately holds most joints still so the limb keeps its shape. Tests bound cumulative downstream flex as well as individual joint movement, and require the thorax joint to dominate both. Staggered swing timing keeps at least four feet supporting the body, and the lower recovery arc limits exaggerated stepping. This is a stylized seven-segment rig; its joint limits and gait parameters are authored for this model rather than measured from a species. Existing saved spider projects retain their previous animation; load `recipe arachnid` or choose Arachnid in the workbench to start from the revised template.
 
-`check:creatures` validates all four GLBs, reloads them independently, checks actual animated skin vertices and loops, and opens every standalone preview in Chromium. Tests also check minimum supporting-foot counts and sub-frame ground contact. The examples use authored procedural rigs; automatic rigging of arbitrary imported meshes and destination-engine integration are outside this release.
+`check:creatures` validates all five GLBs and every clip, reloads them independently, checks actual animated skin vertices and loops, and opens every standalone preview in Chromium. Tests also check minimum supporting-foot counts and sub-frame ground contact. The examples use authored procedural rigs; automatic rigging of arbitrary imported meshes and destination-engine integration are outside this release.
 
 Project design and delivery evidence are maintained in the owner's wiki under `wiki/authored/agent-meshes/`.

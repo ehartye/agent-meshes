@@ -40,7 +40,7 @@ export async function main(args = process.argv): Promise<void> {
       process.once('SIGTERM', shutdown);
     });
   program.command('new <name>').action(name => request('new', { name }));
-  program.command('recipe <kind>').description('Load biped, quadruped, insectoid or arachnid into the workbench').action(async kind => {
+  program.command('recipe <kind>').description('Load biped, equine, vulpine, insectoid or arachnid (quadruped aliases vulpine)').action(async kind => {
     const { createCreature } = await import('./recipes/index.ts');
     await request('project', createCreature(kind));
   });

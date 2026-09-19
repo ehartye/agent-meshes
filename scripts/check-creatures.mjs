@@ -31,7 +31,7 @@ try {
     gltf.scene.traverse(object => { if (object instanceof SkinnedMesh) skins.push(object); if (object.isBone) bones.push(object); });
     assert.equal(skins.length, project.parts.filter(part => part.binding).length);
     assert.equal(bones.length, project.bones.length);
-    assert.equal(bones.filter(bone => /^leg_.*_(hip|coxa)$/.test(bone.name)).length, creatureInfo[kind].legs);
+    assert.equal(bones.filter(bone => /^leg_.*_(hip|shoulder|coxa)$/.test(bone.name)).length, creatureInfo[kind].legs);
     if (kind === 'arachnid') {
       for (const side of ['L', 'R']) for (const index of [1, 2, 3, 4]) {
         let parent = 'root';
@@ -45,7 +45,7 @@ try {
     }
     assert.deepEqual(gltf.animations.map(clip => clip.name), project.clips.map(clip => clip.name));
     const weighted = skins.filter(mesh => { const weights = mesh.geometry.getAttribute('skinWeight'); return Array.from({ length: weights.count }, (_, i) => i).some(i => weights.getX(i) > 0 && weights.getY(i) > 0); });
-    if (kind === 'biped' || kind === 'quadruped') assert.ok(weighted.length > 0, `${kind}: expected weighted surfaces`);
+    if (kind === 'biped' || kind === 'equine' || kind === 'vulpine') assert.ok(weighted.length > 0, `${kind}: expected weighted surfaces`);
     const vertex = (mesh, i) => mesh.applyBoneTransform(i, new Vector3().fromBufferAttribute(mesh.geometry.getAttribute('position'), i)).applyMatrix4(mesh.matrixWorld);
     const clips = [];
     for (const clip of gltf.animations) {
@@ -79,35 +79,42 @@ try {
     page.on('request', request => { if (/^https?:/.test(request.url())) network.push(request.url()); });
     await page.goto(pathToFileURL(join(directory, 'preview.html')).href, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!window.meshPreview, undefined, { timeout: 15000 });
-    const browserFrame = await page.evaluate(() => {
-      const preview = window.meshPreview; preview.setPlaying(false); preview.seek(0);
-      const meshes = []; preview.gltf.scene.traverse(object => { if (object.isSkinnedMesh) meshes.push(object); });
-      const vertex = mesh => mesh.getVertexPosition(0, mesh.position.clone()).applyMatrix4(mesh.matrixWorld);
-      const start = meshes.map(vertex);
-      preview.renderer.render(preview.scene, preview.camera);
-      const firstFrame = preview.renderer.domElement.toDataURL();
-      preview.seek(preview.gltf.animations[0].duration * 0.3);
-      preview.renderer.render(preview.scene, preview.camera);
-      return { motion: Math.max(...meshes.map((mesh, i) => vertex(mesh).distanceTo(start[i]))), changed: preview.renderer.domElement.toDataURL() !== firstFrame };
-    });
-    assert.ok(browserFrame.motion > 0.05, `${kind}: browser model did not move`);
-    assert.equal(browserFrame.changed, true, `${kind}: rendered animation frame did not change`);
-    await page.screenshot({ path: join(evidence, `${kind}-preview.png`) });
-    const beforePlayback = await page.evaluate(() => {
-      const preview = window.meshPreview; preview.seek(0); preview.setPlaying(true);
-      const values = []; preview.gltf.scene.traverse(object => { if (object.isBone) values.push(...object.quaternion); }); return values;
-    });
-    await page.waitForTimeout(180);
-    const playbackMotion = await page.evaluate(before => {
-      const preview = window.meshPreview; preview.setPlaying(false);
-      const values = []; preview.gltf.scene.traverse(object => { if (object.isBone) values.push(...object.quaternion); });
-      return Math.max(...values.map((value, i) => Math.abs(value - before[i])));
-    }, beforePlayback);
-    assert.ok(playbackMotion > 0.01, `${kind}: playback clock did not advance the rig`);
+    assert.deepEqual(await page.locator('#clip option').evaluateAll(options => options.map(option => option.value)), project.clips.map(clip => clip.name));
+    const browserClips = [];
+    for (const clip of project.clips) {
+      await page.locator('#clip').selectOption(clip.name);
+      const browserFrame = await page.evaluate(duration => {
+        const preview = window.meshPreview; preview.setPlaying(false); preview.seek(0);
+        const meshes = []; preview.gltf.scene.traverse(object => { if (object.isSkinnedMesh) meshes.push(object); });
+        const vertex = mesh => mesh.getVertexPosition(0, mesh.position.clone()).applyMatrix4(mesh.matrixWorld);
+        const start = meshes.map(vertex);
+        preview.renderer.render(preview.scene, preview.camera);
+        const firstFrame = preview.renderer.domElement.toDataURL();
+        preview.seek(duration * 0.3);
+        preview.renderer.render(preview.scene, preview.camera);
+        return { motion: Math.max(...meshes.map((mesh, i) => vertex(mesh).distanceTo(start[i]))), changed: preview.renderer.domElement.toDataURL() !== firstFrame };
+      }, clip.duration);
+      assert.ok(browserFrame.motion > 0.05, `${kind}/${clip.name}: browser model did not move`);
+      assert.equal(browserFrame.changed, true, `${kind}/${clip.name}: rendered animation frame did not change`);
+      await page.screenshot({ path: join(evidence, `${kind}-${clip.name}-preview.png`) });
+      if (clip === project.clips[0]) await page.screenshot({ path: join(evidence, `${kind}-preview.png`) });
+      const beforePlayback = await page.evaluate(() => {
+        const preview = window.meshPreview; preview.seek(0); preview.setPlaying(true);
+        const values = []; preview.gltf.scene.traverse(object => { if (object.isBone) values.push(...object.quaternion); }); return values;
+      });
+      await page.waitForTimeout(180);
+      const playbackMotion = await page.evaluate(before => {
+        const preview = window.meshPreview; preview.setPlaying(false);
+        const values = []; preview.gltf.scene.traverse(object => { if (object.isBone) values.push(...object.quaternion); });
+        return Math.max(...values.map((value, i) => Math.abs(value - before[i])));
+      }, beforePlayback);
+      assert.ok(playbackMotion > 0.01, `${kind}/${clip.name}: playback clock did not advance the rig`);
+      browserClips.push({ name: clip.name, browserMotion: browserFrame.motion, renderedFrameChanged: browserFrame.changed, playbackMotion, screenshot: `${kind}-${clip.name}-preview.png` });
+    }
     assert.deepEqual(errors, [], `${kind}: browser errors`);
     assert.deepEqual(network, [], `${kind}: offline preview made network requests`);
     await page.close();
-    const result = { kind, name: project.name, ok: true, errors: verification.errors, warnings: verification.warnings, skins: skins.length, bones: bones.length, weightedMeshes: weighted.length, clips, browserMotion: browserFrame.motion, renderedFrameChanged: browserFrame.changed, playbackMotion, screenshot: `${kind}-preview.png` };
+    const result = { kind, name: project.name, ok: true, errors: verification.errors, warnings: verification.warnings, skins: skins.length, bones: bones.length, weightedMeshes: weighted.length, clips, browserClips, screenshot: `${kind}-preview.png` };
     results.push(result); console.log(`${kind}: ${skins.length} skins, ${bones.length} bones, ${clips.length} clips; validated and replayed offline`);
   }
   const page = await context.newPage();
@@ -124,7 +131,7 @@ try {
   await page.screenshot({ path: join(evidence, 'gallery-mobile.png'), fullPage: true });
   await page.close();
   await writeFile(join(evidence, 'verification.json'), `${JSON.stringify({ ok: true, creatures: results }, null, 2)}\n`);
-  console.log(`PASS: all four creatures. Evidence → ${evidence}`);
+  console.log(`PASS: all ${creatureKinds.length} creature presets and every clip. Evidence → ${evidence}`);
 } catch (error) {
   await writeFile(join(evidence, 'verification.json'), `${JSON.stringify({ ok: false, error: String(error), creatures: results }, null, 2)}\n`);
   throw error;
