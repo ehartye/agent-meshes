@@ -3,6 +3,7 @@ import type { Object3D } from 'three';
 import type { Project } from '../core/types.ts';
 import { createSkeleton, applySkin, applyPose } from './skinning.ts';
 import { geometryFor as partGeometry } from '../geometry.ts';
+import { createClips } from './animation.ts';
 export function buildScene(project: Project) {
   const root = new Group(); root.name = project.name;
   const { bones, skeleton } = createSkeleton(project, root);
@@ -22,7 +23,7 @@ export function buildScene(project: Project) {
   root.updateMatrixWorld(true);
   for (const object of objects.values()) if (object instanceof SkinnedMesh) object.bind(skeleton, object.matrixWorld);
   applyPose(project, root, bones, skeleton);
-  return { root, objects, bones, skeleton, dispose: () => { skeleton.dispose(); disposeScene(root); } };
+  return { root, objects, bones, skeleton, clips: createClips(project, bones), dispose: () => { skeleton.dispose(); disposeScene(root); } };
 }
 export function disposeScene(root: Object3D): void {
   root.traverse(object => {

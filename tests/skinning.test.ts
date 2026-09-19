@@ -5,7 +5,7 @@ import type { Project } from '../src/core/types.ts';
 
 const identity: [number, number, number, number] = [0, 0, 0, 1];
 function fixture(): Project {
-  return { version: 1, name: 'rig-test', bones: [
+  return { version: 1, name: 'rig-test', clips: [], bones: [
     { name: 'root_joint', parent: null, position: [0, 0, 0], rotation: identity, pose: identity },
     { name: 'tip_joint', parent: 'root_joint', position: [0, 1, 0], rotation: identity, pose: identity },
   ], parts: [{ name: 'limb', geometry: { type: 'box', size: [0.4, 2, 0.4], segments: 8 }, color: '#d9a34b', position: [0, 1, 0], rotation: identity, scale: [1, 1, 1], parent: null, binding: { type: 'linear', bones: ['root_joint', 'tip_joint'], axis: 'y', range: [-0.5, 0.5] } }] };

@@ -44,4 +44,34 @@ Bindings support `rigid` (one bone), `linear` (two bones, local `axis`, ascendin
 
 `node scripts/check-rig-browser.mjs` checks weighted posing, recoloring a bound part, and rest-pose reset in Chromium.
 
-Project design and the animated biped/quadruped/insectoid/arachnid acceptance bar are maintained in the owner's wiki under `wiki/authored/agent-meshes/`. Animation and export are subsequent implementation features.
+## Animation and delivery
+
+Use New clip to capture a two-second starting pose, scrub to a time, adjust joints, then Key pose to record the visible pose. Play, pause and frame-step inspect the result. Recording at either endpoint also updates the opposite endpoint for a seamless loop. CLI `clip.set` accepts a complete clip with any duration from 0.05 to 120 seconds:
+
+```json
+{"op":"clip.set","clip":{"name":"sway","duration":2,"tracks":[{"bone":"hip","property":"rotation","keys":[{"time":0,"value":[0,0,0,1]},{"time":1,"value":[0,0,0.258819,0.965926]},{"time":2,"value":[0,0,0,1]}]}]}}
+```
+
+Track `property` is `rotation` (quaternion offset from rest rotation) or `position` (XYZ offset from rest position). Key times strictly increase from zero through the full duration. `clip.remove` takes a clip `name`. Previewing a clip starts untracked bones at rest, matching exported playback.
+
+```powershell
+node scripts/agent-meshes.mjs export model.glb
+node scripts/agent-meshes.mjs verify model.glb
+node scripts/agent-meshes.mjs view review
+```
+
+GLB includes named meshes, materials, skeletons, weights and clips. Export uses the rest rig, independent of the editor's current pose. Skinned mesh transforms are baked and skinned nodes placed at scene root to follow glTF semantics; the bone hierarchy and editable source project remain intact. The exported model is checked with Khronos glTF Validator; structural validity alone does not certify a convincing gait.
+
+For a repeatable build, save `build.json` beside your source project:
+
+```json
+{"version":1,"project":"source.mesh.json","output":"dist"}
+```
+
+Or use `{"version":1,"name":"creature","operations":"operations.json","output":"dist"}` for a JSON array of authoring operations. Paths resolve relative to the config. Run `node scripts/agent-meshes.mjs build build.json`. It produces editable project JSON, `model.glb`, validation report, front/side/perspective PNGs, a contact sheet per clip, and `preview.html`. The self-contained preview loads the actual GLB and works offline, with orbit, playback, scrub and download. PNGs use the exported rest rig and clips; direct `view` also supports inspecting a saved authoring pose.
+
+Rendering requires the built workbench (`npm run build`) and Chromium (`npx playwright install chromium`). `build build.json --no-preview` produces the project, GLB and validation report without a browser. Each build uses isolated state, stages and verifies outputs, then replaces only a directory marked as owned by that config. Extra files, symlinks, and concurrent builds are rejected. Failures preserve the last published build. After a crashed process, check that it has stopped before manually removing the adjacent `.agent-meshes.lock` file.
+
+`node scripts/check-animated-build.mjs` exercises rendered builds and offline exported playback. `node scripts/check-animation-browser.mjs` then verifies scrubbing, key recording and pose editing in the workbench. These write ignored evidence under `artifacts/`.
+
+Project design and the animated biped/quadruped/insectoid/arachnid acceptance bar are maintained in the owner's wiki under `wiki/authored/agent-meshes/`. The four creature recipes follow as the next feature.

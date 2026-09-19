@@ -30,6 +30,9 @@ it('edits and saves a project through the executable CLI', async () => {
   await invoke('new', 'Empty');
   expect(JSON.parse((await invoke('open', project)).stdout).name).toBe('Biped');
   expect(JSON.parse((await invoke('state')).stdout).parts).toHaveLength(2);
+  const glb = join(directory, 'asset.glb');
+  expect(JSON.parse((await invoke('export', glb)).stdout).output).toBe(glb);
+  expect(JSON.parse((await invoke('verify', glb)).stdout).ok).toBe(true);
   await expect(invoke('op', '{"op":"remove","name":"missing"}')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('Error:') });
 }, 30000); // Ten fresh Node processes can exceed five seconds on hosted Windows runners.
 
