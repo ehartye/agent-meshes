@@ -5,6 +5,7 @@ import { buildScene } from '../render/scene.ts';
 import type { Project, GeometryKind, Vec3 } from '../core/types.ts';
 import { installRigUI } from './rig-ui.ts';
 import { installAnimationUI } from './animation-ui.ts';
+import { createCreature, creatureKinds, creatureInfo } from '../recipes/index.ts';
 
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 export const status = (message: string, error = false) => { el('status').textContent = message; el('status').classList.toggle('error', error); };
@@ -130,6 +131,27 @@ onProject(installRigUI({ project: () => project, root: () => built.root, selecte
 }, status }));
 const animation = installAnimationUI({ project: () => project, built: () => built, op: async op => { showProject(await api('op', op)); }, status });
 onProject(animation.projectChanged); frameCallbacks.push(animation.update);
+const recipePicker = el('recipe-picker');
+recipePicker.innerHTML = '<div class="panel-heading recipe-heading">START WITH A CREATURE</div><div class="recipe-grid"></div><p class="recipe-note">Load a rigged model. Make it your own.</p>';
+for (const kind of creatureKinds) {
+  const info = creatureInfo[kind], button = document.createElement('button');
+  button.className = 'recipe-button'; button.dataset.recipe = kind;
+  button.title = `${info.name} · ${info.description}`;
+  button.innerHTML = `<span class="recipe-number" style="color:${info.color}">${info.legs}</span><span>${info.label}<small>${info.gait}</small></span>`;
+  button.onclick = action(async () => {
+    showProject(await api('project', createCreature(kind)));
+    animation.seek(0); animation.play(!matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const skeleton = el<HTMLInputElement>('show-bones'); skeleton.checked = false; skeleton.dispatchEvent(new Event('change'));
+    setCamera('perspective'); status(`${info.name} · ${info.legs} legs · ${info.gait} · Undo restores your previous project`);
+  });
+  recipePicker.querySelector('.recipe-grid')!.append(button);
+}
+onProject(project => {
+  document.querySelectorAll<HTMLButtonElement>('[data-recipe]').forEach(button => {
+    const active = creatureInfo[button.dataset.recipe as typeof creatureKinds[number]].name === project.name;
+    button.classList.toggle('active', active); button.setAttribute('aria-pressed', String(active));
+  });
+});
 el('export-panel').innerHTML = '<div class="panel-heading parts-heading"><span>DELIVER</span></div><button id="export-glb" class="primary" style="width:100%;margin-top:12px">Export animated GLB</button>';
 el('export-glb').onclick = action(async () => {
   const response = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
