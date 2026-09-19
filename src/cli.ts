@@ -39,6 +39,10 @@ export async function main(args = process.argv): Promise<void> {
       process.once('SIGTERM', shutdown);
     });
   program.command('new <name>').action(name => request('new', { name }));
+  program.command('recipe <kind>').description('Load biped, quadruped, insectoid or arachnid into the workbench').action(async kind => {
+    const { createCreature } = await import('./recipes/index.ts');
+    await request('project', createCreature(kind));
+  });
   program.command('state').action(() => request('project'));
   program.command('op <json>').action(json => request('op', JSON.parse(json)));
   program.command('batch <file>').action(async file => {

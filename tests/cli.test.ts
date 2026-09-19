@@ -52,3 +52,15 @@ it('refuses to edit a server that is not agent-meshes', async () => {
   });
   expect(writes).toBe(0);
 });
+
+it('loads an editable creature recipe atomically and rejects unknown recipes', async () => {
+  const server = await createServer({ port: 0 }); cleanup.push(server.close);
+  const invoke = (...args: string[]) => cli('--url', server.url, ...args);
+  const project = JSON.parse((await invoke('recipe', 'insectoid')).stdout);
+  expect(project.name).toBe('Jade scarab');
+  expect(project.bones.filter((bone: { name: string }) => bone.name.endsWith('_ankle'))).toHaveLength(6);
+  expect(project.clips[0].name).toBe('tripod');
+  await expect(invoke('recipe', 'unknown')).rejects.toMatchObject({ code: 1 });
+  expect(JSON.parse((await invoke('state')).stdout).name).toBe('Jade scarab');
+  expect(JSON.parse((await invoke('undo')).stdout).parts).toHaveLength(0);
+}, 30000);
