@@ -10,7 +10,8 @@ const identity: Quat = [0, 0, 0, 1];
 /** Seven rigid exoskeleton sections, plus an unmeshed tip for contact inspection. */
 export function createSpiderLeg(side: number, index: number) {
   const prefix = `leg_${side < 0 ? 'L' : 'R'}_${index + 1}`;
-  const spread = 0.62 - index * 0.44, z = 0.42 - index * 0.2;
+  // Keep all four pairs on the front body shell; translate each entire limb together.
+  const spread = 0.62 - index * 0.44, z = 0.42 - index * 0.14;
   const fan = Math.sin(index / 3 * Math.PI) * 0.18;
   const rest: Vec3[] = [
     [side * 0.23, 0.57, z],
