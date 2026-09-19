@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { applyOperation, createProject, partSchema, projectSchema, validateProject } from './core/model.ts';
 import { bindingBones, bindingSchema, boneSchema, nameSchema, quatSchema } from './core/rig.ts';
 import { clipSchema } from './core/animation.ts';
+import { shellSchema } from './core/model.ts';
 import { assemblyCopySchema } from './core/assembly.ts';
 import { poseTargetSchema } from './core/pose-target.ts';
 import type { BoneDef, Clip, Operation, Part, Project } from './core/types.ts';
@@ -27,6 +28,8 @@ export const operationSchemas = {
   unbind: z.object({ op: z.literal('unbind'), ...named }).strict(),
   'clip.set': z.object({ op: z.literal('clip.set'), clip: clipSchema }).strict(),
   'clip.remove': z.object({ op: z.literal('clip.remove'), ...named }).strict(),
+  'shell.set': z.object({ op: z.literal('shell.set'), shell: shellSchema }).strict(),
+  'shell.remove': z.object({ op: z.literal('shell.remove'), ...named }).strict(),
 } satisfies Record<Operation['op'], z.ZodType>;
 
 export function parseOperation(value: unknown): Operation {
@@ -50,6 +53,8 @@ const examples: Record<Operation['op'], Operation[]> = {
   unbind: [{ op: 'unbind', name: 'body' }],
   'clip.set': [{ op: 'clip.set', clip: { name: 'idle', duration: 1, tracks: [{ bone: 'root', property: 'rotation', keys: [{ time: 0, value: [0, 0, 0, 1] }, { time: 1, value: [0, 0, 0, 1] }] }] } }],
   'clip.remove': [{ op: 'clip.remove', name: 'idle' }],
+  'shell.set': [{ op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, resolution: 48 } }],
+  'shell.remove': [{ op: 'shell.remove', name: 'skin' }],
 };
 const descriptions: Record<Operation['op'], string> = {
   add: 'Create a named primitive or group; omitted fields use the published defaults. A lathe needs a unit profile and a prism a unit outline. An anchor bone makes position and rotation relative to that bone\'s rest frame.',
@@ -65,6 +70,8 @@ const descriptions: Record<Operation['op'], string> = {
   unbind: 'Remove an existing part binding.',
   'clip.set': 'Create or replace an entire named clip. Every track must span zero through duration with strictly increasing key times.',
   'clip.remove': 'Remove an existing named clip.',
+  'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point.',
+  'shell.remove': 'Remove a shell; its member parts render individually again.',
   'assembly.copy': 'Copy a bone subtree with its bound parts and clip tracks under a prefix, optionally mirrored and offset in the root parent frame.',
   'pose.target': 'Pose a three-bone parent-child chain with two-link IK so the end bone reaches a world-space target, bending toward the pole.',
 };

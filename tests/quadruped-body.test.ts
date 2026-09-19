@@ -7,7 +7,7 @@ import { addQuadrupedBody } from '../src/recipes/quadruped-body.ts';
 
 for (const species of ['equine', 'vulpine'] as const) {
   it(`${species} body remains connected to its animated head and tail rig`, () => {
-    const project: Project = { version: 1, name: species, parts: [], clips: [], bones: [
+    const project: Project = { version: 1, name: species, parts: [], clips: [], shells: [], bones: [
       { name: 'root', parent: null, position: [0, 0, 0], rotation: [0, 0, 0, 1], pose: [0, 0, 0, 1] },
     ] };
     addQuadrupedBody(project, species);
