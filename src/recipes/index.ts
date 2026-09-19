@@ -120,7 +120,8 @@ export function createCreature(kind: CreatureKind): Project {
     const insect = kind === 'insectoid';
     const shell = insect ? '#308778' : '#70658d', highlight = insect ? '#75b6a0' : '#a08db5', dark = insect ? '#294c49' : '#34364f', gold = '#ddb768';
     const height = insect ? 0.65 : 0.60;
-    part('abdomen', 'sphere', insect ? [0.85, 0.55, 1.10] : [0.99, 0.72, 1.02], [0, height + 0.05, -0.39], shell);
+    const abdomenZ = insect ? -0.39 : -0.80;
+    part('abdomen', 'sphere', insect ? [0.85, 0.55, 1.10] : [0.99, 0.72, 1.02], [0, height + 0.05, abdomenZ], shell);
     part('thorax', 'sphere', insect ? [0.59, 0.42, 0.59] : [0.62, 0.45, 0.89], [0, height, insect ? 0.30 : 0.19], dark);
     bone('head', [0, height, 0.51]);
     part('head_shape', 'sphere', [0.56, 0.4, 0.43], [0, height + 0.04, 0.64], shell, 'head');
@@ -139,7 +140,8 @@ export function createCreature(kind: CreatureKind): Project {
         motion(`antenna_${s}`, [0, 0, 1], side * 0.08);
       }
     } else {
-      for (let i = 0; i < 3; i++) part(`abdomen_spot_${i}`, 'sphere', [0.2 - i * 0.03, 0.055, 0.19], [0, 1.01 - Math.abs(i - 1) * 0.055, -0.60 + i * 0.22], gold);
+      segment('pedicel', [0, height - 0.01, -0.16], [0, height - 0.01, abdomenZ + 0.44], 0.14, dark, 'root');
+      for (let i = 0; i < 3; i++) part(`abdomen_spot_${i}`, 'sphere', [0.2 - i * 0.03, 0.055, 0.19], [0, 1.01 - Math.abs(i - 1) * 0.055, abdomenZ - 0.21 + i * 0.22], gold);
       for (const side of [-1, 1]) {
         const s = side < 0 ? 'L' : 'R';
         for (let i = 0; i < 2; i++) {

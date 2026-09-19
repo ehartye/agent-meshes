@@ -8,6 +8,20 @@ import { createSpiderLeg } from '../src/recipes/spider-leg.ts';
 const segments = ['coxa', 'trochanter', 'femur', 'patella', 'tibia', 'metatarsus', 'tarsus'];
 const prefixes = ['L', 'R'].flatMap(side => [1, 2, 3, 4].map(index => `leg_${side}_${index}`));
 
+it('anchors every spider leg within the thorax and clear of the abdomen', () => {
+  const project = createCreature('arachnid');
+  const thorax = project.parts.find(p => p.name === 'thorax')!;
+  const abdomen = project.parts.find(p => p.name === 'abdomen')!;
+  const ellipsoidRadius = (point: number[], part: typeof thorax) => point.reduce((sum, value, i) => sum + ((value - part.position[i]) / (part.geometry.size[i] / 2)) ** 2, 0);
+  for (const prefix of prefixes) {
+    const root = project.bones.find(b => b.name === `${prefix}_coxa`)!;
+    expect(ellipsoidRadius(root.position, thorax), `${prefix} must originate inside the thorax shell`).toBeLessThan(0.95);
+    expect(ellipsoidRadius(root.position, abdomen), `${prefix} must not originate inside the abdomen`).toBeGreaterThan(1.2);
+    const joint = project.parts.find(p => p.name === `${prefix}_coxa_joint`)!;
+    expect(joint.position[2] - joint.geometry.size[2] / 2, `${prefix} attachment must be wholly in front of the abdomen`).toBeGreaterThan(abdomen.position[2] + abdomen.geometry.size[2] / 2 + 0.05);
+  }
+});
+
 it('keeps moving distal spider joints on fixed local hinge axes', () => {
   const project = createCreature('arachnid');
   for (const prefix of prefixes) for (const segment of ['patella']) {
