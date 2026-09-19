@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, readFile, writeFile, mkdir, readdir, rm, rename, symlink } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, mkdir, readdir, rm, rename, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProject, applyOperation } from '../src/core/model.ts';
@@ -19,7 +19,7 @@ async function fixture() {
 it('builds owned validated assets from an isolated project and rebuilds them', async () => {
   const { config, output, project } = await fixture();
   const result = await buildAsset(config);
-  expect(result.output).toBe(output);
+  expect(result.output).toBe(await realpath(output));
   expect(result.files).toEqual(expect.arrayContaining(['project.mesh.json', 'model.glb', 'verification.json']));
   expect(JSON.parse(await readFile(join(output, 'project.mesh.json'), 'utf8'))).toEqual(project);
   expect(JSON.parse(await readFile(join(output, 'verification.json'), 'utf8')).ok).toBe(true);
@@ -85,7 +85,7 @@ it('keeps ownership portable when a whole asset workspace moves', async () => {
   const { directory, config } = await fixture(); await buildAsset(config);
   const moved = `${directory}-moved`; directories.push(moved);
   await rename(directory, moved);
-  await expect(buildAsset(join(moved, 'build.json'))).resolves.toMatchObject({ output: join(moved, 'generated') });
+  await expect(buildAsset(join(moved, 'build.json'))).resolves.toMatchObject({ output: await realpath(join(moved, 'generated')) });
 });
 
 it('rejects source files under the output and ambiguous input configs', async () => {
@@ -114,7 +114,7 @@ it('resolves parent directory aliases so builds share ownership and locking', as
   await symlink(actualParent, join(directory, 'alias'), 'junction');
   await writeFile(config, JSON.stringify({ version: 1, project: 'source.json', output: 'alias/generated' }));
   const result = await buildAsset(config);
-  expect(result.output).toBe(join(actualParent, 'generated'));
+  expect(result.output).toBe(await realpath(join(actualParent, 'generated')));
   await writeFile(config, JSON.stringify({ version: 1, project: 'source.json', output: 'actual/generated' }));
   await expect(buildAsset(config)).resolves.toEqual(result);
 });
