@@ -64,6 +64,15 @@ export async function createServer(options: { port?: number; projectPath?: strin
   mutate('redo', () => { editor.redo(); });
   mutate('save', async request => { await saveProject(request.body?.path, editor.project); }, false);
   mutate('open', async request => { editor = new Editor(await loadProject(request.body?.path)); });
+  app.post('/api/export', async (_request, response, next) => {
+    try {
+      await queue;
+      const project = editor.project;
+      const { exportGLB } = await import('./export.ts');
+      const bytes = await exportGLB(project);
+      response.type('model/gltf-binary').send(Buffer.from(bytes));
+    } catch (error) { next(error); }
+  });
   app.use('/api', (_request, response) => { response.status(404).json({ error: 'Unknown API route' }); });
   app.use(express.static(fileURLToPath(new URL('../dist-web/', import.meta.url))));
   app.use((error: Error, _request: Request, response: Response, _next: NextFunction) => {

@@ -22,7 +22,9 @@ export function installRigUI(context: RigContext) {
     el('bone-controls').hidden = !bone;
     if (!bone) return;
     el('selected-bone').textContent = name;
-    const euler = new Euler().setFromQuaternion(new Quaternion().fromArray(bone.pose));
+    const visible = context.root().getObjectByName(name);
+    const offset = visible ? new Quaternion().fromArray(bone.rotation).invert().multiply(visible.quaternion) : new Quaternion().fromArray(bone.pose);
+    const euler = new Euler().setFromQuaternion(offset);
     ['rx', 'ry', 'rz'].forEach((id, i) => el<HTMLInputElement>(id).value = String(Number(MathUtils.radToDeg([euler.x, euler.y, euler.z][i]).toFixed(2))));
     document.querySelectorAll<HTMLElement>('.bone-row').forEach(row => row.classList.toggle('active', row.dataset.name === name));
   }

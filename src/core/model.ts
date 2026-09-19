@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { Project, Operation, PartInput, Part } from './types.ts';
 import { nameSchema, vec3Schema, quatSchema, boneSchema, bindingSchema, validateRig, applyRigOperation } from './rig.ts';
+import { clipSchema, validateAnimation } from './animation.ts';
 export { nameSchema, vec3Schema, quatSchema } from './rig.ts';
 
 const geometrySchema = z.object({
@@ -15,7 +16,7 @@ export const partSchema = z.object({
   parent: nameSchema.nullable(),
   binding: bindingSchema.optional(),
 }).strict();
-export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]) }).strict();
+export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]) }).strict();
 
 export function checkHierarchy(items: { name: string; parent: string | null }[], label: string): void {
   const byName = new Map(items.map(item => [item.name, item]));
@@ -37,6 +38,7 @@ export function validateProject(value: unknown): Project {
   checkHierarchy(project.parts, 'part');
   checkHierarchy(project.bones, 'bone');
   validateRig(project);
+  validateAnimation(project);
   return project;
 }
 export function createProject(name: string): Project { return validateProject({ version: 1, name, parts: [] }); }
@@ -68,6 +70,15 @@ export function applyOperation(project: Project, operation: Operation): Project 
     case 'bone.add': case 'bone.update': case 'bone.remove': case 'bone.mirror':
     case 'pose': case 'pose.reset': case 'bind': case 'unbind':
       applyRigOperation(next, operation); break;
+    case 'clip.set': {
+      const clip = clipSchema.parse(operation.clip);
+      const index = next.clips.findIndex(c => c.name === clip.name);
+      if (index < 0) next.clips.push(clip); else next.clips[index] = clip;
+      break;
+    }
+    case 'clip.remove':
+      if (!next.clips.some(c => c.name === operation.name)) throw new Error(`Unknown clip: ${operation.name}`);
+      next.clips = next.clips.filter(c => c.name !== operation.name); break;
     default: throw new Error(`Unknown operation: ${(operation as { op: string }).op}`);
   }
   return validateProject(next);

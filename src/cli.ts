@@ -1,13 +1,14 @@
 import { Command } from 'commander';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Project } from './core/types.ts';
 
 export async function main(args = process.argv): Promise<void> {
   const program = new Command();
   program.name('agent-meshes').description('Named-part 3D authoring').version('0.1.0')
     .option('--url <url>', 'Running authoring server URL', 'http://127.0.0.1:3388');
-  const request = async (path: string, body?: unknown) => {
+  const requestRaw = async (path: string, body?: unknown) => {
     const base = String(program.opts().url).replace(/\/$/, '');
     const health = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(5000) });
     const identity = await health.json() as { service?: string; version?: string };
@@ -18,8 +19,11 @@ export async function main(args = process.argv): Promise<void> {
       ...(body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(30000),
     });
-    const value = await response.json() as { error?: string };
-    if (!response.ok) throw new Error(value.error ?? `Server returned ${response.status}`);
+    if (!response.ok) { const value = await response.json() as { error?: string }; throw new Error(value.error ?? `Server returned ${response.status}`); }
+    return response;
+  };
+  const request = async (path: string, body?: unknown) => {
+    const value = await (await requestRaw(path, body)).json();
     process.stdout.write(`${JSON.stringify(value)}\n`);
   };
   program.command('serve').description('Start the loopback authoring server')
@@ -45,6 +49,26 @@ export async function main(args = process.argv): Promise<void> {
   program.command('open <file>').action(file => request('open', { path: resolve(file) }));
   program.command('undo').action(() => request('undo', {}));
   program.command('redo').action(() => request('redo', {}));
+  program.command('export <file>').description('Export the current project as animated GLB').action(async file => {
+    const bytes = new Uint8Array(await (await requestRaw('export', {})).arrayBuffer());
+    const output = resolve(file); await mkdir(dirname(output), { recursive: true }); await writeFile(output, bytes);
+    process.stdout.write(`${JSON.stringify({ output, bytes: bytes.length })}\n`);
+  });
+  program.command('verify <file>').description('Validate an exported GLB without a server').action(async file => {
+    const { verifyGLB } = await import('./export.ts');
+    const result = await verifyGLB(await readFile(file)); process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (!result.ok) process.exitCode = 1;
+  });
+  program.command('view <directory>').description('Render fixed views and animation contact sheets').action(async directory => {
+    const project = await (await requestRaw('project')).json() as Project;
+    const { captureProject } = await import('./capture.ts'); const output = resolve(directory);
+    const files = await captureProject(project, output); process.stdout.write(`${JSON.stringify({ output, files })}\n`);
+  });
+  program.command('build <config>').description('Build an isolated, verified asset project').option('--no-preview', 'Skip browser renders and standalone preview').action(async (config, options) => {
+    const { buildAsset } = await import('./build.ts');
+    const decorate = options.preview ? (await import('./capture.ts')).decorateBuild : undefined;
+    process.stdout.write(`${JSON.stringify(await buildAsset(config, { decorate }))}\n`);
+  });
   try {
     await program.parseAsync(args);
   } catch (error) {

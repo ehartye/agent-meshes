@@ -22,7 +22,10 @@ export interface Part {
   parent: string | null;
   binding?: Binding;
 }
-export interface Project { version: 1; name: string; parts: Part[]; bones: BoneDef[] }
+export interface Keyframe { time: number; value: Vec3 | Quat }
+export interface Track { bone: string; property: 'rotation' | 'position'; keys: Keyframe[] }
+export interface Clip { name: string; duration: number; tracks: Track[] }
+export interface Project { version: 1; name: string; parts: Part[]; bones: BoneDef[]; clips: Clip[] }
 export type PartInput = Pick<Part, 'name'> & Partial<Omit<Part, 'name' | 'geometry'>> & {
   geometry?: { type: GeometryKind; size?: Vec3; segments?: number };
 };
@@ -30,7 +33,9 @@ export type Operation =
   | { op: 'add'; part: PartInput }
   | { op: 'update'; name: string; changes: Partial<Omit<Part, 'name'>> }
   | { op: 'remove'; name: string }
-  | RigOperation;
+  | RigOperation
+  | { op: 'clip.set'; clip: Clip }
+  | { op: 'clip.remove'; name: string };
 export type RigOperation =
   | { op: 'bone.add'; bone: Partial<BoneDef> & Pick<BoneDef, 'name'> }
   | { op: 'bone.update'; name: string; changes: Partial<Omit<BoneDef, 'name' | 'pose'>> }

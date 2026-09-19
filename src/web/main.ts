@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildScene } from '../render/scene.ts';
 import type { Project, GeometryKind, Vec3 } from '../core/types.ts';
 import { installRigUI } from './rig-ui.ts';
+import { installAnimationUI } from './animation-ui.ts';
 
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 export const status = (message: string, error = false) => { el('status').textContent = message; el('status').classList.toggle('error', error); };
@@ -27,7 +28,7 @@ const key = new THREE.DirectionalLight('#fff2d8', 3.7); key.position.set(4, 8, 5
 const fill = new THREE.DirectionalLight('#b2e2f0', 1.2); fill.position.set(-5, 3, -3); scene.add(fill);
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: '#dce7eb', roughness: 1 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -0.012; floor.receiveShadow = true; scene.add(floor);
 const grid = new THREE.GridHelper(30, 30, '#8eacb8', '#b5cbd4'); grid.position.y = -0.009; (grid.material as THREE.Material).transparent = true; (grid.material as THREE.Material).opacity = 0.28; scene.add(grid);
-export let project: Project = { version: 1, name: 'Untitled', parts: [], bones: [] };
+export let project: Project = { version: 1, name: 'Untitled', parts: [], bones: [], clips: [] };
 export let built = buildScene(project); scene.add(built.root);
 let selected: string | null = null;
 let currentView = 'perspective';
@@ -41,7 +42,7 @@ export function setCamera(view = currentView): void {
   const box = new THREE.Box3().setFromObject(built.root);
   const center = box.isEmpty() ? new THREE.Vector3(0, 0.8, 0) : box.getCenter(new THREE.Vector3());
   const size = box.isEmpty() ? 2 : box.getSize(new THREE.Vector3()).length();
-  const distance = Math.max(size * 1.45, 2.5);
+  const distance = Math.max(size * 1.8, 3);
   controls.maxDistance = Math.max(80, distance * 4);
   camera.far = Math.max(150, distance * 10); camera.updateProjectionMatrix();
   scene.fog = new THREE.Fog('#dce7eb', Math.max(22, distance * 2.5), Math.max(55, distance * 6));
@@ -54,7 +55,7 @@ function select(name: string | null): void {
   selected = name;
   const part = project.parts.find(part => part.name === name);
   el('part-form').hidden = !part; el('inspector-empty').hidden = !!part;
-  el('selection-label').textContent = part ? part.name : 'No part selected';
+  if (el('selection-label')) el('selection-label').textContent = part ? part.name : 'No part selected';
   document.querySelectorAll<HTMLButtonElement>('.part-row').forEach(button => button.classList.toggle('active', button.dataset.name === name));
   if (!part) return;
   (el('part-name') as HTMLInputElement).value = part.name;
@@ -119,9 +120,24 @@ let last = performance.now();
 renderer.setAnimationLoop(now => { const dt = Math.min((now - last) / 1000, 0.1); last = now; frameCallbacks.forEach(fn => fn(dt)); controls.update(); renderer.render(scene, camera); });
 setCamera();
 const events = new EventSource('/api/events');
-onProject(installRigUI({ project: () => project, root: () => built.root, selectedPart: () => selected, scene, op: async op => { showProject(await api('op', op)); }, status }));
+onProject(installRigUI({ project: () => project, root: () => built.root, selectedPart: () => selected, scene, op: async op => {
+  if (op.op !== 'pose') { showProject(await api('op', op)); return; }
+  const positions = new Map([...built.bones].map(([name, bone]) => [name, bone.position.clone()]));
+  const operations = project.bones.map(def => ({ op: 'pose', name: def.name, rotation: def.name === op.name ? op.rotation : new THREE.Quaternion().fromArray(def.rotation).invert().multiply(built.bones.get(def.name)!.quaternion).normalize().toArray() }));
+  showProject(await api('batch', { operations }));
+  for (const [name, position] of positions) built.bones.get(name)?.position.copy(position);
+  built.root.updateMatrixWorld(true); built.skeleton.update();
+}, status }));
+const animation = installAnimationUI({ project: () => project, built: () => built, op: async op => { showProject(await api('op', op)); }, status });
+onProject(animation.projectChanged); frameCallbacks.push(animation.update);
+el('export-panel').innerHTML = '<div class="panel-heading parts-heading"><span>DELIVER</span></div><button id="export-glb" class="primary" style="width:100%;margin-top:12px">Export animated GLB</button>';
+el('export-glb').onclick = action(async () => {
+  const response = await fetch('/api/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  if (!response.ok) throw new Error((await response.json()).error ?? 'Export failed');
+  download(`${project.name.replace(/[^a-z0-9_-]/gi, '-')}.glb`, await response.blob()); status('Exported model, rig and animation clips');
+});
 events.onopen = () => { el('connection').textContent = 'Connected'; el('connection-dot').classList.add('online'); };
 events.onerror = () => { el('connection').textContent = 'Reconnecting'; el('connection-dot').classList.remove('online'); };
 events.onmessage = event => { try { const data = JSON.parse(event.data); showProject(data.project ?? data); } catch (error) { status((error as Error).message, true); } };
 void action(async () => { showProject(await api('project')); status('Ready · Add a part or open a project'); })();
-Object.assign(window, { meshWorkbench: { get project() { return project; }, get root() { return built.root; }, setCamera, renderer, scene, camera } });
+Object.assign(window, { meshWorkbench: { get project() { return project; }, get root() { return built.root; }, setCamera, renderer, scene, camera, animation, renderFrame: () => renderer.render(scene, camera) } });
