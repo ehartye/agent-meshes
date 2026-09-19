@@ -1,3 +1,4 @@
+import { Quaternion, Vector3 } from 'three';
 import { z } from 'zod';
 import type { Binding, BoneDef, Project, Quat, RigOperation } from './types.ts';
 import { geometryFor } from '../geometry.ts';
@@ -23,6 +24,16 @@ export const bindingSchema = z.discriminatedUnion('type', [
   }).strict().refine(b => b.weights.every(row => row.length === b.bones.length && Math.abs(row.reduce((a, n) => a + n, 0) - 1) < 0.000001), 'Each vertex needs one normalized weight per influence bone'),
 ]);
 
+/** A bone's rest-pose world position and rotation (bones have no scale). */
+export function boneRestWorld(project: Project, name: string): { position: Vector3; rotation: Quaternion } {
+  const bone = project.bones.find(b => b.name === name);
+  if (!bone) throw new Error(`Unknown anchor bone: ${name}`);
+  const parent = bone.parent ? boneRestWorld(project, bone.parent) : { position: new Vector3(), rotation: new Quaternion() };
+  return {
+    position: parent.position.clone().add(new Vector3(...bone.position).applyQuaternion(parent.rotation)),
+    rotation: parent.rotation.clone().multiply(new Quaternion(...bone.rotation)).normalize(),
+  };
+}
 export function bindingBones(binding: Binding): string[] {
   return binding.type === 'rigid' ? [binding.bone] : binding.bones;
 }
