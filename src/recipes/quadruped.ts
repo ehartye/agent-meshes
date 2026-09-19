@@ -10,19 +10,36 @@ const v = (p: Vec3) => new Vector3(...p);
 const tuple = (p: Vector3) => p.toArray() as Vec3;
 const hinge = (angle: number) => new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), angle);
 
+/** Touchdown phase of each foot within one cycle (LF/RF fore, LH/RH hind). */
+export interface Footfall { LF: number; RF: number; LH: number; RH: number }
+export interface GaitSettings {
+  duration: number; stride: number; lift: number; stance: number;
+  /** Trunk rise amplitude, cycles of rise per stride, and where in the stride the rise peaks. */
+  bob: number; bobs: number; bobShift: number;
+  footfall: Footfall;
+}
+// Walk: lateral sequence LH, LF, RH, RF. Trot: diagonal pairs. Gallop: transverse, right lead,
+// hind legs strike first and every foot is off the ground for the last quarter of the stride.
+const walkOrder: Footfall = { LH: 0, LF: 0.25, RH: 0.5, RF: 0.75 };
+const trotOrder: Footfall = { LF: 0, RH: 0, RF: 0.5, LH: 0.5 };
+const gallopOrder: Footfall = { LH: 0, RH: 0.12, LF: 0.28, RF: 0.40 };
 /** In-place cycles: forward travel speed is stride / (stance * duration). */
-export const quadrupedGaits = {
+export const quadrupedGaits: Record<Species, Record<string, GaitSettings>> = {
   equine: {
-    walk: { duration: 1.6, stride: 0.42, lift: 0.10, stance: 0.72, bob: 0.008 },
-    trot: { duration: 1.0, stride: 0.60, lift: 0.15, stance: 0.56, bob: 0.018 },
+    walk: { duration: 1.6, stride: 0.42, lift: 0.10, stance: 0.72, bob: 0.008, bobs: 2, bobShift: 0, footfall: walkOrder },
+    trot: { duration: 1.0, stride: 0.60, lift: 0.15, stance: 0.56, bob: 0.018, bobs: 2, bobShift: 0, footfall: trotOrder },
+    gallop: { duration: 0.7, stride: 0.60, lift: 0.20, stance: 0.36, bob: 0.02, bobs: 1, bobShift: 0.38, footfall: gallopOrder },
   },
   vulpine: {
-    walk: { duration: 1.2, stride: 0.30, lift: 0.08, stance: 0.72, bob: 0.005 },
-    trot: { duration: 0.8, stride: 0.42, lift: 0.12, stance: 0.56, bob: 0.009 },
+    walk: { duration: 1.2, stride: 0.30, lift: 0.08, stance: 0.72, bob: 0.005, bobs: 2, bobShift: 0, footfall: walkOrder },
+    trot: { duration: 0.8, stride: 0.42, lift: 0.12, stance: 0.56, bob: 0.009, bobs: 2, bobShift: 0, footfall: trotOrder },
+    gallop: { duration: 0.55, stride: 0.50, lift: 0.16, stance: 0.36, bob: 0.03, bobs: 1, bobShift: 0.38, footfall: gallopOrder },
   },
-} as const;
+};
+export const defaultQuadrupedGaits = ['walk', 'trot'] as const;
 
-export function createQuadruped(species: Species, name: string): Project {
+export function createQuadruped(species: Species, name: string, gaits: readonly string[] = defaultQuadrupedGaits): Project {
+  for (const gait of gaits) if (!Object.hasOwn(quadrupedGaits[species], gait)) throw new Error(`Unknown ${species} gait: ${gait}`);
   const horse = species === 'equine';
   const project: Project = { version: 1, name, parts: [], bones: [{ name: 'root', parent: null, position: [0, 0, 0], rotation: [...identity], pose: [...identity] }], clips: [] };
   addQuadrupedBody(project, species);
@@ -54,21 +71,21 @@ export function createQuadruped(species: Species, name: string): Project {
     });
   }
 
-  for (const gait of ['walk', 'trot'] as const) {
+  for (const gait of gaits) {
     const settings = quadrupedGaits[species][gait];
     const tracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }, ...legs.flatMap(leg => leg.names.map(bone => ({ bone, property: 'rotation' as const, keys: [] }))), { bone: 'head', property: 'rotation', keys: [] }, { bone: 'tail', property: 'rotation', keys: [] }];
     const frames = Math.ceil(settings.duration * 120);
     for (let frame = 0; frame <= frames; frame++) {
       const phase = frame === frames ? 0 : frame / frames, time = frame / frames * settings.duration;
-      // Low, twice-per-cycle trunk rise; IK compensates so stance feet do not bob.
-      const bob = settings.bob * (1 - Math.cos(4 * Math.PI * phase));
+      // Low trunk rise (twice per cycle for walk and trot, once for gallop); IK compensates so stance feet do not bob.
+      const bob = settings.bob * (1 - Math.cos(2 * Math.PI * (settings.bobs * phase - settings.bobShift)));
       let track = 0;
       tracks[track++].keys.push({ time, value: [0, bob, 0] });
       for (const leg of legs) {
         const { points, front, left } = leg;
-        // Walk touchdown order LH, LF, RH, RF; trot uses opposite diagonal pairs.
-        const offset = gait === 'walk' ? (left ? (front ? 0.75 : 0) : (front ? 0.25 : 0.5)) : (left === front ? 0 : 0.5);
-        const cycle = (phase + offset) % 1;
+        // A foot's cycle starts at its touchdown, so its offset is the complement of its footfall phase.
+        const touchdown = settings.footfall[`${left ? 'L' : 'R'}${front ? 'F' : 'H'}` as keyof Footfall];
+        const cycle = (phase + 1 - touchdown) % 1;
         const path = footPath(cycle, settings.stride, settings.lift, settings.stance);
         const swing = cycle <= settings.stance ? 0 : Math.sin(Math.PI * (cycle - settings.stance) / (1 - settings.stance)) ** 2;
         // Carpus/hock recovery folds are coupled to foot lift, not free oscillators.
@@ -86,7 +103,7 @@ export function createQuadruped(species: Species, name: string): Project {
         values.push((horse ? pastern : distal).clone().invert().toArray() as Quat);
         for (const value of values) tracks[track++].keys.push({ time, value });
       }
-      tracks[track++].keys.push({ time, value: hinge((gait === 'walk' ? 0.022 : 0.007) * Math.sin(4 * Math.PI * phase)).toArray() as Quat });
+      tracks[track++].keys.push({ time, value: hinge((gait === 'walk' ? 0.022 : gait === 'gallop' ? 0.05 : 0.007) * Math.sin(2 * Math.PI * (settings.bobs * phase - settings.bobShift))).toArray() as Quat });
       tracks[track].keys.push({ time, value: new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), (horse ? 0.035 : 0.07) * Math.sin(2 * Math.PI * phase)).toArray() as Quat });
     }
     project.clips.push({ name: gait, duration: settings.duration, tracks });

@@ -24,7 +24,7 @@ Workspace `state` and mutation responses contain `{project, revision, undo, redo
 
 `--workspace <directory> serve` opens a live editor backed by the same workspace. CLI and browser changes share serialized database transactions; the editor observes external workspace revisions. `--workspace` and an explicit `--url` are mutually exclusive. `serve --project` is a separate, in-memory mode and cannot be combined with a workspace. Existing HTTP command responses keep their project shape; workspace servers additionally return the `x-agent-meshes-revision` header on mutations and project reads. `GET /api/workspace` reports durability/revision/history, `GET /api/capabilities` exposes contracts, and `POST /api/plan` accepts `{operations:[...]}` for a nonmutating dry run.
 
-Includes five editable, rigged low-poly characters: **Copper courier** (biped walk), **Amber horse** (equine walk/trot), **Ember fox** (vulpine walk/trot), **Jade scarab** (six-leg tripod gait), and **Indigo weaver** (eight-leg alternating gait). No Blender installation is needed.
+Includes five editable, rigged low-poly characters: **Copper courier** (biped walk), **Amber horse** (equine walk/trot), **Ember fox** (vulpine walk/trot), **Jade scarab** (six-leg tripod gait), and **Indigo weaver** (eight-leg alternating gait). No Blender installation is needed. Horses and foxes can also carry a **gallop** with a true suspension phase: `recipe equine --gaits walk,trot,gallop` chooses which clips a quadruped recipe generates (default `walk,trot`, so the bundled examples are unchanged).
 
 ```powershell
 npm ci
