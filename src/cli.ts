@@ -71,9 +71,10 @@ export async function main(args = process.argv): Promise<void> {
     });
   program.command('new <name>').action(name => request('new', { name }));
   program.command('recipe <kind>').description('Load biped, equine, vulpine, insectoid or arachnid (quadruped aliases vulpine)')
-    .option('--gaits <list>', 'Comma-separated clips for equine or vulpine: walk, trot, gallop (default walk,trot)').action(async (kind, options) => {
+    .option('--gaits <list>', 'Comma-separated clips for equine or vulpine: walk, trot, gallop (default walk,trot)')
+    .option('--shell', 'Equine or vulpine: blend every part into one smooth skin with lathe hooves').action(async (kind, options) => {
     const { createCreature } = await import('./recipes/index.ts');
-    await request('project', createCreature(kind, options.gaits ? { gaits: String(options.gaits).split(',').map((g: string) => g.trim()) } : {}));
+    await request('project', createCreature(kind, { ...(options.gaits ? { gaits: String(options.gaits).split(',').map((g: string) => g.trim()) } : {}), ...(options.shell ? { shell: true } : {}) }));
   });
   program.command('state').action(() => request('project'));
   program.command('op <json>').action(json => request('op', JSON.parse(json)));

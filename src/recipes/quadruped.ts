@@ -38,7 +38,8 @@ export const quadrupedGaits: Record<Species, Record<string, GaitSettings>> = {
 };
 export const defaultQuadrupedGaits = ['walk', 'trot'] as const;
 
-export function createQuadruped(species: Species, name: string, gaits: readonly string[] = defaultQuadrupedGaits): Project {
+export interface QuadrupedOptions { /** Blend every part into one smooth skin with lathe hooves instead of box feet. */ shell?: boolean }
+export function createQuadruped(species: Species, name: string, gaits: readonly string[] = defaultQuadrupedGaits, options: QuadrupedOptions = {}): Project {
   for (const gait of gaits) if (!Object.hasOwn(quadrupedGaits[species], gait)) throw new Error(`Unknown ${species} gait: ${gait}`);
   const horse = species === 'equine';
   const project: Project = { version: 1, name, parts: [], bones: [{ name: 'root', parent: null, position: [0, 0, 0], rotation: [...identity], pose: [...identity] }], clips: [] };
@@ -63,14 +64,20 @@ export function createQuadruped(species: Species, name: string, gaits: readonly 
       const color = index < 2 ? (horse ? '#aa7149' : '#c76f43') : '#463c40';
       if (index < points.length - 1) {
         const end = points[index + 1], direction = v(end).sub(v(point)), length = direction.length();
-        project.parts.push({ name: `${prefix}_${['upper', 'shin', 'cannon', 'pastern'][index]}`, geometry: { type: 'capsule', size: [width, length, width], segments: 10 }, position: tuple(v(point).add(v(end)).multiplyScalar(0.5)), rotation: new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), direction.normalize()).toArray() as Quat, scale: [1, 1, 1], color, parent: null, binding: index === 0 ? { type: 'linear', bones: [names[0], names[1]], axis: 'y', range: [length * 0.1, length * 0.48] } : { type: 'rigid', bone: names[index] } });
+        project.parts.push({ name: `${prefix}_${['upper', 'shin', 'cannon', 'pastern'][index]}`, geometry: { type: 'capsule', size: [width, length, width], segments: 10 }, position: tuple(v(point).add(v(end)).multiplyScalar(0.5)), rotation: new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), direction.normalize()).toArray() as Quat, scale: [1, 1, 1], color, parent: null, binding: index === 0 && !options.shell ? { type: 'linear', bones: [names[0], names[1]], axis: 'y', range: [length * 0.1, length * 0.48] } : { type: 'rigid', bone: names[index] } });
         project.parts.push({ name: `${names[index]}_cover`, geometry: { type: 'sphere', size: [width, width, width], segments: 10 }, position: point, rotation: [...identity], scale: [1, 1, 1], color, parent: null, binding: { type: 'rigid', bone: names[index] } });
       } else {
-        project.parts.push({ name: `${prefix}_foot`, geometry: { type: horse ? 'box' : 'sphere', size: horse ? [0.17, 0.17, 0.23] : [0.18, 0.17, 0.26], segments: 10 }, position: [point[0], point[1], point[2] + 0.025], rotation: [...identity], scale: [1, 1, 1], color: '#463c40', parent: null, binding: { type: 'rigid', bone: names[index] } });
+        const hoof = horse && options.shell;
+        project.parts.push({ name: `${prefix}_foot`, geometry: hoof ? { type: 'lathe', size: [0.19, 0.15, 0.21], segments: 16, profile: [[0.42, -0.5], [0.5, -0.1], [0.44, 0.3], [0.28, 0.5]] } : { type: horse ? 'box' : 'sphere', size: horse ? [0.17, 0.17, 0.23] : [0.18, 0.17, 0.26], segments: 10 }, position: [point[0], hoof ? 0.075 : point[1], point[2] + 0.025], rotation: [...identity], scale: [1, 1, 1], color: '#463c40', parent: null, binding: { type: 'rigid', bone: names[index] } });
       }
     });
   }
 
+  if (options.shell) {
+    // Eyes and nostrils stay crisp on top of the skin; everything else blends into one body.
+    const skin = project.parts.filter(part => !/eye|glint|nostril/.test(part.name)).map(part => part.name);
+    project.shells = [{ name: 'skin', parts: skin, blend: horse ? 0.06 : 0.05, resolution: 72 }];
+  }
   for (const gait of gaits) {
     const settings = quadrupedGaits[species][gait];
     const tracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }, ...legs.flatMap(leg => leg.names.map(bone => ({ bone, property: 'rotation' as const, keys: [] }))), { bone: 'head', property: 'rotation', keys: [] }, { bone: 'tail', property: 'rotation', keys: [] }];
