@@ -1,17 +1,34 @@
 import { z } from 'zod';
-import type { Project, Operation, PartInput, Part } from './types.ts';
-import { nameSchema, vec3Schema, quatSchema, boneSchema, bindingSchema, validateRig, applyRigOperation } from './rig.ts';
+import { Quaternion, Vector3 } from 'three';
+import type { Project, Operation, PartInput, Part, Vec3, Quat } from './types.ts';
+import { nameSchema, vec3Schema, quatSchema, boneSchema, bindingSchema, validateRig, applyRigOperation, boneRestWorld } from './rig.ts';
 import { clipSchema, validateAnimation } from './animation.ts';
 import { applyAssemblyCopy } from './assembly.ts';
 import { applyPoseTarget } from './pose-target.ts';
 export { nameSchema, vec3Schema, quatSchema } from './rig.ts';
 
+const vec2Schema = z.tuple([z.number().finite(), z.number().finite()]);
 const geometrySchema = z.object({
-  type: z.enum(['box', 'sphere', 'cylinder', 'cone', 'capsule', 'group']),
+  type: z.enum(['box', 'sphere', 'cylinder', 'cone', 'capsule', 'lathe', 'prism', 'group']),
   size: vec3Schema.refine(v => v.every(n => n > 0 && n <= 1000), 'Size must be positive and at most 1000'),
   segments: z.number().int().min(3).max(64),
   mirrorX: z.boolean().optional(),
+  /** lathe only: [radius, height] points of a unit profile, radius 0 to 0.5 and height -0.5 to 0.5, revolved around y. */
+  profile: z.array(vec2Schema).min(3, 'A lathe profile needs at least 3 points').max(64).optional(),
+  /** prism only: [x, y] points of a unit outline within -0.5 to 0.5, extruded along z from -0.5 to 0.5. */
+  outline: z.array(vec2Schema).min(3, 'A prism outline needs at least 3 points').max(64).optional(),
 }).strict();
+/** Shape-specific rules kept out of the schema so contract schemas can still be made partial. */
+export function validateGeometry(g: Part['geometry']): void {
+  if (g.type === 'lathe') {
+    if (!g.profile) throw new Error('A lathe needs a profile');
+    if (g.profile.some(([r, y]) => r < 0 || r > 0.5 || y < -0.5 || y > 0.5)) throw new Error('Profile radius must be 0 to 0.5 and height -0.5 to 0.5');
+  } else if (g.profile) throw new Error(`Only a lathe takes a profile, not a ${g.type}`);
+  if (g.type === 'prism') {
+    if (!g.outline) throw new Error('A prism needs an outline');
+    if (g.outline.some(([x, y]) => Math.abs(x) > 0.5 || Math.abs(y) > 0.5)) throw new Error('Outline points must be within -0.5 to 0.5');
+  } else if (g.outline) throw new Error(`Only a prism takes an outline, not a ${g.type}`);
+}
 export const partSchema = z.object({
   name: nameSchema, geometry: geometrySchema, color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   position: vec3Schema, rotation: quatSchema,
@@ -38,6 +55,7 @@ export function checkHierarchy(items: { name: string; parent: string | null }[],
 }
 export function validateProject(value: unknown): Project {
   const project = projectSchema.parse(value);
+  for (const part of project.parts) validateGeometry(part.geometry);
   checkHierarchy(project.parts, 'part');
   checkHierarchy(project.bones, 'bone');
   validateRig(project);
@@ -45,17 +63,26 @@ export function validateProject(value: unknown): Project {
   return project;
 }
 export function createProject(name: string): Project { return validateProject({ version: 1, name, parts: [] }); }
-function makePart(input: PartInput): Part {
-  return partSchema.parse({
+function makePart(project: Project, input: PartInput): Part {
+  const { anchor, ...rest } = input;
+  const part = partSchema.parse({
     color: '#64b9c4', position: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null,
-    ...input, geometry: { type: 'box', size: [1, 1, 1], segments: 12, ...input.geometry },
+    ...rest, geometry: { type: 'box', size: [1, 1, 1], segments: 12, ...input.geometry },
   });
+  if (anchor !== undefined) {
+    if (part.parent) throw new Error('An anchored part cannot also have a parent part');
+    const frame = boneRestWorld(project, nameSchema.parse(anchor));
+    const placed = frame.position.clone().add(new Vector3(...part.position).applyQuaternion(frame.rotation));
+    part.position = placed.toArray() as Vec3;
+    part.rotation = frame.rotation.clone().multiply(new Quaternion(...part.rotation)).normalize().toArray() as Quat;
+  }
+  return part;
 }
 export function applyOperation(project: Project, operation: Operation): Project {
   const next = structuredClone(project);
   if (!operation || typeof operation !== 'object') throw new Error('Expected an operation object');
   switch (operation.op) {
-    case 'add': next.parts.push(makePart(operation.part)); break;
+    case 'add': next.parts.push(makePart(next, operation.part)); break;
     case 'update': {
       const part = next.parts.find(p => p.name === operation.name);
       if (!part) throw new Error(`Unknown part: ${operation.name}`);

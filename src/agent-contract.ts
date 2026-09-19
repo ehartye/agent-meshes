@@ -6,7 +6,7 @@ import { assemblyCopySchema } from './core/assembly.ts';
 import { poseTargetSchema } from './core/pose-target.ts';
 import type { BoneDef, Clip, Operation, Part, Project } from './core/types.ts';
 
-const partInputSchema = partSchema.omit({ geometry: true }).partial().required({ name: true })
+const partInputSchema = partSchema.omit({ geometry: true }).partial().required({ name: true }).extend({ anchor: nameSchema.optional() })
   .extend({ geometry: partSchema.shape.geometry.partial().required({ type: true }).optional() });
 const named = { name: nameSchema };
 
@@ -52,7 +52,7 @@ const examples: Record<Operation['op'], Operation[]> = {
   'clip.remove': [{ op: 'clip.remove', name: 'idle' }],
 };
 const descriptions: Record<Operation['op'], string> = {
-  add: 'Create a named primitive or group; omitted fields use the published defaults.',
+  add: 'Create a named primitive or group; omitted fields use the published defaults. A lathe needs a unit profile and a prism a unit outline. An anchor bone makes position and rotation relative to that bone\'s rest frame.',
   update: 'Update a part. Unbind before changing geometry; update does not rename.',
   remove: 'Remove an existing part after removing or reparenting its children.',
   'bone.add': 'Create a named bone with optional parent and rest transforms.',

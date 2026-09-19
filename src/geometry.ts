@@ -1,4 +1,4 @@
-import { BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, CapsuleGeometry } from 'three';
+import { BoxGeometry, SphereGeometry, CylinderGeometry, ConeGeometry, CapsuleGeometry, LatheGeometry, ExtrudeGeometry, Shape, Vector2 } from 'three';
 import type { BufferGeometry } from 'three';
 import type { Part } from './core/types.ts';
 
@@ -11,6 +11,11 @@ export function geometryFor(part: Part): BufferGeometry {
     case 'cylinder': geometry = new CylinderGeometry(0.5, 0.5, 1, segments, 8); break;
     case 'cone': geometry = new ConeGeometry(0.5, 1, segments, 8); break;
     case 'capsule': geometry = new CapsuleGeometry(0.25, 0.5, 4, segments); geometry.scale(2, 1, 2); break;
+    case 'lathe': geometry = new LatheGeometry((part.geometry.profile ?? []).map(([r, h]) => new Vector2(r, h)), segments); break;
+    case 'prism': {
+      const shape = new Shape((part.geometry.outline ?? []).map(([px, py]) => new Vector2(px, py)));
+      geometry = new ExtrudeGeometry(shape, { depth: 1, bevelEnabled: false, steps: 1 }); geometry.translate(0, 0, -0.5); break;
+    }
     default: geometry = new BoxGeometry(1, 1, 1, 1, 8, 1);
   }
   geometry.scale(x, y, z);

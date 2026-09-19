@@ -54,6 +54,17 @@ node scripts/agent-meshes.mjs state
 node scripts/agent-meshes.mjs recipe biped
 ```
 
+Geometry types are `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe`, `prism` and `group`. `size` is the bounding box of the shape in meters. A `lathe` revolves a `profile` of `[radius, height]` points (radius 0 to 0.5, height -0.5 to 0.5) around y, for vases, birds and turned forms. A `prism` extrudes an `outline` of `[x, y]` points (each within -0.5 to 0.5) along z, for flat cut-outs and silhouettes:
+
+```json
+[
+  {"op":"add","part":{"name":"vase","geometry":{"type":"lathe","size":[0.4,1.2,0.4],"segments":32,"profile":[[0.15,-0.5],[0.5,-0.1],[0.3,0.3],[0.2,0.5]]}}},
+  {"op":"add","part":{"name":"star","geometry":{"type":"prism","size":[1,1,0.05],"outline":[[0,0.5],[0.5,0.1],[0.3,-0.5],[-0.3,-0.5],[-0.5,0.1]]}}}
+]
+```
+
+A part can be placed relative to a bone instead of the world: `{"op":"add","part":{"name":"ring","anchor":"hand","position":[0,-0.5,0],...}}` interprets `position` and `rotation` in the `hand` bone's rest frame and stores the world result, so a part meant to hang from a bone never needs the bone's world position copied by hand.
+
 The CLI prints JSON and exits nonzero on failures. `batch operations.json` applies an array of operations atomically, with one undo step. `open`, `save`, `undo`, and `redo` share the browser's active project. `--url` chooses an already-running server; identity checks prevent edits against an unrelated service. Run `node scripts/agent-meshes.mjs --help` for commands. Names start with a letter and contain letters, numbers, underscores, hyphens or dots. Transforms use meters and Y-up coordinates; rotations are unit quaternions `[x,y,z,w]`.
 
 Development: run the API with `npm start`, then `npm run dev` for Vite's live reload. `npm test`, `npm run typecheck`, and `npm run build` verify the code. `npx playwright install chromium` then `node scripts/check-browser.mjs` exercise the built workbench and write a screenshot under `artifacts/`.
