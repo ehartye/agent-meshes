@@ -10,7 +10,7 @@ import { createServer } from '../src/server.ts';
 const run = promisify(execFile);
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
-const cli = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args]);
+const cli = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args], { timeout: 10000, windowsHide: true });
 
 it('edits and saves a project through the executable CLI', async () => {
   const server = await createServer({ port: 0 });
@@ -31,7 +31,7 @@ it('edits and saves a project through the executable CLI', async () => {
   expect(JSON.parse((await invoke('open', project)).stdout).name).toBe('Biped');
   expect(JSON.parse((await invoke('state')).stdout).parts).toHaveLength(2);
   await expect(invoke('op', '{"op":"remove","name":"missing"}')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('Error:') });
-});
+}, 30000); // Ten fresh Node processes can exceed five seconds on hosted Windows runners.
 
 it('refuses to edit a server that is not agent-meshes', async () => {
   let writes = 0;
