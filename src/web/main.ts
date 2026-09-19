@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { buildScene } from '../render/scene.ts';
 import type { Project, GeometryKind, Vec3 } from '../core/types.ts';
+import { installRigUI } from './rig-ui.ts';
 
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 export const status = (message: string, error = false) => { el('status').textContent = message; el('status').classList.toggle('error', error); };
@@ -26,7 +27,7 @@ const key = new THREE.DirectionalLight('#fff2d8', 3.7); key.position.set(4, 8, 5
 const fill = new THREE.DirectionalLight('#b2e2f0', 1.2); fill.position.set(-5, 3, -3); scene.add(fill);
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: '#dce7eb', roughness: 1 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -0.012; floor.receiveShadow = true; scene.add(floor);
 const grid = new THREE.GridHelper(30, 30, '#8eacb8', '#b5cbd4'); grid.position.y = -0.009; (grid.material as THREE.Material).transparent = true; (grid.material as THREE.Material).opacity = 0.28; scene.add(grid);
-export let project: Project = { version: 1, name: 'Untitled', parts: [] };
+export let project: Project = { version: 1, name: 'Untitled', parts: [], bones: [] };
 export let built = buildScene(project); scene.add(built.root);
 let selected: string | null = null;
 let currentView = 'perspective';
@@ -92,7 +93,8 @@ el('add-part').onclick = action(async () => {
 el('part-form').onsubmit = event => { event.preventDefault(); void action(async () => {
   const part = project.parts.find(p => p.name === selected)!;
   const vector = (ids: string[]) => ids.map(id => Number((el(id) as HTMLInputElement).value)) as Vec3;
-  showProject(await api('op', { op: 'update', name: selected, changes: { position: vector(['px', 'py', 'pz']), geometry: { ...part.geometry, size: vector(['sx', 'sy', 'sz']) }, color: (el('part-color') as HTMLInputElement).value } })); status(`Updated ${selected}`);
+  const size = vector(['sx', 'sy', 'sz']);
+  showProject(await api('op', { op: 'update', name: selected, changes: { position: vector(['px', 'py', 'pz']), ...(JSON.stringify(size) === JSON.stringify(part.geometry.size) ? {} : { geometry: { ...part.geometry, size } }), color: (el('part-color') as HTMLInputElement).value } })); status(`Updated ${selected}`);
 })(); };
 el('remove-part').onclick = action(async () => { showProject(await api('op', { op: 'remove', name: selected })); status('Part removed'); });
 el('new-project').onclick = action(async () => { const name = prompt('Project name', 'Untitled'); if (name) { showProject(await api('new', { name })); status('New project'); } });
@@ -117,6 +119,7 @@ let last = performance.now();
 renderer.setAnimationLoop(now => { const dt = Math.min((now - last) / 1000, 0.1); last = now; frameCallbacks.forEach(fn => fn(dt)); controls.update(); renderer.render(scene, camera); });
 setCamera();
 const events = new EventSource('/api/events');
+onProject(installRigUI({ project: () => project, root: () => built.root, selectedPart: () => selected, scene, op: async op => { showProject(await api('op', op)); }, status }));
 events.onopen = () => { el('connection').textContent = 'Connected'; el('connection-dot').classList.add('online'); };
 events.onerror = () => { el('connection').textContent = 'Reconnecting'; el('connection-dot').classList.remove('online'); };
 events.onmessage = event => { try { const data = JSON.parse(event.data); showProject(data.project ?? data); } catch (error) { status((error as Error).message, true); } };

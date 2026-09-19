@@ -2,7 +2,6 @@ import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer } from './server.ts';
 
 export async function main(args = process.argv): Promise<void> {
   const program = new Command();
@@ -26,6 +25,7 @@ export async function main(args = process.argv): Promise<void> {
   program.command('serve').description('Start the loopback authoring server')
     .option('--port <port>', 'Listening port', '3388').option('--project <file>', 'Project to open')
     .action(async options => {
+      const { createServer } = await import('./server.ts');
       const port = Number(options.port);
       if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer from 0 to 65535');
       const server = await createServer({ port, projectPath: options.project });
