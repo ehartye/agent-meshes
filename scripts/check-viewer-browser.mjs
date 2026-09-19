@@ -53,7 +53,7 @@ try {
       assert.equal(result.changedByColor, true, 'recoloring a part changes the rendered frame');
       assert.equal(result.changedByPlay, true, 'playing a clip changes the rendered frame');
       assert.equal(result.color, '#ff0066');
-      assert.deepEqual(result.pose, { rotation: [0, 0, 0], position: [0, 0, 0] });
+      assert.deepEqual(result.pose, { rotation: [0, 0, 0], position: [0, 0, 0], scale: [1, 1, 1] });
       assert.equal(result.clip, 'trot');
       assert.ok(result.time > 0.1, `playback advanced (${result.time})`);
       await writeFile(join(evidence, 'front.png'), Buffer.from(result.front.split(',')[1], 'base64'));

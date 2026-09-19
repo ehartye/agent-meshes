@@ -43,7 +43,23 @@ describe('puppet', () => {
     expect(puppet.bone('hip').getWorldPosition(new Vector3()).x).toBeCloseTo(0.25, 6);
     puppet.resetPose();
     expect(tip(puppet).toArray().map(v => +v.toFixed(3))).toEqual([0, 0, 0]);
-    expect(puppet.getPose('hip')).toEqual({ rotation: [0, 0, 0], position: [0, 0, 0] });
+    expect(puppet.getPose('hip')).toEqual({ rotation: [0, 0, 0], position: [0, 0, 0], scale: [1, 1, 1] });
+  });
+
+  it('scales a bone and everything it carries, and reports the scale back', async () => {
+    const puppet = await load();
+    puppet.setPose('knee', { scale: [1, 2, 1] });
+    expect(tip(puppet).y).toBeCloseTo(-0.5, 3);
+    expect(puppet.getPose('knee').scale).toEqual([1, 2, 1]);
+    puppet.setPose('hip', { scale: [1, 1.5, 1] });
+    // Child bone positions scale with the parent: the knee sits 0.75 below the hip, then its own doubled shin.
+    expect(puppet.bone('knee').getWorldPosition(new Vector3()).y).toBeCloseTo(0.25, 3);
+    expect(tip(puppet).y).toBeCloseTo(0.25 - 1.5, 3);
+    puppet.resetPose('hip');
+    expect(puppet.getPose('hip').scale).toEqual([1, 1, 1]);
+    expect(puppet.bone('knee').getWorldPosition(new Vector3()).y).toBeCloseTo(0.5, 3);
+    puppet.resetPose();
+    expect(tip(puppet).y).toBeCloseTo(0, 3);
   });
 
   it('keeps a pose offset composed on top of clip playback', async () => {
