@@ -2,12 +2,15 @@ import { z } from 'zod';
 import type { Project, Operation, PartInput, Part } from './types.ts';
 import { nameSchema, vec3Schema, quatSchema, boneSchema, bindingSchema, validateRig, applyRigOperation } from './rig.ts';
 import { clipSchema, validateAnimation } from './animation.ts';
+import { applyAssemblyCopy } from './assembly.ts';
+import { applyPoseTarget } from './pose-target.ts';
 export { nameSchema, vec3Schema, quatSchema } from './rig.ts';
 
 const geometrySchema = z.object({
   type: z.enum(['box', 'sphere', 'cylinder', 'cone', 'capsule', 'group']),
   size: vec3Schema.refine(v => v.every(n => n > 0 && n <= 1000), 'Size must be positive and at most 1000'),
   segments: z.number().int().min(3).max(64),
+  mirrorX: z.boolean().optional(),
 }).strict();
 export const partSchema = z.object({
   name: nameSchema, geometry: geometrySchema, color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
@@ -70,6 +73,8 @@ export function applyOperation(project: Project, operation: Operation): Project 
     case 'bone.add': case 'bone.update': case 'bone.remove': case 'bone.mirror':
     case 'pose': case 'pose.reset': case 'bind': case 'unbind':
       applyRigOperation(next, operation); break;
+    case 'assembly.copy': applyAssemblyCopy(next, operation); break;
+    case 'pose.target': applyPoseTarget(next, operation); break;
     case 'clip.set': {
       const clip = clipSchema.parse(operation.clip);
       const index = next.clips.findIndex(c => c.name === clip.name);

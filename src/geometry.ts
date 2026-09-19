@@ -14,5 +14,17 @@ export function geometryFor(part: Part): BufferGeometry {
     default: geometry = new BoxGeometry(1, 1, 1, 1, 8, 1);
   }
   geometry.scale(x, y, z);
+  if (part.geometry.mirrorX) {
+    // Preserve vertex indices so authored per-vertex skin weights remain attached.
+    geometry.scale(-1, 1, 1);
+    const indices = geometry.getIndex();
+    if (indices) {
+      for (let i = 0; i < indices.count; i += 3) {
+        const second = indices.getX(i + 1);
+        indices.setX(i + 1, indices.getX(i + 2)); indices.setX(i + 2, second);
+      }
+      indices.needsUpdate = true;
+    }
+  }
   return geometry;
 }
