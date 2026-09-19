@@ -3,6 +3,7 @@ import { validateProject } from '../core/model.ts';
 import type { Project, Vec3, Quat, GeometryKind, Track } from '../core/types.ts';
 import { footPath, solveLeg } from './gait.ts';
 import { createSpiderLeg } from './spider-leg.ts';
+import { spiderGait } from './spider-motion.ts';
 
 export const creatureKinds = ['biped', 'quadruped', 'insectoid', 'arachnid'] as const;
 export type CreatureKind = typeof creatureKinds[number];
@@ -163,9 +164,9 @@ export function createCreature(kind: CreatureKind): Project {
     }
     motion('head', [0, 1, 0], 0.035);
   }
-  const duration = kind === 'biped' ? 1.2 : kind === 'quadruped' ? 0.9 : kind === 'insectoid' ? 1.4 : 1.6;
+  const duration = kind === 'biped' ? 1.2 : kind === 'quadruped' ? 0.9 : kind === 'insectoid' ? 1.4 : spiderGait.duration;
   const samples = Math.ceil(duration * 60);
-  const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'quadruped' ? 0.018 : 0.01) * (1 - Math.cos(4 * Math.PI * t));
+  const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'quadruped' ? 0.018 : kind === 'arachnid' ? 0.003 : 0.01) * (1 - Math.cos(4 * Math.PI * t));
   const clipTracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }];
   for (const leg of legs) for (const joint of ['hip', 'knee', 'ankle']) clipTracks.push({ bone: `${leg.name}_${joint}`, property: 'rotation', keys: [] });
   for (const leg of spiderLegs) for (const bone of leg.names) clipTracks.push({ bone, property: 'rotation', keys: [] });

@@ -1,7 +1,6 @@
 import { Quaternion, Vector3 } from 'three';
 import type { BoneDef, Part, Quat, Vec3 } from '../core/types.ts';
-import { footPath } from './gait.ts';
-import { solveChain } from './chain.ts';
+import { solveSpiderPose, spiderGait, spiderStep } from './spider-motion.ts';
 
 export const spiderSegments = ['coxa', 'trochanter', 'femur', 'patella', 'tibia', 'metatarsus', 'tarsus'] as const;
 const vector = (p: Vec3) => new Vector3(...p);
@@ -40,24 +39,9 @@ export function createSpiderLeg(side: number, index: number) {
   parts.push({ name: `${prefix}_contact`, geometry: { type: 'sphere', size: [0.051, 0.062, 0.063], segments: 8 }, position: rest[7], rotation: [...identity], scale: [1, 1, 1], parent: null, color: '#34364f', binding: { type: 'rigid', bone: `${prefix}_tip` } });
 
   function sample(phase: number, bob: number): Quat[] {
-    const cycle = phase + (index + (side < 0 ? 0 : 1)) % 2 * 0.5;
-    const offset = footPath(cycle, 0.25, 0.12, 0.66);
+    const offset = spiderStep(phase, side, index);
     const target = vector(rest[7]).add(new Vector3(offset[0], offset[1] - bob, offset[2]));
-    const terminalRest = vector(rest[7]).sub(vector(rest[6]));
-    // Keep the tarsus sloping down toward its contact; flex it more during recovery.
-    const terminal = terminalRest.clone().applyAxisAngle(new Vector3(0, 0, side), -0.32 * offset[1] / 0.12);
-    const baseTarget = target.clone().sub(terminal);
-    const anchor = vector(rest[0]);
-    const yaw = side * 0.12 * Math.cos(2 * Math.PI * cycle);
-    const preferred = rest.slice(0, 7).map((p, i) => {
-      const point = vector(p).sub(anchor).applyAxisAngle(new Vector3(0, 1, 0), yaw).add(anchor);
-      point.y += Math.sin(2 * Math.PI * cycle) * (i === 0 ? 0 : i < 3 ? 0.025 : 0.045);
-      return tuple(point);
-    });
-    const solved = solveChain(rest.slice(0, 7), tuple(baseTarget), preferred);
-    const parent = solved.rotations.reduce((q, r) => q.multiply(new Quaternion(...r)), new Quaternion());
-    const terminalWorld = new Quaternion().setFromUnitVectors(terminalRest.normalize(), terminal.normalize());
-    return [...solved.rotations, parent.invert().multiply(terminalWorld).normalize().toArray() as Quat];
+    return solveSpiderPose(rest, tuple(target), Math.min(1, offset[1] / spiderGait.lift));
   }
   return { bones, parts, names, sample };
 }
