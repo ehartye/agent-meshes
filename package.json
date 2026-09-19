@@ -15,7 +15,9 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "start": "node src/cli.ts serve",
-    "dev": "vite --host 127.0.0.1"
+    "dev": "vite --host 127.0.0.1",
+    "examples": "npm run build && node scripts/build-creatures.mjs",
+    "check:creatures": "node scripts/check-creatures.mjs"
   },
   "dependencies": {
     "commander": "15.0.0",
