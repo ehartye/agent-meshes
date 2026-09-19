@@ -137,7 +137,7 @@ for (const kind of creatureKinds) {
   const info = creatureInfo[kind], button = document.createElement('button');
   button.className = 'recipe-button'; button.dataset.recipe = kind;
   button.title = `${info.name} · ${info.description}`;
-  button.innerHTML = `<span class="recipe-number" style="color:${info.color}">${info.legs}</span><span>${info.label}<small>${info.gait}</small></span>`;
+  button.innerHTML = `<span class="recipe-number" style="color:${info.color}">${info.legs}</span><span>${info.label}<small>${kind === 'equine' || kind === 'vulpine' ? 'walk · trot' : info.gait}</small></span>`;
   button.onclick = action(async () => {
     showProject(await api('project', createCreature(kind)));
     animation.seek(0); animation.play(!matchMedia('(prefers-reduced-motion: reduce)').matches);

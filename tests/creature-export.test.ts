@@ -30,31 +30,35 @@ for (const kind of creatureKinds) it(`${kind} survives save/reopen and exports t
   const built = buildScene(reopened);
   try {
     expect(loaded.animations.map(clip => clip.name)).toEqual(source.clips.map(clip => clip.name));
-    const names = source.parts.filter(part => part.binding && (kind === 'arachnid' ? /^leg_.*_shell$/.test(part.name) : /_upper$|_shin$|_foot$/.test(part.name) || part.binding.type === 'linear')).map(part => part.name);
-    const selected = [...new Set([source.parts[0].name, ...(kind === 'arachnid' ? names : names.slice(0, 10))])];
+    const quadruped = kind === 'equine' || kind === 'vulpine';
+    const names = source.parts.filter(part => part.binding && (kind === 'arachnid' ? /^leg_.*_shell$/.test(part.name) : quadruped ? part.name.startsWith('leg_') : /_upper$|_shin$|_foot$/.test(part.name) || part.binding.type === 'linear')).map(part => part.name);
+    const selected = [...new Set([source.parts[0].name, ...(kind === 'arachnid' || quadruped ? names : names.slice(0, 10))])];
     const originalMixer = new AnimationMixer(built.root), exportedMixer = new AnimationMixer(loaded.scene);
-    originalMixer.clipAction(built.clips[0]).play(); exportedMixer.clipAction(loaded.animations[0]).play();
-    const duration = source.clips[0].duration;
-    let maxMotion = 0;
-    const initial = new Map<string, Vector3[]>();
-    for (const phase of [0, 0.17, 0.35, 0.58, 0.81, 1 - 1e-7]) {
-      originalMixer.setTime(duration * phase); exportedMixer.setTime(duration * phase);
-      built.root.updateMatrixWorld(true); loaded.scene.updateMatrixWorld(true);
-      for (const name of selected) {
-        const expected = built.root.getObjectByName(name) as SkinnedMesh;
-        const actual = loaded.scene.getObjectByName(name) as SkinnedMesh;
-        expect(actual.isSkinnedMesh).toBe(true);
-        const count = expected.geometry.getAttribute('position').count;
-        if (phase === 0) initial.set(name, Array.from({ length: count }, (_, index) => worldVertex(actual, index)));
-        for (let index = 0; index < count; index++) {
-          const wanted = worldVertex(expected, index), received = worldVertex(actual, index);
-          expect(received.distanceTo(wanted)).toBeLessThan(1e-5);
-          maxMotion = Math.max(maxMotion, received.distanceTo(initial.get(name)![index]));
-          if (phase > 0.99) expect(received.distanceTo(initial.get(name)![index])).toBeLessThan(1e-5);
+    for (const [clipIndex, clip] of source.clips.entries()) {
+      originalMixer.clipAction(built.clips[clipIndex]).play(); exportedMixer.clipAction(loaded.animations[clipIndex]).play();
+      const duration = clip.duration;
+      let maxMotion = 0;
+      const initial = new Map<string, Vector3[]>();
+      for (const phase of [0, 0.17, 0.35, 0.58, 0.81, 1 - 1e-7]) {
+        originalMixer.setTime(duration * phase); exportedMixer.setTime(duration * phase);
+        built.root.updateMatrixWorld(true); loaded.scene.updateMatrixWorld(true);
+        for (const name of selected) {
+          const expected = built.root.getObjectByName(name) as SkinnedMesh;
+          const actual = loaded.scene.getObjectByName(name) as SkinnedMesh;
+          expect(actual.isSkinnedMesh).toBe(true);
+          const count = expected.geometry.getAttribute('position').count;
+          if (phase === 0) initial.set(name, Array.from({ length: count }, (_, index) => worldVertex(actual, index)));
+          for (let index = 0; index < count; index++) {
+            const wanted = worldVertex(expected, index), received = worldVertex(actual, index);
+            expect(received.distanceTo(wanted)).toBeLessThan(1e-5);
+            maxMotion = Math.max(maxMotion, received.distanceTo(initial.get(name)![index]));
+            if (phase > 0.99) expect(received.distanceTo(initial.get(name)![index])).toBeLessThan(1e-5);
+          }
         }
       }
+      expect(maxMotion).toBeGreaterThan(0.05);
+      originalMixer.stopAllAction(); exportedMixer.stopAllAction();
     }
-    expect(maxMotion).toBeGreaterThan(0.05);
     expect(reopened).toEqual(source);
   } finally { built.dispose(); disposeScene(loaded.scene); }
 });
