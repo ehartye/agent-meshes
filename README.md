@@ -130,7 +130,7 @@ Rendering requires the built workbench (`npm run build`) and Chromium (`npx play
 
 ## Optional Blender stage
 
-`node scripts/agent-meshes.mjs refine model.glb smooth.glb --subdivide 1 --noise 0.004 --noise-scale 0.05 --only robin` rounds primitives into organic forms with a subdivision surface and, if asked, adds a feather- or fur-like displacement from a procedural clouds texture, while keeping bones, skins, vertex colors and clips. It runs Blender headless through `scripts/blender-refine.py`; Blender is found on PATH, in the usual install folders, in the Microsoft Store app alias, or from `AGENT_MESHES_BLENDER`. Nothing else in agent-meshes needs Blender, and the refine test skips when it is absent.
+`node scripts/agent-meshes.mjs refine model.glb smooth.glb --subdivide 1 --noise 0.004 --noise-scale 0.05 --only robin` rounds primitives into organic forms with a subdivision surface and, if asked, adds a feather- or fur-like displacement from a procedural clouds texture, while keeping bones, skins, vertex colors and clips. It runs Blender headless through `scripts/blender-refine.py`; Blender is found on PATH, in the usual install folders, in the Microsoft Store app alias, or from `AGENT_MESHES_BLENDER`. Nothing else in agent-meshes needs Blender, and the refine test skips when it is absent. A build config can ask for the pass with `"refine":{"subdivide":1,"noise":0.003,"noiseScale":0.04,"only":["robin"]}`; the refined GLB is verified again, and a build that asks for refinement fails when Blender is missing rather than shipping a coarser model. Renders and contact sheets still come from the unrefined project.
 
 ## Embedding a model in your own page
 

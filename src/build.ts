@@ -6,9 +6,12 @@ import type { Project } from './core/types.ts';
 import type { Operation } from './core/types.ts';
 import { createProject, applyOperation, validateProject } from './core/model.ts';
 import { exportGLB, verifyGLB } from './export.ts';
+import { findBlender, refineGLB } from './refine.ts';
 
 const markerName = '.agent-meshes-build.json';
-const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), name: z.string().min(1).optional(), output: z.string().min(1) }).strict().refine(config => Boolean(config.project) !== Boolean(config.operations), 'Exactly one project or operations input is required');
+/** Optional Blender pass over the exported GLB: subdivision, smoothing and a clouds displacement on named meshes. */
+const refineSchema = z.object({ subdivide: z.number().int().min(0).max(3).default(1), noise: z.number().min(0).max(1).default(0), noiseScale: z.number().positive().max(10).default(0.12), only: z.array(z.string().min(1)).optional() }).strict();
+const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional() }).strict().refine(config => Boolean(config.project) !== Boolean(config.operations), 'Exactly one project or operations input is required');
 const markerSchema = z.object({ version: z.literal(1), generator: z.literal('agent-meshes'), config: z.string().min(1), files: z.array(z.string()) }).strict();
 const portable = (path: string) => path.split(sep).join('/');
 const inside = (directory: string, path: string) => { const rel = relative(directory, path); return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
@@ -89,9 +92,20 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       for (const operation of source) project = applyOperation(project, operation as Operation);
     }
     stage = await mkdtemp(join(dirname(output), `.${basename(output)}.stage-`));
-    const bytes = await exportGLB(project);
-    const verification = await verifyGLB(bytes);
+    let bytes = await exportGLB(project);
+    let verification = await verifyGLB(bytes);
     if (!verification.ok) throw new Error(`GLB verification failed with ${verification.errors} errors`);
+    if (config.refine) {
+      // The refine pass is part of the recipe, so a missing Blender fails the build rather than quietly shipping a coarser model.
+      if (!findBlender()) throw new Error('This build asks for a Blender refine pass but Blender is not installed');
+      const raw = join(stage, 'model.raw.glb'), refined = join(stage, 'model.refined.glb');
+      await writeFile(raw, bytes);
+      await refineGLB(raw, refined, config.refine);
+      bytes = new Uint8Array(await readFile(refined));
+      await Promise.all([unlink(raw), unlink(refined)]);
+      verification = await verifyGLB(bytes);
+      if (!verification.ok) throw new Error(`Refined GLB verification failed with ${verification.errors} errors`);
+    }
     const files = ['project.mesh.json', 'model.glb', 'verification.json'];
     await Promise.all([
       writeFile(join(stage, files[0]), `${JSON.stringify(project, null, 2)}\n`),
