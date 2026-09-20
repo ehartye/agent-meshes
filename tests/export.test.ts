@@ -1,10 +1,11 @@
 import { expect, it } from 'vitest';
-import { AnimationMixer, Mesh, MeshStandardMaterial, SkinnedMesh, Vector3 } from 'three';
+import { AnimationMixer, Color, Mesh, MeshStandardMaterial, SkinnedMesh, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { applyOperation, createProject } from '../src/core/model.ts';
 import { exportGLB, verifyGLB } from '../src/export.ts';
 import type { Project } from '../src/core/types.ts';
 import { buildScene } from '../src/render/scene.ts';
+import { patternColor } from '../src/render/pattern.ts';
 
 function animatedProject(): Project {
   let project = createProject('animated-arm');
@@ -110,4 +111,34 @@ it('reports malformed GLB instead of claiming verification passed', async () => 
   const report = await verifyGLB(new Uint8Array([1, 2, 3, 4]));
   expect(report.ok).toBe(false);
   expect(report.errors).toBeGreaterThan(0);
+});
+
+it('exports patterned parts and shells with baked COLOR_0 and un-patterned COLOR_1 base colors', async () => {
+  const dots = { type: 'dots' as const, color: '#00ff00', size: 0.2 };
+  let project = applyOperation(createProject('painted'), { op: 'add', part: { name: 'ball', geometry: { type: 'sphere', size: [1, 1, 1] }, color: '#ff0000', pattern: dots } });
+  project = applyOperation(project, { op: 'add', part: { name: 'plain', geometry: { type: 'box', size: [0.5, 0.5, 0.5] }, position: [2, 0, 0], color: '#0000ff' } });
+  project = applyOperation(project, { op: 'add', part: { name: 'a', geometry: { type: 'sphere', size: [0.6, 0.6, 0.6] }, position: [0, 2, 0], color: '#ff0000' } });
+  project = applyOperation(project, { op: 'add', part: { name: 'b', geometry: { type: 'sphere', size: [0.6, 0.6, 0.6] }, position: [0.5, 2, 0], color: '#0000ff' } });
+  project = applyOperation(project, { op: 'shell.set', shell: { name: 'blob', parts: ['a', 'b'], blend: 0.3, resolution: 24, pattern: dots } });
+  const bytes = await exportGLB(project);
+  const report = await verifyGLB(bytes);
+  expect(report.errors).toBe(0);
+  const gltf = await new GLTFLoader().parseAsync(bytes.slice().buffer as ArrayBuffer, '');
+  for (const name of ['ball', 'blob']) {
+    const mesh = gltf.scene.getObjectByName(name) as Mesh;
+    const pos = mesh.geometry.getAttribute('position'), color = mesh.geometry.getAttribute('color'), base = mesh.geometry.getAttribute('color_1');
+    expect(color.count).toBe(pos.count); expect(base.count).toBe(pos.count); expect(base.itemSize).toBe(4);
+    // COLOR_0 is exactly pattern(COLOR_1.rgb) * COLOR_1.a at the bind-pose world point, and differs from the plain base somewhere.
+    gltf.scene.updateMatrixWorld(true);
+    let differs = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const p = new Vector3().fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+      const ink = patternColor(dots, new Color(base.getX(i), base.getY(i), base.getZ(i)), [p.x, p.y, p.z]), shade = base.getW(i);
+      expect(color.getX(i)).toBeCloseTo(ink.r * shade, 5); expect(color.getY(i)).toBeCloseTo(ink.g * shade, 5); expect(color.getZ(i)).toBeCloseTo(ink.b * shade, 5);
+      if (Math.abs(color.getY(i) - base.getY(i) * shade) > 0.01) differs++;
+    }
+    expect(differs).toBeGreaterThan(0);
+    expect(mesh.userData.pattern).toEqual(dots);
+  }
+  expect((gltf.scene.getObjectByName('plain') as Mesh).geometry.getAttribute('color')).toBeUndefined();
 });

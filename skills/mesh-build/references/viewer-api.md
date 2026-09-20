@@ -32,6 +32,8 @@ Names are the part, bone and clip names from the project.
 | `setColor(part, css)`, `getColor(part)`, `setVisible(part, bool)` | Recolor or hide a part; hiding also hides its outline hull |
 | `setMaterial(part, {metalness?, roughness?})` | Change a part's finish, each 0 to 1; omitted fields keep their value. `{metalness: 1, roughness: 0.1}` is chrome, `{metalness: 0, roughness: 0.65}` matte. Outline hulls are untouched |
 | `getMaterial(part)` | The part's current `{metalness, roughness}`, as exported from the project |
+| `setPattern(name, pattern or null)` | Re-bake a `{type:'dots'|'stripes'|'checks', color, size, axis?, offset?}` pattern into a shell's or part's vertex colors at bind-pose world points, instantly and without a remesh; `null` restores the un-patterned look exactly. Base colors are kept in the mesh's `COLOR_1`; a flat part gets them from its material color the first time, after which `setColor` tints it like a shell |
+| `getPattern(name)` | The pattern baked into a shell or part, from the export or the last `setPattern`; `null` when plain |
 | `play(clip?)`, `pause()`, `playing`, `clip`, `time`, `duration`, `speed`, `seek(seconds)` | Playback; clips are sampled directly, so `seek` then read works without a frame |
 | `bounds()` | World-space `Box3` of the visible, posed, skinned geometry |
 | `view(name or {position,target})`, `frame()` | Move the camera; `frame` fits the current bounds |

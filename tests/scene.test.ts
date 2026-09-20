@@ -26,3 +26,28 @@ it('applies a part or shell material finish and keeps the default finish for par
     expect(finish('blob')).toEqual({ metalness: 0.8, roughness: 0.2 });
   } finally { dispose(); }
 });
+it('bakes a part pattern into a vertex color attribute in world space and keeps flat parts flat', () => {
+  const stripes = { type: 'stripes' as const, color: '#00ff00', size: 0.5, axis: 'y' as const };
+  let p = applyOperation(createProject('model'), { op: 'add', part: { name: 'plain', geometry: { type: 'box', size: [1, 1, 1] }, color: '#ff0000' } });
+  p = applyOperation(p, { op: 'add', part: { name: 'painted', geometry: { type: 'box', size: [1, 1.25, 1] }, position: [0, 0.75, 0], color: '#ff0000', pattern: stripes } });
+  const built = buildScene(p);
+  try {
+    const plain = built.root.getObjectByName('plain') as Mesh, painted = built.root.getObjectByName('painted') as Mesh;
+    expect(plain.geometry.getAttribute('color')).toBeUndefined();
+    expect((plain.material as MeshStandardMaterial).vertexColors).toBe(false);
+    expect((plain.material as MeshStandardMaterial).color.getHexString()).toBe('ff0000');
+    expect((painted.material as MeshStandardMaterial).vertexColors).toBe(true);
+    expect((painted.material as MeshStandardMaterial).color.getHexString()).toBe('ffffff');
+    const pos = painted.geometry.getAttribute('position'), col = painted.geometry.getAttribute('color');
+    expect(col.count).toBe(pos.count);
+    // Bands are 0.25 tall. The box spans world y 0.125..1.375: its bottom face is in band 0 (green), its top face in band 5 (red).
+    let checked = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const worldY = pos.getY(i) + 0.75;
+      if (Math.abs(worldY - 0.125) < 1e-6) { expect(col.getX(i)).toBeCloseTo(0, 5); expect(col.getY(i)).toBeCloseTo(1, 5); checked++; }
+      if (Math.abs(worldY - 1.375) < 1e-6) { expect(col.getX(i)).toBeCloseTo(1, 5); expect(col.getY(i)).toBeCloseTo(0, 5); checked++; }
+    }
+    expect(checked).toBeGreaterThan(4);
+    expect(painted.userData.pattern).toEqual(stripes);
+  } finally { built.dispose(); }
+});

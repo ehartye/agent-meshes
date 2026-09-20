@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { applyOperation, createProject, partSchema, projectSchema, validateProject } from './core/model.ts';
+import { applyOperation, createProject, partChangesSchema, partSchema, projectSchema, validateProject } from './core/model.ts';
 import { bindingBones, bindingSchema, boneSchema, nameSchema, quatSchema } from './core/rig.ts';
 import { clipSchema } from './core/animation.ts';
 import { shellSchema } from './core/model.ts';
@@ -16,7 +16,7 @@ export const operationSchemas = {
   'assembly.copy': assemblyCopySchema,
   'pose.target': poseTargetSchema,
   add: z.object({ op: z.literal('add'), part: partInputSchema }).strict(),
-  update: z.object({ op: z.literal('update'), ...named, changes: partSchema.omit({ name: true }).partial() }).strict(),
+  update: z.object({ op: z.literal('update'), ...named, changes: partChangesSchema }).strict(),
   remove: z.object({ op: z.literal('remove'), ...named }).strict(),
   'bone.add': z.object({ op: z.literal('bone.add'), bone: boneSchema.partial().required({ name: true }) }).strict(),
   'bone.update': z.object({ op: z.literal('bone.update'), ...named, changes: boneSchema.omit({ name: true, pose: true }).partial() }).strict(),
@@ -44,7 +44,7 @@ const examples: Record<Operation['op'], Operation[]> = {
     { op: 'add', part: { name: 'body', geometry: { type: 'box', size: [1, 2, 1] }, position: [0, 1, 0] } },
     { op: 'add', part: { name: 'balloon', geometry: { type: 'sphere', size: [1, 1, 1] }, color: '#e0563a', material: { metalness: 1, roughness: 0.1 } } },
   ],
-  update: [{ op: 'update', name: 'body', changes: { color: '#64b9c4' } }, { op: 'update', name: 'body', changes: { material: { metalness: 1, roughness: 0.1 } } }],
+  update: [{ op: 'update', name: 'body', changes: { color: '#64b9c4' } }, { op: 'update', name: 'body', changes: { material: { metalness: 1, roughness: 0.1 } } }, { op: 'update', name: 'body', changes: { pattern: { type: 'dots', color: '#ffffff', size: 0.12 } } }, { op: 'update', name: 'body', changes: { pattern: null } }],
   remove: [{ op: 'remove', name: 'body' }],
   'bone.add': [{ op: 'bone.add', bone: { name: 'root' } }],
   'bone.update': [{ op: 'bone.update', name: 'root', changes: { position: [0, 1, 0] } }],
@@ -60,12 +60,13 @@ const examples: Record<Operation['op'], Operation[]> = {
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, resolution: 48 } },
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], cut: ['hole'], blend: 0.12, resolution: 48 } },
     { op: 'shell.set', shell: { name: 'steel', parts: ['body', 'head'], blend: 0.12, resolution: 48, material: { metalness: 1, roughness: 0.1 } } },
+    { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, resolution: 48, pattern: { type: 'stripes', color: '#ffffff', size: 0.2, axis: 'y' } } },
   ],
   'shell.remove': [{ op: 'shell.remove', name: 'skin' }],
 };
 const descriptions: Record<Operation['op'], string> = {
-  add: 'Create a named primitive or group; omitted fields use the published defaults. A lathe needs a unit profile and a prism a unit outline. An anchor bone makes position and rotation relative to that bone\'s rest frame. An optional material sets the finish: metalness 0 to 1 (paint to bare metal) and roughness 0 to 1 (mirror to chalk); metalness 1 with roughness 0.1 is polished chrome.',
-  update: 'Update a part. Unbind before changing geometry; update does not rename. A material change replaces the whole finish (metalness, roughness), with omitted fields at their defaults.',
+  add: 'Create a named primitive or group; omitted fields use the published defaults. A lathe needs a unit profile and a prism a unit outline. An anchor bone makes position and rotation relative to that bone\'s rest frame. An optional material sets the finish: metalness 0 to 1 (paint to bare metal) and roughness 0 to 1 (mirror to chalk); metalness 1 with roughness 0.1 is polished chrome. An optional pattern (dots, stripes or checks of a color at a size in meters; stripes and checks take an axis, default y, and an optional world offset) is painted over the part color in world space and baked into vertex colors.',
+  update: 'Update a part. Unbind before changing geometry; update does not rename. A material change replaces the whole finish (metalness, roughness), with omitted fields at their defaults. Set pattern to null to remove a painted pattern.',
   remove: 'Remove an existing part after removing or reparenting its children.',
   'bone.add': 'Create a named bone with optional parent and rest transforms.',
   'bone.update': 'Update rest transforms or parent. Unbind parts affected by the bone subtree first.',
@@ -77,7 +78,7 @@ const descriptions: Record<Operation['op'], string> = {
   unbind: 'Remove an existing part binding.',
   'clip.set': 'Create or replace an entire named clip. Every track must span zero through duration with strictly increasing key times.',
   'clip.remove': 'Remove an existing named clip.',
-  'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point. Optional cut lists parts subtracted from the surface (holes and hollows) with the same blend; cutters are hidden like members, contribute no color or weight, and cannot also be members. An optional material (metalness, roughness, 0 to 1) sets the finish of the whole shell.',
+  'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point. Optional cut lists parts subtracted from the surface (holes and hollows) with the same blend; cutters are hidden like members, contribute no color or weight, and cannot also be members. An optional material (metalness, roughness, 0 to 1) sets the finish of the whole shell. An optional pattern (dots, stripes or checks) is painted over the blended colors in world space, before ambient occlusion.',
   'shell.remove': 'Remove a shell; its member parts render individually again.',
   'assembly.copy': 'Copy a bone subtree with its bound parts and clip tracks under a prefix, optionally mirrored and offset in the root parent frame.',
   'pose.target': 'Pose a three-bone parent-child chain with two-link IK so the end bone reaches a world-space target, bending toward the pole.',

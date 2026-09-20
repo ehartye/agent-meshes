@@ -1,4 +1,5 @@
 import { Box3, BufferAttribute, BufferGeometry, Color, Float32BufferAttribute, Matrix4, Quaternion, Uint16BufferAttribute, Vector3 } from 'three';
+import { bakePattern } from './pattern.ts';
 import type { Part, Project, Shell, Vec2, Vec3 } from '../core/types.ts';
 import { geometryFor } from '../geometry.ts';
 
@@ -168,9 +169,10 @@ export function buildShellGeometry(project: Project, shell: Shell, boneNames: st
   geometry.computeVertexNormals();
 
   // Ownership: how much each member claims a vertex. Colors blend across the whole join; skin
-  // weights use a tighter band so a moving limb does not drag the body with it.
+  // weights use a tighter band so a moving limb does not drag the body with it. The blend and the
+  // occlusion shade go to the color_1 base; bakePattern paints the pattern between them in world space.
   const count = positions.length / 3;
-  const colors = new Float32Array(count * 3);
+  const base = new Float32Array(count * 4);
   // Ambient occlusion straight from the field: step out along the normal and see how much
   // closer the surface stays than an open slope would be. Crevices darken, ridges stay bright.
   const normals = geometry.getAttribute('normal');
@@ -200,7 +202,7 @@ export function buildShellGeometry(project: Project, shell: Shell, boneNames: st
       const wc = Math.exp(-excess / Math.max(shell.blend * 0.5, 1e-6)); total += wc; mix.add(memberColors[m].clone().multiplyScalar(wc));
       weights[m] = Math.exp(-excess / Math.max(shell.blend * 0.15, 1e-6));
     }
-    mix.multiplyScalar((0.35 + 0.65 * occlusion(p, i)) / total); colors[i * 3] = mix.r; colors[i * 3 + 1] = mix.g; colors[i * 3 + 2] = mix.b;
+    mix.multiplyScalar(1 / total).toArray(base, i * 4); base[i * 4 + 3] = 0.35 + 0.65 * occlusion(p, i);
     if (skinIndex && skinWeight) {
       // Merge members that share a bone, keep the four strongest, renormalise.
       const perBone = new Map<number, number>();
@@ -210,7 +212,8 @@ export function buildShellGeometry(project: Project, shell: Shell, boneNames: st
       top.forEach(([bone, w], k) => { skinIndex[i * 4 + k] = bone; skinWeight[i * 4 + k] = w / sum; });
     }
   }
-  geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  geometry.setAttribute('color_1', new BufferAttribute(base, 4));
+  bakePattern(geometry, shell.pattern, new Matrix4());
   if (skinIndex && skinWeight) { geometry.setAttribute('skinIndex', new Uint16BufferAttribute(skinIndex, 4)); geometry.setAttribute('skinWeight', new Float32BufferAttribute(skinWeight, 4)); }
   return { geometry, boneWeights: null };
 }

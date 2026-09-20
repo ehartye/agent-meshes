@@ -33,6 +33,22 @@ describe('named model authoring', () => {
     expect(() => applyOperation(p, { op: 'add', part: { name: 'bad', geometry: { type: 'sphere', size: [-1, 1, 1] } } })).toThrow();
     expect(() => validateProject({ ...p, version: 42 })).toThrow();
   });
+  it('stores a surface pattern on parts and shells, clears it with null, and rejects bad sizes', () => {
+    const dots = { type: 'dots' as const, color: '#ffffff', size: 0.1 };
+    let p = applyOperation(createProject('nana'), { op: 'add', part: { name: 'body', pattern: dots } });
+    expect(p.parts[0].pattern).toEqual(dots);
+    p = applyOperation(p, { op: 'update', name: 'body', changes: { pattern: { ...dots, type: 'stripes', axis: 'x', offset: [0, 0.05, 0] } } });
+    expect(p.parts[0].pattern).toEqual({ ...dots, type: 'stripes', axis: 'x', offset: [0, 0.05, 0] });
+    p = applyOperation(p, { op: 'add', part: { name: 'head', position: [0, 1, 0] } });
+    p = applyOperation(p, { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.1, resolution: 16, pattern: dots } });
+    expect(p.shells![0].pattern).toEqual(dots);
+    expect(validateProject(JSON.parse(JSON.stringify(p)))).toEqual(p);
+    p = applyOperation(p, { op: 'update', name: 'body', changes: { pattern: null } });
+    expect(p.parts[0]).not.toHaveProperty('pattern');
+    expect(() => applyOperation(p, { op: 'update', name: 'body', changes: { pattern: { ...dots, size: 0 } } })).toThrow();
+    expect(() => applyOperation(p, { op: 'update', name: 'body', changes: { pattern: { ...dots, type: 'hearts' as never } } })).toThrow();
+    expect(() => applyOperation(p, { op: 'update', name: 'body', changes: { pattern: { ...dots, color: 'red' } } })).toThrow();
+  });
 });
 
 describe('part materials', () => {
