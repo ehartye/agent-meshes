@@ -18,7 +18,10 @@ mesh --workspace .agent-meshes/fox view review/
 ```
 
 `export` writes an animated GLB with named meshes, materials, skeleton, weights and clips from the
-rest rig. `verify` runs the Khronos glTF Validator and exits nonzero on errors. `view` renders
+rest rig. `verify` runs the Khronos glTF Validator and exits nonzero on errors. A build already
+runs it and writes the same report as `verification.json`, so `verify` after a build is redundant.
+Zero errors and warnings is the bar; `UNUSED_OBJECT` infos about `TEXCOORD_0` are expected on
+every part (the primitives carry UVs that no material samples). `view` renders
 front, side and perspective PNGs plus one contact sheet per clip into a directory; look at them.
 
 ## Repeatable build
