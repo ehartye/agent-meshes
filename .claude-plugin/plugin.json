@@ -1,0 +1,11 @@
+{
+  "name": "agent-meshes",
+  "version": "0.1.0",
+  "description": "Named-part 3D authoring for coding agents: build rigged, animated GLB models from JSON operations (boxes, lathes, prisms, organic shells), creature recipes with gaits, isolated verified builds with renders and offline previews, an embeddable three.js viewer, and an optional Blender refine stage",
+  "author": {
+    "name": "ehartye"
+  },
+  "repository": "https://github.com/ehartye/agent-meshes",
+  "license": "MIT",
+  "keywords": ["3d", "glb", "gltf", "rigging", "animation", "three.js", "blender", "game-dev"]
+}
