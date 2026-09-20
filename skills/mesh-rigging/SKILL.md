@@ -55,6 +55,7 @@ different head is a `vulpine` recipe plus a few `update` and `add` operations.
 
 ## Verify
 
-Export and verify, then build with renders and read the contact sheet for each clip (one row of
-frames per clip) before calling the animation done. The validator proves the GLB is well formed;
-only the frames show whether the gait is convincing.
+Export and verify, then build with renders and read the contact sheet for each clip (eight
+perspective frames in two rows of four) before calling the animation done. The validator proves
+the GLB is well formed; only the frames show whether the gait is convincing, and foot sliding
+cannot be judged from a perspective sheet at all: run the stride check above for that.

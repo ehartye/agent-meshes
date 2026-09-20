@@ -60,8 +60,11 @@ bones. See [operations](references/operations.md) for a worked example of every 
 
 ## Recipes
 
-`recipe <kind>` replaces the workspace project with a rigged, animated creature to edit further:
-`biped`, `equine`, `vulpine`, `insectoid`, `arachnid`, `strandbeest`. Options: `--gaits walk,trot,gallop`
+`recipe <kind>` replaces the workspace project with a rigged, animated creature to edit further.
+Pick the kind by body plan: a person, robot or figure is `biped`; a horse, deer, donkey, cow or
+any hoofed animal is `equine`; a fox, dog, cat, wolf or any pawed animal is `vulpine`; a beetle,
+ant or six-legged bug is `insectoid`; a spider is `arachnid`; a walking machine is `strandbeest`.
+Resize and recolor parts afterward to turn the fox into a cat or the horse into a deer. Options: `--gaits walk,trot,gallop`
 (quadrupeds), `--shell` (quadrupeds; one smooth skin with lathe hooves), `--leg-phases <json>`
 (insectoid; one clip per named set of six touchdown phases), `--pairs`, `--spacing`, `--patterns <json>`
 (strandbeest; Jansen's real linkage). Recipes are deterministic project data, so a variation is
@@ -69,8 +72,10 @@ the recipe plus a batch of edits, kept as files so it can be rebuilt. To deliver
 model, `save <name>.mesh.json` from the workspace and point `build.json` at it with
 `"project":"<name>.mesh.json"` (see mesh-build).
 
-`recipe`, `state`, `save` and `open` print the whole project (a recipe is about 1 MB of JSON).
-Redirect that output to a file or trim it; use `inspect` for a readable summary.
+`recipe`, `state`, `save` and `open` print the whole project (a recipe is a few hundred kilobytes
+of JSON on one line). Redirect that output to a file or trim it. `inspect` without a selector is
+also one long line: counts first, then every part, bone and clip; read the counts, and use a
+selector such as `inspect clip:walk` for one item.
 
 ## Working method
 
