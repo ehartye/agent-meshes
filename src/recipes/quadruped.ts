@@ -16,24 +16,28 @@ export interface GaitSettings {
   duration: number; stride: number; lift: number; stance: number;
   /** Trunk rise amplitude, cycles of rise per stride, and where in the stride the rise peaks. */
   bob: number; bobs: number; bobShift: number;
+  /** Fraction of the swing spent lifting and again lowering the foot; between, it holds tucked at `lift`. Omitted: a sine arc. */
+  gather?: number;
   footfall: Footfall;
 }
 // Walk: lateral sequence LH, LF, RH, RF. Trot: diagonal pairs. Gallop: transverse, right lead,
-// hind legs strike first and every foot is off the ground for the last quarter of the stride.
+// hind legs strike first, no foot is down for more than 30% of the stride, at most three are down
+// together, and the last 30% is a gathered suspension with every leg folded under the trunk.
 const walkOrder: Footfall = { LH: 0, LF: 0.25, RH: 0.5, RF: 0.75 };
 const trotOrder: Footfall = { LF: 0, RH: 0, RF: 0.5, LH: 0.5 };
 const gallopOrder: Footfall = { LH: 0, RH: 0.12, LF: 0.28, RF: 0.40 };
+const smoothstep = (t: number) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
 /** In-place cycles: forward travel speed is stride / (stance * duration). */
 export const quadrupedGaits: Record<Species, Record<string, GaitSettings>> = {
   equine: {
     walk: { duration: 1.6, stride: 0.42, lift: 0.10, stance: 0.72, bob: 0.008, bobs: 2, bobShift: 0, footfall: walkOrder },
     trot: { duration: 1.0, stride: 0.60, lift: 0.15, stance: 0.56, bob: 0.018, bobs: 2, bobShift: 0, footfall: trotOrder },
-    gallop: { duration: 0.7, stride: 0.60, lift: 0.20, stance: 0.36, bob: 0.02, bobs: 1, bobShift: 0.38, footfall: gallopOrder },
+    gallop: { duration: 0.7, stride: 0.60, lift: 0.24, stance: 0.30, bob: 0.02, bobs: 1, bobShift: 0.35, gather: 0.3, footfall: gallopOrder },
   },
   vulpine: {
     walk: { duration: 1.2, stride: 0.30, lift: 0.08, stance: 0.72, bob: 0.005, bobs: 2, bobShift: 0, footfall: walkOrder },
     trot: { duration: 0.8, stride: 0.42, lift: 0.12, stance: 0.56, bob: 0.009, bobs: 2, bobShift: 0, footfall: trotOrder },
-    gallop: { duration: 0.55, stride: 0.50, lift: 0.16, stance: 0.36, bob: 0.03, bobs: 1, bobShift: 0.38, footfall: gallopOrder },
+    gallop: { duration: 0.55, stride: 0.44, lift: 0.16, stance: 0.30, bob: 0.03, bobs: 1, bobShift: 0.35, gather: 0.3, footfall: gallopOrder },
   },
 };
 export const defaultQuadrupedGaits = ['walk', 'trot'] as const;
@@ -94,7 +98,10 @@ export function createQuadruped(species: Species, name: string, gaits: readonly 
         const touchdown = settings.footfall[`${left ? 'L' : 'R'}${front ? 'F' : 'H'}` as keyof Footfall];
         const cycle = (phase + 1 - touchdown) % 1;
         const path = footPath(cycle, settings.stride, settings.lift, settings.stance);
-        const swing = cycle <= settings.stance ? 0 : Math.sin(Math.PI * (cycle - settings.stance) / (1 - settings.stance)) ** 2;
+        const u = cycle <= settings.stance ? 0 : (cycle - settings.stance) / (1 - settings.stance);
+        // Sine arc for walk and trot; a gathering gait snaps the foot up after lift-off and holds it tucked until just before landing.
+        const swing = u === 0 ? 0 : settings.gather ? smoothstep(Math.min(u, 1 - u) / settings.gather) : Math.sin(Math.PI * u) ** 2;
+        if (settings.gather) path[1] = settings.lift * swing;
         // Carpus/hock recovery folds are coupled to foot lift, not free oscillators.
         const distal = hinge(swing * (front ? 0.48 : -0.20));
         const pastern = distal.clone().multiply(hinge(horse ? -0.12 * swing : 0));
