@@ -27,7 +27,7 @@ export interface CreatureOptions {
   /** Clips for equine or vulpine: any of walk, trot, gallop. Default walk and trot. */ gaits?: readonly string[];
   /** Equine or vulpine only: blend every part into one smooth skin with lathe hooves. */ shell?: boolean;
   /** Insectoid only: one clip per entry, each a touchdown phase (0 to 1) per leg in order L1 L2 L3 R1 R2 R3. */ legPhases?: Record<string, number[]>;
-  /** Strandbeest only: mirrored leg pairs along the crankshaft. Default 3. */ pairs?: number;
+  /** Strandbeest only: crank positions along the crankshaft, four legs each. Default 3, at most 5. */ pairs?: number;
   /** Strandbeest only: distance between pairs in meters, and one clip per named crank-offset pattern. */ spacing?: number; patterns?: Record<string, number[]>;
 }
 export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest', options: CreatureOptions = {}): Project {

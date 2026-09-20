@@ -1,11 +1,18 @@
 import type { Project } from './core/types.ts';
-import { Bone, Group, Matrix4, Scene, Skeleton, SkinnedMesh } from 'three';
+import { Bone, Group, Matrix4, Object3D, Scene, Skeleton, SkinnedMesh } from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { validateBytes } from 'gltf-validator';
 import type { ValidationReport } from 'gltf-validator';
 import { validateProject } from './core/model.ts';
 import { buildScene, disposeScene } from './render/scene.ts';
 import { ensureFileReader } from './node-file-reader.ts';
+
+/** The parts of three's GLTFWriter that its type declaration leaves out but plugins may reach. */
+interface GLTFWriterInternals {
+  json: { nodes: { skin?: number }[] };
+  nodeMap: Map<Object3D, number>;
+  processSkin(object: SkinnedMesh): number | null;
+}
 
 export async function exportGLB(project: Project): Promise<Uint8Array> {
   const clean = validateProject(structuredClone(project));
@@ -58,7 +65,27 @@ export async function exportGLB(project: Project): Promise<Uint8Array> {
     }
     scene.updateMatrixWorld(true);
     ensureFileReader();
-    const output = await new GLTFExporter().parseAsync(scene, { binary: true, animations: built.clips });
+    const exporter = new GLTFExporter();
+    exporter.register(plugin => {
+      // GLTFExporter writes one skin per skinned mesh, each with an inverse bind matrix for every
+      // joint. Every part here binds the same skeleton at identity, so a rig of a hundred rods would
+      // repeat the same block a hundred times; identical skins (same joints, same matrices) share one.
+      const writer = plugin as unknown as GLTFWriterInternals;
+      const original = writer.processSkin.bind(writer), shared = new Map<string, number>(), inverse = new Matrix4();
+      writer.processSkin = object => {
+        const skeleton = object.skeleton;
+        if (!skeleton?.bones.length) return original(object);
+        const joints = skeleton.bones.map(bone => writer.nodeMap.get(bone));
+        const matrices = skeleton.boneInverses.flatMap(boneInverse => inverse.copy(boneInverse).multiply(object.bindMatrix).toArray());
+        const key = JSON.stringify([joints, matrices]);
+        const first = shared.get(key);
+        if (first === undefined) { const index = original(object); if (index !== null) shared.set(key, index); return index; }
+        writer.json.nodes[writer.nodeMap.get(object)!].skin = first;
+        return first;
+      };
+      return {};
+    });
+    const output = await exporter.parseAsync(scene, { binary: true, animations: built.clips });
     if (!(output instanceof ArrayBuffer)) throw new Error('Exporter did not produce a binary GLB');
     return new Uint8Array(output);
   } finally { built.dispose(); disposeScene(scene); }

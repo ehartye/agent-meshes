@@ -67,7 +67,9 @@ ant or six-legged bug is `insectoid`; a spider is `arachnid`; a walking machine 
 Resize and recolor parts afterward to turn the fox into a cat or the horse into a deer. Options: `--gaits walk,trot,gallop`
 (quadrupeds), `--shell` (quadrupeds; one smooth skin with lathe hooves), `--leg-phases <json>`
 (insectoid; one clip per named set of six touchdown phases), `--pairs`, `--spacing`, `--patterns <json>`
-(strandbeest; Jansen's real linkage). Recipes are deterministic project data, so a variation is
+(strandbeest; Jansen's real linkage: `--pairs` counts crank positions, at most 5, and each position
+carries four legs, `leg_L_1f_*` front-facing and `leg_L_1b_*` back-facing on each side, so the feet
+straddle the crankshaft). Recipes are deterministic project data, so a variation is
 the recipe plus a batch of edits, kept as files so it can be rebuilt. To deliver a recipe-based
 model, `save <name>.mesh.json` from the workspace and point `build.json` at it with
 `"project":"<name>.mesh.json"` (see mesh-build).

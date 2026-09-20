@@ -4,7 +4,9 @@ import type { Project, Quat, Track, Vec3 } from '../core/types.ts';
 
 /**
  * Theo Jansen's leg linkage, with the rod lengths he published (his "holy numbers"), and a
- * Strandbeest-style walker built from mirrored leg pairs on one crankshaft.
+ * Strandbeest-style walker built from mirrored leg pairs on one crankshaft. Every crank position
+ * carries four legs: left and right, and on each side a front-facing leg and its back-facing
+ * mirror driven by the same crank pin, so the feet straddle the axle and the body stands over them.
  * The linkage is planar: one crank turn drives eleven rods so the foot traces a flat-bottomed
  * loop. Points follow the usual diagram: O is the crank axle, P the fixed pivot to its left,
  * C the crank pin; A and B hang from C and P; D closes the upper triangle P A D; E is the knee
@@ -45,6 +47,7 @@ export function solveJansenLeg(theta: number): JansenLeg {
 const RODS: Record<string, [keyof JansenLeg, keyof JansenLeg]> = { m: ['O', 'C'], j: ['C', 'A'], k: ['C', 'B'], b: ['P', 'A'], c: ['P', 'B'], d: ['P', 'D'], e: ['A', 'D'], f: ['D', 'E'], g: ['B', 'E'], h: ['B', 'F'], i: ['E', 'F'] };
 
 export interface StrandbeestOptions {
+  /** Crank positions along the shaft; each carries four legs (L and R, front- and back-facing). Default 3. */
   pairs?: number; scale?: number; name?: string; duration?: number;
   /** Distance between leg pairs along the crankshaft, in meters. Default 0.42. */
   spacing?: number;
@@ -52,11 +55,13 @@ export interface StrandbeestOptions {
   patterns?: Record<string, number[]>;
 }
 
-/** A walker of mirrored Jansen leg pairs along one crankshaft, cranks offset evenly around the turn. */
+/** A walker of Jansen legs along one crankshaft, four to a crank position, cranks offset evenly around the turn. */
 export function createStrandbeest(options: StrandbeestOptions = {}): Project {
   const pairs = options.pairs ?? 3, scale = options.scale ?? 0.012, duration = options.duration ?? 2.4, name = options.name ?? 'Strandbeest';
+  // Four legs of twelve bones per crank position, plus the root, must fit the project's 256-bone limit.
+  if (!Number.isInteger(pairs) || pairs < 1 || pairs > 5) throw new Error(`Strandbeest takes at most 5 crank positions (four legs each), received ${pairs}`);
   const tube = '#e6c84a', dark = '#3b3a30', frameColor = '#cfae37';
-  // 60 samples per turn keeps a twelve-legged beast's three clips under a couple of megabytes.
+  // 60 samples per turn; with segments-5 rods, three crank positions (twelve legs) export well under 2.6 MB.
   const frames = 60;
   // Ground level: the lowest the foot ever goes, so feet touch y = 0 at the bottom of the stance.
   let lowest = Infinity;
@@ -65,29 +70,33 @@ export function createStrandbeest(options: StrandbeestOptions = {}): Project {
   const project: Project = { version: 1, name, parts: [], bones: [{ name: 'root', parent: null, position: [0, axleHeight, 0], rotation: [0, 0, 0, 1], pose: [0, 0, 0, 1] }], clips: [], shells: [] };
   const spacing = options.spacing ?? 0.42, inner = 0.32;
   const sideX = (side: number, pair: number) => side * (inner + pair * spacing);
-  // Leg-space (x forward, y up) to root-local space (z forward, y up) at a given side offset.
-  const world = (p: P2, x: number): Vec3 => [x, p[1] * scale, p[0] * scale];
+  // Leg-space (x forward, y up) to root-local space (z forward, y up) at a given side offset. A back-facing
+  // leg (facing -1) is the linkage mirrored through the vertical plane of the crankshaft, so its foot path
+  // lies ahead of the axle where the front-facing leg's lies behind it.
+  const world = (p: P2, x: number, facing: number): Vec3 => [x, p[1] * scale, facing * p[0] * scale];
+  // The same crank pin seen from the mirrored leg: (m cos t, m sin t) reflected in x is the angle pi - t.
+  const crank = (theta: number, facing: number) => (facing < 0 ? Math.PI - theta : theta);
   const rodQuaternion = (from: Vec3, to: Vec3): Quat => new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), new Vector3(to[0] - from[0], to[1] - from[1], to[2] - from[2]).normalize()).toArray() as Quat;
 
   const patterns = options.patterns ?? { walk: Array.from({ length: pairs }, (_, pair) => pair / pairs) };
   for (const [clipName, offsets] of Object.entries(patterns)) if (offsets.length !== pairs) throw new Error(`Expected ${pairs} crank offsets for ${clipName}, received ${offsets.length}`);
-  const legs: { prefix: string; x: number; phase: number }[] = [];
-  for (let pair = 0; pair < pairs; pair++) for (const side of [-1, 1]) {
-    const prefix = `leg_${side < 0 ? 'L' : 'R'}_${pair + 1}`, x = sideX(side, pair), phase = 2 * Math.PI * pair / pairs;
+  const legs: { prefix: string; x: number; facing: number; pair: number }[] = [];
+  for (let pair = 0; pair < pairs; pair++) for (const side of [-1, 1]) for (const facing of [1, -1]) {
+    const prefix = `leg_${side < 0 ? 'L' : 'R'}_${pair + 1}${facing > 0 ? 'f' : 'b'}`, x = sideX(side, pair), phase = 2 * Math.PI * pair / pairs;
     // Rest pose spreads the cranks evenly whatever the patterns, so every clip starts from the same rig.
-    legs.push({ prefix, x, phase });
-    const rest = solveJansenLeg(phase);
+    legs.push({ prefix, x, facing, pair });
+    const rest = solveJansenLeg(crank(phase, facing));
     for (const [rod, [from, to]] of Object.entries(RODS)) {
-      const start = world(rest[from], x), end = world(rest[to], x);
+      const start = world(rest[from], x, facing), end = world(rest[to], x, facing);
       project.bones.push({ name: `${prefix}_${rod}`, parent: 'root', position: start, rotation: rodQuaternion(start, end), pose: [0, 0, 0, 1] });
       const length = JANSEN[rod as keyof typeof JANSEN] * scale;
-      project.parts.push({ name: `${prefix}_${rod}_rod`, geometry: { type: 'capsule', size: [rod === 'm' ? 0.05 : 0.035, length, rod === 'm' ? 0.05 : 0.035], segments: 7 }, color: rod === 'm' ? dark : tube, position: [0, length / 2, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: `${prefix}_${rod}` } });
+      project.parts.push({ name: `${prefix}_${rod}_rod`, geometry: { type: 'capsule', size: [rod === 'm' ? 0.05 : 0.035, length, rod === 'm' ? 0.05 : 0.035], segments: 5 }, color: rod === 'm' ? dark : tube, position: [0, length / 2, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: `${prefix}_${rod}` } });
     }
-    project.bones.push({ name: `${prefix}_foot`, parent: 'root', position: world(rest.F, x), rotation: [0, 0, 0, 1], pose: [0, 0, 0, 1] });
-    const fw = world(rest.F, x);
+    project.bones.push({ name: `${prefix}_foot`, parent: 'root', position: world(rest.F, x, facing), rotation: [0, 0, 0, 1], pose: [0, 0, 0, 1] });
+    const fw = world(rest.F, x, facing);
     project.parts.push({ name: `${prefix}_foot_pad`, geometry: { type: 'sphere', size: [0.09, 0.06, 0.12], segments: 8 }, color: dark, position: [fw[0], fw[1] + axleHeight, fw[2]], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: `${prefix}_foot` } });
     // The fixed frame of this leg: axle to pivot, rigid with the body.
-    const o = world(rest.O, x), p = world(rest.P, x), frameLength = Math.hypot(JANSEN.a, JANSEN.l) * scale;
+    const o = world(rest.O, x, facing), p = world(rest.P, x, facing), frameLength = Math.hypot(JANSEN.a, JANSEN.l) * scale;
     project.parts.push({ name: `${prefix}_frame`, geometry: { type: 'capsule', size: [0.04, frameLength, 0.04], segments: 7 }, color: frameColor, position: [(o[0] + p[0]) / 2, (o[1] + p[1]) / 2 + axleHeight, (o[2] + p[2]) / 2], rotation: rodQuaternion(o, p), scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: 'root' } });
   }
   // Body: the crankshaft across the pairs and a backbone tube above it.
@@ -116,17 +125,16 @@ export function createStrandbeest(options: StrandbeestOptions = {}): Project {
       tracks[0].keys.push({ time, value: [0, 0.01 * (1 - Math.cos(2 * Math.PI * pairs * t)), 0] });
       let index = 1;
       for (const leg of legs) {
-        const pair = Number(leg.prefix.split('_')[2]) - 1;
-        const solved = solveJansenLeg(2 * Math.PI * (offsets[pair] + t));
+        const solved = solveJansenLeg(crank(2 * Math.PI * (offsets[leg.pair] + t), leg.facing));
         for (const [rod, [from, to]] of Object.entries(RODS)) {
           const bone = restOf.get(`${leg.prefix}_${rod}`)!;
-          const start = world(solved[from], leg.x), end = world(solved[to], leg.x);
+          const start = world(solved[from], leg.x, leg.facing), end = world(solved[to], leg.x, leg.facing);
           const absolute = new Quaternion(...rodQuaternion(start, end));
           const offset = new Quaternion(...bone.rotation).invert().multiply(absolute).normalize();
           tracks[index++].keys.push({ time, value: [start[0] - bone.position[0], start[1] - bone.position[1], start[2] - bone.position[2]] });
           tracks[index++].keys.push({ time, value: offset.toArray() as Quat });
         }
-        const foot = restOf.get(`${leg.prefix}_foot`)!, f = world(solved.F, leg.x);
+        const foot = restOf.get(`${leg.prefix}_foot`)!, f = world(solved.F, leg.x, leg.facing);
         tracks[index++].keys.push({ time, value: [f[0] - foot.position[0], f[1] - foot.position[1], f[2] - foot.position[2]] });
       }
     }
