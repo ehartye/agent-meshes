@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Box3, Mesh, SkinnedMesh, Vector3 } from 'three';
+import { Box3, Color, Mesh, SkinnedMesh, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { applyOperation, createProject, validateProject } from '../src/core/model.ts';
 import { buildScene } from '../src/render/scene.ts';
 import { exportGLB, verifyGLB } from '../src/export.ts';
 import { shellField } from '../src/render/shell.ts';
+import { patternColor } from '../src/render/pattern.ts';
 
 function twoSpheres(bound = true) {
   let p = createProject('blob');
@@ -99,6 +100,26 @@ describe('organic shell', () => {
     expect(names).toEqual(['body']);
   });
 
+  it('paints a pattern over the blended colors before ambient occlusion, in world space', () => {
+    const p = twoSpheres(false);
+    const dots = { type: 'dots' as const, color: '#00ff00', size: 0.2 };
+    const built = buildScene(applyOperation(p, { op: 'shell.set', shell: { ...p.shells![0], pattern: dots } }));
+    try {
+      const shell = built.root.getObjectByName('body') as Mesh;
+      const pos = shell.geometry.getAttribute('position'), col = shell.geometry.getAttribute('color');
+      let inked = 0, plain = 0;
+      for (let i = 0; i < pos.count; i++) {
+        const point: [number, number, number] = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+        // Green where the dot lands, member color elsewhere; both scaled by the same occlusion term, so hue survives.
+        if (Math.abs(pos.getX(i)) < 0.15) continue;
+        const expected = patternColor(dots, new Color(pos.getX(i) < 0 ? '#ff0000' : '#0000ff'), point);
+        const green = col.getY(i) > col.getX(i) + col.getZ(i);
+        if (expected.g > 0.5) { expect(green).toBe(true); inked++; } else { expect(green).toBe(false); plain++; }
+      }
+      expect(inked).toBeGreaterThan(20); expect(plain).toBeGreaterThan(20);
+      expect(shell.userData.pattern).toEqual(dots);
+    } finally { built.dispose(); }
+  });
   it('produces the same geometry as before when no cut is given', () => {
     const built = buildScene(twoSpheres());
     try {

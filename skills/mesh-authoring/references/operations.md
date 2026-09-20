@@ -36,6 +36,7 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
 ```json
 {"op":"shell.set","shell":{"name":"skin","parts":["body","neck","head"],"blend":0.12,"resolution":48}}
 {"op":"shell.set","shell":{"name":"figure","parts":["torso","hip"],"cut":["hole"],"blend":0.08,"resolution":48}}
+{"op":"shell.set","shell":{"name":"skin","parts":["body","neck","head"],"blend":0.12,"resolution":48,"pattern":{"type":"dots","color":"#ffffff","size":0.12}}}
 {"op":"shell.remove","name":"skin"}
 ```
 
@@ -45,7 +46,10 @@ smoother, smaller keeps definition). `resolution` is grid cells along the longes
 fast, and a later Blender subdivision multiplies it). Members must all be rigid-bound or all
 unbound. Colors and bone weights come from the member that owns each point. `cut` lists parts
 subtracted from the surface with the same blend (holes, hollows); a cutter is hidden like a
-member, adds no color or weight, cannot also be a member, and is carved where it sits at rest.
+member, adds no color or weight, cannot also be a member, and is carved where it sits at rest. An optional `pattern`
+(`dots`, `stripes` or `checks` of a `color`, `size` in meters, `axis` default `y`, optional `offset`) paints
+over the blended colors in world space; parts take the same `pattern` field, and `update` with
+`{"pattern":null}` removes it. The viewer can swap it later with `setPattern` without a remesh.
 
 ## Bones and bindings
 

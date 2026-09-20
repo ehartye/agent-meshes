@@ -31,14 +31,27 @@ export function validateGeometry(g: Part['geometry']): void {
 }
 /** Surface finish: metalness 0 is paint or plastic, 1 is bare metal; roughness 0 is a mirror, 1 is chalk. Absent means the scene's default finish. */
 export const materialSchema = z.object({ metalness: z.number().min(0).max(1).default(0), roughness: z.number().min(0).max(1).default(0.65) }).strict();
+const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+/** A painted pattern baked into vertex colors in world space. `size` is the dot spacing, stripe period or check size in meters. */
+export const patternSchema = z.object({
+  type: z.enum(['dots', 'stripes', 'checks']), color: colorSchema,
+  size: z.number().positive().max(100),
+  /** Stripes cross this axis; checks tile the two axes perpendicular to it. Default y. */
+  axis: z.enum(['x', 'y', 'z']).optional(),
+  /** World-space shift of the pattern, in meters. */
+  offset: vec3Schema.optional(),
+}).strict();
 export const partSchema = z.object({
-  name: nameSchema, geometry: geometrySchema, color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  name: nameSchema, geometry: geometrySchema, color: colorSchema,
   position: vec3Schema, rotation: quatSchema,
   scale: vec3Schema.refine(v => v.every(n => n > 0 && n <= 1000), 'Scale must be positive'),
   parent: nameSchema.nullable(),
   binding: bindingSchema.optional(),
   material: materialSchema.optional(),
+  pattern: patternSchema.optional(),
 }).strict();
+/** `update` changes: any part field but the name; `pattern: null` removes a pattern. */
+export const partChangesSchema = partSchema.omit({ name: true }).partial().extend({ pattern: patternSchema.nullable().optional() });
 export const shellSchema = z.object({
   name: nameSchema, parts: z.array(nameSchema).min(1).max(200),
   /** Parts subtracted from the field (holes and hollows); never rendered on their own, never a member. */
@@ -48,6 +61,7 @@ export const shellSchema = z.object({
   /** Grid cells along the longest axis, 16 to 96. */
   resolution: z.number().int().min(16).max(96),
   material: materialSchema.optional(),
+  pattern: patternSchema.optional(),
 }).strict();
 export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]), shells: z.array(shellSchema).max(50).default([]) }).strict();
 function validateShells(project: Project): void {
@@ -126,9 +140,10 @@ export function applyOperation(project: Project, operation: Operation): Project 
     case 'update': {
       const part = next.parts.find(p => p.name === operation.name);
       if (!part) throw new Error(`Unknown part: ${operation.name}`);
-      const changes = partSchema.omit({ name: true }).partial().parse(operation.changes);
+      const { pattern, ...changes } = partChangesSchema.parse(operation.changes);
       if (part.binding && changes.geometry) throw new Error('Unbind the part before changing its geometry');
       Object.assign(part, changes);
+      if (pattern === null) delete part.pattern; else if (pattern) part.pattern = pattern;
       break;
     }
     case 'remove': {

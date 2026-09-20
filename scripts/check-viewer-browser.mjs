@@ -50,13 +50,22 @@ try {
         viewer.resetPose(); viewer.play('trot');
         await new Promise(resolve => setTimeout(resolve, 250));
         const played = viewer.screenshot();
-        viewer.view('front'); const front = viewer.screenshot();
-        return { head, part, color: viewer.getColor(part), matte, material: viewer.getMaterial(part), pose: viewer.getPose(head), changedByPose: before !== posed, changedByColor: posed !== recolored, changedByMaterial: recolored !== chromed, changedByPlay: chromed !== played, time: viewer.time, clip: viewer.clip, front };
+        viewer.view('front'); const front = viewer.screenshot(), time = viewer.time, clip = viewer.clip;
+        // Patterns re-bake in place: dots change the frame, null restores the flat part's look, getPattern reports.
+        viewer.pause(); viewer.seek(0);
+        const plain = viewer.screenshot(); viewer.setPattern(part, { type: 'dots', color: '#ffffff', size: 0.05 });
+        const dotted = viewer.screenshot(), pattern = viewer.getPattern(part); viewer.setPattern(part, null);
+        const restored = viewer.screenshot(); viewer.play('trot');
+        return { head, part, color: viewer.getColor(part), matte, material: viewer.getMaterial(part), pose: viewer.getPose(head), changedByPose: before !== posed, changedByColor: posed !== recolored, changedByMaterial: recolored !== chromed, changedByPlay: chromed !== played, time, clip, front, changedByPattern: plain !== dotted, restoredByNull: restored === plain, pattern, cleared: viewer.getPattern(part) };
       });
       assert.equal(result.changedByPose, true, 'posing a bone changes the rendered frame');
       assert.equal(result.changedByColor, true, 'recoloring a part changes the rendered frame');
       assert.equal(result.changedByMaterial, true, 'switching a part to chrome changes the rendered frame');
       assert.equal(result.changedByPlay, true, 'playing a clip changes the rendered frame');
+      assert.equal(result.changedByPattern, true, 'painting dots on a part changes the rendered frame');
+      assert.equal(result.restoredByNull, true, 'clearing the pattern restores the frame');
+      assert.deepEqual(result.pattern, { type: 'dots', color: '#ffffff', size: 0.05 });
+      assert.equal(result.cleared, null);
       assert.equal(result.color, '#ff0066');
       assert.deepEqual(result.matte, { metalness: 0.08, roughness: 0.65 });
       assert.deepEqual(result.material, { metalness: 1, roughness: 0.1 });

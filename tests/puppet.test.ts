@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { Quaternion, Vector3 } from 'three';
+import { Mesh, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
+import type { Pattern } from '../src/core/types.ts';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { applyOperation, createProject } from '../src/core/model.ts';
 import { exportGLB } from '../src/export.ts';
@@ -120,6 +121,65 @@ describe('puppet', () => {
     expect(puppet.bounds().max.z).toBeGreaterThan(1.05);
     puppet.resetPose();
     expect(puppet.bounds().min.y).toBeCloseTo(rest.min.y, 3);
+  });
+
+  it('swaps a shell pattern in place from kept base colors and restores the original on null', async () => {
+    let p = createProject('nana');
+    p = applyOperation(p, { op: 'add', part: { name: 'hip', geometry: { type: 'sphere', size: [0.8, 0.8, 0.8] }, position: [0, 0.5, 0], color: '#ff0000' } });
+    p = applyOperation(p, { op: 'add', part: { name: 'chest', geometry: { type: 'sphere', size: [0.6, 0.6, 0.6] }, position: [0, 1.1, 0], color: '#ffaa00' } });
+    const dots: Pattern = { type: 'dots', color: '#ffffff', size: 0.2 }, stripes: Pattern = { type: 'stripes', color: '#0000ff', size: 0.3 };
+    p = applyOperation(p, { op: 'shell.set', shell: { name: 'body', parts: ['hip', 'chest'], blend: 0.3, resolution: 24, pattern: dots } });
+    const bytes = await exportGLB(p);
+    const puppet = createPuppet(await new GLTFLoader().parseAsync(bytes.slice().buffer, ''));
+    const mesh = puppet.object('body'), color = mesh.geometry.getAttribute('color');
+    const snapshot = () => Array.from(color.array);
+    const dotted = snapshot();
+    expect(puppet.getPattern('body')).toEqual(dots);
+    puppet.setPattern('body', stripes);
+    expect(puppet.getPattern('body')).toEqual(stripes);
+    const striped = snapshot();
+    expect(striped).not.toEqual(dotted);
+    let blue = 0; for (let i = 0; i < color.count; i++) if (color.getZ(i) > color.getX(i) + color.getY(i)) blue++;
+    expect(blue).toBeGreaterThan(color.count / 8);
+    // Idempotent: back to dots gives the export exactly; null gives the un-patterned shell, still shaded by its occlusion.
+    puppet.setPattern('body', dots);
+    expect(snapshot()).toEqual(dotted);
+    puppet.setPattern('body', null);
+    expect(puppet.getPattern('body')).toBeNull();
+    const plain = snapshot();
+    expect(plain).not.toEqual(dotted);
+    const base = mesh.geometry.getAttribute('color_1');
+    for (let i = 0; i < color.count; i++) { expect(color.getX(i)).toBeCloseTo(base.getX(i) * base.getW(i), 5); expect(color.getY(i)).toBeCloseTo(base.getY(i) * base.getW(i), 5); }
+    puppet.setPattern('body', dots);
+    expect(snapshot()).toEqual(dotted);
+    expect(mesh.geometry.getAttribute('color').needsUpdate || (mesh.geometry.getAttribute('color') as { version: number }).version > 0).toBe(true);
+  });
+
+  it('patterns a flat part by moving its material color into kept base colors', async () => {
+    const puppet = await load();
+    const hat = puppet.object('hat') as Mesh, material = hat.material as MeshStandardMaterial;
+    expect(hat.geometry.getAttribute('color')).toBeUndefined();
+    expect(puppet.getPattern('hat')).toBeNull();
+    puppet.setPattern('hat', { type: 'checks', color: '#00ff00', size: 0.1 });
+    expect(material.vertexColors).toBe(true); expect(material.color.getHexString()).toBe('ffffff');
+    const color = hat.geometry.getAttribute('color'), base = hat.geometry.getAttribute('color_1');
+    expect(color.count).toBe(hat.geometry.getAttribute('position').count);
+    let green = 0, red = 0;
+    for (let i = 0; i < color.count; i++) { if (color.getY(i) > 0.5) green++; else if (color.getX(i) > 0.5) red++; }
+    expect(green).toBeGreaterThan(0); expect(red).toBeGreaterThan(0);
+    expect(base.getX(0)).toBeCloseTo(new MeshStandardMaterial({ color: '#cc3333' }).color.r, 5);
+    // The part's color still reads and writes as a color: setColor recolors the base under the checks, not the ink.
+    expect(puppet.getColor('hat')).toBe('#cc3333');
+    puppet.setColor('hat', '#0000ff');
+    expect(puppet.getColor('hat')).toBe('#0000ff');
+    expect(material.color.getHexString()).toBe('ffffff');
+    let blue = 0; green = 0;
+    for (let i = 0; i < color.count; i++) { if (color.getY(i) > 0.5) green++; else if (color.getZ(i) > 0.5) blue++; }
+    expect(green).toBeGreaterThan(0); expect(blue).toBeGreaterThan(0);
+    puppet.setPattern('hat', null);
+    for (let i = 0; i < color.count; i++) expect(color.getX(i)).toBeCloseTo(base.getX(0), 5);
+    expect(puppet.getColor('hat')).toBe('#0000ff');
+    expect(() => puppet.setPattern('nope', null)).toThrow(/Unknown part: nope/);
   });
 
   it('rejects unknown names', async () => {

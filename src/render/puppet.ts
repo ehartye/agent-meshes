@@ -1,5 +1,7 @@
 import { Bone, Box3, Color, Euler, Material, MathUtils, Mesh, Object3D, PropertyBinding, Quaternion, SkinnedMesh, Vector3 } from 'three';
 import type { AnimationClip, Interpolant } from 'three';
+import { bakePattern, uniformBase } from './pattern.ts';
+import type { Pattern } from '../core/types.ts';
 
 /** A pose offset applied on top of the rest pose and any playing clip. Rotation is XYZ Euler degrees; scale multiplies the bone and everything it carries. */
 export interface PoseInput { rotation?: [number, number, number]; position?: [number, number, number]; scale?: [number, number, number] }
@@ -35,6 +37,9 @@ export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[
   const bone = (name: string): Bone => { const value = bones.get(name); if (!value) throw new Error(`Unknown bone: ${name}`); return value; };
   const object = (name: string): Mesh => { const value = parts.get(name); if (!value) throw new Error(`Unknown part: ${name}`); return value; };
   const clipOf = (name: string): AnimationClip => { const value = clips.get(name); if (!value) throw new Error(`Unknown clip: ${name}`); return value; };
+  /** The uniform base colors of a patterned part (not a shell, whose base is a per-vertex blend). */
+  const partBase = (mesh: Mesh) => mesh.userData.shell ? null : mesh.geometry.getAttribute('color_1') ?? null;
+  const rebake = (mesh: Mesh) => bakePattern(mesh.geometry, mesh.userData.pattern as Pattern | undefined, mesh instanceof SkinnedMesh ? mesh.bindMatrix : mesh.matrixWorld);
 
   /** Rest, then the clip sample, then offsets. Resetting first keeps un-animated bones from accumulating. */
   function apply(): void {
@@ -85,8 +90,17 @@ export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[
     },
     /** Clear one bone's offset, or all offsets. */
     resetPose(name?: string): void { if (name === undefined) offsets.clear(); else { bone(name); offsets.delete(name); } apply(); },
-    setColor(name: string, hex: string): void { (object(name).material as Material & { color: Color }).color.set(hex); },
-    getColor(name: string): string { return `#${(object(name).material as Material & { color: Color }).color.getHexString()}`; },
+    /** A patterned part keeps its color in the base attribute under the ink; a plain part in its material; a shell tints through its material. */
+    setColor(name: string, hex: string): void {
+      const mesh = object(name), base = partBase(mesh);
+      if (!base) { (mesh.material as Material & { color: Color }).color.set(hex); return; }
+      const c = new Color(hex); for (let i = 0; i < base.count; i++) base.setXYZ(i, c.r, c.g, c.b);
+      base.needsUpdate = true; rebake(mesh);
+    },
+    getColor(name: string): string {
+      const mesh = object(name), base = partBase(mesh);
+      return `#${(base ? new Color().setRGB(base.getX(0), base.getY(0), base.getZ(0)) : (mesh.material as Material & { color: Color }).color).getHexString()}`;
+    },
     /** Set a part's finish, 0 to 1 each: metalness 1 is bare metal, roughness 0 a mirror. Omitted fields keep their value. */
     setMaterial(name: string, finish: MaterialInput): void {
       const material = object(name).material as Material & MaterialValues;
@@ -98,6 +112,23 @@ export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[
       }
     },
     getMaterial(name: string): MaterialValues { const material = object(name).material as Material & MaterialValues; return { metalness: material.metalness, roughness: material.roughness }; },
+    /**
+     * Re-bake a painted pattern (or none) into the mesh's vertex colors at its bind-pose world points, instantly and
+     * without a remesh. Shells and patterned parts export their un-patterned base colors as COLOR_1 (rgb plus the
+     * occlusion shade), so swapping patterns is idempotent; a flat part gets a uniform base from its material color the
+     * first time and carries its color in the vertices from then on, where setColor and getColor still find it.
+     */
+    setPattern(name: string, pattern: Pattern | null): void {
+      const mesh = object(name), geometry = mesh.geometry, material = mesh.material as Material & { color: Color; vertexColors: boolean };
+      if (!geometry.getAttribute('color_1')) {
+        geometry.setAttribute('color_1', uniformBase(geometry.getAttribute('position').count, material.color));
+        material.color.set('#ffffff'); material.vertexColors = true; material.needsUpdate = true;
+      }
+      if (pattern) mesh.userData.pattern = structuredClone(pattern); else delete mesh.userData.pattern;
+      rebake(mesh);
+    },
+    /** The pattern baked into a mesh, from the export or the last setPattern; null when it is plain. */
+    getPattern(name: string): Pattern | null { return (object(name).userData.pattern as Pattern | undefined) ?? null; },
     setVisible(name: string, visible: boolean): void { object(name).visible = visible; },
     /** Play a clip by name, or resume the current one. */
     play(name?: string): void { if (name !== undefined && name !== current) select(name); else if (current === null && clips.size) select([...clips.keys()][0]); playing = true; },
