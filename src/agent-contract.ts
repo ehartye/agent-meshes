@@ -59,6 +59,7 @@ const examples: Record<Operation['op'], Operation[]> = {
   'shell.set': [
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, resolution: 48 } },
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], cut: ['hole'], blend: 0.12, resolution: 48 } },
+    { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, colorBlend: 0, resolution: 48 } },
     { op: 'shell.set', shell: { name: 'steel', parts: ['body', 'head'], blend: 0.12, resolution: 48, material: { metalness: 1, roughness: 0.1 } } },
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, resolution: 48, pattern: { type: 'stripes', color: '#ffffff', size: 0.2, axis: 'y' } } },
   ],
@@ -78,7 +79,7 @@ const descriptions: Record<Operation['op'], string> = {
   unbind: 'Remove an existing part binding.',
   'clip.set': 'Create or replace an entire named clip. Every track must span zero through duration with strictly increasing key times.',
   'clip.remove': 'Remove an existing named clip.',
-  'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point. Optional cut lists parts subtracted from the surface (holes and hollows) with the same blend; cutters are hidden like members, contribute no color or weight, and cannot also be members. An optional material (metalness, roughness, 0 to 1) sets the finish of the whole shell. An optional pattern (dots, stripes or checks) is painted over the blended colors in world space, before ambient occlusion.',
+  'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point. Optional colorBlend (meters, min 0) is the width of the band where member colors mix: default half of blend, 0 gives hard-edged patches by ownership; bone weights are unaffected. Optional cut lists parts subtracted from the surface (holes and hollows) with the same blend; cutters are hidden like members, contribute no color or weight, and cannot also be members. An optional material (metalness, roughness, 0 to 1) sets the finish of the whole shell. An optional pattern (dots, stripes or checks) is painted over the blended colors in world space, before ambient occlusion.',
   'shell.remove': 'Remove a shell; its member parts render individually again.',
   'assembly.copy': 'Copy a bone subtree with its bound parts and clip tracks under a prefix, optionally mirrored and offset in the root parent frame.',
   'pose.target': 'Pose a three-bone parent-child chain with two-link IK so the end bone reaches a world-space target, bending toward the pole.',

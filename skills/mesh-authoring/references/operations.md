@@ -36,6 +36,7 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
 ```json
 {"op":"shell.set","shell":{"name":"skin","parts":["body","neck","head"],"blend":0.12,"resolution":48}}
 {"op":"shell.set","shell":{"name":"figure","parts":["torso","hip"],"cut":["hole"],"blend":0.08,"resolution":48}}
+{"op":"shell.set","shell":{"name":"nana","parts":["torso","left_leg","right_leg"],"blend":0.10,"colorBlend":0,"resolution":48}}
 {"op":"shell.set","shell":{"name":"skin","parts":["body","neck","head"],"blend":0.12,"resolution":48,"pattern":{"type":"dots","color":"#ffffff","size":0.12}}}
 {"op":"shell.remove","name":"skin"}
 ```
@@ -44,7 +45,10 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
 smoother, smaller keeps definition). `resolution` is grid cells along the longest axis, 16 to 96;
 48 is a good default, 32 for a quick look, above 64 only for hero models (vertex count grows
 fast, and a later Blender subdivision multiplies it). Members must all be rigid-bound or all
-unbound. Colors and bone weights come from the member that owns each point. `cut` lists parts
+unbound. Colors and bone weights come from the member that owns each point. `colorBlend` (meters,
+min 0, default half of `blend`) is the width of the band where neighbouring members' colors mix:
+`0` gives hard-edged color patches by ownership, for a figure whose parts are painted in flat
+blocks of color; skin weights keep their own band either way. `cut` lists parts
 subtracted from the surface with the same blend (holes, hollows); a cutter is hidden like a
 member, adds no color or weight, cannot also be a member, and is carved where it sits at rest. An optional `pattern`
 (`dots`, `stripes` or `checks` of a `color`, `size` in meters, `axis` default `y`, optional `offset`) paints
