@@ -38,6 +38,8 @@ export const partSchema = z.object({
 }).strict();
 export const shellSchema = z.object({
   name: nameSchema, parts: z.array(nameSchema).min(1).max(200),
+  /** Parts subtracted from the field (holes and hollows); never rendered on their own, never a member. */
+  cut: z.array(nameSchema).max(200).optional(),
   /** Blend radius in meters: how far two members reach toward each other before they merge. */
   blend: z.number().positive().max(10),
   /** Grid cells along the longest axis, 16 to 96. */
@@ -59,6 +61,15 @@ function validateShells(project: Project): void {
     }
     const bound = shell.parts.filter(name => project.parts.find(p => p.name === name)!.binding);
     if (bound.length && bound.length !== shell.parts.length) throw new Error(`Shell ${shell.name} mixes bound and unbound parts`);
+    const cut = shell.cut ?? [];
+    if (new Set(cut).size !== cut.length) throw new Error(`Shell ${shell.name} lists a cutter twice`);
+    for (const name of cut) {
+      const part = project.parts.find(p => p.name === name);
+      if (!part) throw new Error(`Unknown shell cutter: ${name}`);
+      if (shell.parts.includes(name)) throw new Error(`Shell ${shell.name}: ${name} cannot be both a member and a cutter`);
+      if (part.geometry.type === 'group') throw new Error(`Shell ${shell.name} cannot cut with group ${name}`);
+      if (part.binding && part.binding.type !== 'rigid') throw new Error(`Shell ${shell.name} cutter ${name} must be rigid-bound or unbound`);
+    }
   }
 }
 
@@ -119,7 +130,7 @@ export function applyOperation(project: Project, operation: Operation): Project 
     case 'remove': {
       if (!next.parts.some(p => p.name === operation.name)) throw new Error(`Unknown part: ${operation.name}`);
       if (next.parts.some(p => p.parent === operation.name)) throw new Error('Remove or reparent child parts first');
-      for (const shell of next.shells ?? []) if (shell.parts.includes(operation.name)) throw new Error(`Part ${operation.name} belongs to shell ${shell.name}; remove it from the shell first`);
+      for (const shell of next.shells ?? []) if (shell.parts.includes(operation.name) || shell.cut?.includes(operation.name)) throw new Error(`Part ${operation.name} belongs to shell ${shell.name}; remove it from the shell first`);
       next.parts = next.parts.filter(p => p.name !== operation.name);
       break;
     }

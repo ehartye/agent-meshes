@@ -10,7 +10,7 @@ export function buildScene(project: Project) {
   const { bones, skeleton } = createSkeleton(project, root);
   const objects = new Map<string, Object3D>();
   const shells = project.shells ?? [];
-  const shelled = new Set(shells.flatMap(shell => shell.parts));
+  const shelled = new Set(shells.flatMap(shell => [...shell.parts, ...(shell.cut ?? [])]));
   for (const part of project.parts) {
     // Shell members stay in the hierarchy as empty groups so children and transforms still resolve.
     const geometry = part.geometry.type === 'group' || shelled.has(part.name) ? null : partGeometry(part);
