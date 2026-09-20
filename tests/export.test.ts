@@ -142,3 +142,24 @@ it('exports patterned parts and shells with baked COLOR_0 and un-patterned COLOR
   }
   expect((gltf.scene.getObjectByName('plain') as Mesh).geometry.getAttribute('color')).toBeUndefined();
 });
+
+it('shares one glTF skin between parts that bind the same skeleton identically', async () => {
+  let project = animatedProject();
+  project = applyOperation(project, { op: 'add', part: { name: 'forearm', geometry: { type: 'box', size: [0.3, 1, 0.3] }, position: [0, 1.5, 0] } });
+  project = applyOperation(project, { op: 'bind', name: 'forearm', binding: { type: 'rigid', bone: 'elbow' } });
+  const bytes = await exportGLB(project);
+  expect((await verifyGLB(bytes)).errors).toBe(0);
+  // Each skinned mesh lists every joint with a 64-byte inverse bind matrix; a rig of a hundred
+  // rods on a hundred bones would otherwise repeat the same block a hundred times over.
+  const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + new DataView(bytes.buffer, bytes.byteOffset).getUint32(12, true))));
+  expect(json.meshes).toHaveLength(2);
+  expect(json.skins).toHaveLength(1);
+  expect(json.nodes.filter((node: { skin?: number }) => node.skin === 0)).toHaveLength(2);
+  const gltf = await new GLTFLoader().parseAsync(bytes.slice().buffer as ArrayBuffer, '');
+  const mixer = new AnimationMixer(gltf.scene);
+  mixer.clipAction(gltf.animations[0]).play(); mixer.setTime(0.5); gltf.scene.updateMatrixWorld(true);
+  const forearm = gltf.scene.getObjectByName('forearm') as SkinnedMesh, positions = forearm.geometry.getAttribute('position');
+  const vertex = new Vector3().fromBufferAttribute(positions, 0);
+  // The second part still deforms with the elbow through the shared skin.
+  expect(forearm.applyBoneTransform(0, vertex.clone()).distanceTo(vertex)).toBeGreaterThan(0.5);
+});

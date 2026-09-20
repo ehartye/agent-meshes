@@ -38,10 +38,36 @@ describe("Jansen's linkage", () => {
 });
 
 describe('strandbeest recipe', () => {
-  it('takes crank offset patterns, one clip each, and a six-pair beest stays on its feet only when the cranks are spread', () => {
-    const project = createStrandbeest({ pairs: 6, patterns: { together: [0, 0, 0, 0, 0, 0], turn: [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6], teams: [0, 0.5, 0, 0.5, 0, 0.5] } });
+  it('drives a front-facing and a back-facing leg from every crank pin so the feet straddle the crankshaft', () => {
+    const project = createStrandbeest({ pairs: 3 });
+    // Four legs per crank position: L and R sides, each with an f (front) and a b (back) facing leg.
+    const feet = project.bones.filter(b => /^leg_[LR]_\d+[fb]_foot$/.test(b.name));
+    expect(feet).toHaveLength(12);
+    // The front leg's foot path lies behind the axle (z < 0); its back-facing twin mirrors it to z > 0.
+    for (let pair = 1; pair <= 3; pair++) for (const side of ['L', 'R']) {
+      const front = feet.find(b => b.name === `leg_${side}_${pair}f_foot`)!, back = feet.find(b => b.name === `leg_${side}_${pair}b_foot`)!;
+      expect(front.position[2]).toBeLessThan(0);
+      expect(back.position[2]).toBeGreaterThan(0);
+      expect(front.position[2] * back.position[2]).toBeLessThan(0);
+      expect(front.position[0]).toBeCloseTo(back.position[0], 6);
+    }
+    // Feet are root-local, and the root is the axle: the machine stands over its feet, not beside them.
+    const meanZ = feet.reduce((sum, b) => sum + b.position[2], 0) / feet.length;
+    expect(Math.abs(meanZ)).toBeLessThan(0.1);
+    // Both facings share the crank pin: the m rods of a front and back twin start at the same axle point.
+    const mf = project.bones.find(b => b.name === 'leg_L_2f_m')!, mb = project.bones.find(b => b.name === 'leg_L_2b_m')!;
+    expect(mf.position).toEqual(mb.position);
+  });
+
+  it('exports three crank positions (twelve legs) under 2.7 MB', async () => {
+    const bytes = await exportGLB(createStrandbeest({ pairs: 3 }));
+    expect(bytes.byteLength).toBeLessThan(2_700_000);
+  });
+
+  it('takes crank offset patterns, one clip each, and a five-position beest stays on its feet only when the cranks are spread', () => {
+    const project = createStrandbeest({ pairs: 5, patterns: { together: [0, 0, 0, 0, 0], turn: [0, 0.2, 0.4, 0.6, 0.8], teams: [0, 0.5, 0, 0.5, 0] } });
     expect(project.clips.map(c => c.name)).toEqual(['together', 'turn', 'teams']);
-    expect(project.bones.filter(b => /_foot$/.test(b.name))).toHaveLength(12);
+    expect(project.bones.filter(b => /_foot$/.test(b.name))).toHaveLength(20);
     const fewest = (clipName: string) => {
       const built = buildScene(project);
       try {
@@ -57,15 +83,17 @@ describe('strandbeest recipe', () => {
     expect(fewest('turn')).toBeGreaterThanOrEqual(4);
     expect(fewest('teams')).toBeGreaterThanOrEqual(4);
     expect(() => createStrandbeest({ pairs: 3, patterns: { bad: [0, 0] } })).toThrow(/3 crank offsets/);
+    // Four legs of twelve bones per position: six positions would pass the project's 256-bone limit.
+    expect(() => createStrandbeest({ pairs: 6 })).toThrow(/at most 5 crank positions/);
   });
 
   it('builds a walking beast with mirrored leg pairs on one crankshaft and exports it', async () => {
     const project = createStrandbeest({ pairs: 3 });
-    expect(project.bones.filter(b => /^leg_[LR]_\d+_m$/.test(b.name))).toHaveLength(6);
+    expect(project.bones.filter(b => /^leg_[LR]_\d+[fb]_m$/.test(b.name))).toHaveLength(12);
     expect(project.clips.map(c => c.name)).toEqual(['walk']);
     // Rods are parts bound to their own bones; every rod bone has a position and a rotation track.
     const tracks = project.clips[0].tracks;
-    for (const rod of ['leg_L_1_b', 'leg_L_1_h', 'leg_R_3_j']) {
+    for (const rod of ['leg_L_1f_b', 'leg_L_1b_h', 'leg_R_3f_j']) {
       expect(tracks.some(t => t.bone === rod && t.property === 'rotation')).toBe(true);
       expect(tracks.some(t => t.bone === rod && t.property === 'position')).toBe(true);
     }
@@ -74,18 +102,25 @@ describe('strandbeest recipe', () => {
       const clip = built.clips[0];
       const mixer = new AnimationMixer(built.root); mixer.clipAction(clip).play();
       const feet = [...built.bones.values()].filter(b => /_foot$/.test(b.name));
-      expect(feet).toHaveLength(6);
-      let fewest = 6, ground = Infinity;
+      expect(feet).toHaveLength(12);
+      const facing = (letter: string) => feet.map((f, i) => [f, i] as const).filter(([f]) => new RegExp(`\\d${letter}_foot$`).test(f.name)).map(([, i]) => i);
+      let fewest = 12, fewestFront = 12, fewestBack = 12, ground = Infinity;
       const heights: number[][] = [];
       for (let frame = 0; frame < 120; frame++) {
         mixer.setTime(clip.duration * frame / 120); built.root.updateMatrixWorld(true);
         const ys = feet.map(f => f.getWorldPosition(new Vector3()).y); heights.push(ys); ground = Math.min(ground, ...ys);
       }
-      for (const ys of heights) fewest = Math.min(fewest, ys.filter(y => y < ground + 0.09).length);
-      // Three pairs at 120 degrees keep at least two feet down at all times.
-      expect(fewest).toBeGreaterThanOrEqual(2);
+      for (const ys of heights) {
+        fewest = Math.min(fewest, ys.filter(y => y < ground + 0.09).length);
+        fewestFront = Math.min(fewestFront, facing('f').filter(i => ys[i] < ground + 0.09).length);
+        fewestBack = Math.min(fewestBack, facing('b').filter(i => ys[i] < ground + 0.09).length);
+      }
+      // Three crank positions at 120 degrees keep at least two feet of each facing down at all times.
+      expect(fewest).toBeGreaterThanOrEqual(4);
+      expect(fewestFront).toBeGreaterThanOrEqual(2);
+      expect(fewestBack).toBeGreaterThanOrEqual(2);
       // Opposite legs of a pair mirror across the body: same height, opposite x.
-      const l = built.bones.get('leg_L_1_foot')!.getWorldPosition(new Vector3()), r = built.bones.get('leg_R_1_foot')!.getWorldPosition(new Vector3());
+      const l = built.bones.get('leg_L_1f_foot')!.getWorldPosition(new Vector3()), r = built.bones.get('leg_R_1f_foot')!.getWorldPosition(new Vector3());
       expect(l.y).toBeCloseTo(r.y, 5); expect(l.x).toBeCloseTo(-r.x, 5);
     } finally { built.dispose(); }
     expect((await verifyGLB(await exportGLB(project))).errors).toBe(0);
