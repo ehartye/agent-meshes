@@ -56,7 +56,8 @@ export interface StrandbeestOptions {
 export function createStrandbeest(options: StrandbeestOptions = {}): Project {
   const pairs = options.pairs ?? 3, scale = options.scale ?? 0.012, duration = options.duration ?? 2.4, name = options.name ?? 'Strandbeest';
   const tube = '#e6c84a', dark = '#3b3a30', frameColor = '#cfae37';
-  const frames = 96;
+  // 60 samples per turn keeps a twelve-legged beast's three clips under a couple of megabytes.
+  const frames = 60;
   // Ground level: the lowest the foot ever goes, so feet touch y = 0 at the bottom of the stance.
   let lowest = Infinity;
   for (let k = 0; k < frames; k++) lowest = Math.min(lowest, solveJansenLeg(2 * Math.PI * k / frames).F[1]);
@@ -80,14 +81,14 @@ export function createStrandbeest(options: StrandbeestOptions = {}): Project {
       const start = world(rest[from], x), end = world(rest[to], x);
       project.bones.push({ name: `${prefix}_${rod}`, parent: 'root', position: start, rotation: rodQuaternion(start, end), pose: [0, 0, 0, 1] });
       const length = JANSEN[rod as keyof typeof JANSEN] * scale;
-      project.parts.push({ name: `${prefix}_${rod}_rod`, geometry: { type: 'capsule', size: [rod === 'm' ? 0.05 : 0.035, length, rod === 'm' ? 0.05 : 0.035], segments: 10 }, color: rod === 'm' ? dark : tube, position: [0, length / 2, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: `${prefix}_${rod}` } });
+      project.parts.push({ name: `${prefix}_${rod}_rod`, geometry: { type: 'capsule', size: [rod === 'm' ? 0.05 : 0.035, length, rod === 'm' ? 0.05 : 0.035], segments: 7 }, color: rod === 'm' ? dark : tube, position: [0, length / 2, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: `${prefix}_${rod}` } });
     }
     project.bones.push({ name: `${prefix}_foot`, parent: 'root', position: world(rest.F, x), rotation: [0, 0, 0, 1], pose: [0, 0, 0, 1] });
     const fw = world(rest.F, x);
-    project.parts.push({ name: `${prefix}_foot_pad`, geometry: { type: 'sphere', size: [0.09, 0.06, 0.12], segments: 10 }, color: dark, position: [fw[0], fw[1] + axleHeight, fw[2]], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: `${prefix}_foot` } });
+    project.parts.push({ name: `${prefix}_foot_pad`, geometry: { type: 'sphere', size: [0.09, 0.06, 0.12], segments: 8 }, color: dark, position: [fw[0], fw[1] + axleHeight, fw[2]], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: `${prefix}_foot` } });
     // The fixed frame of this leg: axle to pivot, rigid with the body.
     const o = world(rest.O, x), p = world(rest.P, x), frameLength = Math.hypot(JANSEN.a, JANSEN.l) * scale;
-    project.parts.push({ name: `${prefix}_frame`, geometry: { type: 'capsule', size: [0.04, frameLength, 0.04], segments: 10 }, color: frameColor, position: [(o[0] + p[0]) / 2, (o[1] + p[1]) / 2 + axleHeight, (o[2] + p[2]) / 2], rotation: rodQuaternion(o, p), scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: 'root' } });
+    project.parts.push({ name: `${prefix}_frame`, geometry: { type: 'capsule', size: [0.04, frameLength, 0.04], segments: 7 }, color: frameColor, position: [(o[0] + p[0]) / 2, (o[1] + p[1]) / 2 + axleHeight, (o[2] + p[2]) / 2], rotation: rodQuaternion(o, p), scale: [1, 1, 1], parent: null, binding: { type: 'rigid', bone: 'root' } });
   }
   // Body: the crankshaft across the pairs and a backbone tube above it.
   const span = 2 * (inner + (pairs - 1) * spacing) + 0.3;
