@@ -128,6 +128,33 @@ describe('organic shell', () => {
       expect(g.index!.count).toBe(3876);
     } finally { built.dispose(); }
   });
+  it('colorBlend 0 paints hard patches by member ownership without touching the skin weights', () => {
+    const p = twoSpheres();
+    const built = buildScene(applyOperation(p, { op: 'shell.set', shell: { ...p.shells![0], colorBlend: 0 } })), soft = buildScene(p);
+    try {
+      const shell = built.root.getObjectByName('body') as Mesh, pos = shell.geometry.getAttribute('position'), col = shell.geometry.getAttribute('color');
+      const hues = new Set<string>();
+      for (let i = 0; i < pos.count; i++) {
+        // Occlusion scales all three channels alike, so the normalised color is exactly one member's.
+        const peak = Math.max(col.getX(i), col.getY(i), col.getZ(i));
+        hues.add([col.getX(i), col.getY(i), col.getZ(i)].map(c => Math.round(c / peak * 100) / 100).join());
+      }
+      expect([...hues].sort()).toEqual(['0,0,1', '1,0,0']);
+      const before = (soft.root.getObjectByName('body') as Mesh).geometry;
+      expect(shell.geometry.getAttribute('skinWeight').array).toEqual(before.getAttribute('skinWeight').array);
+      expect(shell.geometry.getAttribute('skinIndex').array).toEqual(before.getAttribute('skinIndex').array);
+    } finally { built.dispose(); soft.dispose(); }
+  });
+  it('blends colors across half the blend radius by default, exactly as before', () => {
+    const built = buildScene(twoSpheres());
+    try {
+      const col = (built.root.getObjectByName('body') as Mesh).geometry.getAttribute('color');
+      let mixed = 0, digest = 0;
+      for (let i = 0; i < col.count; i++) { if (col.getX(i) > 0.05 && col.getZ(i) > 0.05) mixed++; digest = (digest * 31 + Math.round((col.getX(i) + col.getZ(i) * 7) * 1e4)) % 1_000_000_007; }
+      expect(mixed).toBeGreaterThan(50);
+      expect(digest).toMatchInlineSnapshot(`998657526`);
+    } finally { built.dispose(); }
+  });
 });
 
 /** A red sphere with a thin green cylinder standing through its centre along y, subtracted by the shell. */

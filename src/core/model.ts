@@ -58,6 +58,8 @@ export const shellSchema = z.object({
   cut: z.array(nameSchema).max(200).optional(),
   /** Blend radius in meters: how far two members reach toward each other before they merge. */
   blend: z.number().positive().max(10),
+  /** Width of the band over which member colors mix, in meters; 0 gives hard patches by ownership. Default blend / 2. Skin weights are unaffected. */
+  colorBlend: z.number().min(0).max(10).optional(),
   /** Grid cells along the longest axis, 16 to 96. */
   resolution: z.number().int().min(16).max(96),
   material: materialSchema.optional(),

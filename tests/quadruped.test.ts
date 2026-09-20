@@ -43,6 +43,33 @@ it('equine gallop is opt-in and has a suspension phase with all four hooves off 
   } finally { built.dispose(); }
 });
 
+/** Hoof heights above rest for every sampled frame of a clip, in leg order. */
+function hoofHeights(species: 'equine' | 'vulpine', gait: string, frames = 240): number[][] {
+  const built = buildScene(createCreature(species, { gaits: [gait] }));
+  try {
+    const clip = built.clips.find(c => c.name === gait)!;
+    const mixer = new AnimationMixer(built.root); mixer.clipAction(clip).play();
+    const feet = [...built.bones.values()].filter(b => /_(hoof|paw)$/.test(b.name));
+    const rest = feet.map(b => b.getWorldPosition(new Vector3()).y);
+    const rows: number[][] = [];
+    for (let frame = 0; frame < frames; frame++) {
+      mixer.setTime(frame / frames * clip.duration); built.root.updateMatrixWorld(true);
+      rows.push(feet.map((b, i) => b.getWorldPosition(new Vector3()).y - rest[i]));
+    }
+    return rows;
+  } finally { built.dispose(); }
+}
+
+for (const species of ['equine', 'vulpine'] as const) it(`${species} gallop never has four feet down, keeps every stance short and gathers the legs in suspension`, () => {
+  const rows = hoofHeights(species, 'gallop');
+  // A hoof within 2 cm of the floor reads as planted in a render.
+  const down = (h: number) => h < 0.02;
+  for (const row of rows) expect(row.filter(down).length).toBeLessThan(4);
+  for (let foot = 0; foot < 4; foot++) expect(rows.filter(row => down(row[foot])).length / rows.length).toBeLessThanOrEqual(0.4);
+  // Muybridge's gathered suspension: at some moment every hoof is tucked well up toward the belly.
+  expect(Math.max(...rows.map(row => Math.min(...row)))).toBeGreaterThan(species === 'equine' ? 0.12 : 0.09);
+});
+
 it('equine shell option wraps the whole horse in one smooth skin with lathe hooves', () => {
   const project = createCreature('equine', { gaits: ['walk', 'gallop'], shell: true });
   expect(project.shells).toHaveLength(1);

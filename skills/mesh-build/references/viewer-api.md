@@ -14,7 +14,7 @@ Fills the container and follows its size. Options:
 | `background` | CSS color, or `null` for transparent |
 | `orbit` | Mouse/touch orbit controls (default true) |
 | `floor` | Draw a ground disc with the shadow |
-| `view` | `front`, `side`, `top`, `perspective`, or `{position:[x,y,z], target:[x,y,z]}` |
+| `view` | `front`, `back`, `left`, `right` (`side` is its alias), `top`, `bottom`, `perspective`, or `{position:[x,y,z], target:[x,y,z]}` |
 | `outline`, `outlineColor` | Ink outline thickness in meters behind every part, and its color |
 
 The scene has a procedural room environment plus key and fill lights with soft shadows. Shells
@@ -36,7 +36,7 @@ Names are the part, bone and clip names from the project.
 | `getPattern(name)` | The pattern baked into a shell or part, from the export or the last `setPattern`; `null` when plain |
 | `play(clip?)`, `pause()`, `playing`, `clip`, `time`, `duration`, `speed`, `seek(seconds)` | Playback; clips are sampled directly, so `seek` then read works without a frame |
 | `bounds()` | World-space `Box3` of the visible, posed, skinned geometry |
-| `view(name or {position,target})`, `frame()` | Move the camera; `frame` fits the current bounds |
+| `view(name or {position,target})`, `frame()` | Move the camera to one of the eight named views above (the model's `left` is -x, `right`/`side` +x, `front` +z) or an explicit position; `frame` fits the current bounds. An unknown name throws an `Error` that lists the valid names |
 | `setBackground(css or null)`, `screenshot()` | Change the background; PNG data URL of the current frame |
 | `onFrame(fn)` | Per-frame callback, returns an unsubscribe function |
 | `resize()`, `dispose()` | Handle a container resize by hand; release the WebGL context |

@@ -36,7 +36,7 @@ export interface Keyframe { time: number; value: Vec3 | Quat }
 export interface Track { bone: string; property: 'rotation' | 'position'; keys: Keyframe[] }
 export interface Clip { name: string; duration: number; tracks: Track[] }
 /** A smooth surface blended from several parts; it replaces them when rendered or exported. */
-export interface Shell { name: string; parts: string[]; cut?: string[]; blend: number; resolution: number; material?: Material; pattern?: Pattern }
+export interface Shell { name: string; parts: string[]; cut?: string[]; blend: number; colorBlend?: number; resolution: number; material?: Material; pattern?: Pattern }
 export interface Project { version: 1; name: string; parts: Part[]; bones: BoneDef[]; clips: Clip[]; shells?: Shell[] }
 export type PartInput = Pick<Part, 'name'> & Partial<Omit<Part, 'name' | 'geometry' | 'material'>> & {
   geometry?: { type: GeometryKind; size?: Vec3; segments?: number; mirrorX?: boolean; profile?: Vec2[]; outline?: Vec2[] };
