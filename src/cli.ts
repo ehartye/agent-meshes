@@ -102,6 +102,15 @@ export async function main(args = process.argv): Promise<void> {
     const result = await verifyGLB(await readFile(file)); process.stdout.write(`${JSON.stringify(result)}\n`);
     if (!result.ok) process.exitCode = 1;
   });
+  program.command('refine <input> <output>').description('Optional Blender stage: subdivide, smooth and displace a GLB, keeping bones and clips')
+    .option('--subdivide <levels>', 'Subdivision surface levels', '1')
+    .option('--noise <strength>', 'Displacement strength from a clouds texture, in meters', '0')
+    .option('--noise-scale <size>', 'Clouds texture scale', '0.12')
+    .option('--only <names>', 'Comma-separated mesh names to refine; others pass through').action(async (input, output, options) => {
+    const { refineGLB } = await import('./refine.ts');
+    const result = await refineGLB(input, output, { subdivide: Number(options.subdivide), noise: Number(options.noise), noiseScale: Number(options.noiseScale), only: options.only ? String(options.only).split(',') : undefined });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  });
   program.command('viewer <file>').description('Write the standalone viewer runtime: one script defining window.MeshViewer.mount()').action(async file => {
     const { viewerScript } = await import('./preview-html.ts');
     const code = await viewerScript(); const output = resolve(file);
