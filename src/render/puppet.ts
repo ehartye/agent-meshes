@@ -98,7 +98,18 @@ export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[
     seek(value: number): void { time = duration ? ((value % duration) + duration) % duration : 0; apply(); },
     /** Advance playback by dt seconds. Call once per rendered frame. */
     update(dt: number): void { if (playing && current !== null) puppet.seek(time + dt * speed); },
-    bounds(): Box3 { return new Box3().setFromObject(root); },
+    /** World bounds of the posed puppet. Skinned meshes are measured vertex by vertex, since their bind-pose boxes ignore pose and scale. */
+    bounds(): Box3 {
+      const box = new Box3(), point = new Vector3();
+      root.traverse(item => {
+        if (!(item instanceof Mesh) || !item.visible) return;
+        if (item instanceof SkinnedMesh) {
+          const positions = item.geometry.getAttribute('position');
+          for (let i = 0; i < positions.count; i++) box.expandByPoint(item.getVertexPosition(i, point).applyMatrix4(item.matrixWorld));
+        } else box.expandByObject(item);
+      });
+      return box;
+    },
   };
   return puppet;
 }
