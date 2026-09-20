@@ -49,6 +49,11 @@ export async function captureProject(project: Project, directory: string): Promi
     return files;
   } finally { await browser?.close(); await server.close(); }
 }
+/** Which decorator a build uses: nothing without a browser, renders only, or renders plus preview.html. */
+export function decoratorFor(flags: { preview: boolean; previewPage: boolean }): ((project: Project, directory: string) => Promise<string[]>) | undefined {
+  if (!flags.preview) return undefined;
+  return flags.previewPage ? decorateBuild : captureProject;
+}
 export async function decorateBuild(project: Project, directory: string): Promise<string[]> {
   const exported = structuredClone(project);
   for (const bone of exported.bones) bone.pose = [0, 0, 0, 1];

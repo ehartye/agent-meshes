@@ -97,6 +97,18 @@ describe('puppet', () => {
     expect(puppet.object('hat').visible).toBe(false);
   });
 
+  it('reports bounds from the posed skin, not the bind pose', async () => {
+    const puppet = await load();
+    const rest = puppet.bounds();
+    expect(rest.min.y).toBeCloseTo(0, 2);
+    puppet.setPose('knee', { scale: [1, 2, 1] });
+    expect(puppet.bounds().min.y).toBeCloseTo(-0.5, 2);
+    puppet.setPose('hip', { position: [0, 0, 1] });
+    expect(puppet.bounds().max.z).toBeGreaterThan(1.05);
+    puppet.resetPose();
+    expect(puppet.bounds().min.y).toBeCloseTo(rest.min.y, 3);
+  });
+
   it('rejects unknown names', async () => {
     const puppet = await load();
     expect(() => puppet.setPose('tail', { rotation: [1, 0, 0] })).toThrow(/Unknown bone: tail/);
