@@ -128,6 +128,10 @@ Rendering requires the built workbench (`npm run build`) and Chromium (`npx play
 
 `node scripts/check-animated-build.mjs` exercises rendered builds and offline exported playback. `node scripts/check-animation-browser.mjs` then verifies scrubbing, key recording and pose editing in the workbench. These write ignored evidence under `artifacts/`.
 
+## Optional Blender stage
+
+`node scripts/agent-meshes.mjs refine model.glb smooth.glb --subdivide 1 --noise 0.004 --noise-scale 0.05 --only robin` rounds primitives into organic forms with a subdivision surface and, if asked, adds a feather- or fur-like displacement from a procedural clouds texture, while keeping bones, skins, vertex colors and clips. It runs Blender headless through `scripts/blender-refine.py`; Blender is found on PATH, in the usual install folders, in the Microsoft Store app alias, or from `AGENT_MESHES_BLENDER`. Nothing else in agent-meshes needs Blender, and the refine test skips when it is absent.
+
 ## Embedding a model in your own page
 
 `node scripts/agent-meshes.mjs viewer lib/mesh-viewer.js` writes the standalone viewer runtime: one script, no build step, no network. It defines `window.MeshViewer`. `preview.html` is built on the same runtime.
