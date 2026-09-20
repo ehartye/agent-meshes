@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { AnimationMixer, Quaternion, SkinnedMesh, Vector3 } from 'three';
+import { AnimationMixer, Quaternion, SkinnedMesh, Vector3, type Object3D } from 'three';
 import { createCreature } from '../src/recipes/index.ts';
 import { buildScene } from '../src/render/scene.ts';
 
@@ -70,6 +70,66 @@ for (const species of ['equine', 'vulpine'] as const) it(`${species} gallop neve
   expect(Math.max(...rows.map(row => Math.min(...row)))).toBeGreaterThan(species === 'equine' ? 0.12 : 0.09);
 });
 
+/** Per-frame leg samples of a clip: hoof rise, hoof reach past its shoulder or hip (+ forward), the distal joint fold, and the trunk. */
+function legSamples(species: 'equine' | 'vulpine', gait: string, frames = 240) {
+  const built = buildScene(createCreature(species, { gaits: [gait] }));
+  try {
+    const clip = built.clips.find(c => c.name === gait)!;
+    const mixer = new AnimationMixer(built.root); mixer.clipAction(clip).play();
+    const legs = (['L_front', 'R_front', 'L_rear', 'R_rear'] as const).map(leg => {
+      const front = leg.endsWith('front');
+      const joints = front ? ['shoulder', 'elbow', species === 'equine' ? 'carpus' : 'wrist'] : ['hip', 'stifle', 'hock'];
+      joints.push(species === 'equine' ? 'fetlock' : 'paw');
+      return { front, bones: joints.map(j => built.bones.get(`leg_${leg}_${j}`)!), foot: built.bones.get(`leg_${leg}_${species === 'equine' ? 'hoof' : 'paw'}`)! };
+    });
+    const world = (b: Object3D) => b.getWorldPosition(new Vector3());
+    const rest = legs.map(leg => world(leg.foot).y);
+    const bend = (a: Vector3, b: Vector3) => Math.atan2(a.y * b.z - a.z * b.y, a.dot(b));
+    const trunkRest = world(legs[0].bones[0]).add(world(legs[2].bones[0])).multiplyScalar(0.5);
+    const rows: { phase: number; rise: number[]; reach: number[]; fold: number[]; pitch: number; trunkShift: number }[] = [];
+    for (let frame = 0; frame < frames; frame++) {
+      mixer.setTime(frame / frames * clip.duration); built.root.updateMatrixWorld(true);
+      const q = built.bones.get('root')!.getWorldQuaternion(new Quaternion());
+      rows.push({
+        phase: frame / frames,
+        rise: legs.map((leg, i) => world(leg.foot).y - rest[i]),
+        reach: legs.map(leg => world(leg.foot).z - world(leg.bones[0]).z),
+        fold: legs.map(leg => { const p = leg.bones.map(world); return bend(p[2].clone().sub(p[1]), p[3].clone().sub(p[2])); }),
+        pitch: 2 * Math.atan2(q.x, q.w),
+        trunkShift: world(legs[0].bones[0]).add(world(legs[2].bones[0])).multiplyScalar(0.5).distanceTo(trunkRest),
+      });
+    }
+    return rows;
+  } finally { built.dispose(); }
+}
+
+for (const species of ['equine', 'vulpine'] as const) it(`${species} gallop folds every leg under the belly at the gathered moment`, () => {
+  // Vulpine numbers scale with its shoulder height (1.00 m against the equine's 1.43 m).
+  const scale = species === 'equine' ? 1 : 0.7;
+  const rows = legSamples(species, 'gallop');
+  const gathered = rows.reduce((best, row) => Math.min(...row.rise) > Math.min(...best.rise) ? row : best);
+  // Muybridge's suspension: hooves high, fore hooves swung back behind the shoulders and hind hooves forward of the hips,
+  // carpus and hock folded well past 60 degrees.
+  for (const rise of gathered.rise) expect(rise).toBeGreaterThanOrEqual(0.35 * scale);
+  for (const [i, reach] of gathered.reach.entries()) expect(i < 2 ? -reach : reach).toBeGreaterThanOrEqual(0.2 * scale);
+  for (const [i, fold] of gathered.fold.entries()) expect(i < 2 ? fold : -fold).toBeGreaterThan(1.2);
+});
+
+for (const species of ['equine', 'vulpine'] as const) it(`${species} gallop pitches the trunk nose-down at the top of the leap and level at touchdown`, () => {
+  const rows = legSamples(species, 'gallop');
+  const gathered = rows.reduce((best, row) => Math.min(...row.rise) > Math.min(...best.rise) ? row : best);
+  // About six degrees nose-down at the top of the leap; positive pitch about +X dips the nose.
+  expect(gathered.pitch).toBeGreaterThan(0.08);
+  expect(gathered.pitch).toBeLessThan(0.13);
+  expect(Math.abs(rows[0].pitch)).toBeLessThan(0.005);
+  // The pitch turns the trunk about its own centre, not the ground origin, so the body does not lurch.
+  for (const row of rows) expect(row.trunkShift).toBeLessThan(0.06);
+  // Walk and trot keep a level trunk.
+  const project = createCreature(species, { gaits: ['walk', 'trot', 'gallop'] });
+  for (const gait of ['walk', 'trot']) expect(project.clips.find(c => c.name === gait)!.tracks.some(t => t.bone === 'root' && t.property === 'rotation')).toBe(false);
+  for (const gait of ['walk', 'trot']) for (const row of legSamples(species, gait, 60)) expect(row.pitch).toBe(0);
+});
+
 it('equine shell option wraps the whole horse in one smooth skin with lathe hooves', () => {
   const project = createCreature('equine', { gaits: ['walk', 'gallop'], shell: true });
   expect(project.shells).toHaveLength(1);
@@ -96,6 +156,20 @@ it('equine shell option wraps the whole horse in one smooth skin with lathe hoov
     mixer.setTime(clip.duration * 0.5); built.root.updateMatrixWorld(true); skin.skeleton.update();
     expect(vertex().distanceTo(before)).toBeGreaterThan(0.05);
   } finally { built.dispose(); }
+});
+
+it('shelled equine back is one continuous surface: no differently coloured trunk part rides inside the barrel', () => {
+  const project = createCreature('equine', { shell: true });
+  const body = project.parts.find(p => p.name === 'body')!;
+  const [, height, length] = body.geometry.size, [, cy, cz] = body.position;
+  // A part nested in the barrel with its own colour shows through the skin as a patch with an occlusion rim.
+  const inBarrel = (p: { position: readonly number[] }) => ((p.position[1] - cy) / (height / 2)) ** 2 + ((p.position[2] - cz) / (length / 2)) ** 2 <= 1;
+  const trunk = project.parts.filter(p => p.binding?.type === 'rigid' && p.binding.bone === 'root' && inBarrel(p));
+  expect(trunk.map(p => p.name)).toContain('chest');
+  for (const part of trunk) expect(part.color).toBe(body.color);
+  expect(project.parts.map(p => p.name)).not.toContain('back_highlight');
+  // The unshelled horse keeps its highlight stripe on top of the primitives.
+  expect(createCreature('equine').parts.map(p => p.name)).toContain('back_highlight');
 });
 
 it('rejects an unknown gait name', () => {
