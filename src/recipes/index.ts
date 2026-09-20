@@ -5,6 +5,7 @@ import { footPath, solveLeg } from './gait.ts';
 import { createSpiderLeg } from './spider-leg.ts';
 import { spiderGait } from './spider-motion.ts';
 import { createQuadruped } from './quadruped.ts';
+import { createStrandbeest } from './strandbeest.ts';
 
 export const creatureKinds = ['biped', 'equine', 'vulpine', 'insectoid', 'arachnid'] as const;
 export type CreatureKind = typeof creatureKinds[number];
@@ -26,8 +27,12 @@ export interface CreatureOptions {
   /** Clips for equine or vulpine: any of walk, trot, gallop. Default walk and trot. */ gaits?: readonly string[];
   /** Equine or vulpine only: blend every part into one smooth skin with lathe hooves. */ shell?: boolean;
   /** Insectoid only: one clip per entry, each a touchdown phase (0 to 1) per leg in order L1 L2 L3 R1 R2 R3. */ legPhases?: Record<string, number[]>;
+  /** Strandbeest only: mirrored leg pairs along the crankshaft. Default 3. */ pairs?: number;
+  /** Strandbeest only: distance between pairs in meters, and one clip per named crank-offset pattern. */ spacing?: number; patterns?: Record<string, number[]>;
 }
-export function createCreature(kind: CreatureKind | 'quadruped', options: CreatureOptions = {}): Project {
+export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest', options: CreatureOptions = {}): Project {
+  // Jansen's walking machine is a linkage, not a limb rig, so it has its own recipe and is not one of the gallery creatures.
+  if (kind === 'strandbeest') return createStrandbeest({ pairs: options.pairs, spacing: options.spacing, patterns: options.patterns });
   if (kind === 'quadruped') kind = 'vulpine';
   if (!creatureKinds.includes(kind)) throw new Error(`Unknown creature recipe: ${kind}`);
   const info = creatureInfo[kind];

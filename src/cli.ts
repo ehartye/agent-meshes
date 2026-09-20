@@ -70,12 +70,15 @@ export async function main(args = process.argv): Promise<void> {
       process.once('SIGTERM', shutdown);
     });
   program.command('new <name>').action(name => request('new', { name }));
-  program.command('recipe <kind>').description('Load biped, equine, vulpine, insectoid or arachnid (quadruped aliases vulpine)')
+  program.command('recipe <kind>').description('Load biped, equine, vulpine, insectoid, arachnid or strandbeest (quadruped aliases vulpine)')
     .option('--gaits <list>', 'Comma-separated clips for equine or vulpine: walk, trot, gallop (default walk,trot)')
     .option('--shell', 'Equine or vulpine: blend every part into one smooth skin with lathe hooves')
-    .option('--leg-phases <json>', 'Insectoid: JSON object of clip name to six touchdown phases (0 to 1) in leg order L1 L2 L3 R1 R2 R3').action(async (kind, options) => {
+    .option('--leg-phases <json>', 'Insectoid: JSON object of clip name to six touchdown phases (0 to 1) in leg order L1 L2 L3 R1 R2 R3')
+    .option('--pairs <count>', 'Strandbeest: mirrored leg pairs on the crankshaft (default 3)')
+    .option('--spacing <meters>', 'Strandbeest: distance between leg pairs (default 0.42)')
+    .option('--patterns <json>', 'Strandbeest: JSON object of clip name to one crank offset (0 to 1) per pair').action(async (kind, options) => {
     const { createCreature } = await import('./recipes/index.ts');
-    await request('project', createCreature(kind, { ...(options.gaits ? { gaits: String(options.gaits).split(',').map((g: string) => g.trim()) } : {}), ...(options.shell ? { shell: true } : {}), ...(options.legPhases ? { legPhases: JSON.parse(String(options.legPhases)) } : {}) }));
+    await request('project', createCreature(kind, { ...(options.gaits ? { gaits: String(options.gaits).split(',').map((g: string) => g.trim()) } : {}), ...(options.shell ? { shell: true } : {}), ...(options.legPhases ? { legPhases: JSON.parse(String(options.legPhases)) } : {}), ...(options.pairs ? { pairs: Number(options.pairs) } : {}), ...(options.spacing ? { spacing: Number(options.spacing) } : {}), ...(options.patterns ? { patterns: JSON.parse(String(options.patterns)) } : {}) }));
   });
   program.command('state').action(() => request('project'));
   program.command('op <json>').action(json => request('op', JSON.parse(json)));
