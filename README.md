@@ -145,7 +145,7 @@ Rendering requires the built workbench (`npm run build`) and Chromium (`npx play
 </script>
 ```
 
-`mount(container, options)` fills the container and follows its size. `glb` is bytes or a base64 string, which works from `file://` where `fetch` does not. Options: `autoplay` (default follows `prefers-reduced-motion`), `background` (`null` for transparent), `orbit`, `floor`, `view` (`front`, `side`, `top`, `perspective` or `{position, target}`).
+`mount(container, options)` fills the container and follows its size. `glb` is bytes or a base64 string, which works from `file://` where `fetch` does not. Options: `autoplay` (default follows `prefers-reduced-motion`), `background` (`null` for transparent), `orbit`, `floor`, `view` (`front`, `side`, `top`, `perspective` or `{position, target}`), and `outline` (an ink outline of that thickness in meters behind every part, with `outlineColor`). The scene is lit by a procedural room environment plus a key and fill light, with soft shadows; shells carry ambient occlusion baked into their vertex colors from the distance field, so crevices read dark without any texture.
 
 The viewer exposes the puppet by name: `bones`, `parts`, `clips`; `setPose(bone, {rotation?, position?, scale?})` (scale multiplies the bone and everything it carries, so a longer leg moves its foot), `getPose`, `resetPose(bone?)`; `setColor`, `getColor`, `setVisible`; `play(clip?)`, `pause`, `playing`, `clip`, `time`, `duration`, `speed`, `seek`; plus `view`, `frame`, `setBackground`, `screenshot`, `onFrame`, `resize`, `dispose`, and the underlying `renderer`, `scene`, `camera`, `controls`. Pose offsets compose on top of clip playback each frame. `node scripts/check-viewer-browser.mjs` verifies the runtime in Chromium.
 

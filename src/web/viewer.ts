@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createPuppet } from '../render/puppet.ts';
 import type { Puppet } from '../render/puppet.ts';
 
@@ -20,6 +21,10 @@ export interface MountOptions {
   floor?: boolean;
   /** Initial camera view. Default 'perspective'. */
   view?: ViewName | ViewSpec;
+  /** Ink outline thickness in meters (an inverted hull behind every part). Default none. */
+  outline?: number;
+  /** Outline color. Default near-black. */
+  outlineColor?: string;
 }
 export type ViewName = 'front' | 'side' | 'top' | 'perspective';
 export interface ViewSpec { position: [number, number, number]; target?: [number, number, number] }
@@ -48,7 +53,31 @@ export async function mount(container: HTMLElement, options: MountOptions) {
   const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 200);
   const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.enabled = options.orbit ?? true;
   scene.add(gltf.scene); gltf.scene.traverse(object => { object.castShadow = true; object.receiveShadow = true; });
-  scene.add(new THREE.HemisphereLight('#ffffff', '#718794', 2.6));
+  // Image-based light from a procedural room: soft fill, believable speculars, no assets to load.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
+  scene.environmentIntensity = 0.55;
+  scene.add(new THREE.HemisphereLight('#ffffff', '#718794', 1.3));
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const hulls = new Map<string, THREE.Mesh>();
+  if (options.outline) {
+    const thickness = options.outline, ink = new THREE.MeshBasicMaterial({ color: options.outlineColor ?? '#111111', side: THREE.BackSide });
+    for (const name of puppet.parts) {
+      const mesh = puppet.object(name);
+      // Inverted hull: the same geometry pushed out along its normals, drawn back-face only.
+      const source = mesh.geometry.clone(); if (!source.getAttribute('normal')) source.computeVertexNormals();
+      const pos = source.getAttribute('position'), nor = source.getAttribute('normal');
+      for (let i = 0; i < pos.count; i++) pos.setXYZ(i, pos.getX(i) + nor.getX(i) * thickness, pos.getY(i) + nor.getY(i) * thickness, pos.getZ(i) + nor.getZ(i) * thickness);
+      pos.needsUpdate = true;
+      let hull: THREE.Mesh;
+      if (mesh instanceof THREE.SkinnedMesh) { const skinned = new THREE.SkinnedMesh(source, ink); mesh.parent!.add(skinned); skinned.bind(mesh.skeleton, mesh.bindMatrix); hull = skinned; }
+      else { hull = new THREE.Mesh(source, ink); mesh.parent!.add(hull); hull.position.copy(mesh.position); hull.quaternion.copy(mesh.quaternion); hull.scale.copy(mesh.scale); }
+      hull.name = `${name}_outline`; hull.userData.outline = true; hull.castShadow = false; hull.receiveShadow = false; hull.renderOrder = -1;
+      hulls.set(name, hull);
+    }
+    const setVisible = puppet.setVisible.bind(puppet);
+    puppet.setVisible = (name, visible) => { setVisible(name, visible); const hull = hulls.get(name); if (hull) hull.visible = visible; };
+  }
   const key = new THREE.DirectionalLight('#fff2d8', 3.7); key.position.set(4, 8, 5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.normalBias = 0.025; scene.add(key);
   const fill = new THREE.DirectionalLight('#b2e2f0', 1.2); fill.position.set(-5, 3, -3); scene.add(fill);
   let floor: THREE.Mesh | null = null;
@@ -102,7 +131,7 @@ export async function mount(container: HTMLElement, options: MountOptions) {
     /** Run a callback before every rendered frame. Returns a function that removes it. */
     onFrame(listener: (viewer: Viewer) => void): () => void { frameListeners.add(listener); return () => frameListeners.delete(listener); },
     resize,
-    dispose(): void { renderer.setAnimationLoop(null); observer?.disconnect(); controls.dispose(); renderer.dispose(); renderer.domElement.remove(); },
+    dispose(): void { renderer.setAnimationLoop(null); observer?.disconnect(); controls.dispose(); scene.environment?.dispose(); renderer.dispose(); renderer.domElement.remove(); },
   };
   const viewer: Viewer = Object.assign(Object.create(puppet) as Puppet, extras);
   return viewer;

@@ -30,7 +30,9 @@ try {
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.goto(pathToFileURL(page_).href, { waitUntil: 'load' });
     await page.evaluate(() => window.ready);
-    const state = await page.evaluate(() => ({ playing: viewer.playing, clips: viewer.clips, bones: viewer.bones.length, parts: viewer.parts.length, version: MeshViewer.version }));
+    const state = await page.evaluate(() => ({ playing: viewer.playing, clips: viewer.clips, bones: viewer.bones.length, parts: viewer.parts.length, version: MeshViewer.version, environment: !!viewer.scene.environment, outlines: viewer.scene.children.filter(o => o.userData.outline).length }));
+    assert.equal(state.environment, true, `${label}: the scene has environment lighting`);
+    assert.equal(state.outlines, 0, `${label}: no outline meshes unless asked`);
     assert.equal(state.playing, reducedMotion === 'no-preference', `${label}: autoplay should follow reduced-motion preference`);
     assert.deepEqual(state.clips, ['walk', 'trot']);
     assert.ok(state.bones > 10 && state.parts > 5, `${label}: puppet lists bones and parts`);
@@ -57,6 +59,20 @@ try {
       assert.equal(result.clip, 'trot');
       assert.ok(result.time > 0.1, `playback advanced (${result.time})`);
       await writeFile(join(evidence, 'front.png'), Buffer.from(result.front.split(',')[1], 'base64'));
+      // Ink outlines: an inverted hull per mesh, following the same skeleton.
+      const outlined = await page.evaluate(async () => {
+        viewer.dispose();
+        const v = await MeshViewer.mount(document.getElementById('stage'), { glb: document.getElementById('glb').textContent, background: '#f4efe6', outline: 0.02, autoplay: false });
+        const hulls = []; v.scene.traverse(o => { if (o.userData.outline) hulls.push(o); });
+        const skinned = hulls.filter(h => h.isSkinnedMesh).length;
+        const before = v.screenshot(); v.setPose(v.bones[0], { rotation: [0, 40, 0] }); const after = v.screenshot();
+        window.viewer = v; return { hulls: hulls.length, skinned, parts: v.parts.length, moved: before !== after, color: hulls[0] && hulls[0].material.color.getHexString() };
+      });
+      assert.equal(outlined.hulls, outlined.parts, 'one outline hull per visible part');
+      assert.ok(outlined.skinned > 0, 'skinned parts get skinned hulls');
+      assert.equal(outlined.moved, true, 'outlined puppet still poses');
+      assert.equal(outlined.color, '111111');
+      await page.screenshot({ path: join(evidence, 'outline.png') });
     }
     await page.screenshot({ path: join(evidence, `${label}.png`) });
     assert.deepEqual(errors, [], `${label}: console errors`);

@@ -161,6 +161,19 @@ export function buildShellGeometry(project: Project, shell: Shell, boneNames: st
   // weights use a tighter band so a moving limb does not drag the body with it.
   const count = positions.length / 3;
   const colors = new Float32Array(count * 3);
+  // Ambient occlusion straight from the field: step out along the normal and see how much
+  // closer the surface stays than an open slope would be. Crevices darken, ridges stay bright.
+  const normals = geometry.getAttribute('normal');
+  const aoStep = Math.max(shell.blend * 0.4, step);
+  const occlusion = (p: Vec3, i: number): number => {
+    let occ = 0, weight = 1;
+    for (let k = 1; k <= 5; k++) {
+      const h = k * aoStep;
+      const d = field([p[0] + normals.getX(i) * h, p[1] + normals.getY(i) * h, p[2] + normals.getZ(i) * h]);
+      occ += Math.max(h - d, 0) * weight; weight *= 0.6;
+    }
+    return Math.max(0, Math.min(1, 1 - occ / (aoStep * 2.2)));
+  };
   const memberColors = list.map(m => new Color(m.part.color));
   const bound = list.every(m => m.part.binding?.type === 'rigid');
   const skinIndex = bound ? new Uint16Array(count * 4) : null, skinWeight = bound ? new Float32Array(count * 4) : null;
@@ -177,7 +190,7 @@ export function buildShellGeometry(project: Project, shell: Shell, boneNames: st
       const wc = Math.exp(-excess / Math.max(shell.blend * 0.5, 1e-6)); total += wc; mix.add(memberColors[m].clone().multiplyScalar(wc));
       weights[m] = Math.exp(-excess / Math.max(shell.blend * 0.15, 1e-6));
     }
-    mix.multiplyScalar(1 / total); colors[i * 3] = mix.r; colors[i * 3 + 1] = mix.g; colors[i * 3 + 2] = mix.b;
+    mix.multiplyScalar((0.35 + 0.65 * occlusion(p, i)) / total); colors[i * 3] = mix.r; colors[i * 3 + 1] = mix.g; colors[i * 3 + 2] = mix.b;
     if (skinIndex && skinWeight) {
       // Merge members that share a bone, keep the four strongest, renormalise.
       const perBone = new Map<number, number>();
