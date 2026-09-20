@@ -16,6 +16,8 @@ function smoothMin(a: number, b: number, k: number): number {
   const h = Math.max(k - Math.abs(a - b), 0) / k;
   return Math.min(a, b) - h * h * k * 0.25;
 }
+/** Smooth subtraction of b from a: max(a, -b) rounded the same way the union is. */
+function smoothCut(a: number, b: number, k: number): number { return -smoothMin(-a, b, k); }
 
 /** Signed distance to the unit shape of a part, in the part's local space, scaled by its size. */
 function localDistance(part: Part, p: Vector3): number {
@@ -84,8 +86,8 @@ function worldMatrix(project: Project, part: Part): Matrix4 {
 }
 
 interface Member { part: Part; inverse: Matrix4; scale: number; box: Box3 }
-function members(project: Project, shell: Shell): Member[] {
-  return shell.parts.map(name => {
+function members(project: Project, names: string[]): Member[] {
+  return names.map(name => {
     const part = project.parts.find(p => p.name === name)!;
     const world = worldMatrix(project, part);
     const geometry = geometryFor(part);
@@ -101,18 +103,26 @@ function memberDistance(member: Member, p: Vec3): number {
   return localDistance(member.part, local) * member.scale;
 }
 
+/** Smooth union of the members, then smooth subtraction of every cutter. */
+function fieldOf(list: Member[], cutters: Member[], blend: number): Field {
+  return p => {
+    let d = Infinity; for (const m of list) d = smoothMin(d, memberDistance(m, p), blend);
+    for (const c of cutters) d = smoothCut(d, memberDistance(c, p), blend);
+    return d;
+  };
+}
+
 /** The blended signed distance field of a shell, for tests and tools. */
 export function shellField(project: Project, shell: Shell): Field {
-  const list = members(project, shell);
-  return p => { let d = Infinity; for (const m of list) d = smoothMin(d, memberDistance(m, p), shell.blend); return d; };
+  return fieldOf(members(project, shell.parts), members(project, shell.cut ?? []), shell.blend);
 }
 
 export interface ShellMesh { geometry: BufferGeometry; boneWeights: { index: number[]; weight: number[] }[] | null }
 
 /** Mesh a shell with surface nets and attach vertex colors and, for rigid-bound members, bone weights. */
 export function buildShellGeometry(project: Project, shell: Shell, boneNames: string[]): ShellMesh {
-  const list = members(project, shell);
-  const field: Field = p => { let d = Infinity; for (const m of list) d = smoothMin(d, memberDistance(m, p), shell.blend); return d; };
+  const list = members(project, shell.parts);
+  const field = fieldOf(list, members(project, shell.cut ?? []), shell.blend);
   const box = new Box3(); for (const m of list) box.union(m.box);
   const size = box.getSize(new Vector3());
   const step = (Math.max(size.x, size.y, size.z) + 2 * shell.blend) / Math.min(96, Math.max(16, shell.resolution));

@@ -98,4 +98,72 @@ describe('organic shell', () => {
     const names: string[] = []; gltf.scene.traverse(o => { if (o instanceof Mesh) names.push(o.name); });
     expect(names).toEqual(['body']);
   });
+
+  it('produces the same geometry as before when no cut is given', () => {
+    const built = buildScene(twoSpheres());
+    try {
+      const g = (built.root.getObjectByName('body') as Mesh).geometry;
+      expect(g.getAttribute('position').count).toBe(648);
+      expect(g.index!.count).toBe(3876);
+    } finally { built.dispose(); }
+  });
+});
+
+/** A red sphere with a thin green cylinder standing through its centre along y, subtracted by the shell. */
+function pierced(bound = true) {
+  let p = createProject('ring');
+  if (bound) p = applyOperation(p, { op: 'bone.add', bone: { name: 'a', position: [0, 0.5, 0] } });
+  p = applyOperation(p, { op: 'add', part: { name: 'ball', geometry: { type: 'sphere', size: [1, 1, 1] }, position: [0, 0.5, 0], color: '#ff0000', ...(bound ? { binding: { type: 'rigid', bone: 'a' } } : {}) } });
+  p = applyOperation(p, { op: 'add', part: { name: 'drill', geometry: { type: 'cylinder', size: [0.3, 2, 0.3] }, position: [0, 0.5, 0], color: '#00ff00' } });
+  return applyOperation(p, { op: 'shell.set', shell: { name: 'body', parts: ['ball'], cut: ['drill'], blend: 0.1, resolution: 32 } });
+}
+
+describe('shell cut', () => {
+  it('stores cut parts and validates them against members', () => {
+    const p = pierced();
+    expect(p.shells![0].cut).toEqual(['drill']);
+    expect(validateProject(JSON.parse(JSON.stringify(p)))).toEqual(p);
+    expect(() => applyOperation(p, { op: 'shell.set', shell: { name: 'body', parts: ['ball'], cut: ['ball'], blend: 0.1, resolution: 32 } })).toThrow(/both a member and a cutter/i);
+    expect(() => applyOperation(p, { op: 'shell.set', shell: { name: 'body', parts: ['ball'], cut: ['nope'], blend: 0.1, resolution: 32 } })).toThrow(/Unknown shell cutter: nope/);
+    expect(() => applyOperation(p, { op: 'shell.set', shell: { name: 'body', parts: ['ball'], cut: ['drill', 'drill'], blend: 0.1, resolution: 32 } })).toThrow(/twice/);
+    expect(() => applyOperation(p, { op: 'remove', name: 'drill' })).toThrow(/shell body/);
+    expect(applyOperation(p, { op: 'shell.set', shell: { name: 'body', parts: ['ball'], blend: 0.1, resolution: 32 } }).shells![0].cut).toBeUndefined();
+  });
+
+  it('subtracts the cutter from the field so the centre is empty and the wall is inside', () => {
+    const p = pierced();
+    const field = shellField(p, p.shells![0]);
+    expect(field([0, 0.5, 0])).toBeGreaterThan(0);
+    expect(field([0, 0.9, 0])).toBeGreaterThan(0);
+    expect(field([0.35, 0.5, 0])).toBeLessThan(0);
+    expect(field([0, 0.5, -0.35])).toBeLessThan(0);
+    const solid = shellField(p, { ...p.shells![0], cut: [] });
+    expect(solid([0, 0.5, 0])).toBeLessThan(-0.4);
+  });
+
+  it('meshes the hole wall and takes colors and weights only from members', () => {
+    const built = buildScene(pierced());
+    try {
+      const meshes: Mesh[] = []; built.root.traverse(o => { if (o instanceof Mesh) meshes.push(o); });
+      expect(meshes.map(m => m.name)).toEqual(['body']);
+      const g = meshes[0].geometry;
+      const pos = g.getAttribute('position'), col = g.getAttribute('color'), idx = g.getAttribute('skinIndex'), w = g.getAttribute('skinWeight');
+      let wall = 0;
+      for (let i = 0; i < pos.count; i++) {
+        const r = Math.hypot(pos.getX(i), pos.getZ(i));
+        if (r < 0.25 && Math.abs(pos.getY(i) - 0.5) < 0.3) wall++;
+        expect(col.getY(i)).toBeLessThan(0.05);
+        expect(idx.getX(i)).toBe(0); expect(w.getX(i)).toBeCloseTo(1, 5);
+      }
+      expect(wall).toBeGreaterThan(20);
+    } finally { built.dispose(); }
+  });
+
+  it('keeps the cutter out of the exported GLB', async () => {
+    const bytes = await exportGLB(pierced(false));
+    expect((await verifyGLB(bytes)).errors).toBe(0);
+    const gltf = await new GLTFLoader().parseAsync(bytes.slice().buffer, '');
+    const names: string[] = []; gltf.scene.traverse(o => { if (o instanceof Mesh) names.push(o.name); });
+    expect(names).toEqual(['body']);
+  });
 });

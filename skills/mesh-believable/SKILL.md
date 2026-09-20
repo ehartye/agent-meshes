@@ -26,6 +26,8 @@ single biggest step from "primitives" to "sculpture". Overlap members by roughly
 distance; a member that does not touch or nearly touch its neighbor stays a bump. Keep crisp
 features (eyes, beak, hooves, buttons) as separate parts on top of the shell rather than inside
 it. Use one shell per organism; a rigid-bound shell is skinned automatically from its members.
+Holes and hollows come from `cut`: list a part (a cylinder through a torso, a sphere inside a
+bowl) and the shell subtracts it with the same blend instead of rendering it.
 
 ## 3. Use profiles for anything turned or cut
 
