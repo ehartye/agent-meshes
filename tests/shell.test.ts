@@ -62,6 +62,25 @@ describe('organic shell', () => {
     } finally { built.dispose(); }
   });
 
+  it('darkens vertex colors in crevices with distance-field ambient occlusion', () => {
+    const built = buildScene(twoSpheres(false));
+    try {
+      const shell = built.root.getObjectByName('body') as Mesh;
+      const pos = shell.geometry.getAttribute('position'), col = shell.geometry.getAttribute('color');
+      // The neck between the spheres sits near x = 0 at mid height; the outer poles are at |x| > 0.65.
+      let neck = -1, pole = -1;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i), y = pos.getY(i);
+        if (Math.abs(x) < 0.06 && Math.abs(y - 0.5) < 0.08 && (neck < 0 || pos.getZ(i) > pos.getZ(neck))) neck = i;
+        if (x > 0.6 && (pole < 0 || x > pos.getX(pole))) pole = i;
+      }
+      expect(neck).toBeGreaterThanOrEqual(0); expect(pole).toBeGreaterThanOrEqual(0);
+      const brightness = (i: number) => col.getX(i) + col.getY(i) + col.getZ(i);
+      expect(brightness(neck)).toBeLessThan(brightness(pole) * 0.85);
+      expect(brightness(pole)).toBeGreaterThan(0.9);
+    } finally { built.dispose(); }
+  });
+
   it('renders an unbound shell as a plain mesh', () => {
     const built = buildScene(twoSpheres(false));
     try {
