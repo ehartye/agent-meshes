@@ -77,6 +77,10 @@ The CLI prints JSON and exits nonzero on failures. `batch operations.json` appli
 
 Development: run the API with `npm start`, then `npm run dev` for Vite's live reload. `npm test`, `npm run typecheck`, and `npm run build` verify the code. `npx playwright install chromium` then `node scripts/check-browser.mjs` exercise the built workbench and write a screenshot under `artifacts/`.
 
+## Claude Code plugin
+
+The repository is also a Claude Code plugin, listed in the [Hartye marketplace](https://github.com/ehartye/hartye-claude-plugins): `/plugin marketplace add ehartye/hartye-claude-plugins`, then `/plugin install agent-meshes@hartye-plugins`. The plugin cache is a bare checkout, so run `/agent-meshes:mesh-setup` once after installing or updating: it copies the runtime to `~/.agent-meshes/releases/<version-hash-platform>`, installs dependencies, builds the workbench, installs Chromium for renders, links the CLI and records a receipt (`npm run setup` does the same from a checkout). Skills (`mesh-setup`, `mesh-authoring`, `mesh-rigging`, `mesh-build`, `mesh-believable`) run every command through `scripts/run-managed.js`, which refuses a missing or modified release instead of falling back to PATH. `AGENT_MESHES_HOME` moves the managed home. Node.js 24 or newer is required; Blender stays optional and setup reports where it found one.
+
 ## Rigging
 
 Bones form an arbitrary hierarchy; there is no fixed limb count. In the browser, add bones under Skeleton, select a bone, bind the selected mesh part, then enter joint rotations in degrees under Pose. Reset all poses returns to the saved rest rig. The skeleton overlay helps inspect joint placement.

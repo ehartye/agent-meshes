@@ -1,0 +1,16 @@
+{
+  "name": "agent-meshes",
+  "description": "Local marketplace for the agent-meshes plugin",
+  "owner": {
+    "name": "ehartye"
+  },
+  "plugins": [
+    {
+      "name": "agent-meshes",
+      "description": "Named-part 3D authoring for coding agents: build rigged, animated GLB models from JSON operations, creature recipes with gaits, isolated verified builds with renders and offline previews, an embeddable three.js viewer, and an optional Blender refine stage",
+      "version": "0.1.0",
+      "source": "./",
+      "license": "MIT"
+    }
+  ]
+}
