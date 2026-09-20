@@ -29,12 +29,15 @@ export function validateGeometry(g: Part['geometry']): void {
     if (g.outline.some(([x, y]) => Math.abs(x) > 0.5 || Math.abs(y) > 0.5)) throw new Error('Outline points must be within -0.5 to 0.5');
   } else if (g.outline) throw new Error(`Only a prism takes an outline, not a ${g.type}`);
 }
+/** Surface finish: metalness 0 is paint or plastic, 1 is bare metal; roughness 0 is a mirror, 1 is chalk. Absent means the scene's default finish. */
+export const materialSchema = z.object({ metalness: z.number().min(0).max(1).default(0), roughness: z.number().min(0).max(1).default(0.65) }).strict();
 export const partSchema = z.object({
   name: nameSchema, geometry: geometrySchema, color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   position: vec3Schema, rotation: quatSchema,
   scale: vec3Schema.refine(v => v.every(n => n > 0 && n <= 1000), 'Scale must be positive'),
   parent: nameSchema.nullable(),
   binding: bindingSchema.optional(),
+  material: materialSchema.optional(),
 }).strict();
 export const shellSchema = z.object({
   name: nameSchema, parts: z.array(nameSchema).min(1).max(200),
@@ -44,6 +47,7 @@ export const shellSchema = z.object({
   blend: z.number().positive().max(10),
   /** Grid cells along the longest axis, 16 to 96. */
   resolution: z.number().int().min(16).max(96),
+  material: materialSchema.optional(),
 }).strict();
 export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]), shells: z.array(shellSchema).max(50).default([]) }).strict();
 function validateShells(project: Project): void {

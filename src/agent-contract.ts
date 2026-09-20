@@ -40,8 +40,11 @@ export function parseOperation(value: unknown): Operation {
 const examples: Record<Operation['op'], Operation[]> = {
   'assembly.copy': [{ op: 'assembly.copy', root: 'upper', prefix: 'right_', mirror: 'x', offset: [0, 0, 0], clips: true }],
   'pose.target': [{ op: 'pose.target', chain: ['upper', 'middle', 'end'], target: [0.5, 0.2, 0], pole: [0.5, 1, 1], preserveEndOrientation: true }],
-  add: [{ op: 'add', part: { name: 'body', geometry: { type: 'box', size: [1, 2, 1] }, position: [0, 1, 0] } }],
-  update: [{ op: 'update', name: 'body', changes: { color: '#64b9c4' } }],
+  add: [
+    { op: 'add', part: { name: 'body', geometry: { type: 'box', size: [1, 2, 1] }, position: [0, 1, 0] } },
+    { op: 'add', part: { name: 'balloon', geometry: { type: 'sphere', size: [1, 1, 1] }, color: '#e0563a', material: { metalness: 1, roughness: 0.1 } } },
+  ],
+  update: [{ op: 'update', name: 'body', changes: { color: '#64b9c4' } }, { op: 'update', name: 'body', changes: { material: { metalness: 1, roughness: 0.1 } } }],
   remove: [{ op: 'remove', name: 'body' }],
   'bone.add': [{ op: 'bone.add', bone: { name: 'root' } }],
   'bone.update': [{ op: 'bone.update', name: 'root', changes: { position: [0, 1, 0] } }],
@@ -56,12 +59,13 @@ const examples: Record<Operation['op'], Operation[]> = {
   'shell.set': [
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, resolution: 48 } },
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], cut: ['hole'], blend: 0.12, resolution: 48 } },
+    { op: 'shell.set', shell: { name: 'steel', parts: ['body', 'head'], blend: 0.12, resolution: 48, material: { metalness: 1, roughness: 0.1 } } },
   ],
   'shell.remove': [{ op: 'shell.remove', name: 'skin' }],
 };
 const descriptions: Record<Operation['op'], string> = {
-  add: 'Create a named primitive or group; omitted fields use the published defaults. A lathe needs a unit profile and a prism a unit outline. An anchor bone makes position and rotation relative to that bone\'s rest frame.',
-  update: 'Update a part. Unbind before changing geometry; update does not rename.',
+  add: 'Create a named primitive or group; omitted fields use the published defaults. A lathe needs a unit profile and a prism a unit outline. An anchor bone makes position and rotation relative to that bone\'s rest frame. An optional material sets the finish: metalness 0 to 1 (paint to bare metal) and roughness 0 to 1 (mirror to chalk); metalness 1 with roughness 0.1 is polished chrome.',
+  update: 'Update a part. Unbind before changing geometry; update does not rename. A material change replaces the whole finish (metalness, roughness), with omitted fields at their defaults.',
   remove: 'Remove an existing part after removing or reparenting its children.',
   'bone.add': 'Create a named bone with optional parent and rest transforms.',
   'bone.update': 'Update rest transforms or parent. Unbind parts affected by the bone subtree first.',
@@ -73,7 +77,7 @@ const descriptions: Record<Operation['op'], string> = {
   unbind: 'Remove an existing part binding.',
   'clip.set': 'Create or replace an entire named clip. Every track must span zero through duration with strictly increasing key times.',
   'clip.remove': 'Remove an existing named clip.',
-  'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point. Optional cut lists parts subtracted from the surface (holes and hollows) with the same blend; cutters are hidden like members, contribute no color or weight, and cannot also be members.',
+  'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point. Optional cut lists parts subtracted from the surface (holes and hollows) with the same blend; cutters are hidden like members, contribute no color or weight, and cannot also be members. An optional material (metalness, roughness, 0 to 1) sets the finish of the whole shell.',
   'shell.remove': 'Remove a shell; its member parts render individually again.',
   'assembly.copy': 'Copy a bone subtree with its bound parts and clip tracks under a prefix, optionally mirrored and offset in the root parent frame.',
   'pose.target': 'Pose a three-bone parent-child chain with two-link IK so the end bone reaches a world-space target, bending toward the pole.',

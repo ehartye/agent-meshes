@@ -30,6 +30,8 @@ Names are the part, bone and clip names from the project.
 | `setPose(bone, {rotation?, position?, scale?})` | Offsets from rest and from any playing clip; `rotation` is XYZ Euler degrees, `position` meters, `scale` multiplies the bone and everything it carries |
 | `getPose(bone)`, `resetPose(bone?)` | Read or clear offsets (all bones when omitted) |
 | `setColor(part, css)`, `getColor(part)`, `setVisible(part, bool)` | Recolor or hide a part; hiding also hides its outline hull |
+| `setMaterial(part, {metalness?, roughness?})` | Change a part's finish, each 0 to 1; omitted fields keep their value. `{metalness: 1, roughness: 0.1}` is chrome, `{metalness: 0, roughness: 0.65}` matte. Outline hulls are untouched |
+| `getMaterial(part)` | The part's current `{metalness, roughness}`, as exported from the project |
 | `play(clip?)`, `pause()`, `playing`, `clip`, `time`, `duration`, `speed`, `seek(seconds)` | Playback; clips are sampled directly, so `seek` then read works without a frame |
 | `bounds()` | World-space `Box3` of the visible, posed, skinned geometry |
 | `view(name or {position,target})`, `frame()` | Move the camera; `frame` fits the current bounds |

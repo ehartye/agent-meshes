@@ -27,6 +27,15 @@ describe('agent authoring contract', () => {
     expect(() => parseOperation({ op: 'pose.reset', typo: true })).toThrow();
   });
 
+  it('describes and demonstrates the material finish on add, update and shell.set', () => {
+    const contract = capabilities();
+    for (const op of ['add', 'update', 'shell.set'] as const) {
+      expect(contract.operations[op].description).toMatch(/metalness/);
+      expect(JSON.stringify(contract.operations[op].examples)).toMatch(/"material":\{"metalness":1,"roughness":0\.1\}/);
+    }
+    expect(JSON.stringify(contract.projectSchema)).toContain('"material"');
+  });
+
   it('inspects compact summaries and exact selections without exposing mutable state', () => {
     const project = fixture(), before = structuredClone(project);
     const summary = inspectProject(project);

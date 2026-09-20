@@ -1,6 +1,7 @@
 import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildScene } from '../render/scene.ts';
 import type { Project, GeometryKind, Vec3 } from '../core/types.ts';
 import { installRigUI } from './rig-ui.ts';
@@ -24,7 +25,11 @@ viewport.prepend(renderer.domElement);
 const scene = new THREE.Scene(); scene.fog = new THREE.Fog('#dce7eb', 22, 55);
 const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 150);
 const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.minDistance = 0.1; controls.maxDistance = 80;
-scene.add(new THREE.HemisphereLight('#ffffff', '#718794', 2.6));
+// The same room environment as the viewer runtime, so metal parts reflect something in build captures.
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
+scene.environmentIntensity = 0.55;
+scene.add(new THREE.HemisphereLight('#ffffff', '#718794', 1.3));
 const key = new THREE.DirectionalLight('#fff2d8', 3.7); key.position.set(4, 8, 5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.camera.left = -10; key.shadow.camera.right = 10; key.shadow.camera.top = 10; key.shadow.camera.bottom = -10; key.shadow.normalBias = 0.025; scene.add(key);
 const fill = new THREE.DirectionalLight('#b2e2f0', 1.2); fill.position.set(-5, 3, -3); scene.add(fill);
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.MeshStandardMaterial({ color: '#dce7eb', roughness: 1 })); floor.rotation.x = -Math.PI / 2; floor.position.y = -0.012; floor.receiveShadow = true; scene.add(floor);

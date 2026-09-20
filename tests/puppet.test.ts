@@ -11,7 +11,7 @@ function project() {
   p = applyOperation(p, { op: 'bone.add', bone: { name: 'knee', parent: 'hip', position: [0, -0.5, 0] } });
   p = applyOperation(p, { op: 'add', part: { name: 'thigh', geometry: { type: 'box', size: [0.2, 0.5, 0.2] }, position: [0, 0.75, 0], color: '#3366cc', binding: { type: 'rigid', bone: 'hip' } } });
   p = applyOperation(p, { op: 'add', part: { name: 'shin', geometry: { type: 'box', size: [0.2, 0.5, 0.2] }, position: [0, 0.25, 0], color: '#3366cc', binding: { type: 'rigid', bone: 'knee' } } });
-  p = applyOperation(p, { op: 'add', part: { name: 'hat', geometry: { type: 'sphere', size: [0.3, 0.3, 0.3] }, position: [0, 1.5, 0], color: '#cc3333' } });
+  p = applyOperation(p, { op: 'add', part: { name: 'hat', geometry: { type: 'sphere', size: [0.3, 0.3, 0.3] }, position: [0, 1.5, 0], color: '#cc3333', material: { metalness: 1, roughness: 0.1 } } });
   p = applyOperation(p, { op: 'clip.set', clip: { name: 'kick', duration: 1, tracks: [{ bone: 'knee', property: 'rotation', keys: [{ time: 0, value: [0, 0, 0, 1] }, { time: 0.5, value: [0.7071068, 0, 0, 0.7071068] }, { time: 1, value: [0, 0, 0, 1] }] }] } });
   return p;
 }
@@ -95,6 +95,19 @@ describe('puppet', () => {
     expect(puppet.getColor('shin')).toBe('#3366cc');
     puppet.setVisible('hat', false);
     expect(puppet.object('hat').visible).toBe(false);
+  });
+
+  it('reads the exported finish and switches one part between matte and mirror without touching its neighbours', async () => {
+    const puppet = await load();
+    expect(puppet.getMaterial('hat')).toEqual({ metalness: 1, roughness: 0.1 });
+    expect(puppet.getMaterial('thigh')).toEqual({ metalness: 0.08, roughness: 0.65 });
+    puppet.setMaterial('thigh', { metalness: 1, roughness: 0.1 });
+    expect(puppet.getMaterial('thigh')).toEqual({ metalness: 1, roughness: 0.1 });
+    expect(puppet.getMaterial('shin')).toEqual({ metalness: 0.08, roughness: 0.65 });
+    puppet.setMaterial('thigh', { roughness: 0.9 });
+    expect(puppet.getMaterial('thigh')).toEqual({ metalness: 1, roughness: 0.9 });
+    expect(() => puppet.setMaterial('thigh', { metalness: 2 })).toThrow(/0 to 1/);
+    expect(() => puppet.getMaterial('wing')).toThrow(/Unknown part: wing/);
   });
 
   it('reports bounds from the posed skin, not the bind pose', async () => {

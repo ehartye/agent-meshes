@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { AnimationMixer, Mesh, SkinnedMesh, Vector3 } from 'three';
+import { AnimationMixer, Mesh, MeshStandardMaterial, SkinnedMesh, Vector3 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { applyOperation, createProject } from '../src/core/model.ts';
 import { exportGLB, verifyGLB } from '../src/export.ts';
@@ -82,6 +82,23 @@ it('preserves animated world vertices and static descendants under transformed p
     }
     expect(project).toEqual(original);
   } finally { built.dispose(); }
+});
+
+it('carries part and shell metalness and roughness into the GLB as pbrMetallicRoughness factors', async () => {
+  let project = createProject('koons');
+  project = applyOperation(project, { op: 'add', part: { name: 'chrome', geometry: { type: 'sphere', size: [1, 1, 1] }, material: { metalness: 1, roughness: 0.1 } } });
+  project = applyOperation(project, { op: 'add', part: { name: 'matte', position: [2, 0, 0] } });
+  project = applyOperation(project, { op: 'add', part: { name: 'a', position: [0, 3, 0] } });
+  project = applyOperation(project, { op: 'add', part: { name: 'b', position: [0.5, 3, 0] } });
+  project = applyOperation(project, { op: 'shell.set', shell: { name: 'blob', parts: ['a', 'b'], blend: 0.3, resolution: 16, material: { metalness: 0.8, roughness: 0.2 } } });
+  const bytes = await exportGLB(project);
+  const report = await verifyGLB(bytes);
+  expect(report.errors).toBe(0);
+  const gltf = await new GLTFLoader().parseAsync(bytes.slice().buffer as ArrayBuffer, '');
+  const finish = (name: string) => { const m = (gltf.scene.getObjectByName(name) as Mesh).material as MeshStandardMaterial; return { metalness: m.metalness, roughness: m.roughness }; };
+  expect(finish('chrome')).toEqual({ metalness: 1, roughness: 0.1 });
+  expect(finish('matte')).toEqual({ metalness: 0.08, roughness: 0.65 });
+  expect(finish('blob')).toEqual({ metalness: 0.8, roughness: 0.2 });
 });
 
 it('supports simultaneous exports without FileReader races', async () => {
