@@ -26,12 +26,22 @@ export interface MountOptions {
   /** Outline color. Default near-black. */
   outlineColor?: string;
 }
-export type ViewName = 'front' | 'side' | 'top' | 'perspective';
+/** Camera directions. `side` is the model's right (+x); `top` and `bottom` lean a hair off the pole so the orbit up vector stays defined. */
+export type ViewName = 'front' | 'back' | 'left' | 'right' | 'side' | 'top' | 'bottom' | 'perspective';
 export interface ViewSpec { position: [number, number, number]; target?: [number, number, number] }
 
 const directions: Record<ViewName, THREE.Vector3> = {
-  front: new THREE.Vector3(0, 0.12, 1), side: new THREE.Vector3(1, 0.12, 0), top: new THREE.Vector3(0, 1, 0.0001), perspective: new THREE.Vector3(1, 0.65, 1.4),
+  front: new THREE.Vector3(0, 0.12, 1), back: new THREE.Vector3(0, 0.12, -1),
+  left: new THREE.Vector3(-1, 0.12, 0), right: new THREE.Vector3(1, 0.12, 0), side: new THREE.Vector3(1, 0.12, 0),
+  top: new THREE.Vector3(0, 1, 0.0001), bottom: new THREE.Vector3(0, -1, 0.0001), perspective: new THREE.Vector3(1, 0.65, 1.4),
 };
+export const viewNames = Object.keys(directions) as ViewName[];
+/** The camera direction of a named view (a fresh vector); an unknown name throws an Error listing the valid names. */
+export function viewDirection(name: string): THREE.Vector3 {
+  const direction = Object.hasOwn(directions, name) ? directions[name as ViewName] : null;
+  if (!direction) throw new Error(`Unknown view "${name}"; use one of ${viewNames.join(', ')}, or {position, target}`);
+  return direction.clone();
+}
 
 function bytesOf(glb: MountOptions['glb']): ArrayBuffer {
   if (typeof glb === 'string') return Uint8Array.from(atob(glb), char => char.charCodeAt(0)).buffer as ArrayBuffer;
@@ -99,7 +109,7 @@ export async function mount(container: HTMLElement, options: MountOptions) {
     if (typeof spec === 'string') {
       const distance = Math.max(box.getSize(new THREE.Vector3()).length() * padding, 3);
       camera.far = Math.max(200, distance * 10); camera.updateProjectionMatrix();
-      camera.position.copy(center).add(directions[spec].clone().normalize().multiplyScalar(distance)); controls.target.copy(center);
+      camera.position.copy(center).add(viewDirection(spec).normalize().multiplyScalar(distance)); controls.target.copy(center);
     } else { camera.position.fromArray(spec.position); controls.target.copy(spec.target ? new THREE.Vector3().fromArray(spec.target) : center); }
     controls.update();
   }

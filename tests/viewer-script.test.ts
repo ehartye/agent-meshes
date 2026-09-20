@@ -5,10 +5,24 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { previewHTML, viewerScript } from '../src/preview-html.ts';
+import { viewDirection, viewNames } from '../src/web/viewer.ts';
 
 const run = promisify(execFile);
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
+
+it('names eight camera views, mirrors the opposites, and rejects an unknown name by listing them', () => {
+  expect(viewNames).toEqual(['front', 'back', 'left', 'right', 'side', 'top', 'bottom', 'perspective']);
+  const unit = (name: string) => viewDirection(name).normalize().toArray().map(v => Math.round(v * 1000) / 1000 || 0);
+  expect(unit('front')[2]).toBeGreaterThan(0.9); expect(unit('back')[2]).toBeLessThan(-0.9);
+  expect(unit('right')[0]).toBeGreaterThan(0.9); expect(unit('left')[0]).toBeLessThan(-0.9);
+  expect(unit('right')).toEqual(unit('side'));
+  expect(unit('top')[1]).toBeGreaterThan(0.99); expect(unit('bottom')[1]).toBeLessThan(-0.99);
+  // Opposites are exact mirrors, so a back view keeps the same slight downward tilt as the front.
+  expect(unit('back')).toEqual(unit('front').map((v, i) => (i === 1 ? v : -v) || 0));
+  expect(() => viewDirection('rear')).toThrow(/Unknown view "rear"; use one of front, back, left, right, side, top, bottom, perspective/);
+  expect(() => viewDirection('rear')).not.toThrow(TypeError);
+});
 
 it('bundles a standalone viewer runtime exposing a global mount function', async () => {
   const code = await viewerScript();

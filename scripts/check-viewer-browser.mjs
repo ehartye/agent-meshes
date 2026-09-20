@@ -51,12 +51,16 @@ try {
         await new Promise(resolve => setTimeout(resolve, 250));
         const played = viewer.screenshot();
         viewer.view('front'); const front = viewer.screenshot(), time = viewer.time, clip = viewer.clip;
+        // Every named view moves the camera somewhere different; an unknown name is a plain Error that lists them.
+        const views = {}; for (const name of ['front', 'back', 'left', 'right', 'side', 'top', 'bottom', 'perspective']) { viewer.view(name); views[name] = viewer.camera.position.toArray().map(v => Math.round(v * 100) / 100); }
+        let rejected = null; try { viewer.view('rear'); } catch (error) { rejected = { type: error.constructor.name, message: error.message }; }
+        viewer.view('front');
         // Patterns re-bake in place: dots change the frame, null restores the flat part's look, getPattern reports.
         viewer.pause(); viewer.seek(0);
         const plain = viewer.screenshot(); viewer.setPattern(part, { type: 'dots', color: '#ffffff', size: 0.05 });
         const dotted = viewer.screenshot(), pattern = viewer.getPattern(part); viewer.setPattern(part, null);
         const restored = viewer.screenshot(); viewer.play('trot');
-        return { head, part, color: viewer.getColor(part), matte, material: viewer.getMaterial(part), pose: viewer.getPose(head), changedByPose: before !== posed, changedByColor: posed !== recolored, changedByMaterial: recolored !== chromed, changedByPlay: chromed !== played, time, clip, front, changedByPattern: plain !== dotted, restoredByNull: restored === plain, pattern, cleared: viewer.getPattern(part) };
+        return { head, part, color: viewer.getColor(part), matte, material: viewer.getMaterial(part), pose: viewer.getPose(head), changedByPose: before !== posed, changedByColor: posed !== recolored, changedByMaterial: recolored !== chromed, changedByPlay: chromed !== played, time, clip, front, changedByPattern: plain !== dotted, restoredByNull: restored === plain, pattern, cleared: viewer.getPattern(part), views, rejected };
       });
       assert.equal(result.changedByPose, true, 'posing a bone changes the rendered frame');
       assert.equal(result.changedByColor, true, 'recoloring a part changes the rendered frame');
@@ -72,6 +76,13 @@ try {
       assert.deepEqual(result.pose, { rotation: [0, 0, 0], position: [0, 0, 0], scale: [1, 1, 1] });
       assert.equal(result.clip, 'trot');
       assert.ok(result.time > 0.1, `playback advanced (${result.time})`);
+      const { views } = result;
+      assert.deepEqual(views.side, views.right, 'side is the right view');
+      assert.ok(views.back[2] < 0 && views.front[2] > 0 && views.left[0] < 0 && views.right[0] > 0, `back, front, left and right face the model from their own sides: ${JSON.stringify(views)}`);
+      assert.ok(views.bottom[1] < views.top[1] && views.bottom[1] < 0, `bottom looks up from below the floor: ${JSON.stringify(views)}`);
+      assert.equal(new Set(Object.values(views).filter((p, i, all) => all.indexOf(p) === i).map(p => p.join())).size, 7, 'seven distinct camera positions for eight names');
+      assert.equal(result.rejected?.type, 'Error', `unknown view is a plain Error: ${JSON.stringify(result.rejected)}`);
+      assert.match(result.rejected?.message ?? '', /Unknown view "rear"; use one of front, back, left, right, side, top, bottom, perspective/);
       await writeFile(join(evidence, 'front.png'), Buffer.from(result.front.split(',')[1], 'base64'));
       // Ink outlines: an inverted hull per mesh, following the same skeleton.
       const outlined = await page.evaluate(async () => {
