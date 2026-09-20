@@ -25,6 +25,7 @@ interface Leg { name: string; hip: Vec3; knee: Vec3; foot: Vec3; pole: Vec3; pha
 export interface CreatureOptions {
   /** Clips for equine or vulpine: any of walk, trot, gallop. Default walk and trot. */ gaits?: readonly string[];
   /** Equine or vulpine only: blend every part into one smooth skin with lathe hooves. */ shell?: boolean;
+  /** Insectoid only: one clip per entry, each a touchdown phase (0 to 1) per leg in order L1 L2 L3 R1 R2 R3. */ legPhases?: Record<string, number[]>;
 }
 export function createCreature(kind: CreatureKind | 'quadruped', options: CreatureOptions = {}): Project {
   if (kind === 'quadruped') kind = 'vulpine';
@@ -32,6 +33,7 @@ export function createCreature(kind: CreatureKind | 'quadruped', options: Creatu
   const info = creatureInfo[kind];
   if (kind === 'equine' || kind === 'vulpine') return createQuadruped(kind, info.name, options.gaits, { shell: options.shell });
   if (options.gaits || options.shell) throw new Error(`Gaits and shells are only configurable for equine and vulpine, not ${kind}`);
+  if (options.legPhases && kind !== 'insectoid') throw new Error(`Leg phases are only configurable for insectoid, not ${kind}`);
   const project: Project = { version: 1, name: info.name, parts: [], bones: [], clips: [] };
   const legs: Leg[] = [];
   const spiderLegs: ReturnType<typeof createSpiderLeg>[] = [];
@@ -149,32 +151,42 @@ export function createCreature(kind: CreatureKind | 'quadruped', options: Creatu
   const duration = kind === 'biped' ? 1.2 : kind === 'insectoid' ? 1.4 : spiderGait.duration;
   const samples = Math.ceil(duration * 60);
   const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'arachnid' ? 0.003 : 0.01) * (1 - Math.cos(4 * Math.PI * t));
-  const clipTracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }];
-  for (const leg of legs) for (const joint of ['hip', 'knee', 'ankle']) clipTracks.push({ bone: `${leg.name}_${joint}`, property: 'rotation', keys: [] });
-  for (const leg of spiderLegs) for (const bone of leg.names) clipTracks.push({ bone, property: 'rotation', keys: [] });
-  for (const { bone } of tracks) clipTracks.push({ bone, property: 'rotation', keys: [] });
-  for (let frame = 0; frame <= samples; frame++) {
-    const phase = frame === samples ? 0 : frame / samples, time = frame / samples * duration;
-    let index = 0;
-    clipTracks[index++].keys.push({ time, value: [0, bob(phase), 0] });
-    for (const leg of legs) {
-      const offset = footPath(phase + leg.phase, leg.stride, leg.lift, leg.stance);
-      const target: Vec3 = [leg.foot[0] + offset[0], leg.foot[1] + offset[1] - bob(phase), leg.foot[2] + offset[2]];
-      const pose = solveLeg(leg.hip, leg.knee, leg.foot, target, leg.pole);
-      for (const value of [pose.upper, pose.lower, pose.ankle]) clipTracks[index++].keys.push({ time, value });
+  /** Sample one looping clip; phaseOf overrides each leg's touchdown phase in leg order. */
+  function sampleClip(name: string, phaseOf: (legIndex: number) => number): void {
+    const clipTracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }];
+    for (const leg of legs) for (const joint of ['hip', 'knee', 'ankle']) clipTracks.push({ bone: `${leg.name}_${joint}`, property: 'rotation', keys: [] });
+    for (const leg of spiderLegs) for (const bone of leg.names) clipTracks.push({ bone, property: 'rotation', keys: [] });
+    for (const { bone } of tracks) clipTracks.push({ bone, property: 'rotation', keys: [] });
+    for (let frame = 0; frame <= samples; frame++) {
+      const phase = frame === samples ? 0 : frame / samples, time = frame / samples * duration;
+      let index = 0;
+      clipTracks[index++].keys.push({ time, value: [0, bob(phase), 0] });
+      legs.forEach((leg, legIndex) => {
+        const offset = footPath(phase + phaseOf(legIndex), leg.stride, leg.lift, leg.stance);
+        const target: Vec3 = [leg.foot[0] + offset[0], leg.foot[1] + offset[1] - bob(phase), leg.foot[2] + offset[2]];
+        const pose = solveLeg(leg.hip, leg.knee, leg.foot, target, leg.pole);
+        for (const value of [pose.upper, pose.lower, pose.ankle]) clipTracks[index++].keys.push({ time, value });
+      });
+      for (const leg of spiderLegs) for (const value of leg.sample(phase, bob(phase))) clipTracks[index++].keys.push({ time, value });
+      for (const { sample } of tracks) clipTracks[index++].keys.push({ time, value: sample(phase) });
     }
-    for (const leg of spiderLegs) for (const value of leg.sample(phase, bob(phase))) clipTracks[index++].keys.push({ time, value });
-    for (const { sample } of tracks) clipTracks[index++].keys.push({ time, value: sample(phase) });
-  }
-  // Avoid quaternion sign flips between adjacent samples without changing orientation.
-  for (const track of clipTracks) if (track.property === 'rotation') {
-    for (let i = 1; i < track.keys.length; i++) {
-      const previous = track.keys[i - 1].value, current = track.keys[i].value;
-      if (current.reduce((sum, n, j) => sum + n * previous[j], 0) < 0) track.keys[i].value = current.map(n => -n) as Quat;
+    // Avoid quaternion sign flips between adjacent samples without changing orientation.
+    for (const track of clipTracks) if (track.property === 'rotation') {
+      for (let i = 1; i < track.keys.length; i++) {
+        const previous = track.keys[i - 1].value, current = track.keys[i].value;
+        if (current.reduce((sum, n, j) => sum + n * previous[j], 0) < 0) track.keys[i].value = current.map(n => -n) as Quat;
+      }
+      track.keys.at(-1)!.value = [...track.keys[0].value];
     }
-    track.keys.at(-1)!.value = [...track.keys[0].value];
+    project.clips.push({ name, duration, tracks: clipTracks });
   }
-  project.clips.push({ name: info.gait, duration, tracks: clipTracks });
+  if (options.legPhases) {
+    if (kind !== 'insectoid') throw new Error(`Leg phases are only configurable for insectoid, not ${kind}`);
+    for (const [name, phases] of Object.entries(options.legPhases)) {
+      if (phases.length !== legs.length) throw new Error(`Expected ${legs.length} phases for ${name}, received ${phases.length}`);
+      sampleClip(name, legIndex => phases[legIndex]);
+    }
+  } else sampleClip(info.gait, legIndex => legs[legIndex].phase);
   // Canonical JSON also turns signed zero from quaternion math into ordinary zero.
   return validateProject(JSON.parse(JSON.stringify(project)));
 }
