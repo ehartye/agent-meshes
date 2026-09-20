@@ -13,6 +13,7 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
 {"op":"add","part":{"name":"fin","geometry":{"type":"prism","size":[0.6,0.4,0.05],"outline":[[-0.5,-0.5],[0.5,-0.5],[0.2,0.5]]},"position":[0,1,-0.5]}}
 {"op":"add","part":{"name":"arm_group","geometry":{"type":"group"},"position":[0.6,1.8,0]}}
 {"op":"update","name":"body","changes":{"color":"#c76f43","scale":[1,1.1,1]}}
+{"op":"update","name":"body","changes":{"material":{"metalness":1,"roughness":0.1}}}
 {"op":"remove","name":"fin"}
 ```
 
@@ -25,6 +26,10 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
 - `parent` makes the transform relative to another part. `anchor` makes it relative to a bone's
   rest frame instead; use it for anything that belongs at a joint.
 - `update` takes `changes` with any part fields except `name`; unbind before changing geometry.
+- `material` sets the finish, each 0 to 1: `metalness` 0 is paint, 1 bare metal; `roughness` 0 is a
+  mirror, 1 chalk. Omitted, a part keeps the default matte finish (metalness 0.08, roughness 0.65).
+  `{"metalness":1,"roughness":0.1}` is polished chrome. A shell takes the same `material` for its
+  whole surface.
 
 ## Shells
 

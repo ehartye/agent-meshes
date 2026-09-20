@@ -23,6 +23,8 @@ try {
   await page.waitForFunction(() => window.meshWorkbench.project.parts[0]?.geometry.size[0] === 200);
   await page.locator('#fit').click();
   assert.ok(await page.evaluate(() => window.meshWorkbench.camera.position.length() > 300));
+  // Metal parts reflect the room environment; without it a chrome part renders black in build captures.
+  assert.equal(await page.evaluate(() => !!window.meshWorkbench.scene.environment), true, 'the workbench scene has environment lighting');
   assert.deepEqual(errors, []);
   console.log('PASS: browser add/edit/undo/redo, valid form defaults, large-model framing');
 } finally { await browser.close(); server.server.closeAllConnections(); await server.close(); }

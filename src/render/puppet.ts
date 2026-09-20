@@ -4,6 +4,9 @@ import type { AnimationClip, Interpolant } from 'three';
 /** A pose offset applied on top of the rest pose and any playing clip. Rotation is XYZ Euler degrees; scale multiplies the bone and everything it carries. */
 export interface PoseInput { rotation?: [number, number, number]; position?: [number, number, number]; scale?: [number, number, number] }
 export interface Pose { rotation: [number, number, number]; position: [number, number, number]; scale: [number, number, number] }
+/** A part's surface finish: metalness 0 is paint, 1 bare metal; roughness 0 is a mirror, 1 chalk. */
+export interface MaterialValues { metalness: number; roughness: number }
+export type MaterialInput = Partial<MaterialValues>;
 
 interface Rest { position: Vector3; quaternion: Quaternion; scale: Vector3 }
 interface Offset { position: Vector3; quaternion: Quaternion; euler: [number, number, number]; scale: Vector3 }
@@ -84,6 +87,17 @@ export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[
     resetPose(name?: string): void { if (name === undefined) offsets.clear(); else { bone(name); offsets.delete(name); } apply(); },
     setColor(name: string, hex: string): void { (object(name).material as Material & { color: Color }).color.set(hex); },
     getColor(name: string): string { return `#${(object(name).material as Material & { color: Color }).color.getHexString()}`; },
+    /** Set a part's finish, 0 to 1 each: metalness 1 is bare metal, roughness 0 a mirror. Omitted fields keep their value. */
+    setMaterial(name: string, finish: MaterialInput): void {
+      const material = object(name).material as Material & MaterialValues;
+      for (const key of ['metalness', 'roughness'] as const) {
+        const value = finish[key];
+        if (value === undefined) continue;
+        if (!(value >= 0 && value <= 1)) throw new Error(`${key} must be 0 to 1: ${value}`);
+        material[key] = value;
+      }
+    },
+    getMaterial(name: string): MaterialValues { const material = object(name).material as Material & MaterialValues; return { metalness: material.metalness, roughness: material.roughness }; },
     setVisible(name: string, visible: boolean): void { object(name).visible = visible; },
     /** Play a clip by name, or resume the current one. */
     play(name?: string): void { if (name !== undefined && name !== current) select(name); else if (current === null && clips.size) select([...clips.keys()][0]); playing = true; },

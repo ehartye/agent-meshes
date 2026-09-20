@@ -34,3 +34,19 @@ describe('named model authoring', () => {
     expect(() => validateProject({ ...p, version: 42 })).toThrow();
   });
 });
+
+describe('part materials', () => {
+  it('stores optional metalness and roughness on add, update and shell.set, defaulting metalness to 0', () => {
+    let p = applyOperation(createProject('koons'), { op: 'add', part: { name: 'balloon', material: { metalness: 1, roughness: 0.1 } } });
+    expect(p.parts[0].material).toEqual({ metalness: 1, roughness: 0.1 });
+    p = applyOperation(p, { op: 'add', part: { name: 'plain' } });
+    expect(p.parts[1].material).toBeUndefined();
+    p = applyOperation(p, { op: 'update', name: 'plain', changes: { material: { roughness: 0.3 } } });
+    expect(p.parts[1].material).toEqual({ metalness: 0, roughness: 0.3 });
+    p = applyOperation(p, { op: 'shell.set', shell: { name: 'skin', parts: ['balloon', 'plain'], blend: 0.1, resolution: 16, material: { metalness: 1, roughness: 0.1 } } });
+    expect(p.shells![0].material).toEqual({ metalness: 1, roughness: 0.1 });
+    expect(validateProject(JSON.parse(JSON.stringify(p)))).toEqual(p);
+    expect(() => applyOperation(p, { op: 'update', name: 'plain', changes: { material: { metalness: 1.5 } } })).toThrow();
+    expect(() => applyOperation(p, { op: 'update', name: 'plain', changes: { material: { roughness: -0.1 } } })).toThrow();
+  });
+});
