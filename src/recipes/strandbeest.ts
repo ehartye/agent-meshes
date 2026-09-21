@@ -17,34 +17,33 @@ export const JANSEN = { a: 38, b: 41.5, c: 39.3, d: 40.1, e: 55.8, f: 39.4, g: 3
 export type P2 = [number, number];
 export interface JansenLeg { O: P2; P: P2; C: P2; A: P2; B: P2; D: P2; E: P2; F: P2 }
 
-/** The two intersections of circles (c1, r1) and (c2, r2); `pick` chooses one. */
-function meet(c1: P2, r1: number, c2: P2, r2: number, pick: (p: P2, q: P2) => P2): P2 {
+/** Circle intersection on the signed side of the directed line c1 → c2. */
+function meet(c1: P2, r1: number, c2: P2, r2: number, branch: -1 | 1): P2 {
   const dx = c2[0] - c1[0], dy = c2[1] - c1[1], d = Math.hypot(dx, dy);
   if (d > r1 + r2 || d < Math.abs(r1 - r2) || d === 0) throw new Error(`Linkage cannot close: circles ${r1} and ${r2} at distance ${d.toFixed(3)}`);
   const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d), h = Math.sqrt(Math.max(0, r1 * r1 - a * a));
   const mx = c1[0] + a * dx / d, my = c1[1] + a * dy / d;
-  return pick([mx + h * dy / d, my - h * dx / d], [mx - h * dy / d, my + h * dx / d]);
+  return [mx - branch * h * dy / d, my + branch * h * dx / d];
 }
-const lower = (p: P2, q: P2): P2 => (p[1] < q[1] ? p : q);
-const leftmost = (p: P2, q: P2): P2 => (p[0] < q[0] ? p : q);
 
 /** Solve one leg for a crank angle, in Jansen's units, x forward and y up, crank axle at the origin. */
 export function solveJansenLeg(theta: number): JansenLeg {
   const { a, b, c, d, e, f, g, h, i, j, k, l, m } = JANSEN;
   const O: P2 = [0, 0], P: P2 = [-a, -l];
   const C: P2 = [m * Math.cos(theta), m * Math.sin(theta)];
-  // Branches chosen so the foot path is the classic one: flat along the bottom, below and
-  // behind the axle, continuous through the whole turn.
-  const A = meet(P, b, C, j, lower);
-  const B = meet(P, c, C, k, lower);
-  const D = meet(P, d, A, e, leftmost);
-  const E = meet(D, f, B, g, lower);
-  const F = meet(B, h, E, i, lower);
+  // Unfolded assembly: A is above P and D is to its left at theta = 0.
+  // Oriented branches stay fixed through the turn, independent of sample order.
+  // Diagram: https://www.csuohio.edu/sites/default/files/47A-2016.pdf
+  const A = meet(P, b, C, j, 1);
+  const B = meet(P, c, C, k, -1);
+  const D = meet(P, d, A, e, 1);
+  const E = meet(D, f, B, g, -1);
+  const F = meet(B, i, E, h, 1);
   return { O, P, C, A, B, D, E, F };
 }
 
 /** The rods as pairs of joint names, keyed by Jansen's letters (the frame a and l are static). */
-const RODS: Record<string, [keyof JansenLeg, keyof JansenLeg]> = { m: ['O', 'C'], j: ['C', 'A'], k: ['C', 'B'], b: ['P', 'A'], c: ['P', 'B'], d: ['P', 'D'], e: ['A', 'D'], f: ['D', 'E'], g: ['B', 'E'], h: ['B', 'F'], i: ['E', 'F'] };
+const RODS: Record<string, [keyof JansenLeg, keyof JansenLeg]> = { m: ['O', 'C'], j: ['C', 'A'], k: ['C', 'B'], b: ['P', 'A'], c: ['P', 'B'], d: ['P', 'D'], e: ['A', 'D'], f: ['D', 'E'], g: ['B', 'E'], h: ['E', 'F'], i: ['B', 'F'] };
 
 export interface StrandbeestOptions {
   /** Crank positions along the shaft; each carries four legs (L and R, front- and back-facing). Default 3. */

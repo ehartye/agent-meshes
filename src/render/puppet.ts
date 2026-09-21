@@ -1,7 +1,9 @@
 import { Bone, Box3, Color, Euler, Material, MathUtils, Mesh, Object3D, PropertyBinding, Quaternion, SkinnedMesh, Vector3 } from 'three';
-import type { AnimationClip, Interpolant } from 'three';
+import type { AnimationClip, Interpolant, Skeleton } from 'three';
 import { bakePattern, uniformBase } from './pattern.ts';
 import type { Pattern } from '../core/types.ts';
+import { clonePoseSource, finiteTriple, observePoints } from './observation.ts';
+import type { Anchors, Observations, PoseSample, PoseSampler } from './observation.ts';
 
 /** A pose offset applied on top of the rest pose and any playing clip. Rotation is XYZ Euler degrees; scale multiplies the bone and everything it carries. */
 export interface PoseInput { rotation?: [number, number, number]; position?: [number, number, number]; scale?: [number, number, number] }
@@ -24,15 +26,24 @@ interface Sampler { binding: Binding; interpolant: Interpolant }
  * when its sampled value changes and so cannot be composed with pose offsets frame by frame.
  */
 export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[] }) {
+  return buildPuppet(gltf, true).puppet;
+}
+
+function buildPuppet(gltf: { scene: Object3D; animations: AnimationClip[] }, capture: boolean) {
+  // Geometry is shared read-only; the lightweight authored hierarchy precedes all clip sampling.
+  const authored = capture ? clonePoseSource(gltf) : null;
   const root = gltf.scene;
   const bones = new Map<string, Bone>(), parts = new Map<string, Mesh>(), rest = new Map<string, Rest>(), offsets = new Map<string, Offset>();
   const morphRest = new Map<Mesh, number[]>(), morphOverrides = new Map<Mesh, Map<number, number>>();
+  const ownedMaterials = new Set<Material>(), ownedSkeletons = new Set<Skeleton>();
   root.traverse(object => {
     if (object instanceof Bone) { bones.set(object.name, object); rest.set(object.name, { position: object.position.clone(), quaternion: object.quaternion.clone(), scale: object.scale.clone() }); }
-    else if (object instanceof Mesh && object.name) {
+    else if (object instanceof Mesh) {
       // Preserve geometry groups and isolate every slot from other parts (and from other slots).
       object.material = Array.isArray(object.material) ? object.material.map(material => material.clone()) : object.material.clone();
-      parts.set(object.name, object);
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) ownedMaterials.add(material);
+      if (object instanceof SkinnedMesh) ownedSkeletons.add(object.skeleton);
+      if (object.name) parts.set(object.name, object);
       if (object.morphTargetInfluences) morphRest.set(object, [...object.morphTargetInfluences]);
     }
   });
@@ -79,7 +90,7 @@ export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[
     root.updateMatrixWorld(true);
     root.traverse(item => { if (item instanceof SkinnedMesh) { item.skeleton.update(); item.computeBoundingSphere(); } });
   }
-  function select(name: string | null): void {
+  function select(name: string | null, update = true): void {
     const clip = name === null ? null : clipOf(name);
     samplers = []; current = null; duration = 0;
     if (clip) {
@@ -91,24 +102,43 @@ export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[
       }
       current = name; duration = clip.duration;
     }
-    time = 0; apply();
+    time = 0; if (update) apply();
   }
   select(gltf.animations[0]?.name ?? null);
 
+  function putPose(name: string, pose: PoseInput): void {
+    bone(name);
+    const offset = offsets.get(name) ?? { position: new Vector3(), quaternion: new Quaternion(), euler: [0, 0, 0] as [number, number, number], scale: new Vector3(1, 1, 1) };
+    if (pose.rotation) { offset.euler = [...pose.rotation]; offset.quaternion.setFromEuler(new Euler(...pose.rotation.map(MathUtils.degToRad) as [number, number, number], 'XYZ')); }
+    if (pose.position) offset.position.fromArray(pose.position);
+    if (pose.scale) { if (pose.scale.some(v => !(v > 0))) throw new Error(`Scale must be positive: ${pose.scale}`); offset.scale.fromArray(pose.scale); }
+    offsets.set(name, offset);
+  }
+
   const puppet = {
     root,
+    /** Observe named local points without changing playback or controls. */
+    observe(anchors: Anchors, relativeTo?: string): Observations { return observePoints(root, anchors, relativeTo); },
+    /** Independent authored transforms/materials. Later scene additions are omitted; geometry/textures stay shared. */
+    createPoseSampler(): PoseSampler {
+      if (!authored) throw new Error('Nested pose samplers are unsupported');
+      const sampled = buildPuppet(clonePoseSource(authored), false);
+      let disposed = false;
+      const alive = () => { if (disposed) throw new Error('Pose sampler is disposed'); };
+      return {
+        root: sampled.puppet.root,
+        sample(input) { alive(); sampled.sample(input); },
+        observe(anchors, relativeTo) { alive(); return sampled.puppet.observe(anchors, relativeTo); },
+        dispose() { if (disposed) return; disposed = true; sampled.release(); },
+      };
+    },
     get bones(): string[] { return [...bones.keys()]; },
     get parts(): string[] { return [...parts.keys()]; },
     get clips(): string[] { return [...clips.keys()]; },
     bone, object,
     /** Set a pose offset for one bone. Omitted fields keep their current offset. */
     setPose(name: string, pose: PoseInput): void {
-      bone(name);
-      const offset = offsets.get(name) ?? { position: new Vector3(), quaternion: new Quaternion(), euler: [0, 0, 0] as [number, number, number], scale: new Vector3(1, 1, 1) };
-      if (pose.rotation) { offset.euler = [...pose.rotation]; offset.quaternion.setFromEuler(new Euler(...pose.rotation.map(MathUtils.degToRad) as [number, number, number], 'XYZ')); }
-      if (pose.position) offset.position.fromArray(pose.position);
-      if (pose.scale) { if (pose.scale.some(v => !(v > 0))) throw new Error(`Scale must be positive: ${pose.scale}`); offset.scale.fromArray(pose.scale); }
-      offsets.set(name, offset); apply();
+      putPose(name, pose); apply();
     },
     getPose(name: string): Pose {
       bone(name);
@@ -211,6 +241,36 @@ export function createPuppet(gltf: { scene: Object3D; animations: AnimationClip[
       return box;
     },
   };
-  return puppet;
+  return {
+    puppet,
+    sample(input: PoseSample): void {
+      // Complete validation precedes changes to the last successful sample.
+      if (input.clip !== null) clipOf(input.clip);
+      if (!Number.isFinite(input.time)) throw new Error('Sample time must be finite');
+      const poses = Object.entries(input.poses ?? {}), morphs = input.morphs ?? [];
+      if (poses.length > 4096 || morphs.length > 4096) throw new Error('At most 4096 pose or morph controls');
+      for (const [name, pose] of poses) {
+        bone(name);
+        for (const key of ['rotation', 'position', 'scale'] as const) if (pose[key]) {
+          finiteTriple(pose[key]!, `Pose ${key}`);
+          if (key === 'scale' && pose.scale!.some(v => v <= 0)) throw new Error('Pose scale must be positive');
+        }
+      }
+      for (const value of morphs) { morph(value.part, value.target); if (!Number.isFinite(value.weight)) throw new Error('Morph weight must be finite'); }
+      offsets.clear(); morphOverrides.clear(); select(input.clip, false);
+      time = duration ? ((input.time % duration) + duration) % duration : 0;
+      for (const [name, pose] of poses) putPose(name, pose);
+      for (const value of morphs) {
+        const { mesh, index } = morph(value.part, value.target), values = morphOverrides.get(mesh) ?? new Map<number, number>();
+        values.set(index, value.weight); morphOverrides.set(mesh, values);
+      }
+      apply();
+    },
+    release(): void {
+      for (const skeleton of ownedSkeletons) skeleton.dispose();
+      for (const material of ownedMaterials) material.dispose();
+      root.removeFromParent();
+    },
+  };
 }
 export type Puppet = ReturnType<typeof createPuppet>;

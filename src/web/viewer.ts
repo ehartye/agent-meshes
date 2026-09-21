@@ -7,6 +7,7 @@ import type { Puppet } from '../render/puppet.ts';
 
 export const version = '1';
 export type { Pose, PoseInput, MaterialValues, MaterialInput } from '../render/puppet.ts';
+export type { Anchor, Anchors, Observations, PoseSample, PoseSampler } from '../render/observation.ts';
 export { createSweep } from '../render/sweep.ts';
 export type { Sweep, SweepSpec, SweepSample } from '../render/sweep.ts';
 export { createCarver } from './carver.ts';
