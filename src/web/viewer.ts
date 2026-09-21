@@ -8,6 +8,8 @@ import type { Puppet } from '../render/puppet.ts';
 export const version = '1';
 export type { Pose, PoseInput, MaterialValues, MaterialInput } from '../render/puppet.ts';
 export type { Anchor, Anchors, Observations, PoseSample, PoseSampler } from '../render/observation.ts';
+export { createAssembly, solveFrame } from '../render/assembly.ts';
+export type { Assembly, AssemblySpec, AssemblyPiece, AssemblyJoint, AssemblySnapshot, AssemblyAnchor, AssemblyAction, AssemblyMatrix, AssemblyPoint } from '../render/assembly.ts';
 export { createSweep } from '../render/sweep.ts';
 export type { Sweep, SweepSpec, SweepSample } from '../render/sweep.ts';
 export { createCarver } from './carver.ts';
