@@ -20,7 +20,8 @@ export function buildScene(project: Project) {
     if (geometry && part.binding) applySkin(geometry, part.binding, [...bones.keys()]);
     // A patterned part carries its color in the vertices, like a shell; the base color_1 attribute lets the viewer re-bake.
     if (geometry && part.pattern) geometry.setAttribute('color_1', uniformBase(geometry.getAttribute('position').count, new Color(part.color)));
-    const material = geometry ? new MeshStandardMaterial({ color: part.pattern ? '#ffffff' : part.color, vertexColors: !!part.pattern, ...(part.material ?? defaultFinish), flatShading: true }) : null;
+    // Use the same geometry normals glTF exports, so curved surfaces preview faithfully.
+    const material = geometry ? new MeshStandardMaterial({ color: part.pattern ? '#ffffff' : part.color, vertexColors: !!part.pattern, ...(part.material ?? defaultFinish) }) : null;
     const object = !geometry ? new Group() : part.binding ? new SkinnedMesh(geometry, material!) : new Mesh(geometry, material!);
     object.name = part.name;
     object.position.fromArray(part.position); object.quaternion.fromArray(part.rotation); object.scale.fromArray(part.scale);
