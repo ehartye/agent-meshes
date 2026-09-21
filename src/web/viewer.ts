@@ -15,6 +15,8 @@ export type { Sweep, SweepSpec, SweepSample } from '../render/sweep.ts';
 export { createCarver } from './carver.ts';
 export type { Carver, CarverOptions, CarverResult } from './carver.ts';
 export type { CarveRequest, EllipticalCutter, SolidBounds } from '../render/carving.ts';
+export { createPlanarLinkage } from '../mechanisms/planar-linkage.ts';
+export type { PlanarPoint, PlanarCrank, PlanarIntersection, PlanarLinkageSpec, PlanarLinkageSample, PlanarLinkage } from '../mechanisms/planar-linkage.ts';
 
 export interface MountOptions {
   /** GLB bytes, or the GLB as a base64 string (works from file:// where fetch does not). */
