@@ -17,6 +17,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python tests/blender_author_geometry.py
+      - run: python tests/blender_author_skin.py
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
