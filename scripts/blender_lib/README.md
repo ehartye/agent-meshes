@@ -83,10 +83,48 @@ skins, animations, named morphs and authored rest weights. It does not apply
 geometry modifiers, which can discard morph topology. Resolve required modifiers
 before creating shape keys. The build runner normally calls this function for you.
 
+`bind_skin(mesh, armature, weights)` binds an authored mesh to existing deform
+bones and returns its new Armature modifier. Supply a dense list/tuple with one
+mapping per mesh vertex, for example `{'hip': .7, 'knee': .3}`. Every row must
+contain 1–4 entries naming existing bones with `use_deform=True`, finite
+nonnegative values, and positive total weight. The helper normalizes each row;
+it never silently truncates more than four entries. Supplied zeros count toward
+that limit and their bone names are validated, then zero weights are omitted.
+Normalization scales before summing to avoid overflow; tiny ratios may round to
+zero in Python or Blender's float storage.
+
+```python
+from agent_meshes_author import bind_skin
+
+# mesh and rig are authored objects; author weights in the rig's rest space.
+bind_skin(mesh, rig, weights)
+# build() must return both so selected-object export includes the skeleton.
+return [mesh, rig]
+```
+
+Both objects must be local/editable, in Object mode and the active view layer.
+The mesh must have single-user data and no parent, constraints, Armature modifier
+or existing deform-bone vertex groups. Cyclic parenting and singular/nonfinite
+armature world transforms reject. Unrelated groups and modifiers remain intact.
+All validation precedes changes; the helper creates named groups, an explicitly
+vertex-weighted linear-blend Armature modifier, and an armature parent with its
+inverse world matrix. Mesh coordinates, current world transform, selection and
+mode remain unchanged. It does not create bones, infer weights, change topology
+or author animation. Existing poses deform the result immediately; keep the rig
+in rest pose when checking initial appearance. Resolve topology-changing
+modifiers deliberately before weighting if their output needs distinct weights.
+
+`normalize_skin_weights(weights, bone_names, vertex_count)` exposes the same
+validation/normalization without Blender and returns independent row dictionaries.
+`bone_names` is a list, tuple, set or frozenset of unique nonempty names;
+`vertex_count` must be a positive integer. Rebinding is deliberately rejected;
+start from the reproducible source recipe rather than overwriting a live binding.
+
 Run geometry checks without Blender:
 
 ```sh
 python tests/blender_author_geometry.py
+python tests/blender_author_skin.py
 ```
 
 The optional real-Blender fixture `tests/blender_author_fusion.py` defines `build()`
@@ -94,3 +132,9 @@ for the authoring runner. It checks pre-morph rejection, disconnected outputs,
 transformed overlapping meshes, shared-data isolation, and post-fusion morphs.
 Run it through `authorGLB` and validate its temporary GLB with `verifyGLB`; Blender
 is not required by the pure-Python CI checks.
+
+`node scripts/check-authored-skin-browser.mjs` runs the optional real Blender skin
+fixture, validates its exported GLB, and loads the public viewer offline. It checks
+normalized exported weights, actual deformed vertices, pinned root vertices,
+changed rendered pixels and return to rest. Screenshots and measurements are
+written under ignored `.agent-meshes/skin-proof/`.

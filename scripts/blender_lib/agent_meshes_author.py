@@ -6,6 +6,7 @@ named glTF morph targets. Blender-only helpers import bpy lazily.
 """
 import math
 from numbers import Real
+from collections.abc import Mapping, Sequence
 
 
 def _number(value, label):
@@ -79,6 +80,111 @@ def topology_report(vertices, faces):
         'boundary_edges': sum(count == 1 for count in edges.values()),
         'nonmanifold_edges': sum(count > 2 for count in edges.values()),
     }
+
+
+def normalize_skin_weights(weights, bone_names, vertex_count):
+    """Validate and copy dense rows of at most four named skin influences.
+
+    No Blender dependency. Counts include supplied zero entries; missing names
+    and negative/nonfinite values are never silently discarded. Normalize using
+    the largest weight first, avoiding overflow of otherwise finite inputs.
+    """
+    if isinstance(vertex_count, bool) or not isinstance(vertex_count, int) or vertex_count < 1:
+        raise ValueError('Skin vertex count must be a positive integer')
+    if not isinstance(bone_names, (list, tuple, set, frozenset)) or not bone_names:
+        raise ValueError('Skin needs a collection of deform bone names')
+    names = [_name(name) for name in bone_names]
+    if len(set(names)) != len(names): raise ValueError('Duplicate deform bone name')
+    names = set(names)
+    if not isinstance(weights, Sequence) or isinstance(weights, (str, bytes)) or len(weights) != vertex_count:
+        raise ValueError('Skin weights need one dense row per vertex')
+    result = []
+    for index, row in enumerate(weights):
+        if not isinstance(row, Mapping) or not 1 <= len(row) <= 4:
+            raise ValueError(f'Skin vertex {index} needs a mapping of 1 to 4 influences')
+        values = {}
+        for name, weight in row.items():
+            if not isinstance(name, str) or name not in names:
+                raise ValueError(f'Skin vertex {index} references an unknown deform bone: {name!r}')
+            weight = _number(weight, f'Skin vertex {index} weight')
+            if weight < 0: raise ValueError(f'Skin vertex {index} has a negative weight')
+            values[name] = weight
+        largest = max(values.values())
+        if largest == 0: raise ValueError(f'Skin vertex {index} has zero total weight')
+        scaled = {name: value/largest for name, value in values.items() if value > 0}
+        total = math.fsum(scaled.values())
+        result.append({name: value/total for name, value in scaled.items() if value > 0})
+    return result
+
+
+def bind_skin(mesh, armature, weights):
+    """Bind a local, unparented, single-user mesh to an existing armature.
+
+    All inputs and ownership conflicts are checked before creating groups,
+    modifier or parent. Leaves coordinates, selection and mode alone; preserves
+    world transform with the inverse parent matrix. Returns the new modifier.
+    Existing unrelated groups/modifiers survive. Author weights in the rig's
+    rest space; posing the armature deforms the mesh immediately after binding.
+    """
+    import bpy
+    if not isinstance(mesh, bpy.types.Object) or mesh.type != 'MESH':
+        raise ValueError('Skin input must be a Blender mesh object')
+    if not isinstance(armature, bpy.types.Object) or armature.type != 'ARMATURE':
+        raise ValueError('Skin target must be a Blender armature object')
+    if mesh.mode != 'OBJECT' or armature.mode != 'OBJECT':
+        raise ValueError('Skin binding needs mesh and armature in Object mode')
+    if any(obj.library or obj.data.library or obj.override_library for obj in (mesh, armature)):
+        raise ValueError('Skin binding needs local editable objects and data')
+    if mesh.data.users != 1: raise ValueError('Skin binding needs single-user mesh data')
+    if mesh.parent is not None or mesh.constraints:
+        raise ValueError('Skin mesh already has a parent or constraint')
+    ancestor = armature.parent
+    while ancestor is not None:
+        if ancestor == mesh: raise ValueError('Skin parenting would create a cycle')
+        ancestor = ancestor.parent
+    if any(mod.type == 'ARMATURE' for mod in mesh.modifiers):
+        raise ValueError('Skin mesh already has an Armature modifier')
+    names = [bone.name for bone in armature.data.bones if bone.use_deform]
+    rows = normalize_skin_weights(weights, names, len(mesh.data.vertices))
+    if any(name in mesh.vertex_groups for name in names):
+        raise ValueError('Skin mesh already has a deform-bone vertex group')
+    bpy.context.view_layer.update()
+    for obj in (mesh, armature):
+        if bpy.context.view_layer.objects.get(obj.name) != obj:
+            raise ValueError('Skin objects must be in the active view layer')
+        for row in obj.matrix_world: _vector(row, 4, 'Skin world transform')
+    try:
+        inverse = armature.matrix_world.inverted()
+    except ValueError as exc:
+        raise ValueError('Skin armature world transform must be invertible') from exc
+    for row in inverse: _vector(row, 4, 'Skin inverse transform')
+
+    groups, modifier = [], None
+    previous_inverse = mesh.matrix_parent_inverse.copy()
+    try:
+        used = {name for row in rows for name in row}
+        by_name = {}
+        for name in names:
+            if name in used:
+                group = mesh.vertex_groups.new(name=name)
+                groups.append(group); by_name[name] = group
+        for index, row in enumerate(rows):
+            for name, weight in row.items(): by_name[name].add([index], weight, 'REPLACE')
+        modifier = mesh.modifiers.new('Authored skin', 'ARMATURE')
+        modifier.object = armature
+        modifier.use_vertex_groups = True
+        modifier.use_bone_envelopes = False
+        modifier.use_deform_preserve_volume = False
+        mesh.parent = armature
+        mesh.matrix_parent_inverse = inverse
+        return modifier
+    except Exception:
+        # Blender runtime failures also leave no partial binding behind.
+        mesh.parent = None
+        mesh.matrix_parent_inverse = previous_inverse
+        if modifier is not None: mesh.modifiers.remove(modifier)
+        for group in reversed(groups): mesh.vertex_groups.remove(group)
+        raise
 
 
 def fuse_meshes(objects, name, voxel_size, smooth_passes=2, expected_components=1):
