@@ -9,6 +9,9 @@ export const version = '1';
 export type { Pose, PoseInput, MaterialValues, MaterialInput } from '../render/puppet.ts';
 export { createSweep } from '../render/sweep.ts';
 export type { Sweep, SweepSpec, SweepSample } from '../render/sweep.ts';
+export { createCarver } from './carver.ts';
+export type { Carver, CarverOptions, CarverResult } from './carver.ts';
+export type { CarveRequest, EllipticalCutter, SolidBounds } from '../render/carving.ts';
 
 export interface MountOptions {
   /** GLB bytes, or the GLB as a base64 string (works from file:// where fetch does not). */

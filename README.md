@@ -192,6 +192,35 @@ Centers and radii must have matching counts; a scalar radius makes a circular se
 
 `samplePath(u)` accepts normalized **distance** in 0..1 and returns a fresh immutable `{position, tangent, segment, t}`; `segment` and `t` identify the original centerline interval for labels or markers. The path is piecewise linear. Repeated points, antiparallel cusps, degenerate frames, more than 4,096 rings, more than 256 radial segments, or more than one million vertices are rejected. These bounds do not prove non-self-intersection: round abrupt centerline corners and keep section radii small enough for the bend. Smooth frames cannot repair an intersecting surface, and interpolating two paths is a visual deformation rather than a physical unfolding simulation.
 
+`MeshViewer.createCarver(options)` is a separate asynchronous path for interactive solid carving. It samples an immutable project's shell field inside explicit bounds, caches the requested resolutions in an inline Blob worker, and extracts a new indexed surface for each cutter. Existing shell renders/exports keep their current mesher. The body uses `shell.blend`; each request has an independent `cutBlend` for the opening's rounded rim.
+
+```js
+const carver = MeshViewer.createCarver({
+  project, shell: project.shells[0],
+  bounds: {min: [-2,-.1,-1], max: [2,2,1]},
+  resolutions: [56,128],
+  floorY: 0 // optional, immutable clipping plane retaining Y >= 0
+});
+const next = await carver.update({
+  cutter: {center: [0,.8,0], radii: [.3,.2], halfLength: 1.2,
+           rotation: [0,0,0,1]}, // cylinder local Z axis; unit quaternion
+  resolution: 56, cutBlend: .05, removed: true
+});
+if (next) {
+  sculpture.geometry.dispose();
+  sculpture.geometry = next.geometry;
+  // next.removed is the actual removed material, including the rounded rim.
+  // Own/dispose it too; it can contain multiple connected pieces or be empty.
+}
+// Request the finer grid after input settles. A null cutter restores the body.
+// Leave the last good geometry visible while a request is pending or fails.
+carver.dispose();
+```
+
+Only one request runs at a time; one queued request is retained. Superseded requests and requests pending during `dispose()` resolve to `null`; invalid requests and worker errors reject. Invalid input does not supersede a valid active request. Returned geometry belongs to the caller: replacing/discarding it requires `dispose()`, and disposing the carver stops its worker without disposing previously returned meshes. A body or removed result can be empty: check `geometry.attributes.position.count === 0` and skip fitting/bounds calculations for it. The API never changes a camera, material, or scene. The standalone viewer embeds the worker and supports `file://` without network access; pages enforcing CSP must permit Blob workers. Node code can use `createSolid(field, {bounds,resolutions})` from `src/render/carving.ts` for the same synchronous kernel and typed-array results; its field function must remain immutable.
+
+Bounds must enclose the full uncut body with a positive field at every grid boundary sample. One to three resolutions (integers 16–192) are allowed, with at most four million samples per grid and six million across cached grids. Extraction also limits vertices/triangles. Validation happens before grid allocation; finite field samples and boundary clearance are checked when sampling. `stats` reports sampling/extraction timings, cache reuse and sample count, not a manifold certificate. Consistent tetrahedra share crossing vertices and orient faces from the local field. Final Float32 coordinates are welded, collapsed faces removed, and every remaining edge must have one triangle in each direction; precision-unsafe results reject. Shading normals estimate the resulting cut-field gradient. This is sampled geometry: small features, critical topology transitions, very thin removed layers and non-distance input fields require consumer checks at their chosen resolutions. Connectivity, vertex-fan manifoldness, self-intersection and a single removed piece are not universal guarantees. Preview/final resolution and debounce policy belong to the exhibit; a slower refinement remains asynchronous and is not a 60 fps promise.
+
 ## Five animated examples
 
 ```powershell
