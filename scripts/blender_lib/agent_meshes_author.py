@@ -42,6 +42,129 @@ def unit(v):
     return mul(v, 1/length)
 
 
+def topology_report(vertices, faces):
+    """Count vertex-connected components and edge incidences, without Blender.
+
+    Boundary edges have one incident face; nonmanifold_edges counts edges with
+    more than two. Isolated vertices count as components. This is not a test of
+    winding, vertex fans, zero-area faces, geometric intersections or volume.
+    """
+    vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    parents = list(range(len(vertices)))
+    sizes = [1] * len(vertices)
+    edges = {}
+
+    def root(index):
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    for polygon in faces:
+        face = tuple(polygon)
+        if len(face) < 3 or any(isinstance(i, bool) or not isinstance(i, int) or i < 0 or i >= len(vertices) for i in face):
+            raise ValueError('Faces must contain at least three valid integer vertex indices')
+        if len(set(face)) != len(face):
+            raise ValueError('Faces must not repeat a vertex index')
+        for a, b in zip(face, face[1:] + face[:1]):
+            edge = (min(a, b), max(a, b))
+            edges[edge] = edges.get(edge, 0) + 1
+            first, second = root(a), root(b)
+            if first != second:
+                if sizes[first] < sizes[second]: first, second = second, first
+                parents[second] = first
+                sizes[first] += sizes[second]
+    return {
+        'components': len({root(i) for i in range(len(vertices))}),
+        'boundary_edges': sum(count == 1 for count in edges.values()),
+        'nonmanifold_edges': sum(count > 2 for count in edges.values()),
+    }
+
+
+def fuse_meshes(objects, name, voxel_size, smooth_passes=2, expected_components=1):
+    """Consume mesh objects into a voxel-fused, globally smooth-shaded surface.
+
+    Returns an unparented mesh with identity transform and world-space vertices.
+    Call before shape keys, animation, UVs or final material assignment. Rejects
+    unresolved modifiers and shape keys before any destructive operation. After
+    validation it owns selection/mode and consumes inputs, even if remeshing or
+    the topology check fails; keep source recipes, not references to old objects.
+    """
+    name = _name(name)
+    voxel_size = _number(voxel_size, 'Voxel size')
+    if voxel_size <= 0: raise ValueError('Voxel size must be positive')
+    if isinstance(smooth_passes, bool) or not isinstance(smooth_passes, int) or not 0 <= smooth_passes <= 50:
+        raise ValueError('Smooth passes must be an integer from 0 to 50')
+    if expected_components is not None and (isinstance(expected_components, bool) or not isinstance(expected_components, int) or not 1 <= expected_components <= 256):
+        raise ValueError('Expected components must be an integer from 1 to 256, or None')
+    objects = list(objects)
+    if not 1 <= len(objects) <= 256: raise ValueError('Fusion needs 1 to 256 mesh objects')
+    import bpy
+    from mathutils import Matrix, Vector
+    if any(not isinstance(obj, bpy.types.Object) or obj.type != 'MESH' for obj in objects):
+        raise ValueError('Fusion inputs must be Blender mesh objects')
+    if len({obj.as_pointer() for obj in objects}) != len(objects): raise ValueError('Duplicate fusion input')
+    for obj in objects:
+        if obj.data.shape_keys: raise ValueError(f'Fuse before adding shape keys: {obj.name}')
+        if obj.modifiers: raise ValueError(f'Resolve modifiers before fusion: {obj.name}')
+        if obj.constraints or obj.animation_data: raise ValueError(f'Fuse before constraints or animation: {obj.name}')
+        if any(child not in objects for child in obj.children): raise ValueError(f'Fusion input has children outside the input list: {obj.name}')
+        if obj.library or obj.data.library: raise ValueError(f'Fusion needs local editable objects: {obj.name}')
+        if bpy.context.view_layer.objects.get(obj.name) != obj: raise ValueError(f'Fusion input is outside the active view layer: {obj.name}')
+        if not obj.data.vertices or not obj.data.polygons: raise ValueError(f'Fusion input has no surface: {obj.name}')
+        for vertex in obj.data.vertices: _vector(vertex.co, 3, 'Fusion vertex')
+    bpy.context.view_layer.update()
+    corners = [_vector(obj.matrix_world @ Vector(corner), 3, 'World bound') for obj in objects for corner in obj.bound_box]
+    # Reject accidental microscopic voxels before allocating an enormous grid.
+    # This is a conservative bounding-grid budget, not a memory-use guarantee.
+    dimensions = [(max(p[i] for p in corners)-min(p[i] for p in corners))/voxel_size for i in range(3)]
+    if any(not math.isfinite(d) or d > 32000000 for d in dimensions) or math.prod(math.ceil(d)+3 for d in dimensions) > 32000000:
+        raise ValueError('Voxel size exceeds the 32-million-cell fusion grid budget')
+
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT': bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+    # Snapshot the entire hierarchy before changing any parent. Bake full affine
+    # matrices into geometry: assigning a sheared world matrix to an unparented
+    # object would decompose it into location/rotation/scale and lose the shear.
+    worlds = [obj.matrix_world.copy() for obj in objects]
+    for obj, world in zip(objects, worlds):
+        if obj.data.users > 1: obj.data = obj.data.copy()
+        obj.data.transform(world)
+        if world.determinant() < 0: obj.data.flip_normals()
+        obj.data.update()
+        obj.parent = None
+        obj.matrix_world = Matrix.Identity(4)
+        obj.hide_set(False)
+        obj.hide_viewport = False
+        obj.hide_select = False
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = objects[0]
+    with bpy.context.temp_override(object=objects[0], active_object=objects[0], selected_objects=objects, selected_editable_objects=objects):
+        bpy.ops.object.join()
+    fused = bpy.context.view_layer.objects.active
+    fused.name = name
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    remesh = fused.modifiers.new('Fused surface', 'REMESH')
+    remesh.mode = 'VOXEL'
+    remesh.voxel_size = voxel_size
+    remesh.use_remove_disconnected = False
+    remesh.use_smooth_shade = True
+    bpy.ops.object.modifier_apply(modifier=remesh.name)
+    if smooth_passes:
+        smoothing = fused.modifiers.new('Fused contours', 'SMOOTH')
+        smoothing.factor = .5
+        smoothing.iterations = smooth_passes
+        bpy.ops.object.modifier_apply(modifier=smoothing.name)
+    for face in fused.data.polygons: face.use_smooth = True
+    fused.data.update()
+    report = topology_report([tuple(v.co) for v in fused.data.vertices], [tuple(face.vertices) for face in fused.data.polygons])
+    if not fused.data.polygons or report['boundary_edges'] or report['nonmanifold_edges']:
+        raise ValueError(f'Fusion did not produce a closed edge-manifold surface: {report}')
+    if expected_components is not None and report['components'] != expected_components:
+        raise ValueError(f"Fusion expected {expected_components} components, found {report['components']}: {report}")
+    return fused
+
+
 def sweep_mesh(centers, radii, radial_segments=48, twist=None, initial_normal=None):
     """Return vertices and outward faces; radians twist is per ring.
 
