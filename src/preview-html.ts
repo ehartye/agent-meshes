@@ -26,6 +26,13 @@ export async function viewerScript(): Promise<string> {
   return `/*! agent-meshes viewer ${version} | window.MeshViewer.mount(container, { glb }) */\n${await bundleWeb('./web/viewer.ts', 'MeshViewer')}`;
 }
 
+/** Optional, renderer-free mobile physics. Rapier's WASM is embedded for offline use. */
+export async function mobilePhysicsScript(): Promise<string> {
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  const license = await readFile(new URL('../LICENSE', import.meta.resolve('@dimforge/rapier3d-compat')), 'utf8');
+  return `/*! agent-meshes mobile physics ${version} | Rapier 0.20.0 | window.MobilePhysics.createHangingMobile(spec) */\n/*! @dimforge/rapier3d-compat license:\n${license.replaceAll('*/', '* /')}\n*/\n${await bundleWeb('./web/mobile-physics.ts', 'MobilePhysics')}`;
+}
+
 /** A self-contained preview page: the viewer runtime plus a small control shell and the inlined GLB. */
 export async function previewHTML(name: string, glb: Uint8Array): Promise<string> {
   const data = JSON.stringify({ name, glb: Buffer.from(glb).toString('base64') }).replaceAll('<', '\\u003c');
