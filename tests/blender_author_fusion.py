@@ -5,7 +5,7 @@ for the caller to export and validate as GLB. No Blender is needed in CI.
 """
 import bpy
 from mathutils import Matrix, Vector
-from agent_meshes_author import fuse_meshes, shape_key, topology_report
+from agent_meshes_author import fuse_meshes, make_mesh, shape_key, topology_report
 
 
 def cube(name, position, scale=(1,1,1)):
@@ -30,6 +30,27 @@ def rejects(call, message):
 
 
 def build():
+    vertices = [(-.5,-.5,-.5),(.5,-.5,-.5),(.5,.5,-.5),(-.5,.5,-.5),
+                (-.5,-.5,.5),(.5,-.5,.5),(.5,.5,.5),(-.5,.5,.5)]
+    faces = [(0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]
+    # No operator or explicit view-layer refresh between data linking and fusion.
+    fresh = make_mesh('Fresh linked cube', vertices, faces)
+    fresh.location.x = 3
+    fused_fresh = fuse_meshes([fresh], 'Fresh fused cube', .1)
+    fresh_report = report(fused_fresh)
+    assert fresh_report['components'] == 1, fresh_report
+    assert 2.3 < min(v.co.x for v in fused_fresh.data.vertices) < 2.7
+    assert 3.3 < max(v.co.x for v in fused_fresh.data.vertices) < 3.7
+    bpy.data.objects.remove(fused_fresh, do_unlink=True)
+
+    unlinked = make_mesh('Truly unlinked cube', vertices, faces)
+    bpy.context.collection.objects.unlink(unlinked)
+    before_unlinked = set(bpy.data.objects.keys())
+    rejects(lambda: fuse_meshes([unlinked], 'Rejected', .1), 'active view layer')
+    assert set(bpy.data.objects.keys()) == before_unlinked
+    assert len(unlinked.data.vertices) == 8
+    bpy.data.objects.remove(unlinked, do_unlink=True)
+
     morph = cube('Morph input', (0,0,0))
     other = cube('Other input', (.5,0,0))
     shape_key(morph, 'Stretch', [tuple(v.co * 1.2) for v in morph.data.vertices])
