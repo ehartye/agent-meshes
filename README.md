@@ -277,6 +277,69 @@ Only one request runs at a time; one queued request is retained. Superseded requ
 
 Bounds must enclose the full uncut body with a positive field at every grid boundary sample. One to three resolutions (integers 16–192) are allowed, with at most four million samples per grid and six million across cached grids. Extraction also limits vertices/triangles. Validation happens before grid allocation; finite field samples and boundary clearance are checked when sampling. `stats` reports sampling/extraction timings, cache reuse and sample count, not a manifold certificate. Consistent tetrahedra share crossing vertices and orient faces from the local field. Final Float32 coordinates are welded, collapsed faces removed, and every remaining edge must have one triangle in each direction; precision-unsafe results reject. Shading normals estimate the resulting cut-field gradient. This is sampled geometry: small features, critical topology transitions, very thin removed layers and non-distance input fields require consumer checks at their chosen resolutions. Connectivity, vertex-fan manifoldness, self-intersection and a single removed piece are not universal guarantees. Preview/final resolution and debounce policy belong to the exhibit; a slower refinement remains asynchronous and is not a 60 fps promise.
 
+## Named-frame assemblies
+
+`MeshViewer.createAssembly(spec)` controls a reversible assembly without owning a scene or
+loading a physics engine. Node callers import it from `src/render/assembly.ts`. Pieces declare
+their assembled and staged transforms; named joints declare matching local frames. Matrices
+are sixteen column-major numbers, as returned by Three's `Matrix4.toArray()`.
+
+```js
+const assembly = MeshViewer.createAssembly({
+  pieces: [
+    {id: 'base', assembled: baseMatrix, staged: baseMatrix,
+     explode: [0, 0, 0], fixed: true},
+    {id: 'rail', assembled: railMatrix, staged: trayMatrix,
+     explode: [.2, 0, 0]}
+  ],
+  joints: [{id: 'rail-to-base', child: 'rail', parent: 'base',
+    childFrame: railSocketMatrix, parentFrame: baseSocketMatrix}]
+});
+
+const result = assembly.snap('rail'); // {ok:true}, or a blocked action
+const state = assembly.snapshot();
+// When the rendered piece is a direct child of the assembly coordinate frame:
+railObject.matrixAutoUpdate = false;
+railObject.matrix.fromArray(state.transforms.rail);
+railObject.updateMatrixWorld(true);
+```
+
+Every movable piece needs a joint and an acyclic path to a fixed foundation. All named parents
+must be connected before `snap(id)` can place a child. The first mating frame determines its
+complete placement; every required secondary frame is checked before committing. Frames match
+in position, orientation and scale, so author any intended face-to-face rotation into the local
+frames. Constructor checks also require the declared assembled frames to coincide.
+
+`remove(id)` refuses fixed pieces or supports with connected dependents. Blocked actions return
+`{ok:false, reason, pieces}` with reason `missing-pieces`, `dependent-pieces`, `fixed-piece` or
+`exploded-view`; they do not change state. Unknown names and malformed or numerically unsafe
+input throw. `setExplode(0..1)` translates connected pieces by their authored offsets in assembly
+coordinates for inspection; it preserves their logical connections, and snapping requires a
+closed view. Loose pieces stay at their staged matrices. `reset()` restores fixed foundations,
+staged pieces and zero explosion. `dispose()` is idempotent; other methods reject afterward.
+
+Snapshots and `anchors()` return independent, deeply frozen numeric data. Snapshot `available`
+lists dependency-ready loose pieces (close the exploded view before snapping); `missing` lists
+each piece's absent parents. Anchors contain source/target points, their displayed gap and a
+logical `joined` flag. They describe authored mating frames, not measured mesh contact or
+structural strength. The caller owns picking, highlights, color, motion between placements and
+all meshes/materials. No geometry or renderer is allocated or disposed by this controller.
+
+`MeshViewer.solveFrame(sourceLocal, targetWorld, parentWorld?)` is the standalone alignment
+primitive: `inverse(parentWorld) * targetWorld * inverse(sourceLocal)`. The parent defaults to
+identity. Its frozen output retains reflections and shear; use the complete matrix with
+`matrixAutoUpdate=false`, because decomposing to position/rotation/scale can lose shear.
+All piece placements share one assembly coordinate frame. Convert to a different rendering
+parent explicitly rather than assigning an assembly matrix as an unrelated local transform.
+
+Limits are 128 pieces, 512 joints and 128 characters per nonempty name. Finite matrix/offset
+components must stay within ±1e9; the linear matrix infinity norm must be at least 1e-9 and its
+estimated condition number at most 1e8. Singular, inversion-overflow and unsafe output matrices
+reject. Affine bottom-row roundoff up to 1e-12 is normalized to `[0,0,0,1]`; perspective matrices
+reject. Mating agreement uses an absolute 1e-7 tolerance per matrix element. Invalid edits or
+inconsistent secondary frames preserve the last state. These checks bound numerical work and
+placement consistency; they do not detect geometry intersections, hidden gaps or weak joinery.
+
 ## Connected planar figure contours
 
 The existing `MeshViewer` runtime also exposes a renderer-independent figure controller. It returns one connected 2D boundary, with elbows and knees solved from hand/foot targets. The fixed `dance-v1` profile supports open dance gestures; it is not an arbitrary rig, crossed-limb solver, or validated 3D extrusion.
