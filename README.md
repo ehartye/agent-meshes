@@ -171,6 +171,29 @@ The source defines `build()` returning a nonempty list of Blender objects, inclu
 
 The viewer exposes the puppet by name: `bones`, `parts`, `clips`; `setPose(bone, {rotation?, position?, scale?})` (scale multiplies the bone and everything it carries, so a longer leg moves its foot), `getPose`, `resetPose(bone?)`; `setColor`, `getColor`, `setVisible`; `setPattern(name, pattern | null)`, `getPattern(name)` (re-bake a dots/stripes/checks pattern on a shell or part from its kept base colors; a flat part moves its color into the vertices the first time, after which `setColor` tints it like a shell); `play(clip?)`, `pause`, `playing`, `clip`, `time`, `duration`, `speed`, `seek`; plus `view`, `frame`, `setBackground`, `screenshot`, `onFrame`, `resize`, `dispose`, and the underlying `renderer`, `scene`, `camera`, `controls`. Pose offsets compose on top of clip playback each frame. `node scripts/check-viewer-browser.mjs` verifies the runtime in Chromium.
 
+`viewer.observe({hoof: {node: 'leg_L_front_hoof', point: [0, 0, 0]}}, relativeTo?)`
+returns frozen numeric points in world coordinates, or relative to another uniquely named node.
+These are local node anchors, not deformed mesh vertices or inferred ground contacts. Missing or
+ambiguous names, non-finite points and singular relative frames reject. A batch supports up to
+4096 anchors and updates ancestor/descendant matrices once.
+
+`const sampler = viewer.createPoseSampler()` creates an independent authored rig for measurements
+or rendering with a separate scene/camera. Call
+`sampler.sample({clip: 'gallop', time: 0.2, poses: {}, morphs: []})`, then `sampler.observe(...)`.
+Every sample starts from authored values captured before the live puppet's first clip; omitted
+controls reset, `clip: null` selects rest, and finite times wrap in either direction. Optional
+`poses` maps bone names to the same pose offsets; `morphs` contains `{part, target, weight}` entries.
+The complete input validates before replacing the last sample, then applies in one batch.
+
+The sampler exposes its detached `root` for a separate renderer; it never seeks or pauses the live
+puppet or touches a renderer/camera. Its transforms, skeletons and materials are independent.
+Geometry and textures remain borrowed read-only: live vertex-color/geometry edits are visible
+through those shared objects, and later live scene additions are omitted. All skinned bones must
+be descendants of the imported scene, as in ordinary GLB scenes. Dispose the sampler when done;
+this releases its materials and skeleton textures, never the borrowed geometry or image textures.
+`node scripts/check-pose-sampler-browser.mjs [model.glb]` verifies twelve offline rendered exposures
+and unchanged live pose, playback, camera and pixels.
+
 Authored GLBs retain every material slot. `setColor(part, hex, slot?)` and `setMaterial(part, {metalness?, roughness?}, slot?)` update all slots when `slot` is omitted; `getColor(part, slot?)` and `getMaterial(part, slot?)` read the first slot by default. Slots are zero-based and isolated from other parts. `setPattern` rejects multi-material parts before changing them, so group colors remain intact.
 
 Playback supports imported position, rotation, scale and morph-weight tracks, restoring authored values when switching to a clip that leaves them unanimated. `setMorph(part, targetName, weight)` overrides a named morph after clip sampling; `getMorph(part, targetName)` reads its effective weight. Weights must be finite and may extend beyond 0..1. `resetMorph(part?, targetName?)` clears one target, one part, or all overrides, revealing the current clip or authored rest weights. Target names are available through `object(part).morphTargetDictionary`; `bounds()` measures the currently visible, morphed and skinned surface.
