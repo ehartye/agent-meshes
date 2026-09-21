@@ -7,6 +7,35 @@ it('keeps quadruped as a compatibility alias for vulpine', () => {
   expect(createCreature('quadruped')).toEqual(createCreature('vulpine'));
 });
 
+it('equine gallop rolls recovering hooves and avoids a locked-height hover', () => {
+  const built = buildScene(createCreature('equine', { gaits: ['gallop'] }));
+  try {
+    const clip = built.clips[0], mixer = new AnimationMixer(built.root);
+    mixer.clipAction(clip).play();
+    const root = built.bones.get('root')!;
+    const restHeights = new Map([...built.bones.values()].map(b => [b.name, b.getWorldPosition(new Vector3()).y]));
+    for (const [leg, touchdown] of Object.entries({ L_front: .28, R_front: .40, L_rear: 0, R_rear: .12 })) {
+      const hoof = built.bones.get(`leg_${leg}_hoof`)!;
+      let maxRoll = 0, hover = 0, longestHover = 0, previousY = NaN;
+      const restY = restHeights.get(hoof.name)!;
+      for (let frame = 0; frame < 240; frame++) {
+        const phase = frame / 240, cycle = (phase + 1 - touchdown) % 1;
+        mixer.setTime(phase * clip.duration); built.root.updateMatrixWorld(true);
+        const y = hoof.getWorldPosition(new Vector3()).y;
+        const relative = root.getWorldQuaternion(new Quaternion()).invert().multiply(hoof.getWorldQuaternion(new Quaternion()));
+        const roll = 2 * Math.atan2(relative.x, relative.w);
+        if (cycle < .30) expect(Math.abs(roll)).toBeLessThan(.01);
+        else maxRoll = Math.max(maxRoll, Math.abs(roll));
+        hover = y > restY + .10 && Math.abs(y - previousY) < .0001 ? hover + 1 : 0;
+        longestHover = Math.max(longestHover, hover); previousY = y;
+      }
+      expect(maxRoll).toBeGreaterThan(.30);
+      expect(longestHover).toBeLessThan(20);
+      mixer.setTime(0); built.root.updateMatrixWorld(true);
+    }
+  } finally { built.dispose(); }
+});
+
 it('equine gallop is opt-in and has a suspension phase with all four hooves off the ground', () => {
   expect(createCreature('equine').clips.map(c => c.name)).toEqual(['walk', 'trot']);
   const project = createCreature('equine', { gaits: ['walk', 'trot', 'gallop'] });
@@ -108,11 +137,32 @@ for (const species of ['equine', 'vulpine'] as const) it(`${species} gallop fold
   const scale = species === 'equine' ? 1 : 0.7;
   const rows = legSamples(species, 'gallop');
   const gathered = rows.reduce((best, row) => Math.min(...row.rise) > Math.min(...best.rise) ? row : best);
-  // Muybridge's suspension: hooves high, fore hooves swung back behind the shoulders and hind hooves forward of the hips,
-  // carpus and hock folded well past 60 degrees.
+  // Muybridge's brief collected suspension: high hooves beneath the belly, forefeet behind the shoulders
+  // and hindfeet ahead of the hips. Recovery must reach this pose without holding it across the swing.
   for (const rise of gathered.rise) expect(rise).toBeGreaterThanOrEqual(0.35 * scale);
   for (const [i, reach] of gathered.reach.entries()) expect(i < 2 ? -reach : reach).toBeGreaterThanOrEqual(0.2 * scale);
   for (const [i, fold] of gathered.fold.entries()) expect(i < 2 ? fold : -fold).toBeGreaterThan(1.2);
+});
+
+it('rotating equine gallop hooves clear the floor and loop without a position or orientation pop', () => {
+  const built = buildScene(createCreature('equine', { gaits: ['gallop'], shell: true }));
+  try {
+    const clip = built.clips[0], mixer = new AnimationMixer(built.root);
+    mixer.clipAction(clip).play();
+    const feet: SkinnedMesh[] = [];
+    built.root.traverse(o => { if (o instanceof SkinnedMesh && o.name.endsWith('_foot')) feet.push(o); });
+    const sample = (phase: number) => {
+      mixer.setTime(phase * clip.duration); built.root.updateMatrixWorld(true);
+      return feet.flatMap(foot => {
+        foot.skeleton.update();
+        const pos = foot.geometry.getAttribute('position');
+        return Array.from({ length: pos.count }, (_, i) => foot.applyBoneTransform(i, new Vector3().fromBufferAttribute(pos, i)).applyMatrix4(foot.matrixWorld));
+      });
+    };
+    for (let frame = 0; frame < 240; frame++) for (const point of sample(frame / 240)) expect(point.y).toBeGreaterThanOrEqual(-.001);
+    const first = sample(0), last = sample(1 - 1e-7);
+    last.forEach((point, i) => expect(point.distanceTo(first[i])).toBeLessThan(.00001));
+  } finally { built.dispose(); }
 });
 
 for (const species of ['equine', 'vulpine'] as const) it(`${species} gallop pitches the trunk nose-down at the top of the leap and level at touchdown`, () => {

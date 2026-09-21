@@ -19,10 +19,14 @@ export interface GaitSettings {
   bob: number; bobs: number; bobShift: number;
   /** Fraction of the swing spent lifting and again lowering the foot; between, it holds tucked at `lift`. Omitted: a sine arc. */
   gather?: number;
+  /** Shared stride phase for a brief collected pose; each leg eases to it from its own lift-off. */
+  gatherPhase?: number;
   /** How far a tucked fore hoof swings back and a hind hoof forward (meters), scaled by the same profile as the lift. */
   tuck?: [fore: number, hind: number];
   /** Carpus (or wrist) and hock recovery fold at full lift, radians about +X; positive folds a fore cannon back. */
   fold?: [fore: number, hind: number];
+  /** Toe roll during recovery; stance remains level. Radians about +X, fore then hind. */
+  footRoll?: [fore: number, hind: number];
   /** Trunk pitch nose-down at the top of the leap (radians); level whenever a foot is on the ground. */
   pitch?: number;
   footfall: Footfall;
@@ -40,9 +44,9 @@ export const quadrupedGaits: Record<Species, Record<string, GaitSettings>> = {
   equine: {
     walk: { duration: 1.6, stride: 0.42, lift: 0.10, stance: 0.72, bob: 0.008, bobs: 2, bobShift: 0, footfall: walkOrder },
     trot: { duration: 1.0, stride: 0.60, lift: 0.15, stance: 0.56, bob: 0.018, bobs: 2, bobShift: 0, footfall: trotOrder },
-    // Muybridge's gathered suspension: hooves 0.4 m up, fore hooves swung back under the chest, hind hooves forward
-    // under the belly, carpus and hock folded past 70 degrees, and the trunk dipping six degrees at the top of the leap.
-    gallop: { duration: 0.7, stride: 0.60, lift: 0.46, stance: 0.30, bob: 0.02, bobs: 1, bobShift: 0.35, gather: 0.25, tuck: [0.25, 0.20], fold: [1.0, -0.7], pitch: 0.105, footfall: gallopOrder },
+    // Hind recovery peaks late and fore recovery early, meeting briefly in collected flight.
+    // Hooves roll with the folded legs and return level before contact; no held recovery pose.
+    gallop: { duration: 0.7, stride: 0.655, lift: 0.44, stance: 0.30, bob: 0.008, bobs: 1, bobShift: 0.35, gather: 0.5, gatherPhase: 0.84, tuck: [0.12, 0.14], fold: [0.95, -0.65], footRoll: [0.61, -0.44], pitch: 0.105, footfall: gallopOrder },
   },
   vulpine: {
     walk: { duration: 1.2, stride: 0.30, lift: 0.08, stance: 0.72, bob: 0.005, bobs: 2, bobShift: 0, footfall: walkOrder },
@@ -122,9 +126,15 @@ export function createQuadruped(species: Species, name: string, gaits: readonly 
         const cycle = (phase + 1 - touchdown) % 1;
         const path = footPath(cycle, settings.stride, settings.lift, settings.stance);
         const u = cycle <= settings.stance ? 0 : (cycle - settings.stance) / (1 - settings.stance);
-        // Sine arc for walk and trot; a gathering gait snaps the foot up after lift-off and holds it tucked until just before landing.
-        const swing = u === 0 ? 0 : settings.gather ? smoothstep(Math.min(u, 1 - u) / settings.gather) : Math.sin(Math.PI * u) ** 2;
-        if (settings.gather) path[1] = settings.lift * swing;
+        // Walk/trot use a sine arc. Gathering gaits either hold a tuck or peak briefly in a shared flight phase.
+        let swing = u === 0 ? 0 : settings.gather ? smoothstep(Math.min(u, 1 - u) / settings.gather) : Math.sin(Math.PI * u) ** 2;
+        if (settings.gatherPhase !== undefined && u > 0) {
+          const peak = ((settings.gatherPhase - touchdown - settings.stance + 1) % 1) / (1 - settings.stance);
+          const side = u < peak ? u / peak : (1 - u) / (1 - peak);
+          // Clear the floor promptly, then ease into the brief gathered pose. Both endpoint velocities stay zero.
+          swing = smoothstep(side / (0.55 + 0.45 * side));
+        }
+        if (settings.gather || settings.gatherPhase !== undefined) path[1] = settings.lift * swing;
         // Tucked hooves swing back under the chest and forward under the belly while they are held up.
         if (settings.tuck) path[2] += swing * (front ? -settings.tuck[0] : settings.tuck[1]);
         // Carpus/hock recovery folds are coupled to foot lift, not free oscillators.
@@ -139,7 +149,7 @@ export function createQuadruped(species: Species, name: string, gaits: readonly 
         const parent = new Quaternion().fromArray(solved.upper).multiply(new Quaternion().fromArray(solved.lower));
         const values: Quat[] = [solved.upper, solved.lower, parent.invert().multiply(distal).toArray() as Quat];
         if (horse) values.push(distal.clone().invert().multiply(pastern).toArray() as Quat);
-        values.push((horse ? pastern : distal).clone().invert().toArray() as Quat);
+        values.push((horse ? pastern : distal).clone().invert().multiply(hinge(swing * (settings.footRoll?.[front ? 0 : 1] ?? 0))).toArray() as Quat);
         for (const value of values) tracks[track++].keys.push({ time, value });
       }
       tracks[track++].keys.push({ time, value: hinge((gait === 'walk' ? 0.022 : gait === 'gallop' ? 0.05 : 0.007) * Math.sin(2 * Math.PI * (settings.bobs * phase - settings.bobShift))).toArray() as Quat });
