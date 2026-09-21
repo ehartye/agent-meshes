@@ -1,17 +1,20 @@
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Project } from './core/types.ts';
 import type { Operation } from './core/types.ts';
 import { createProject, applyOperation, validateProject } from './core/model.ts';
 import { exportGLB, verifyGLB } from './export.ts';
 import { findBlender, refineGLB } from './refine.ts';
+import { authorGLB } from './author.ts';
 
 const markerName = '.agent-meshes-build.json';
 /** Optional Blender pass over the exported GLB: subdivision, smoothing and a clouds displacement on named meshes. */
 const refineSchema = z.object({ subdivide: z.number().int().min(0).max(3).default(1), noise: z.number().min(0).max(1).default(0), noiseScale: z.number().positive().max(10).default(0.12), only: z.array(z.string().min(1)).optional() }).strict();
-const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional() }).strict().refine(config => Boolean(config.project) !== Boolean(config.operations), 'Exactly one project or operations input is required');
+const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), blender: z.object({ script: z.string().min(1) }).strict().optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional() }).strict()
+  .refine(config => [config.project, config.operations, config.blender].filter(Boolean).length === 1, 'Exactly one project, operations or blender input is required')
+  .refine(config => !(config.blender && config.refine), 'Blender authoring cannot be combined with refine; author modifiers in the source script');
 const markerSchema = z.object({ version: z.literal(1), generator: z.literal('agent-meshes'), config: z.string().min(1), files: z.array(z.string()) }).strict();
 const portable = (path: string) => path.split(sep).join('/');
 const inside = (directory: string, path: string) => { const rel = relative(directory, path); return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
@@ -67,10 +70,11 @@ async function move(source: string, destination: string): Promise<void> {
   }
 }
 
-export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[] }> {
+export interface AuthoredAsset { name: string }
+export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]>; decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[] }> {
   const configFile = await realpath(resolve(configPath));
   const config = configSchema.parse(JSON.parse(await readFile(configFile, 'utf8')));
-  const input = await realpath(resolve(dirname(configFile), config.project ?? config.operations!));
+  const input = await realpath(resolve(dirname(configFile), config.project ?? config.operations ?? config.blender!.script));
   const requestedOutput = resolve(dirname(configFile), config.output);
   // Resolve parent aliases, but never follow an output symlink into somebody else's directory.
   const output = join(await canonical(dirname(requestedOutput)), basename(requestedOutput));
@@ -83,36 +87,50 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
   try {
     await lock.writeFile(JSON.stringify({ config: configFile, pid: process.pid }));
     await checkOwnership(output, configFile);
-    const source: unknown = JSON.parse(await readFile(input, 'utf8'));
-    let project: Project;
-    if (config.project) project = validateProject(source);
-    else {
-      if (!Array.isArray(source)) throw new Error('Operations input must be a JSON array');
-      project = createProject(config.name ?? basename(configFile).replace(/\.[^.]+$/, ''));
-      for (const operation of source) project = applyOperation(project, operation as Operation);
-    }
     stage = await mkdtemp(join(dirname(output), `.${basename(output)}.stage-`));
-    let bytes = await exportGLB(project);
-    let verification = await verifyGLB(bytes);
-    if (!verification.ok) throw new Error(`GLB verification failed with ${verification.errors} errors`);
-    if (config.refine) {
-      // The refine pass is part of the recipe, so a missing Blender fails the build rather than quietly shipping a coarser model.
-      if (!findBlender()) throw new Error('This build asks for a Blender refine pass but Blender is not installed');
-      const raw = join(stage, 'model.raw.glb'), refined = join(stage, 'model.refined.glb');
-      await writeFile(raw, bytes);
-      await refineGLB(raw, refined, config.refine);
-      bytes = new Uint8Array(await readFile(refined));
-      await Promise.all([unlink(raw), unlink(refined)]);
-      verification = await verifyGLB(bytes);
-      if (!verification.ok) throw new Error(`Refined GLB verification failed with ${verification.errors} errors`);
+    let files: string[];
+    if (config.blender) {
+      const source = await readFile(input);
+      const result = await authorGLB(input, join(stage, 'model.glb'));
+      const verification = await verifyGLB(await readFile(join(stage, 'model.glb')));
+      if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
+      files = ['model.glb', 'verification.json', 'authoring.json'];
+      await Promise.all([
+        writeFile(join(stage, 'verification.json'), `${JSON.stringify(verification, null, 2)}\n`),
+        writeFile(join(stage, 'authoring.json'), `${JSON.stringify({ version: 1, source: { script: portable(relative(dirname(configFile), input)), sha256: createHash('sha256').update(source).digest('hex') }, blender: result.blender, meshes: result.meshes }, null, 2)}\n`),
+      ]);
+      if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
+    } else {
+      const source: unknown = JSON.parse(await readFile(input, 'utf8'));
+      let project: Project;
+      if (config.project) project = validateProject(source);
+      else {
+        if (!Array.isArray(source)) throw new Error('Operations input must be a JSON array');
+        project = createProject(config.name ?? basename(configFile).replace(/\.[^.]+$/, ''));
+        for (const operation of source) project = applyOperation(project, operation as Operation);
+      }
+      let bytes = await exportGLB(project);
+      let verification = await verifyGLB(bytes);
+      if (!verification.ok) throw new Error(`GLB verification failed with ${verification.errors} errors`);
+      if (config.refine) {
+        // The refine pass is part of the recipe, so a missing Blender fails the build rather than quietly shipping a coarser model.
+        if (!findBlender()) throw new Error('This build asks for a Blender refine pass but Blender is not installed');
+        const raw = join(stage, 'model.raw.glb'), refined = join(stage, 'model.refined.glb');
+        await writeFile(raw, bytes);
+        await refineGLB(raw, refined, config.refine);
+        bytes = new Uint8Array(await readFile(refined));
+        await Promise.all([unlink(raw), unlink(refined)]);
+        verification = await verifyGLB(bytes);
+        if (!verification.ok) throw new Error(`Refined GLB verification failed with ${verification.errors} errors`);
+      }
+      files = ['project.mesh.json', 'model.glb', 'verification.json'];
+      await Promise.all([
+        writeFile(join(stage, files[0]), `${JSON.stringify(project, null, 2)}\n`),
+        writeFile(join(stage, files[1]), bytes),
+        writeFile(join(stage, files[2]), `${JSON.stringify(verification, null, 2)}\n`),
+      ]);
+      if (options.decorate) files.push(...await options.decorate(structuredClone(project), stage));
     }
-    const files = ['project.mesh.json', 'model.glb', 'verification.json'];
-    await Promise.all([
-      writeFile(join(stage, files[0]), `${JSON.stringify(project, null, 2)}\n`),
-      writeFile(join(stage, files[1]), bytes),
-      writeFile(join(stage, files[2]), `${JSON.stringify(verification, null, 2)}\n`),
-    ]);
-    if (options.decorate) files.push(...await options.decorate(structuredClone(project), stage));
     checkFiles(files);
     await writeFile(join(stage, markerName), `${JSON.stringify({ version: 1, generator: 'agent-meshes', config: portable(relative(output, configFile)), files }, null, 2)}\n`);
     await checkTree(stage, files);
