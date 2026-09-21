@@ -339,6 +339,37 @@ reject. Affine bottom-row roundoff up to 1e-12 is normalized to `[0,0,0,1]`; per
 reject. Mating agreement uses an absolute 1e-7 tolerance per matrix element. Invalid edits or
 inconsistent secondary frames preserve the last state. These checks bound numerical work and
 placement consistency; they do not detect geometry intersections, hidden gaps or weak joinery.
+## Connected planar figure contours
+
+The existing `MeshViewer` runtime also exposes a renderer-independent figure controller. It returns one connected 2D boundary, with elbows and knees solved from hand/foot targets. The fixed `dance-v1` profile supports open dance gestures; it is not an arbitrary rig, crossed-limb solver, or validated 3D extrusion.
+
+```js
+const figure = MeshViewer.createPlanarFigure({ leftHand: [-105, -123] });
+function draw(snapshot) {
+  path.setAttribute('d', 'M' + snapshot.points.map(p => p.join(',')).join('L') + 'Z');
+  // Position handles and motion marks from snapshot.limbs[name].end, not the request.
+}
+draw(figure.snapshot());
+draw(figure.setTargets({ leftHand: [-128, -70] }));
+draw(figure.reset()); // this controller's creation pose
+```
+
+Coordinates are profile-local, X right and Y down. Apply placement/scale in the consumer renderer. `MeshViewer.planarFigureProfile` is deeply frozen and supplies the default targets, target rectangles and stable vertex count. Rectangles are `[minX, maxX, minY, maxY]`:
+
+| Target | Rectangle | Bone lengths |
+| --- | --- | --- |
+| `leftHand` | `[-128, -58, -165, -70]` | 55, 49 |
+| `rightHand` | `[58, 128, -165, -70]` | 55, 49 |
+| `leftFoot` | `[-110, -30, 76, 146]` | 64, 60 |
+| `rightFoot` | `[30, 110, 76, 146]` | 64, 60 |
+
+Finite targets clamp to these rectangles before solving. Reach then clamps to 70% of the combined bone lengths through their sum minus 4; a fixed bend branch prevents joint flips. `snapshot.targets` contains the rectangle-clamped requests. `snapshot.limbs[name]` contains `root`, `joint`, actual `end`, `lengths`, and `constrained` (whether the actual endpoint differs from the submitted request). These are stylized proportion units, not anatomical measurements. Widths, attachment roots, head and torso are deliberately fixed. Joint fillets have radii greater than limb half-widths, keeping the inner bend from folding back.
+
+Every update validates its entire 420-point contour before replacing the current state. Returned snapshots include actual point bounds and signed area, and are deeply frozen. Invalid input, unknown target keys or an invalid generated contour throw while retaining the last valid snapshot. `setTargets({})` is a no-op. Controllers retain only their creation and current states; no DOM, timers, Three objects, GPU resources or edit history exist, so there is no `dispose()` step. Consumers own any snapshots they choose to keep.
+
+`MeshViewer.validatePlanarContour(points)` is also available for bounded simple polygons. It accepts 3..512 finite two-number points with coordinates within [-10000, 10000], implicit closure, either winding and straight subdivisions. It rejects edges <= 1e-7, area magnitude <= 1e-8, nonadjacent touching/crossing, and backtracking; geometric comparisons use a 1e-8 tolerance. It returns frozen signed area and bounds. This validates the boundary only; it does not promise safe thick stroke offsets, triangulated caps or watertight extrusion. Passing a repeated closing point is an error.
+
+Tests cover all 256 simultaneous target-rectangle corners, seeded interior poses, a continuous gesture, fixed bone lengths, nonlocal intersections, mutation isolation and failed-update retention. The profile and output sample count are intentionally bounded; enlarging its pose domain requires new geometry and visual acceptance evidence.
 
 ## Optional hanging-mobile physics
 
