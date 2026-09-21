@@ -19,6 +19,8 @@ export { validatePlanarContour } from '../render/planar-figure.ts';
 export type { PlanarPoint as PlanarFigurePoint, PlanarEffector, PlanarTargets, PlanarTargetPatch, PlanarLimb, PlanarContourInfo, PlanarFigureSnapshot, PlanarFigure } from '../render/planar-figure.ts';
 export { createPlanarLinkage } from '../mechanisms/planar-linkage.ts';
 export type { PlanarPoint, PlanarCrank, PlanarIntersection, PlanarLinkageSpec, PlanarLinkageSample, PlanarLinkage } from '../mechanisms/planar-linkage.ts';
+export { createBeltDrive } from '../mechanisms/belt-drive.ts';
+export type { BeltPoint, BeltPulley, BeltDriveSpec, BeltSegment, BeltDrive } from '../mechanisms/belt-drive.ts';
 
 export interface MountOptions {
   /** GLB bytes, or the GLB as a base64 string (works from file:// where fetch does not). */

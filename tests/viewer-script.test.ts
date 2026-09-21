@@ -10,6 +10,7 @@ import { viewDirection, viewNames } from '../src/web/viewer.ts';
 import type { createSweep } from '../src/render/sweep.ts';
 import type { createPlanarFigure, planarFigureProfile } from '../src/render/planar-figure.ts';
 import type { createPlanarLinkage } from '../src/mechanisms/planar-linkage.ts';
+import type { createBeltDrive } from '../src/mechanisms/belt-drive.ts';
 
 const run = promisify(execFile);
 const cleanup: (() => Promise<unknown>)[] = [];
@@ -35,9 +36,11 @@ it('bundles a standalone viewer runtime exposing a global mount function', async
   expect(code).toContain('mount');
   expect(code).not.toContain('getElementById("asset")');
   expect(code).not.toContain("getElementById('asset')");
-  const scope = {} as { MeshViewer: { createSweep: typeof createSweep; createCarver: unknown; createPlanarFigure: typeof createPlanarFigure; planarFigureProfile: typeof planarFigureProfile; createPlanarLinkage: typeof createPlanarLinkage } };
+  const scope = {} as { MeshViewer: { createSweep: typeof createSweep; createCarver: unknown; createPlanarFigure: typeof createPlanarFigure; planarFigureProfile: typeof planarFigureProfile; createPlanarLinkage: typeof createPlanarLinkage; createBeltDrive: typeof createBeltDrive } };
   runInNewContext(code,scope);
   expect(typeof scope.MeshViewer.createCarver).toBe('function');
+  const belt=scope.MeshViewer.createBeltDrive({driver:{center:[0,0],radius:.2},driven:{center:[1,0],radius:.4}});
+  expect(belt.sample(4).drivenAngle).toBe(2);expect(belt.point(0).point).toEqual(belt.point(belt.length).point);
   const linkage = scope.MeshViewer.createPlanarLinkage({ fixed: { O: [0, 0] }, crank: { name: 'C', center: 'O', radius: 2 }, joints: [] });
   expect(linkage.sample(Math.PI / 2).points.C[1]).toBe(2);
   const sweep = scope.MeshViewer.createSweep({ centers:[[0,0,0],[0,0,1]], radii:[.1,.1] });

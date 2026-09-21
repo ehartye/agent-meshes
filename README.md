@@ -387,3 +387,28 @@ Each spider leg has **coxa → trochanter → femur → patella → tibia → me
 `check:creatures` validates all five GLBs and every clip, reloads them independently, checks actual animated skin vertices and loops, and opens every standalone preview in Chromium. Tests also check minimum supporting-foot counts and sub-frame ground contact. The examples use authored procedural rigs; automatic rigging of arbitrary imported meshes and destination-engine integration are outside this release.
 
 Project design and delivery evidence are maintained in the owner's wiki under `wiki/authored/agent-meshes/`.
+
+### Ideal planar belt drives
+
+`MeshViewer.createBeltDrive({driver:{center:[0,0],radius:.18}, driven:{center:[1.2,0],radius:.36}, crossed:false})`
+returns an immutable renderer-independent two-pulley model. Centers and pitch radii use the
+same units. `ratio` is driven angle / driver angle; it is positive for an open belt and
+negative for crossed routing. `sample(angle)` returns unwrapped driver/driven radians and
+signed `beltTravel`. Positive angles are counterclockwise in the specified plane.
+
+`segments` contains two exact tangent lines and two circular wrap arcs in closed path order.
+`point(distance)` wraps a signed path distance and returns an immutable position/unit tangent;
+`point(sample(angle).beltTravel)` follows the driving rim. Consumers own scene objects,
+time and resources. Recreate the tiny model when changing radii or centers; the resulting
+belt length changes too. There is no hidden tensioner, slip, thickness, friction, elasticity,
+inertia or force simulation. A crossed path's intersection is a mathematical crossing.
+
+Inputs require disjoint pitch circles, finite centers in ±1e6 and radii in1e-6..1e6, with
+sufficient numerical separation and coordinate/radius precision. Angles/output angles are
+bounded to ±1e9 and travel to ±1e12; distances that can no longer resolve phase reject.
+Configuration arrays are copied, output data frozen, and samples have no retained state.
+The distance-phase precision check can reject accumulated travel even when its angle sample
+remains valid; consumers should bound or restart a long-running demonstration explicitly.
+Run `node scripts/check-belt-drive-browser.mjs` for a real offline public-factory proof.
+The helper preserves full turns for ratios; it never wraps the driver before deriving the
+output. See `tests/belt-drive.test.ts` and the real viewer-bundle smoke test.
