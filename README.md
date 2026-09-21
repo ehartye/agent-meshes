@@ -161,6 +161,10 @@ Rendering requires the built workbench (`npm run build`) and Chromium (`npx play
 
 The viewer exposes the puppet by name: `bones`, `parts`, `clips`; `setPose(bone, {rotation?, position?, scale?})` (scale multiplies the bone and everything it carries, so a longer leg moves its foot), `getPose`, `resetPose(bone?)`; `setColor`, `getColor`, `setVisible`; `setPattern(name, pattern | null)`, `getPattern(name)` (re-bake a dots/stripes/checks pattern on a shell or part from its kept base colors; a flat part moves its color into the vertices the first time, after which `setColor` tints it like a shell); `play(clip?)`, `pause`, `playing`, `clip`, `time`, `duration`, `speed`, `seek`; plus `view`, `frame`, `setBackground`, `screenshot`, `onFrame`, `resize`, `dispose`, and the underlying `renderer`, `scene`, `camera`, `controls`. Pose offsets compose on top of clip playback each frame. `node scripts/check-viewer-browser.mjs` verifies the runtime in Chromium.
 
+Authored GLBs retain every material slot. `setColor(part, hex, slot?)` and `setMaterial(part, {metalness?, roughness?}, slot?)` update all slots when `slot` is omitted; `getColor(part, slot?)` and `getMaterial(part, slot?)` read the first slot by default. Slots are zero-based and isolated from other parts. `setPattern` rejects multi-material parts before changing them, so group colors remain intact.
+
+Playback supports imported position, rotation, scale and morph-weight tracks, restoring authored values when switching to a clip that leaves them unanimated. `setMorph(part, targetName, weight)` overrides a named morph after clip sampling; `getMorph(part, targetName)` reads its effective weight. Weights must be finite and may extend beyond 0..1. `resetMorph(part?, targetName?)` clears one target, one part, or all overrides, revealing the current clip or authored rest weights. Target names are available through `object(part).morphTargetDictionary`; `bounds()` measures the currently visible, morphed and skinned surface.
+
 ## Five animated examples
 
 ```powershell
