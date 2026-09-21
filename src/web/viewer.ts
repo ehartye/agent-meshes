@@ -7,6 +7,8 @@ import type { Puppet } from '../render/puppet.ts';
 
 export const version = '1';
 export type { Pose, PoseInput, MaterialValues, MaterialInput } from '../render/puppet.ts';
+export { createSweep } from '../render/sweep.ts';
+export type { Sweep, SweepSpec, SweepSample } from '../render/sweep.ts';
 
 export interface MountOptions {
   /** GLB bytes, or the GLB as a base64 string (works from file:// where fetch does not). */

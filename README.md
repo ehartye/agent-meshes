@@ -175,6 +175,23 @@ Authored GLBs retain every material slot. `setColor(part, hex, slot?)` and `setM
 
 Playback supports imported position, rotation, scale and morph-weight tracks, restoring authored values when switching to a clip that leaves them unanimated. `setMorph(part, targetName, weight)` overrides a named morph after clip sampling; `getMorph(part, targetName)` reads its effective weight. Weights must be finite and may extend beyond 0..1. `resetMorph(part?, targetName?)` clears one target, one part, or all overrides, revealing the current clip or authored rest weights. Target names are available through `object(part).morphTargetDictionary`; `bounds()` measures the currently visible, morphed and skinned surface.
 
+`MeshViewer.createSweep(spec)` creates a runtime tube or elliptical strip with closed, flat-shaded caps. It returns `{geometry, update(spec), samplePath(u), length, dispose()}` and works without mounting a viewer or loading a GLB. The same factory is available from `src/render/sweep.ts` in Node. Assign its geometry to a Three mesh or an existing viewer part; the caller owns the material, mesh transform and eventual `dispose()` call.
+
+```js
+const form = MeshViewer.createSweep({
+  centers: [[0,0,0], [0,1,0], [.3,2,0]],
+  radii: [[.2,.1], [.3,.12], [.08,.04]],
+  radialSegments: 24,
+  initialNormal: [1,0,0],
+  twist: [0, .1, .2] // radians per ring
+});
+const halfway = form.samplePath(.5); // position, unit tangent, segment, t
+```
+
+Centers and radii must have matching counts; a scalar radius makes a circular section. Coordinates, positive radii and twist must be finite. Parallel transport keeps the cross-section frame stable; provide an explicit `initialNormal` for a family of shapes, perpendicular to the initial direction when possible. If omitted, the chosen seed is retained across updates. `update` keeps the original ring/radial counts, index and attribute objects, recomputes normals and bounds, and rejects invalid changes before mutation. Omitted `radialSegments` retains its original value; omitted twist means zero twist. UVs run around the section and along normalized centerline distance, with matching normals across the UV seam and separate flat cap normals.
+
+`samplePath(u)` accepts normalized **distance** in 0..1 and returns a fresh immutable `{position, tangent, segment, t}`; `segment` and `t` identify the original centerline interval for labels or markers. The path is piecewise linear. Repeated points, antiparallel cusps, degenerate frames, more than 4,096 rings, more than 256 radial segments, or more than one million vertices are rejected. These bounds do not prove non-self-intersection: round abrupt centerline corners and keep section radii small enough for the bend. Smooth frames cannot repair an intersecting surface, and interpolating two paths is a visual deformation rather than a physical unfolding simulation.
+
 ## Five animated examples
 
 ```powershell

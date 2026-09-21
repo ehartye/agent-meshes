@@ -4,8 +4,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { runInNewContext } from 'node:vm';
 import { previewHTML, viewerScript } from '../src/preview-html.ts';
 import { viewDirection, viewNames } from '../src/web/viewer.ts';
+import type { createSweep } from '../src/render/sweep.ts';
 
 const run = promisify(execFile);
 const cleanup: (() => Promise<unknown>)[] = [];
@@ -31,6 +33,11 @@ it('bundles a standalone viewer runtime exposing a global mount function', async
   expect(code).toContain('mount');
   expect(code).not.toContain('getElementById("asset")');
   expect(code).not.toContain("getElementById('asset')");
+  const scope = {} as { MeshViewer: { createSweep: typeof createSweep } };
+  runInNewContext(code,scope);
+  const sweep = scope.MeshViewer.createSweep({ centers:[[0,0,0],[0,0,1]], radii:[.1,.1] });
+  expect(sweep.length).toBe(1); expect(sweep.samplePath(.5).position[2]).toBe(.5);
+  sweep.update({centers:[[0,0,0],[0,0,2]],radii:[.1,.2]}); expect(sweep.length).toBe(2); sweep.dispose();
 }, 60000);
 
 it('still inlines a working preview page that shares the viewer runtime', async () => {
