@@ -22,17 +22,18 @@ function checkSnapshot(s: PlanarFigureSnapshot) {
   }
   // Independent signed-area and proper-intersection checks on emitted points.
   const cross = (a:PlanarPoint,b:PlanarPoint,c:PlanarPoint) => (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
-  let area=0;
+  let area=0, minimumEdge=Infinity;
   for(let i=0;i<s.points.length;i++) {
     const a=s.points[i],b=s.points[(i+1)%s.points.length];
     area+=(a[0]*b[1]-a[1]*b[0])/2;
-    expect(distance(a,b)).toBeGreaterThan(1e-7);
+    minimumEdge=Math.min(minimumEdge,distance(a,b));
     for(let j=i+2;j<s.points.length;j++) {
       if(i===0&&j===s.points.length-1) continue;
       const c=s.points[j],d=s.points[(j+1)%s.points.length];
       if(cross(a,b,c)*cross(a,b,d)<-1e-8 && cross(c,d,a)*cross(c,d,b)<-1e-8) throw new Error(`Crossing ${i}/${j}`);
     }
   }
+  expect(minimumEdge).toBeGreaterThan(1e-7);
   expect(s.area).toBeCloseTo(area,8);
 }
 
