@@ -13,6 +13,10 @@ export type { Sweep, SweepSpec, SweepSample } from '../render/sweep.ts';
 export { createCarver } from './carver.ts';
 export type { Carver, CarverOptions, CarverResult } from './carver.ts';
 export type { CarveRequest, EllipticalCutter, SolidBounds } from '../render/carving.ts';
+export { createPlanarFigure } from '../render/planar-figure.ts';
+export { planarFigureProfile } from '../render/planar-figure.ts';
+export { validatePlanarContour } from '../render/planar-figure.ts';
+export type { PlanarPoint as PlanarFigurePoint, PlanarEffector, PlanarTargets, PlanarTargetPatch, PlanarLimb, PlanarContourInfo, PlanarFigureSnapshot, PlanarFigure } from '../render/planar-figure.ts';
 export { createPlanarLinkage } from '../mechanisms/planar-linkage.ts';
 export type { PlanarPoint, PlanarCrank, PlanarIntersection, PlanarLinkageSpec, PlanarLinkageSample, PlanarLinkage } from '../mechanisms/planar-linkage.ts';
 
