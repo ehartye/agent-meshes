@@ -104,6 +104,9 @@ def fuse_meshes(objects, name, voxel_size, smooth_passes=2, expected_components=
     if any(not isinstance(obj, bpy.types.Object) or obj.type != 'MESH' for obj in objects):
         raise ValueError('Fusion inputs must be Blender mesh objects')
     if len({obj.as_pointer() for obj in objects}) != len(objects): raise ValueError('Duplicate fusion input')
+    # Data-linked objects need a refresh before view-layer membership is current.
+    # Keep all destructive operations after the validation below.
+    bpy.context.view_layer.update()
     for obj in objects:
         if obj.data.shape_keys: raise ValueError(f'Fuse before adding shape keys: {obj.name}')
         if obj.modifiers: raise ValueError(f'Resolve modifiers before fusion: {obj.name}')
@@ -113,7 +116,6 @@ def fuse_meshes(objects, name, voxel_size, smooth_passes=2, expected_components=
         if bpy.context.view_layer.objects.get(obj.name) != obj: raise ValueError(f'Fusion input is outside the active view layer: {obj.name}')
         if not obj.data.vertices or not obj.data.polygons: raise ValueError(f'Fusion input has no surface: {obj.name}')
         for vertex in obj.data.vertices: _vector(vertex.co, 3, 'Fusion vertex')
-    bpy.context.view_layer.update()
     corners = [_vector(obj.matrix_world @ Vector(corner), 3, 'World bound') for obj in objects for corner in obj.bound_box]
     # Reject accidental microscopic voxels before allocating an enormous grid.
     # This is a conservative bounding-grid budget, not a memory-use guarantee.
