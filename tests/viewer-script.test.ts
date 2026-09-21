@@ -33,8 +33,9 @@ it('bundles a standalone viewer runtime exposing a global mount function', async
   expect(code).toContain('mount');
   expect(code).not.toContain('getElementById("asset")');
   expect(code).not.toContain("getElementById('asset')");
-  const scope = {} as { MeshViewer: { createSweep: typeof createSweep } };
+  const scope = {} as { MeshViewer: { createSweep: typeof createSweep; createCarver: unknown } };
   runInNewContext(code,scope);
+  expect(typeof scope.MeshViewer.createCarver).toBe('function');
   const sweep = scope.MeshViewer.createSweep({ centers:[[0,0,0],[0,0,1]], radii:[.1,.1] });
   expect(sweep.length).toBe(1); expect(sweep.samplePath(.5).position[2]).toBe(.5);
   sweep.update({centers:[[0,0,0],[0,0,2]],radii:[.1,.2]}); expect(sweep.length).toBe(2); sweep.dispose();
