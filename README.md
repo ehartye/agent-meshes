@@ -339,6 +339,7 @@ reject. Affine bottom-row roundoff up to 1e-12 is normalized to `[0,0,0,1]`; per
 reject. Mating agreement uses an absolute 1e-7 tolerance per matrix element. Invalid edits or
 inconsistent secondary frames preserve the last state. These checks bound numerical work and
 placement consistency; they do not detect geometry intersections, hidden gaps or weak joinery.
+
 ## Connected planar figure contours
 
 The existing `MeshViewer` runtime also exposes a renderer-independent figure controller. It returns one connected 2D boundary, with elbows and knees solved from hand/foot targets. The fixed `dance-v1` profile supports open dance gestures; it is not an arbitrary rig, crossed-limb solver, or validated 3D extrusion.
