@@ -2,6 +2,18 @@ import { it, expect } from 'vitest';
 import { Box3, Mesh, MeshStandardMaterial, Vector3 } from 'three';
 import { createProject, applyOperation } from '../src/core/model.ts';
 import { buildScene } from '../src/render/scene.ts';
+it('previews curved parts with their authored normals, matching exported glTF shading', () => {
+  const project = applyOperation(createProject('balloon'), { op: 'add', part: {
+    name: 'balloon', geometry: { type: 'sphere', size: [1, 2, 1] },
+    material: { metalness: 1, roughness: 0.1 },
+  } });
+  const built = buildScene(project);
+  try {
+    const mesh = built.objects.get('balloon') as Mesh;
+    expect(mesh.geometry.getAttribute('normal').count).toBeGreaterThan(0);
+    expect((mesh.material as MeshStandardMaterial).flatShading).toBe(false);
+  } finally { built.dispose(); }
+});
 it('renders named mesh geometry at the intended dimensions and local hierarchy', () => {
   let p = applyOperation(createProject('model'), { op: 'add', part: { name: 'body', geometry: { type: 'group' }, position: [0, 3, 0] } });
   p = applyOperation(p, { op: 'add', part: { name: 'head', parent: 'body', geometry: { type: 'box', size: [2, 1, 3] }, position: [0, 1, 0] } });
