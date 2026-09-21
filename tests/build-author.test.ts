@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -36,7 +36,7 @@ it('builds verified authored assets without inventing an editable primitive proj
   });
   const result = await buildAsset(config, { decorate, decorateAsset });
   expect(result.files).toEqual(['model.glb', 'verification.json', 'authoring.json', 'preview.html']);
-  expect(authorGLB.mock.calls[0][0]).toBe(join(directory, 'bird.py')); expect(decorate).not.toHaveBeenCalled();
+  expect(authorGLB.mock.calls[0][0]).toBe(await realpath(join(directory, 'bird.py'))); expect(decorate).not.toHaveBeenCalled();
   expect(decorateAsset).toHaveBeenCalledOnce();
   expect(JSON.parse(await readFile(join(output, 'verification.json'), 'utf8')).ok).toBe(true);
   expect(JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'))).toMatchObject({ version: 1, blender: '5.0.1', source: { script: 'bird.py', sha256: createHash('sha256').update(source).digest('hex') } });

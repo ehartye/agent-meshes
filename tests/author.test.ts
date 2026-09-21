@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { authorGLB } from '../src/author.ts';
@@ -27,7 +27,7 @@ it('runs the wrapper with literal paths and reads its completion report after at
     return child;
   });
   await expect(authorGLB(input, output)).resolves.toEqual({ output, bytes: 3, meshes: 2, blender: '5.0.1' });
-  expect(spawn).toHaveBeenCalledWith('blender', expect.arrayContaining(['--python', expect.stringMatching(/blender-author\.py$/), '--', input, output]), expect.objectContaining({ windowsHide: true }));
+  expect(spawn).toHaveBeenCalledWith('blender', expect.arrayContaining(['--python', expect.stringMatching(/blender-author\.py$/), '--', await realpath(input), output]), expect.objectContaining({ windowsHide: true }));
   expect(await readdir(directory)).toEqual(expect.arrayContaining(['source.py', 'model.glb']));
   expect(await readdir(directory)).not.toContain('model.glb.done');
 });
