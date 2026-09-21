@@ -198,6 +198,39 @@ Authored GLBs retain every material slot. `setColor(part, hex, slot?)` and `setM
 
 Playback supports imported position, rotation, scale and morph-weight tracks, restoring authored values when switching to a clip that leaves them unanimated. `setMorph(part, targetName, weight)` overrides a named morph after clip sampling; `getMorph(part, targetName)` reads its effective weight. Weights must be finite and may extend beyond 0..1. `resetMorph(part?, targetName?)` clears one target, one part, or all overrides, revealing the current clip or authored rest weights. Target names are available through `object(part).morphTargetDictionary`; `bounds()` measures the currently visible, morphed and skinned surface.
 
+`MeshViewer.createPlanarLinkage(spec)` creates a stateless analytic 2D mechanism without a
+renderer or physics engine. The same factory is available from `src/mechanisms/planar-linkage.ts`:
+
+```js
+const linkage = MeshViewer.createPlanarLinkage({
+  fixed: { O: [0, 0], P: [2, 0] },
+  crank: { name: 'C', center: 'O', radius: 1 },
+  joints: [{ name: 'J', a: 'P', b: 'C', ra: 2, rb: 2, branch: 1 }],
+});
+const { points, minimumBranchGap } = linkage.sample(Math.PI / 3);
+// points.J is the intersection of circles (P, 2) and (C, 2).
+```
+
+Use consistent units and radians. Intersections are ordered: their centers must already exist.
+`branch: 1` chooses the left side of the directed line from `a` to `b`; `-1` chooses its right.
+The crank starts on positive X and rotates counterclockwise. Each sample detaches and deeply
+freezes a new numeric point record with a null prototype, independent of previous calls. The
+factory also detaches its input. `minimumBranchGap` measures the closest pair of alternate
+intersections, or is `null` for a crank without intersections. Callers own timing, phase offsets,
+traces and rendering; a Y-aligned planar rod can use `rotation.z = Math.atan2(-dx, dy)`.
+
+Bounds are 1–32 fixed points, one crank, 0–64 intersections, coordinates within ±1e6, radii
+1e-6..1e6 and angles within ±1e9 radians. Names are unique ASCII identifiers beginning with a
+letter, at most 64 characters, with letters, digits, underscores, dots and hyphens thereafter.
+Malformed or sparse graphs reject at creation. Sampling rejects unreachable, coincident or
+near-tangent circles, out-of-range outputs, and coordinate precision loss (returned radii must
+agree within 1e-8 relative error each). Normalized squared intersection height must exceed
+128 × machine epsilon, so extremely ill-conditioned assemblies reject even if mathematically
+possible. Failed samples leave other samples untouched. A valid graph does not guarantee closure
+at every angle; this API does not simulate contact, load, collision or balance.
+`node scripts/check-planar-linkage-browser.mjs` checks the bundled factory offline through a
+complete corrected Jansen turn and records a rendered trace in `.agent-meshes/check-planar-linkage`.
+
 `MeshViewer.createSweep(spec)` creates a runtime tube or elliptical strip with closed, flat-shaded caps. It returns `{geometry, update(spec), samplePath(u), length, dispose()}` and works without mounting a viewer or loading a GLB. The same factory is available from `src/render/sweep.ts` in Node. Assign its geometry to a Three mesh or an existing viewer part; the caller owns the material, mesh transform and eventual `dispose()` call.
 
 ```js

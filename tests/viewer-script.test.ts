@@ -9,6 +9,7 @@ import { previewHTML, viewerScript } from '../src/preview-html.ts';
 import { viewDirection, viewNames } from '../src/web/viewer.ts';
 import type { createSweep } from '../src/render/sweep.ts';
 import type { createPlanarFigure, planarFigureProfile } from '../src/render/planar-figure.ts';
+import type { createPlanarLinkage } from '../src/mechanisms/planar-linkage.ts';
 
 const run = promisify(execFile);
 const cleanup: (() => Promise<unknown>)[] = [];
@@ -34,9 +35,11 @@ it('bundles a standalone viewer runtime exposing a global mount function', async
   expect(code).toContain('mount');
   expect(code).not.toContain('getElementById("asset")');
   expect(code).not.toContain("getElementById('asset')");
-  const scope = {} as { MeshViewer: { createSweep: typeof createSweep; createCarver: unknown; createPlanarFigure: typeof createPlanarFigure; planarFigureProfile: typeof planarFigureProfile } };
+  const scope = {} as { MeshViewer: { createSweep: typeof createSweep; createCarver: unknown; createPlanarFigure: typeof createPlanarFigure; planarFigureProfile: typeof planarFigureProfile; createPlanarLinkage: typeof createPlanarLinkage } };
   runInNewContext(code,scope);
   expect(typeof scope.MeshViewer.createCarver).toBe('function');
+  const linkage = scope.MeshViewer.createPlanarLinkage({ fixed: { O: [0, 0] }, crank: { name: 'C', center: 'O', radius: 2 }, joints: [] });
+  expect(linkage.sample(Math.PI / 2).points.C[1]).toBe(2);
   const sweep = scope.MeshViewer.createSweep({ centers:[[0,0,0],[0,0,1]], radii:[.1,.1] });
   expect(sweep.length).toBe(1); expect(sweep.samplePath(.5).position[2]).toBe(.5);
   sweep.update({centers:[[0,0,0],[0,0,2]],radii:[.1,.2]}); expect(sweep.length).toBe(2); sweep.dispose();
