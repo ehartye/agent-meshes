@@ -6,7 +6,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
-from agent_meshes_author import sweep_mesh
+from agent_meshes_author import fuse_meshes, sweep_mesh, topology_report
 
 
 class SweepGeometryTests(unittest.TestCase):
@@ -68,6 +68,47 @@ class SweepGeometryTests(unittest.TestCase):
         for changes in cases:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 sweep_mesh(**dict(centers=valid_centers,radii=valid_radii,**{}) | changes)
+
+
+class TopologyTests(unittest.TestCase):
+    tetra_vertices = [(0,0,0), (1,0,0), (0,1,0), (0,0,1)]
+    tetra_faces = [(0,2,1), (0,1,3), (1,2,3), (2,0,3)]
+
+    def test_closed_connected_and_disconnected_surfaces(self):
+        self.assertEqual(topology_report(self.tetra_vertices, self.tetra_faces),
+                         {'components': 1, 'boundary_edges': 0, 'nonmanifold_edges': 0})
+        vertices = self.tetra_vertices + [(x+3,y,z) for x,y,z in self.tetra_vertices]
+        faces = self.tetra_faces + [tuple(i+4 for i in face) for face in self.tetra_faces]
+        self.assertEqual(topology_report(vertices, faces),
+                         {'components': 2, 'boundary_edges': 0, 'nonmanifold_edges': 0})
+
+    def test_boundary_and_overused_edges_are_counted_separately(self):
+        self.assertEqual(topology_report(self.tetra_vertices, [(0,1,2,3)]),
+                         {'components': 1, 'boundary_edges': 4, 'nonmanifold_edges': 0})
+        vertices = self.tetra_vertices + [(0,-1,0)]
+        self.assertEqual(topology_report(vertices, [(0,1,2), (1,0,3), (0,1,4)]),
+                         {'components': 1, 'boundary_edges': 6, 'nonmanifold_edges': 1})
+
+    def test_isolated_vertices_count_and_empty_mesh_is_not_a_surface(self):
+        self.assertEqual(topology_report(self.tetra_vertices + [(4,4,4)], self.tetra_faces)['components'], 2)
+        self.assertEqual(topology_report([], []), {'components': 0, 'boundary_edges': 0, 'nonmanifold_edges': 0})
+
+    def test_rejects_malformed_geometry(self):
+        for faces in [[(0,1)], [(0,1,1)], [(0,1,4)], [(0,1,-1)], [(0,1,True)], [(0,1,2.0)]]:
+            with self.subTest(faces=faces), self.assertRaises(ValueError):
+                topology_report(self.tetra_vertices, faces)
+        with self.assertRaises(ValueError):
+            topology_report([(float('nan'),0,0)], [])
+
+    def test_fusion_parameters_reject_before_requiring_blender(self):
+        for arguments in [
+            dict(voxel_size=0), dict(voxel_size=-.1), dict(voxel_size=float('nan')), dict(voxel_size=float('inf')),
+            dict(smooth_passes=-1), dict(smooth_passes=51), dict(smooth_passes=1.5), dict(smooth_passes=True),
+            dict(expected_components=0), dict(expected_components=257), dict(expected_components=1.5), dict(expected_components=True),
+            dict(objects=[]), dict(objects=[object()]*257), dict(name=''),
+        ]:
+            with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                fuse_meshes(**(dict(objects=[object()], name='Form', voxel_size=.1) | arguments))
 
 
 if __name__ == '__main__':
