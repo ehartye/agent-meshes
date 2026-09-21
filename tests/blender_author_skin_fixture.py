@@ -25,7 +25,7 @@ def build():
     weights = [{'root': 1-z/2, 'tip': z/2} for _, _, z in vertices]
 
     def snapshot():
-        return (mesh.parent, tuple(g.name for g in mesh.vertex_groups), tuple(m.name for m in mesh.modifiers),
+        return (mesh.parent, mesh.parent_type, mesh.parent_bone, tuple(g.name for g in mesh.vertex_groups), tuple(m.name for m in mesh.modifiers),
                 tuple(tuple(row) for row in mesh.matrix_world), tuple(tuple((g.group,g.weight) for g in v.groups) for v in mesh.data.vertices))
 
     def rejects(rows=weights, obj=mesh, arm=rig):
@@ -49,6 +49,9 @@ def build():
     alias = bpy.data.objects.new('Shared mesh', mesh.data); bpy.context.collection.objects.link(alias)
     rejects(); bpy.data.objects.remove(alias, do_unlink=True)
     unrelated = mesh.vertex_groups.new(name='Paint mask'); unrelated.add([0], .37, 'REPLACE')
+    # Detached objects can retain obsolete bone-parent metadata.
+    mesh.parent = rig; mesh.parent_type = 'BONE'; mesh.parent_bone = 'tip'
+    mesh.parent = None; mesh.matrix_world = transform
     bpy.context.view_layer.update()
     before = mesh.matrix_world.copy()
     modifier = bind_skin(mesh, rig, weights)
