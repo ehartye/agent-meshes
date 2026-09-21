@@ -3,6 +3,7 @@ import type { Project, Vec3, Quat, Track } from '../core/types.ts';
 import { validateProject } from '../core/model.ts';
 import { footPath, solveLeg } from './gait.ts';
 import { addQuadrupedBody } from './quadruped-body.ts';
+import { refineEquineSkin } from './equine-skin.ts';
 
 type Species = 'equine' | 'vulpine';
 const identity: Quat = [0, 0, 0, 1];
@@ -51,7 +52,7 @@ export const quadrupedGaits: Record<Species, Record<string, GaitSettings>> = {
 };
 export const defaultQuadrupedGaits = ['walk', 'trot'] as const;
 
-export interface QuadrupedOptions { /** Blend every part into one smooth skin with lathe hooves instead of box feet. */ shell?: boolean }
+export interface QuadrupedOptions { /** Smooth body skin; equine hair, ears and hard hooves retain distinct geometry. */ shell?: boolean }
 export function createQuadruped(species: Species, name: string, gaits: readonly string[] = defaultQuadrupedGaits, options: QuadrupedOptions = {}): Project {
   for (const gait of gaits) if (!Object.hasOwn(quadrupedGaits[species], gait)) throw new Error(`Unknown ${species} gait: ${gait}`);
   const horse = species === 'equine';
@@ -89,9 +90,11 @@ export function createQuadruped(species: Species, name: string, gaits: readonly 
   if (options.shell) {
     // The flat highlight stripe would ride on the barrel as a lighter patch with an occlusion rim; the skin is one colour there.
     project.parts = project.parts.filter(part => part.name !== 'back_highlight');
-    // Eyes and nostrils stay crisp on top of the skin; everything else blends into one body.
-    const skin = project.parts.filter(part => !/eye|glint|nostril/.test(part.name)).map(part => part.name);
-    project.shells = [{ name: 'skin', parts: skin, blend: horse ? 0.06 : 0.05, resolution: 72 }];
+    if (horse) refineEquineSkin(project);
+    // Small details and hard material boundaries must not dissolve into the flesh field.
+    const separate = horse ? /eye|glint|nostril|^mane$|^blaze$|^ear_|^tail_hair$|_foot$/ : /eye|glint|nostril/;
+    const skin = project.parts.filter(part => !separate.test(part.name)).map(part => part.name);
+    project.shells = [{ name: 'skin', parts: skin, blend: horse ? 0.04 : 0.05, resolution: horse ? 96 : 72 }];
   }
   // The trunk pitches about the midpoint of shoulders and hips, not the ground origin, so the body does not lurch.
   const pivot = v(legs[0].points[0]).add(v(legs[1].points[0])).multiplyScalar(0.5).setX(0);

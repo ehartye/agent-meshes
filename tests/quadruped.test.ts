@@ -130,11 +130,9 @@ for (const species of ['equine', 'vulpine'] as const) it(`${species} gallop pitc
   for (const gait of ['walk', 'trot']) for (const row of legSamples(species, gait, 60)) expect(row.pitch).toBe(0);
 });
 
-it('equine shell option wraps the whole horse in one smooth skin with lathe hooves', () => {
+it('equine shell preserves hard hoof soles and distinct hair outside the continuous skin', () => {
   const project = createCreature('equine', { gaits: ['walk', 'gallop'], shell: true });
   expect(project.shells).toHaveLength(1);
-  // Eyes and nostrils stay separate so they read crisply on the smooth skin.
-  expect(project.shells![0].parts.sort()).toEqual(project.parts.map(p => p.name).filter(n => !/eye|glint|nostril/.test(n)).sort());
   expect(project.parts.every(p => p.binding?.type === 'rigid')).toBe(true);
   expect(project.parts.filter(p => p.name.endsWith('_foot')).every(p => p.geometry.type === 'lathe')).toBe(true);
   expect(createCreature('equine').shells ?? []).toEqual([]);
@@ -142,11 +140,23 @@ it('equine shell option wraps the whole horse in one smooth skin with lathe hoov
   try {
     const meshes: string[] = []; built.root.traverse(o => { if (o instanceof SkinnedMesh) meshes.push(o.name); });
     expect(meshes).toContain('skin');
-    expect(meshes.filter(m => m !== 'skin').every(m => /eye|glint|nostril/.test(m))).toBe(true);
-    // The skin still follows the gallop: a hoof-owned vertex moves with its hoof bone.
+    expect(meshes).toEqual(expect.arrayContaining(['mane', 'tail_hair', 'ear_L', 'ear_R', 'leg_L_front_foot', 'leg_R_rear_foot']));
+    // A closed, level sole must survive meshing rather than become a rounded skin blob.
+    for (const name of meshes.filter(n => n.endsWith('_foot'))) {
+      const foot = built.root.getObjectByName(name) as SkinnedMesh;
+      const pos = foot.geometry.getAttribute('position');
+      const minimum = Math.min(...Array.from({ length: pos.count }, (_, i) => pos.getY(i)));
+      const sole = Array.from({ length: pos.count }, (_, i) => i).filter(i => Math.abs(pos.getY(i) - minimum) < 1e-6);
+      expect(sole.length).toBeGreaterThan(16);
+      const center = new Vector3(
+        (Math.min(...sole.map(i => pos.getX(i))) + Math.max(...sole.map(i => pos.getX(i)))) / 2, minimum,
+        (Math.min(...sole.map(i => pos.getZ(i))) + Math.max(...sole.map(i => pos.getZ(i)))) / 2);
+      expect(sole.some(i => Math.hypot(pos.getX(i) - center.x, pos.getZ(i) - center.z) < .002)).toBe(true);
+    }
+    // Separate hard parts still follow their bones through the gallop.
     const clip = built.clips.find(c => c.name === 'gallop')!;
     const mixer = new AnimationMixer(built.root); mixer.clipAction(clip).play();
-    const skin = built.root.getObjectByName('skin') as SkinnedMesh;
+    const skin = built.root.getObjectByName('leg_L_front_foot') as SkinnedMesh;
     const hoof = built.bones.get('leg_L_front_hoof')!;
     const nearest = () => { const pos = skin.geometry.getAttribute('position'); let best = 0, bestD = Infinity; const h = hoof.getWorldPosition(new Vector3()); for (let i = 0; i < pos.count; i++) { const d = new Vector3().fromBufferAttribute(pos, i).distanceTo(h); if (d < bestD) { bestD = d; best = i; } } return best; };
     mixer.setTime(0); built.root.updateMatrixWorld(true);
