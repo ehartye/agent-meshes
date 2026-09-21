@@ -122,12 +122,17 @@ export async function main(args = process.argv): Promise<void> {
     const { captureProject } = await import('./capture.ts'); const output = resolve(directory);
     const files = await captureProject(project, output); process.stdout.write(`${JSON.stringify({ output, files })}\n`);
   });
-  program.command('build <config>').description('Build an isolated, verified asset project')
+  program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')
     .option('--no-preview', 'Skip browser renders and the standalone preview page')
     .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html').action(async (config, options) => {
     const { buildAsset } = await import('./build.ts');
     const decorate = (await import('./capture.ts')).decoratorFor({ preview: options.preview, previewPage: options.previewPage });
-    process.stdout.write(`${JSON.stringify(await buildAsset(config, { decorate }))}\n`);
+    const decorateAsset = options.preview && options.previewPage ? async (asset: { name: string }, stage: string): Promise<string[]> => {
+      const { previewHTML } = await import('./preview-html.ts');
+      await writeFile(resolve(stage, 'preview.html'), await previewHTML(asset.name, await readFile(resolve(stage, 'model.glb'))));
+      return ['preview.html'];
+    } : undefined;
+    process.stdout.write(`${JSON.stringify(await buildAsset(config, { decorate, decorateAsset }))}\n`);
   });
   try {
     await program.parseAsync(args);
