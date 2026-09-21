@@ -221,6 +221,56 @@ Only one request runs at a time; one queued request is retained. Superseded requ
 
 Bounds must enclose the full uncut body with a positive field at every grid boundary sample. One to three resolutions (integers 16–192) are allowed, with at most four million samples per grid and six million across cached grids. Extraction also limits vertices/triangles. Validation happens before grid allocation; finite field samples and boundary clearance are checked when sampling. `stats` reports sampling/extraction timings, cache reuse and sample count, not a manifold certificate. Consistent tetrahedra share crossing vertices and orient faces from the local field. Final Float32 coordinates are welded, collapsed faces removed, and every remaining edge must have one triangle in each direction; precision-unsafe results reject. Shading normals estimate the resulting cut-field gradient. This is sampled geometry: small features, critical topology transitions, very thin removed layers and non-distance input fields require consumer checks at their chosen resolutions. Connectivity, vertex-fan manifoldness, self-intersection and a single removed piece are not universal guarantees. Preview/final resolution and debounce policy belong to the exhibit; a slower refinement remains asynchronous and is not a 60 fps promise.
 
+## Optional hanging-mobile physics
+
+```powershell
+node scripts/agent-meshes.mjs mobile-physics lib/mobile-physics.js
+```
+
+This separate script defines `window.MobilePhysics` with `createHangingMobile(spec)` and `validateMobileSpec(spec)`. It embeds Rapier 3D **0.20.0** and its WASM for offline use, including `file://`; no renderer, network fetch or Three dependency is included. Load it only in pages that need physics. The default viewer and workbench do not import it. The CLI prints the output path and byte count, like `viewer <file>`.
+
+A spec contains named rigid pieces, sampled wire paths, optional convex sheet contours and one connected suspension tree. Units are meters, kilograms and seconds, with Y up. Every piece starts at identity rotation; the controller places its local suspension anchor at its parent's local anchor. The root's `parent: null` attaches to the fixed ceiling at a world coordinate. For example:
+
+```js
+const wire = points => ({ points, radius: .0045, density: 7850 });
+const spec = { nodes: [
+  {
+    name: 'bow',
+    wires: [wire([[-.7,0,0], [0,.1,0], [.7,0,0]])],
+    suspension: { parent: null, parentAnchor: [0,2.5,0], anchor: [0,.1,0] }
+  },
+  ...[-.7, .7].map((x, i) => ({
+    name: i ? 'right' : 'left',
+    wires: [wire([[0,0,0], [0,.25,0]])],
+    leaf: {
+      contour: [[0,0], [.2,-.2], [0,-.45], [-.2,-.2]],
+      thickness: .0014, density: 2700, scaleRange: [1,1.65]
+    },
+    suspension: { parent: 'bow', parentAnchor: [x,0,0], anchor: [0,.25,0] }
+  }))
+] };
+const mobile = await MobilePhysics.createHangingMobile(spec);
+mobile.setLeafScale('left', 1.4);
+mobile.applyGust({ direction: [0,0,1], strength: .7 });
+mobile.advance(elapsedSeconds);       // consumer's animation loop
+const snapshot = mobile.snapshot();   // immutable poses, geometry, masses, anchors
+// Apply each named pose to a scene group. Build its wires/sheet from the same
+// local geometry; scale only the sheet in XY by pose.scale, retaining thickness.
+mobile.clearAccumulator();            // when pausing or hiding the page
+mobile.reset();                       // original geometry, controls and solver state
+mobile.dispose();                    // frees the engine world; safe to call twice
+```
+
+Typed interfaces are exported from [src/physics/mobile.ts](src/physics/mobile.ts). Sheet contours are ordered convex XY polygons, extruded equally on both sides of local Z = 0. `setLeafScale(name, scale)` scales XY about the local origin and recomputes mass/inertia from the same thickness and density. Attached wires stay fixed, so author the sheet's attachment at its local origin. The allowed `scaleRange` must contain 1; omitting it fixes the sheet at its authored size. Wire mass uses cylindrical segment volumes at the authored density; capsule inertia approximates each segment. Snapshot `mass` includes its wires and sheet, while `leafMass` reports only the sheet. Snapshot arrays and local geometry are immutable and contain no engine objects; positions/quaternions and both local/world joint anchors describe the current simulated state.
+
+A wire piece can also declare `hanger: {wire: 1, path: sampledRail, initial: .5}`. The indicated wire must start at that normalized distance along the rail and end at the piece's suspension anchor. Author the rail along the supporting bow. `setHanger(name, u)` targets normalized **arclength** in 0..1, translating that complete hanger wire and its real joint anchor along the rail. Movement is limited to .008 m per physics step; snapshots include the updated wire geometry for rendering. Changing the anchor injects work into the simulation rather than prescribing a bar angle.
+
+`advance(seconds)` runs fixed 1/120-second steps, at most eight per call, and returns the count. Excess elapsed time is discarded, so a stalled or hidden page cannot accumulate unlimited catch-up work. Pause, visibility and reduced-motion policy belong to the consumer. `applyGust` normalizes its nonzero direction and applies 0..2 N·s per exposed square meter at each leaf's area centroid. This is a short impulse approximation, not fluid simulation. Reset reconstructs the world, including warm-start solver state; failed reconstruction preserves the current world. All methods except idempotent `dispose()` reject after disposal.
+
+Validation copies and freezes inputs before engine initialization/world allocation: 1–32 pieces, 0–8 wires per piece, 2–128 samples per path, at most 2048 wire segments, 3–128 points per convex leaf, one root, unique names, no cycles or unknown parents. Coordinates are finite within ±1000 m, radii/thickness .00001–1 m, density 1–50000 kg/m³, authored piece mass .000001–100000 kg, and leaf scale limits .1–4. Degenerate paths and concave/self-crossing contours reject. Invalid controls leave the current state untouched. Each piece needs physical geometry.
+
+Leaf-to-leaf contacts use convex sheet colliders, four CCD substeps and 16 solver iterations. **Wire collisions are disabled**: wires contribute mass/inertia, while spherical joints represent their connections. Bows and hangers are rigid; damping, capsule inertia and gusts are approximations. Extreme contact configurations still require consumer testing, especially thin sheets at speed; this is not a general guarantee against tunneling, wire entanglement or self-intersection. The seven-leaf regression retains 14 bodies, 511 colliders and 13 joints and verifies real ancestor motion, mass/inertia, thin-sheet contact, reset/disposal and offline export. Hardware phone performance remains a consumer release check.
+
 ## Five animated examples
 
 ```powershell

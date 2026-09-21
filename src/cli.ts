@@ -117,6 +117,12 @@ export async function main(args = process.argv): Promise<void> {
     await mkdir(dirname(output), { recursive: true }); await writeFile(output, code);
     process.stdout.write(`${JSON.stringify({ output, bytes: Buffer.byteLength(code) })}\n`);
   });
+  program.command('mobile-physics <file>').description('Write optional offline hanging-mobile physics: window.MobilePhysics, without a renderer').action(async file => {
+    const { mobilePhysicsScript } = await import('./preview-html.ts');
+    const code = await mobilePhysicsScript(); const output = resolve(file);
+    await mkdir(dirname(output), { recursive: true }); await writeFile(output, code);
+    process.stdout.write(`${JSON.stringify({ output, bytes: Buffer.byteLength(code) })}\n`);
+  });
   program.command('view <directory>').description('Render fixed views and animation contact sheets').action(async directory => {
     const project = await currentProject();
     const { captureProject } = await import('./capture.ts'); const output = resolve(directory);
