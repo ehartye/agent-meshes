@@ -24,16 +24,16 @@ slug means work only that lesson. `tool:<id>` means work only that backlog entry
 
 | Thing | Location |
 | ----- | -------- |
-| Tool source (this repo) | `C:\Users\ehart\repos\agent-meshes` |
-| Gallery repo (sibling checkout) | `C:\Users\ehart\repos\art-explorers` |
-| GitHub | private repo `ehartye/art-explorers`, Pages from `main` at `/` |
+| Tool source (this repo) | the root of this checkout |
+| Gallery repo (sibling checkout) | `../art-explorers` next to this checkout, or `$ART_EXPLORERS_DIR` if set |
+| GitHub | private repo `<owner>/art-explorers` under your GitHub account, Pages from `main` at `/` |
 | Ledger (all resumable state) | `art-explorers/LEDGER.md` |
 | Kid-test rubric | `art-explorers/RUBRIC.md` |
 | Lesson sources (operations, recipes, build config) | `art-explorers/lessons/<slug>/source/` |
 | Lesson page and built assets | `art-explorers/lessons/<slug>/` (`index.html`, `model.glb`, PNGs) |
 | Shared embed runtime | `art-explorers/lib/` (copied from an agent-meshes build, never hand edited) |
 | Evidence screenshots and check output | `art-explorers/evidence/<slug>/` |
-| Tool change notes and architecture | the wiki, via `wiki-master:wiki-author` |
+| Tool change notes and architecture | your project documentation (for example a `docs/` folder or a team wiki) |
 
 The gallery repo holds static output plus lesson prose. It may carry a `package.json` with
 dev-only tooling (Playwright) for checks. The published site must never need a build step.
@@ -58,16 +58,16 @@ Skip any step the ledger marks done.
 
 1. Create the gallery repo if it does not exist:
    ```bash
-   gh repo create ehartye/art-explorers --private --clone --description "Playable art lessons for kids, built with agent-meshes"
+   gh repo create <owner>/art-explorers --private --clone --description "Playable art lessons for kids, built with agent-meshes"
    ```
    Clone to the sibling path above. Add `.nojekyll`, a README that says what the site is and
    that lesson sources are in `lessons/<slug>/source/`, and a placeholder `index.html`.
 2. Enable Pages from `main` at `/`:
    ```bash
-   gh api -X POST repos/ehartye/art-explorers/pages -f 'source[branch]=main' -f 'source[path]=/'
+   gh api -X POST repos/<owner>/art-explorers/pages -f 'source[branch]=main' -f 'source[path]=/'
    ```
-   The owner's GitHub plan supports Pages on private repos, so this should succeed. If GitHub
-   still refuses, **stop** and report the exact error. Do not make the repo public yourself.
+   Pages on a private repo needs a GitHub plan that supports it. If GitHub refuses, **stop** and
+   report the exact error. Do not make the repo public yourself.
 3. Wait for the Pages URL to serve the placeholder. Record the URL in Decisions.
 4. Write `RUBRIC.md` (section below) before any lesson exists. Commit.
 5. Add `scripts/check.mjs` to the gallery with Playwright as a dev dependency. It takes a lesson
@@ -141,7 +141,8 @@ and verify the GLB. Copy `model.glb`, PNGs and `project.mesh.json` into the less
 
 **Page** (`modeled` to `paged`). Write `index.html` as one self-contained page using the shared
 embed runtime in `lib/`. Structure as screens the kid moves through, not a scrolling essay. Load
-the `hartye-skills:beautiful` skill before writing any page. Every lesson shares the site's
+the `hartye-skills:beautiful` skill (from the public hartye-plugins marketplace, or your own
+design skill) before writing any page. Every lesson shares the site's
 palette and type so the six read as one thing. Add the lesson to the gallery `index.html`.
 
 **Verify** (`paged` to `verified`). Run the gallery check script against the lesson: offline
@@ -184,8 +185,8 @@ waits. When working one:
    owner approved that policy when defining this goal. Wait for checks, confirm the PR state is
    `MERGED` before deleting the remote branch, and sync `main`.
 5. Rebuild any lesson that used the changed path and re-verify it.
-6. Record what shipped in the wiki with `wiki-master:wiki-author` and close the backlog entry
-   with the PR number.
+6. Record what shipped in your project documentation and close the backlog entry with the PR
+   number.
 
 A likely first entry: the preview runtime exposes play, clip choice and scrub, but a lesson has
 no way to pose a bone, recolor a part, swap a clip on a slider, or read back a joint angle from
@@ -197,8 +198,8 @@ Tool changes must not break the five existing creatures. `npm run examples` and
 ## Rails
 
 - Never `--force` push, never rewrite pushed history, in either repo.
-- Never make `art-explorers` public. Never change the HAL9000 tailnet route or anything under
-  `artifacts/creatures`.
+- Never make `art-explorers` public. Never change an existing deployment route that serves the
+  creature gallery, or anything under `artifacts/creatures`.
 - No services beyond GitHub. No external images of artworks. No tracking scripts.
 - Never commit to `main` directly in either repo. Feature branch, PR, merge.
 - `ship-it` merge is pre-authorized only for the two repos named here.
@@ -225,7 +226,8 @@ Report done only when all of these are true and the ledger says so:
 - Both refinement passes are recorded.
 - Every `blocker` and `bug` backlog entry is closed with a PR number, and remaining entries are
   listed in the final report with a recommendation each.
-- The wiki has a page for the Art Explorers architecture and one per shipped tool change.
+- The project documentation has a page for the Art Explorers architecture and one per shipped
+  tool change.
 
 The final report lists the six artists with their lesson promise and URL, the tool changes
 shipped, the backlog left open, and what you would do with a seventh lesson.
