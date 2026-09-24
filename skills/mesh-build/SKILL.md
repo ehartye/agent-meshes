@@ -147,3 +147,21 @@ viewer API reference has the key rules and a counting example.
 A build is not done when `verification.json` reports zero errors. Open the PNGs and the contact
 sheets and compare them with the intent. If something looks blocky, floating or lumpy, read
 [mesh-believable](../mesh-believable/SKILL.md) before adjusting numbers at random.
+
+## Face-rig contract check
+
+```text
+mesh verify head.glb --contract arkit-face/1
+```
+
+Checks everything computable in the `arkit-face/1` face-rig contract and prints a JSON report
+(`checks`, `failures`, `warnings`, `measurements`): validator errors, the single skin with
+`head`/`eye_L`/`eye_R`, eyeballs bound 100% to eye bones that pivot at their centers, the 21
+required morph names (exact spelling, one glTF mesh per name), zero rest weights, every morph
+moving at least 1 mm, no flipped triangles at 0.5/1 or across the emotion presets with
+`jawOpen` = 1, lid clearance of eyeball radius + 0.5 mm at blink .25/.5/.75/1 alone and with
+squint, the `extras.arkitFace` schema and `exposedTeeth`, upper teeth fixed and lower teeth,
+tongue and cavity carried by `jawOpen`, and a chin that drops. It exits 1 and prints
+`FAIL <check>: <problem>` lines on stderr. Teeth are found by the materials `teeth_upper` and
+`teeth_lower`. It does not render: blink coverage, a dark open mouth and gaze still need looking
+at. `node <plugin-root>/scripts/check-face-rig-browser.mjs` renders the helper-built test heads.

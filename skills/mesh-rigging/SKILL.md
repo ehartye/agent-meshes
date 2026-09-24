@@ -1,7 +1,7 @@
 ---
 name: mesh-rigging
-description: Rig and animate agent-meshes models with bone hierarchies, rigid, linear or weighted bindings, two-link IK posing, mirrored assemblies, and keyframed clips such as walk cycles, idles and gaits.
-when_to_use: Use when a model needs a skeleton, when parts should move with joints, when asked for a walk, trot, gallop, idle, sway, flap, wave or any animation clip in a GLB, or when a clip plays wrong, feet slide, or limbs pop.
+description: Rig and animate agent-meshes models with bone hierarchies, rigid, linear or weighted bindings, two-link IK posing, mirrored assemblies, keyframed clips such as walk cycles, idles and gaits, and ARKit face rigs for talking heads (eyelids, eye bones, a toothed puppet jaw, the arkit-face/1 contract).
+when_to_use: Use when a model needs a skeleton, when parts should move with joints, when asked for a walk, trot, gallop, idle, sway, flap, wave or any animation clip in a GLB, when a clip plays wrong, feet slide, or limbs pop, or when a head needs blendshapes, blinking or squinting lids, gaze, emotions or a talking jaw with teeth.
 ---
 
 # Mesh rigging and animation
@@ -59,3 +59,29 @@ Export and verify, then build with renders and read the contact sheet for each c
 perspective frames in two rows of four) before calling the animation done. The validator proves
 the GLB is well formed; only the frames show whether the gait is convincing, and foot sliding
 cannot be judged from a perspective sheet at all: run the stride check above for that.
+
+## Talking-head face rigs
+
+Faces with blendshapes are authored in Blender (a `build.json` with a `blender` script, see
+mesh-build) with the face-rig helpers, which follow the `arkit-face/1` contract: one skin with
+`head`, `eye_L` and `eye_R` (left is the character's left, +X), the 21 required ARKit morphs at
+zero rest weight, and `extras.arkitFace` on the root. Read the "Face-rig helpers" section of
+`<plugin-root>/scripts/blender_lib/README.md` for the API, and copy the working heads in
+`<plugin-root>/tests/fixtures/face-rig/` (`test_head.py` with lids and a puppet jaw,
+`test_robot.py` with shutters and a chin plate). The rules that are easy to get wrong:
+
+- Morphs are linear: a lid swept across a round eye as one morph cuts into the eyeball
+  mid-blink. Use `build_eye(..., style='lid')` (the lid radius is solved for 0.5 mm clearance at
+  every weight) or `style='shutter'`; do not hand-roll lid morphs.
+- Drive `jawOpen` on every jaw-carried part from one `JawHinge`: `add_jaw_open(skin, jaw)` drops
+  the chin and lower face with the teeth (a puppet jaw, not a hole in a fixed face), and
+  `rigid=True` turns the lower teeth, tongue or a robot chin plate as one body. Cut the lip seam
+  with `slit_mouth` and add a dark `mouth_cavity_geometry` bag so an open mouth is never see-through.
+- Put every morph-bearing part in one mesh with `join_face_parts`: Unreal discards all morph
+  names when a name repeats across glTF meshes. Keep only the eyeballs separate.
+- Name teeth materials `teeth_upper` and `teeth_lower`, and write the extras with
+  `face_contract(rig, objects, yaw_max, pitch_max, exposed_teeth=[...])`.
+- Gaze is eye-bone rotation, not morphs: yaw about the eye bone's local Y, pitch about local X.
+
+Check every build with `mesh verify <head>.glb --contract arkit-face/1` (mesh-build) and look at
+blink, squint, jaw and emotion renders before calling the head done.

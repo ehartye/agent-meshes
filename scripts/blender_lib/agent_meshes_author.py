@@ -392,7 +392,18 @@ def export_glb(path, objects):
             export_apply=False, export_morph=True, export_morph_normal=True,
             export_animations=True, export_skins=True, export_yup=True,
             export_cameras=False, export_lights=False)
+        # Blender's exporter drops JSON-shaped custom properties; write root extras (for
+        # example the arkit-face/1 contract from set_face_contract) into the GLB directly.
+        import json
+        from agent_meshes_face import EXTRAS_PROPERTY, merge_glb_node_extras
+        extras = {obj.name: json.loads(obj[EXTRAS_PROPERTY]) for obj in objects if EXTRAS_PROPERTY in obj.keys()}
+        if extras: merge_glb_node_extras(path, extras)
     finally:
         bpy.ops.object.select_all(action='DESELECT')
         for obj in previous_selection: obj.select_set(True)
         bpy.context.view_layer.objects.active = previous_active
+
+
+# Face-rig helpers live in a sibling module; importing them here keeps one entry point.
+# agent_meshes_face never imports this module at load time, so there is no import cycle.
+from agent_meshes_face import *  # noqa: E402,F401,F403

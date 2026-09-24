@@ -74,6 +74,11 @@ the recipe plus a batch of edits, kept as files so it can be rebuilt. To deliver
 model, `save <name>.mesh.json` from the workspace and point `build.json` at it with
 `"project":"<name>.mesh.json"` (see mesh-build).
 
+A **talking head or any face with blendshapes** (blink, squint, gaze, emotions, a jaw with
+teeth) is not a recipe or a JSON-operations model: author it in Blender with the face-rig
+helpers and check it against the `arkit-face/1` contract. Read the face-rig section of
+[mesh-rigging](../mesh-rigging/SKILL.md) first.
+
 `recipe`, `state`, `save` and `open` print the whole project (a recipe is a few hundred kilobytes
 of JSON on one line). Redirect that output to a file or trim it. `inspect` without a selector is
 also one long line: counts first, then every part, bone and clip; read the counts, and use a
