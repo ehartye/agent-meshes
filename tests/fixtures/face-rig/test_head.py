@@ -6,9 +6,8 @@ Build: node scripts/agent-meshes.mjs build tests/fixtures/face-rig/build.json
 Check: node scripts/agent-meshes.mjs verify <output>/model.glb --contract arkit-face/1
 Blender coordinates: Z up, meters, the face looks down -Y, character left is +X.
 """
-import math
 from agent_meshes_author import (
-    JawHinge, add_jaw_open, build_eye, cut_faces, ellipsoid_geometry, face_contract, face_skeleton,
+    JawHinge, add_jaw_open, build_eye, cut_faces, cut_hole, ellipsoid_geometry, face_contract, face_skeleton, front_surface,
     join_face_parts, material, mesh_from_geometry, mouth_cavity_geometry, recommended_gaze, shape_key, slit_mouth, soft_offset,
     symmetric_offsets, teeth_row_geometry, tongue_geometry,
 )
@@ -27,20 +26,25 @@ def build():
 def build_face(robot=False):
     skin = material('metal' if robot else 'skin', (.55, .58, .62) if robot else (.62, .36, .24), metalness=.8 if robot else 0, roughness=.35 if robot else .55)
     rig = face_skeleton(head=(0, 0, .09), eye_left=EYE_L, eye_right=EYE_R, name='Face rig')
-    jaw = JawHinge(pivot=(0, -.005, .1), angle=18, mouth_z=MOUTH_Z, half_width=MOUTH_HALF_WIDTH, corner_falloff=.02, band=.03)
 
-    # Head blank with eye holes; the lids (or shutters), sockets and eyeballs fill them.
+    # Head blank with smooth round eye holes; the lids (or shutters), sockets and eyeballs fill them.
     blank = ellipsoid_geometry(HEAD_CENTER, HEAD_RADII, rings=48, segments=64)
-    hole = lambda c: min(math.dist(c, EYE_L), math.dist(c, EYE_R)) < .0185
-    vertices, faces, _ = cut_faces(blank['vertices'], blank['faces'], hole)
+    vertices, faces = blank['vertices'], blank['faces']
+    for eye in (EYE_L, EYE_R):
+        cut = cut_hole(vertices, faces, eye, .0185)
+        vertices, faces = cut['vertices'], cut['faces']
+    front = front_surface(vertices, faces)
+    # A puppet jaw hinged at the back of the head, level with the mouth: the chin drops with the lips.
+    # The robot's rigid chin plate turns further and slides less.
+    jaw = JawHinge.ear(vertices, MOUTH_Z, MOUTH_HALF_WIDTH, **(dict(angle=14, drop=.012) if robot else {}))
     extra = []
     if robot:
-        # The chin plate is its own rigid part hinged below the mouth line; the skull keeps the rest.
-        chin = lambda c: c[2] < MOUTH_Z and c[1] < -.03
+        # The chin plate is the whole lower head below the mouth line, one rigid part; the skull keeps the rest.
+        chin = lambda c: c[2] < MOUTH_Z
         plate_vertices, plate_faces, _ = cut_faces(vertices, faces, lambda c: not chin(c))
         vertices, faces, _ = cut_faces(vertices, faces, chin)
         plate = mesh_from_geometry('chin_plate', {'vertices': plate_vertices, 'faces': plate_faces}, [skin])
-        add_jaw_open(plate, jaw, rigid=True)
+        add_jaw_open(plate, jaw, rigid=True, min_chin_drop=.1)
         extra.append(plate)
     head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces}, [skin])
     if not robot: slit_mouth(head, MOUTH_Z, MOUTH_HALF_WIDTH)
@@ -62,12 +66,14 @@ def build_face(robot=False):
     shape_key(head, 'browInnerUp', soft_offset(rest, (0, -.08, .165), .025, (0, 0, .004)))
     shape_key(head, 'mouthFunnel', soft_offset(rest, (0, -.083, MOUTH_Z), (.026, .02, .016), (0, -.004, 0)))
 
-    if not robot: add_jaw_open(head, jaw)
+    if not robot: add_jaw_open(head, jaw, min_chin_drop=.1)
 
     # Mouth interior: a dark bag, teeth rows and a tongue carried by the same hinge.
     dark = material('mouth_cavity', (.03, .005, .01), roughness=.9)
     dark.use_backface_culling = False
-    cavity = mesh_from_geometry('mouth_cavity', mouth_cavity_geometry((0, -.074, .074), width=.042, height=.032, depth=.045), [dark])
+    # The cavity rim hugs the curved face just behind the lips, so it never pokes through at rest.
+    cavity_geometry = mouth_cavity_geometry((0, front(0, MOUTH_Z), .074), width=.042, height=.032, depth=.05, surface=front)
+    cavity = mesh_from_geometry('mouth_cavity', cavity_geometry, [dark])
     add_jaw_open(cavity, jaw)
     enamel_upper = material('teeth_upper', (.9, .88, .8), roughness=.3)
     enamel_lower = material('teeth_lower', (.88, .86, .78), roughness=.3)

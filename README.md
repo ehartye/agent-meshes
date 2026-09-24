@@ -358,15 +358,15 @@ Talking heads (blinking, gazing, squinting, emoting, with a toothed puppet jaw) 
 **Authoring.** Blender sources build heads with the face helpers in `scripts/blender_lib` (`agent_meshes_face`, re-exported by `agent_meshes_author`; the [helper README](scripts/blender_lib/README.md#face-rig-helpers-arkit-face1) documents the API):
 
 ```python
-from agent_meshes_author import (face_skeleton, build_eye, JawHinge, add_jaw_open, slit_mouth,
-    teeth_row_geometry, mouth_cavity_geometry, mesh_from_geometry, join_face_parts, face_contract)
+from agent_meshes_author import (face_skeleton, build_eye, JawHinge, add_jaw_open, slit_mouth, cut_hole,
+    front_surface, teeth_row_geometry, mouth_cavity_geometry, mesh_from_geometry, join_face_parts, face_contract)
 
 # A sketch: tests/fixtures/face-rig/test_head.py is the complete, runnable source.
 def build():
     rig = face_skeleton(head=(0, 0, .09), eye_left=(.033, -.067, .145), eye_right=(-.033, -.067, .145))
-    skin = ...                                   # your head mesh; slit_mouth(skin, .075, .022)
-    jaw = JawHinge(pivot=(0, -.005, .1), angle=18, mouth_z=.075, half_width=.022)
-    add_jaw_open(skin, jaw)                      # the chin and lower face drop with the teeth
+    skin = ...                                   # your head mesh, eye holes cut with cut_hole; slit_mouth(skin, .075, .022)
+    jaw = JawHinge.ear(head_vertices, .075, .022) # hinged at the back of the head, level with the mouth
+    add_jaw_open(skin, jaw, min_chin_drop=.1)    # the chin drops >= 10% of the head, not only the lips
     lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, -.0745, .0735), .018, .011, 6, .005, row='lower'), [lower_enamel])
     add_jaw_open(lower, jaw, rigid=True)
     eyes = [build_eye(rig, side, c, .014, style='lid') for side, c in (('L', (.033, -.067, .145)), ('R', (-.033, -.067, .145)))]
@@ -376,8 +376,9 @@ def build():
 ```
 
 - **Eyes.** `build_eye` makes an eyeball with `eye_white`/`eye_iris`/`eye_pupil` slots bound to its eye bone, a socket cup, and lids (`style='lid'`) or robot shutters (`style='shutter'`) carrying the blink, squint and wide morphs. Morphs are linear, so a lid swept across a round eye cuts a chord through the eyeball mid-blink. The lid helper solves the shell radius so that every blink, squint and wide weight combination keeps every lid vertex at least 0.5 mm outside the eyeball (the lower lid rises to meet a limited upper arc, and the upper lid passes in front); shutters translate in planes in front of the lens. It also rejects squints outside 25-60% of the opening and lid settings that fold faces.
-- **Jaw.** One `JawHinge` drives `jawOpen` on everything the jaw carries: a hinge about a pivot with a falloff that moves the lower lip, chin and lower face outline rigidly with the teeth inside the mouth slit and fades beyond the mouth corners and behind the pivot. `rigid=True` turns a whole part as one body (lower teeth, tongue, a robot chin plate).
-- **Mouth.** `slit_mouth` cuts a closed lip seam that opens with the jaw, `mouth_cavity_geometry` a dark bag so an open mouth never sees through the head, `tongue_geometry` a tongue, and `teeth_row_geometry` rows of rounded, saw (pointed) or grille (rectangular) teeth, with per-tooth sizes for buck teeth or fangs.
+- **Jaw.** One `JawHinge` drives `jawOpen` on everything the jaw carries, as a puppet jaw: the chin and lower face outline drop with the teeth, not only the lips. **Put the pivot at the back of the head, level with the mouth line (by the ears).** `JawHinge.ear(head_vertices, mouth_z, half_width)` places it there and sizes the motion (an 8 degree turn plus a downward `drop` of 9% of the head height), which drops the chin by 12-14% of the head on the fixtures. A pivot in the middle of the head swings the chin back and up and only opens a hole at the lips. Below the mouth line the whole lower face moves. On the lower lip the weight follows a rounded mouth shape (full at the middle, none at the corners), and beyond the corners and behind the slit it fades in over `band`, so the cheeks stretch without folding. `add_jaw_open(skin, jaw, min_chin_drop=.1)` rejects a jaw whose lowest point drops by less than 10% of the part's height, and every call rejects a jaw that folds faces. `rigid=True` moves a whole part as one body (lower teeth, tongue, a robot chin plate).
+- **Mouth.** `slit_mouth` cuts a closed lip seam and tags its vertices (the `jaw_seam` point attribute: 1 lower lip, 2 upper lip), so the lower lip opens and the upper lip stays whatever float32 does to the mouth line (.088 rounds down, .086 up; both work). `mouth_cavity_geometry` makes a dark bag so an open mouth never sees through the head. Pass `surface=front_surface(skin_vertices, skin_faces)` and its rim follows a curved face 4 mm behind the skin instead of poking out at the cheeks. `tongue_geometry` makes a tongue, `teeth_row_geometry` rows of rounded, saw (pointed) or grille (rectangular) teeth, and `exposed_teeth_geometry(surface, xs, mouth_z, length, width)` fangs or buck teeth that hang in front of the closed lower lip (declare them in `exposedTeeth`).
+- **Skin holes and brows.** `cut_hole(vertices, faces, center, radius)` opens an eye hole (or any round or elliptical hole) whose rim lies exactly on the circle, where `cut_faces` leaves stair steps. `brow_ridge_geometry(eye_center, dome_radius, side)` builds a brow ridge lying on a lid dome (a frog's or creature's eye) with `browDown`, `browInnerUp` and `browOuterUp` morphs that slide it over the dome without cutting the lids.
 - **One morph mesh.** Unreal discards every morph name in a file when a name repeats across glTF meshes, and `jawOpen` moves the skin, teeth, tongue and cavity. `join_face_parts` joins all morph-bearing parts into one mesh (one glTF primitive per material). Only the eyeballs stay separate.
 - **Extras.** `face_contract` writes `extras.arkitFace` on the rig, the scene's single root node. `export_glb` writes these extras into the GLB, because Blender's exporter drops JSON-shaped custom properties.
 
@@ -388,7 +389,7 @@ def build():
 | `validator` | the Khronos glTF validator reports any error (warnings are listed in `warnings`) |
 | `skeleton` | there is not exactly one skin; `head`, `eye_L` or `eye_R` is missing; an eye bone is not a child of `head`; `head` is not the skin root; `eye_L` is not on the +X side |
 | `skinning` | a mesh is not bound to the skin |
-| `eyes` | no mesh is bound 100% (>= 0.999) to an eye bone, or the eye bone sits more than 1 mm from that eyeball's center |
+| `eyes` | no mesh is bound 100% (>= 0.999) to an eye bone, the eye bone sits more than 1 mm from that eyeball's center, or a part too large to be an eyeball (reaching past half the distance between the eyes, such as a skull) is bound to an eye bone |
 | `orientation` | the eyes are not on the +Z half of the model (the face must look down +Z) or lie outside its height (Y up). A height outside 0.20-0.30 m is a warning |
 | `morph-names` | a required morph is missing; a name is a near miss of an ARKit name (`EyeBlinkLeft`, `eyeBlink_L`); targets lack `extras.targetNames`; or a morph name repeats across glTF meshes |
 | `rest-weights` | a mesh or node default morph weight is not 0 |
@@ -397,9 +398,12 @@ def build():
 | `lid-clearance` | at `eyeBlinkX` = 0, .25, .5, .75 or 1, alone and with `eyeSquintX` = 1, a lid vertex comes within eyeball radius + 0.5 mm of the eye center |
 | `extras` | no single scene root node carries `extras.arkitFace`, or it breaks the schema (contract string, morph list equal to the file's morphs, gaze limits in (0, 90], lid follow in [0, 1], the six emotions using only ARKit curve names with weights in [0, 1]) |
 | `exposed-teeth` | `extras.arkitFace.exposedTeeth` is not a list of names (`[]` when no teeth show at rest) |
-| `teeth` | no upper or lower teeth are found; `jawOpen` moves the upper teeth by 0.1 mm or more; the upper teeth are not bound 100% to `head`; or `jawOpen` lowers the lower teeth by less than 1 mm |
+| `head-binding` | a morph-bearing part, or a part named skull, gum, teeth, head, skin, face or lid, is not bound 100% to `head` (the message names the bone it is bound to) |
+| `teeth` | no upper or lower teeth are found; `jawOpen` moves the upper teeth by 0.1 mm or more; or `jawOpen` lowers the lower teeth by less than 1 mm |
 | `mouth-parts` | a tongue or mouth-cavity primitive is not moved at least 1 mm by `jawOpen` |
-| `puppet-jaw` | `jawOpen` drops no face or chin-plate vertex by at least 5 mm (a hole opening in a fixed face) |
+| `puppet-jaw` | at `jawOpen` = 1 the face's lowest point (the chin) drops by less than 10% of the face height. This is E3 of the talking-heads bar, measured against chin to crown, which is stricter than chin to brow. A hole opening in a fixed face fails |
+| `upper-lip` | `jawOpen` moves face skin above the upper teeth's gum line (their highest point) by more than 0.5 mm: the upper lip must stay on the skull |
+| `mouth-open` | at `jawOpen` = 1, a front view halfway between the teeth rows (at the mouth center and a third of the way to each side) hits skin, such as an upper lip hanging like a curtain, or nothing (see-through) before it hits teeth, tongue or mouth cavity; or the rows still overlap |
 
 The verifier identifies parts by convention, in contract terms:
 
@@ -407,11 +411,11 @@ The verifier identifies parts by convention, in contract terms:
 - The **lid vertices** are the vertices `eyeBlinkLeft` or `eyeBlinkRight` moves by more than 0.01 mm.
 - The **upper teeth** and **lower teeth** are primitives whose material (or mesh or node) name contains `teeth` or `tooth` and `upper` or `lower`: name the materials `teeth_upper` and `teeth_lower`.
 - The **mouth parts** are primitives named with `tongue`, or `cavity`, `throat` or `mouth_interior`.
-- The **face or chin plate** is every other primitive that carries `jawOpen`.
+- The **face** for the chin measurement is every other primitive except eye sockets and parts named `neck`, `collar`, `body`, `torso` or `shoulder`, which do not open with the jaw. Its lowest point is the chin. `measurements` reports `chinDrop`, `faceHeight`, `chinDropRatio`, `upperLipMove` and what the `mouthOpen` rays hit.
 
 The contract clauses that need a render (iris hidden at full blink, no eyeball pixels over a lid, a dark open mouth, gaze coverage) are not checked here. The required names come from `src/arkit-face.ts`, the one copy every verifier imports. `src/gltf-read.ts` is the small GLB reader the verifier uses (accessors, including sparse ones, skins and node world matrices).
 
-**Fixtures and proofs.** `tests/fixtures/face-rig/test_head.py` (round eyes with lids, a hinged puppet jaw, rounded teeth and a tongue) and `test_robot.py` (shutter eyes, grille teeth and a rigid chin plate) are built only with the helpers. `tests/face-rig-blender.test.ts` builds both through `agent-meshes build` and verifies them when Blender is installed; CI skips it. `tests/face-contract.test.ts` builds small GLBs in Node and proves each check passes on a good head and fails on a broken one. `node scripts/check-face-rig-browser.mjs [test_head|test_robot]` builds a fixture, verifies it, and renders blink, squint, wide, jaw and emotion states through the offline viewer into `.agent-meshes/face-rig-proof/<fixture>/contact-sheet.png`. MeshViewer's `setMorph` addresses one three.js mesh, and a multi-material face loads as one mesh per primitive, so set a morph on each of them.
+**Fixtures and proofs.** `tests/fixtures/face-rig/test_head.py` (round eyes with lids, an ear-hinged puppet jaw, rounded teeth and a tongue), `test_robot.py` (shutter eyes, grille teeth and a rigid chin plate) and `test_frog.py` (a wide, flat frog with lid domes, brow ridges, saw teeth, two exposed fangs and a mouth line at .088) are built only with the helpers. `tests/face-rig-blender.test.ts` builds all three through `agent-meshes build` and verifies them when Blender is installed; CI skips it. `tests/face-contract.test.ts` builds small GLBs in Node and proves each check passes on a good head and fails on a broken one. `node scripts/check-face-rig-browser.mjs [test_head|test_robot|test_frog]` builds a fixture, verifies it, and renders blink, squint, wide, jaw and emotion states through the offline viewer into `.agent-meshes/face-rig-proof/<fixture>/contact-sheet.png`, plus `jaw-sheet.png` (jawOpen 0, .5 and 1 from the front, three-quarter and close up, captioned with the measured chin drop). MeshViewer's `setMorph` addresses one three.js mesh, and a multi-material face loads as one mesh per primitive, so set a morph on each of them.
 
 ## Named-frame assemblies
 

@@ -146,7 +146,8 @@ repeats them. `agent_meshes_author` re-exports all of them, so one import works:
 
 ```python
 from agent_meshes_author import (face_skeleton, build_eye, JawHinge, add_jaw_open,
-    slit_mouth, teeth_row_geometry, mouth_cavity_geometry, tongue_geometry,
+    slit_mouth, cut_hole, front_surface, teeth_row_geometry, exposed_teeth_geometry,
+    mouth_cavity_geometry, tongue_geometry, brow_ridge_geometry, chin_drop,
     mesh_from_geometry, soft_offset, symmetric_offsets, shape_key,
     join_face_parts, face_contract, recommended_gaze)
 ```
@@ -157,9 +158,10 @@ this into Y up with the face looking down +Z). Angles are degrees. Geometry
 helpers are pure Python and return `{'vertices', 'faces', ...}` dicts in world
 coordinates; the Blender wrappers build objects with identity transforms. The
 pure-Python checks run with `python tests/blender_face_geometry.py`. The complete
-worked example is `tests/fixtures/face-rig/test_head.py` (round eyes, lids, a
-hinged puppet jaw) and `test_robot.py` (shutter eyes, grille teeth, a rigid chin
-plate).
+worked examples are `tests/fixtures/face-rig/test_head.py` (round eyes, lids, an
+ear-hinged puppet jaw), `test_robot.py` (shutter eyes, grille teeth, a rigid chin
+plate) and `test_frog.py` (a wide frog: lid domes with brow ridges, saw teeth,
+two exposed fangs, a cavity fitted to the curved face).
 
 ### Skeleton, binding and one face mesh
 
@@ -239,28 +241,66 @@ margin=4)` gives `yawMax`/`pitchMax` that keep the iris center inside the openin
 
 ### Jaw, mouth slit, teeth and interior
 
-`JawHinge(pivot, angle=18, mouth_z, half_width, corner_falloff=.02, band=.03,
-back_band=.06, axis=(1, 0, 0))` is the one hinge every jaw-carried mesh shares. A
-vertex's `jawOpen` target is its position turned by `angle * weight` degrees about
-`axis` through `pivot` (positive opens: the chin swings down and back).
-`weight(p)` is 1 below the mouth line inside the mouth slit, so the lower lip,
-chin and lower face outline drop rigidly with the teeth (a puppet jaw, not a hole
-opening in a fixed face). Beyond the mouth corners it fades in over `band` below
-the line, and it fades out over `back_band` behind the pivot so the back of the
-head stays put. Keep `angle` at 30 or less (12-25 reads well): linear morphs
-shorten a hinge's chords by `1 - cos(angle / 2)`. `targets(vertices, weight=None)`
-returns morph targets (weight a number, callable or per-vertex list overrides the
-falloff).
+**A puppet jaw drops the chin.** The talking-heads bar wants the chin and the
+lower face outline to drop with the teeth (at `jawOpen` = 1 the face's lowest
+point drops by at least 10% of the head), not a hole opening in a fixed face. A
+hinge only lowers what is well *in front of* it, so **the pivot goes at the back
+of the head, level with the mouth line (by the ears)**. A pivot in the middle of
+the head swings the chin back and up: the round-1 fixture's chin rose 2.7 mm.
 
-`add_jaw_open(obj, jaw, weight=None, name='jawOpen', rigid=False)` adds the shape
-key to an object. `rigid=True` is the **rigid-plate mode**: the whole object turns
-as one body. Use it for the lower teeth, the tongue and a robot's chin plate. It
-rejects a morph that folds faces, which a short `back_band` does under the chin.
+`JawHinge.ear(vertices, mouth_z, half_width, center_x=0, angle=8, drop=None,
+drop_reach=None, inset=None, lift=0, **options)` builds that jaw from the head's
+vertices: the pivot sits 10% of the head's depth in front of the back of the
+head at the mouth line, `drop` defaults to 9% of the head height and
+`drop_reach` to half the way from the pivot to the face. On the fixtures this
+drops the chin by 12-14% of the head and the lower lip by about 1.3 times that.
+Start there and tune `angle` and `drop`.
 
-`slit_mouth(obj, mouth_z, half_width, center_x=0, front_y=None, seam=2e-5)`
-bisects a skin mesh at the mouth line, splits the edges along it on the front so
-the lips can part, and nudges the lower lip's seam 0.02 mm down so the hinge
-weight carries it. The corners stay joined. Call it before shape keys.
+`JawHinge(pivot, angle=8, mouth_z, half_width, lip_round=.75, band=.03,
+back_band=0, drop=0, drop_reach=None, slit_back=None, axis=(1, 0, 0),
+mask=None)` is the one jaw every jaw-carried mesh shares. A vertex's `jawOpen`
+target is its position turned by `angle * weight` degrees about `axis` through
+`pivot` (positive opens), then lowered by `drop * weight`. Morphs are linear, so
+a turn alone opens the lips about twice as far as it drops the chin (the lips
+are twice as far from an ear hinge); the straight `drop` lowers the chin as much
+as the lips. It fades out over `drop_reach` in front of the pivot so the back of
+the head stays near the hinge; rigid parts always take the full drop. Keep
+`angle` at 30 or less. `weight(p)`:
+
+- is 0 on and above the mouth line, and 1 a `band` below it: the whole lower
+  face moves as one;
+- on the lower lip follows the mouth's shape, `(1 - (x / half_width)^2) **
+  lip_round` (1 in the middle, 0 at the corners), so the lips part in a rounded D;
+- beyond the corners and behind `slit_back` (where the slit ends; `ear` puts it
+  at the middle of the head, as `slit_mouth` does) fades in over `band`, so the
+  cheeks and the back of the head stretch instead of creasing;
+- counts a vertex within `SEAM_TOLERANCE` (1 micron) of the line as on it, and
+  `weight(p, lower_lip=True)` as just below it: seam vertices are classified by
+  tag, never by comparing float32 coordinates with `mouth_z`;
+- fades out over `back_band` behind the pivot when that is non-zero, and is
+  scaled by `mask(p)` when given (for a neck that must stay put).
+
+`targets(vertices, weight=None, lower_lip=())` returns morph targets; a number
+(1 for rigid parts), callable or per-vertex list overrides the weight.
+`chin_drop(rest, targets)` reports `{'drop', 'height', 'ratio'}` of the lowest
+point, the measurement the verifier's `puppet-jaw` check makes.
+
+`add_jaw_open(obj, jaw, weight=None, name='jawOpen', rigid=False,
+min_chin_drop=None)` adds the shape key to an object. It reads the lip-seam tags
+`slit_mouth` wrote, so the lower lip opens and the upper lip stays. `rigid=True`
+is the **rigid-plate mode**: the whole object moves as one body. Use it for the
+lower teeth, the tongue and a robot's chin plate. `min_chin_drop=.1` on the head
+skin (or chin plate) rejects a jaw whose lowest point drops by less than 10% of
+the object's height, with the measured numbers. Every call rejects a morph that
+folds faces.
+
+`slit_mouth(obj, mouth_z, half_width, center_x=0, front_y=None)` bisects a skin
+mesh at the mouth line and splits the edges along it on the front (y <
+`front_y`, default the mean vertex y) so the lips can part; the corners stay
+joined. It tags the seam in the `jaw_seam` point attribute (`SEAM_ATTRIBUTE`; 1
+lower lip, 2 upper lip). Round 1 compared coordinates with `mouth_z` instead,
+and a mouth line that float32 rounds down (.088, .087, .08) hung the upper lip
+on the jaw like a curtain. Call it before shape keys.
 
 `teeth_row_geometry(style, center, half_width, depth, count, height, row='upper',
 width=None, thickness=None, sizes=None, span=150)` lays teeth along an elliptical
@@ -271,10 +311,28 @@ fangs) and `'grille'` (a robot's rectangular blocks). `sizes` holds one
 the materials `teeth_upper` and `teeth_lower`**: the verifier finds teeth by that
 convention.
 
-`mouth_cavity_geometry(center, width, height, depth)` is a dark half-ellipsoid bag
-behind the lips, open to the front, so an open mouth never sees through the head.
-Give it a dark, double-sided material named `mouth_cavity` and carry it with
-`add_jaw_open(cavity, jaw)`: the falloff drops its floor with the lower lip.
+`exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw',
+root=None, thickness=None, clearance=.0005, sizes=None)` makes upper teeth that
+show with the mouth closed: Mossjaw's fangs, Pip's buck teeth. One tooth hangs
+at each x, `length` below the mouth line, its root tucked `root` (default 0.35 *
+length) under the upper lip. Each stands at least `clearance` in front of the
+skin below the line (measured on its vertices, reported as `clearance`), so the
+closed lower lip never cuts it and drops away behind it when the jaw opens.
+`surface` is the skin's front: `front_surface(vertices, faces)` returns a
+function (x, z) -> y of the frontmost skin point (None beside the head). Name
+the material `teeth_upper`, bind it to `head` and list it in `exposedTeeth`.
+
+`mouth_cavity_geometry(center, width, height, depth, rings=8, segments=32,
+surface=None, inset=.004)` is a dark bag behind the lips, open to the front, so
+an open mouth never sees through the head. Give it a dark, double-sided material
+named `mouth_cavity` and carry it with `add_jaw_open(cavity, jaw)`: the weight
+drops its floor with the lower lip. On a curved face a flat rim behind the middle
+of the mouth pokes out through the cheeks at the corners, so pass `surface`
+(`front_surface(...)`): the rim then follows the skin `inset` behind it, every
+other vertex stays at least `inset` behind the skin, and `depth` is measured from
+`center`. Near the rim the walls lean forward rather than running edge-on to the
+view, which keeps renderers from leaking multisampled pixels of the dark bag
+through the skin.
 `tongue_geometry(center, length, width, thickness)` is a flat-bottomed dome; name
 its material `tongue` and carry it rigidly.
 
@@ -287,7 +345,28 @@ returns the (Left, Right) pair, mirrored across x = 0; `mirror_x(point)` mirrors
 one point. Brows, cheeks and mouth shapes are usually one or two of these per
 side. `ellipsoid_geometry(center, radii)` is a closed head blank, and
 `cut_faces(vertices, faces, remove)` drops the faces whose centroid
-`remove(centroid)` accepts (eye holes, a chin plate) and reindexes the rest.
+`remove(centroid)` accepts (a chin plate) and reindexes the rest. Its rim
+follows the mesh's faces, so a round hole comes out stair-stepped.
+
+`cut_hole(vertices, faces, center, radius)` cuts a smooth hole for an eye (or a
+mouth): it removes every face with a vertex inside the sphere (or the
+ellipsoid, when `radius` is (rx, ry, rz)) and slides each rim vertex along its
+removed edge onto it, so the rim lies exactly on the circle and stays on the
+original surface. Moves that would fold a face are backed off. It returns
+`{'vertices', 'faces', 'mapping', 'source', 'boundary'}`.
+
+`brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50,
+height=12, thickness=None, arch=4, down=12, inner_up=10, outer_up=10)` builds a
+brow ridge for eyes that sit in domes (a frog, a creature): a tapered ridge on
+the sphere of `radius` around the eye center (pass the lid's outer radius,
+`upper_radius + thickness` from `build_eye(...)['geometry']`), from `inner`
+degrees toward the nose to `outer` degrees away, at `elevation` degrees above
+the gaze axis. Its morphs turn it over the dome about the eye center:
+`browDown<Side>` lowers the inner end most (angry), `browInnerUp` lifts the inner
+end (sad, surprised), `browOuterUp<Side>` the outer end. Its base sits far
+enough out that no weight combination dips into the dome (`min_clearance`
+reports the margin), so it never cuts the lids. Make it a mesh, add its morphs
+with `shape_key`, and join it into the face.
 
 ### Contract extras
 

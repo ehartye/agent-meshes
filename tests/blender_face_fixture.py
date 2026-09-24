@@ -4,7 +4,7 @@ build() asserts wrapper behavior inside Blender, then returns a small joined fac
 """
 import json
 from agent_meshes_author import (
-    EXTRAS_PROPERTY, JawHinge, add_jaw_open, build_eye, ellipsoid_geometry, face_contract_extras, face_skeleton,
+    EXTRAS_PROPERTY, SEAM_ATTRIBUTE, JawHinge, add_jaw_open, chin_drop, build_eye, ellipsoid_geometry, face_contract_extras, face_skeleton,
     join_face_parts, material, mesh_from_geometry, set_face_contract, shape_key, slit_mouth, ARKIT_REQUIRED,
 )
 
@@ -32,15 +32,33 @@ def build():
     before = len(skin.data.vertices)
     split = slit_mouth(skin, .075, .022)
     assert split > 2 and len(skin.data.vertices) > before, (split, before, len(skin.data.vertices))
-    lowered = [v for v in skin.data.vertices if abs(v.co.z - (.075 - 2e-5)) < 1e-7]
-    assert len(lowered) >= split - 1, 'the lower lip seam is nudged below the mouth line'
+    tags = [item.value for item in skin.data.attributes[SEAM_ATTRIBUTE].data]
+    assert tags.count(1) >= split - 1 and tags.count(2) >= split - 1, 'both lip seams are tagged'
 
-    jaw = JawHinge(pivot=(0, -.005, .1), angle=18, mouth_z=.075, half_width=.022)
+    # Float32 rounds .088 down: the untagged comparison used to hang the upper lip on the jaw.
+    frog = mesh_from_geometry('frog', ellipsoid_geometry((0, 0, .12), (.11, .085, .10), rings=40, segments=56), [skin_material])
+    slit_mouth(frog, .088, .055)
+    frog_rest = [tuple(v.co) for v in frog.data.vertices]
+    frog_jaw = JawHinge.ear(frog_rest, .088, .055)
+    add_jaw_open(frog, frog_jaw, min_chin_drop=.1)
+    frog_tags = [item.value for item in frog.data.attributes[SEAM_ATTRIBUTE].data]
+    opened = frog.data.shape_keys.key_blocks['jawOpen'].data
+    upper = [i for i, t in enumerate(frog_tags) if t == 2]
+    lower = [i for i, t in enumerate(frog_tags) if t == 1]
+    assert upper and all((opened[i].co - frog.data.vertices[i].co).length < 1e-9 for i in upper), 'the upper lip stays at mouth_z .088'
+    assert lower and all(opened[i].co.z < frog.data.vertices[i].co.z - .02 for i in lower), 'the lower lip opens at mouth_z .088'
+    assert chin_drop(frog_rest, [tuple(p.co) for p in opened])['ratio'] >= .1
+    import bpy
+    bpy.data.objects.remove(frog, do_unlink=True)
+
+    jaw = JawHinge.ear([tuple(v.co) for v in skin.data.vertices], .075, .022)
     rejects(lambda: add_jaw_open(skin, jaw, weight=1, rigid=True), 'rigid')
     sharp = JawHinge(pivot=(0, -.005, .1), angle=18, mouth_z=.075, half_width=.022, back_band=.02)
     rejects(lambda: add_jaw_open(skin, sharp), 'folds')
+    middle = JawHinge(pivot=(0, -.005, .1), angle=18, mouth_z=.075, half_width=.022, back_band=.06)
+    rejects(lambda: add_jaw_open(skin, middle, min_chin_drop=.1), 'raises the lowest point')
     assert skin.data.shape_keys is None, 'a rejected jaw leaves no shape key behind'
-    add_jaw_open(skin, jaw)
+    add_jaw_open(skin, jaw, min_chin_drop=.1)
     rest = [tuple(v.co) for v in skin.data.vertices]
     for name in ARKIT_REQUIRED:
         if name != 'jawOpen' and not name.startswith('eye'):

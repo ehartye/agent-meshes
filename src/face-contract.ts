@@ -35,7 +35,10 @@ export const CANONICAL_EMOTIONS: Record<string, Record<string, number>> = {
 };
 export const LID_CLEARANCE = 0.0005;
 export const MIN_MORPH_MOTION = 0.001;
-export const MIN_CHIN_DROP = 0.005;
+/** E3: at jawOpen = 1 the chin's lowest point drops by at least this fraction of the face height. */
+export const MIN_CHIN_DROP_RATIO = 0.1;
+/** The upper lip and the face above it may move at most this much under jawOpen = 1. */
+export const UPPER_LIP_TOLERANCE = 0.0005;
 const LID_MOTION = 0.00001, UPPER_TEETH_TOLERANCE = 0.0001, BOUND = 0.999, PIVOT_TOLERANCE = 0.001;
 
 export interface FaceCheck { id: string; ok: boolean; message: string; problems: string[] }
@@ -44,7 +47,13 @@ export interface FaceContractReport {
   contract: typeof ARKIT_FACE_CONTRACT; ok: boolean; failures: string[]; warnings: string[]; checks: FaceCheck[];
   validator: { errors: number; warnings: number };
   measurements: {
-    height: number; morphs: string[]; morphMotion: Record<string, number>; inversionCombos: number; chinDrop: number | null;
+    height: number; morphs: string[]; morphMotion: Record<string, number>; inversionCombos: number;
+    /** Drop of the face's lowest point (the chin) at jawOpen = 1, the face height it is measured against, and their ratio. */
+    chinDrop: number | null; faceHeight: number | null; chinDropRatio: number | null;
+    /** Largest jawOpen motion of face skin above the upper teeth's gum line (the upper lip and everything above it). */
+    upperLipMove: number | null;
+    /** What a front view hits first between the teeth rows at jawOpen = 1, at the mouth center and to each side. */
+    mouthOpen: { height: number; xs: number[]; hits: string[] } | null;
     eyes: Partial<Record<'L' | 'R', EyeMeasure>>; teeth: { upperMove: number | null; lowerDrop: number | null };
   };
 }
@@ -64,6 +73,10 @@ const upperTeeth = (names: string[]) => names.some(n => /teeth|tooth/i.test(n) &
 const lowerTeeth = (names: string[]) => names.some(n => /teeth|tooth/i.test(n) && /lower/i.test(n));
 const tongue = (names: string[]) => names.some(n => /tongue/i.test(n));
 const cavity = (names: string[]) => names.some(n => /cavity|throat|mouth[_ -]?interior/i.test(n));
+const socket = (names: string[]) => names.some(n => /socket/i.test(n));
+/** Parts below the head that the chin measurement ignores (a neck, collar or body does not open with the jaw). */
+const body = (names: string[]) => names.some(n => /neck|collar|body|torso|shoulder/i.test(n));
+const mouthPart = (names: string[]) => upperTeeth(names) || lowerTeeth(names) || tongue(names) || cavity(names);
 
 function instances(doc: GLTFDocument, graph: ReturnType<typeof sceneGraph>): Instance[] {
   const { json } = doc, result: Instance[] = [];
@@ -166,6 +179,16 @@ function normals(points: Float64Array, tris: Uint32Array): Float64Array {
   return out;
 }
 
+/** Height (z) where the front-view ray at (x, y) meets triangle abc, or null when it misses (glTF: the face looks down +Z). */
+function rayZ(points: Float64Array, a: number, b: number, c: number, x: number, y: number): number | null {
+  const ax = points[a * 3], ay = points[a * 3 + 1], bx = points[b * 3], by = points[b * 3 + 1], cx = points[c * 3], cy = points[c * 3 + 1];
+  const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+  if (Math.abs(d) < 1e-18) return null;
+  const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, w = 1 - u - v;
+  if (u < -1e-9 || v < -1e-9 || w < -1e-9) return null;
+  return u * points[a * 3 + 2] + v * points[b * 3 + 2] + w * points[c * 3 + 2];
+}
+
 /** Problems with a root node's `extras` against the `arkit-face/1` schema; `exposedTeeth` is checked separately. */
 export function faceExtrasProblems(extras: unknown, fileMorphs?: string[]): string[] {
   const problems: string[] = [];
@@ -219,7 +242,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     if (skippedBecause) checks.push({ id, ok: false, message: `skipped: ${skippedBecause}`, problems: [`skipped because ${skippedBecause}`] });
     else checks.push({ id, ok: problems.length === 0, message: problems.length ? problems[0] : message, problems });
   };
-  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, chinDrop: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null } };
+  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null } };
 
   // 1. glTF validator
   const validation = await verifyGLB(bytes);
@@ -255,11 +278,20 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   // 4. eyes
   const eyes: Partial<Record<'L' | 'R', { center: Vector3; radius: number }>> = {};
   const eyeProblems: string[] = [];
+  const eyeballInstances = new Set<Instance>();
   for (const side of ['L', 'R'] as const) {
     const joint = bones[`eye_${side}`];
     if (joint === undefined) { eyeProblems.push(`eye_${side} bone is missing`); continue; }
     const center = worldPosition(joint);
-    const balls = all.filter(i => i.skinned && i.count > 0 && Array.from({ length: i.count }, (_, v) => i.influence(v, joint)).every(w => w >= BOUND));
+    const candidates = all.filter(i => i.skinned && i.count > 0 && Array.from({ length: i.count }, (_, v) => i.influence(v, joint)).every(w => w >= BOUND));
+    // An eyeball is small: it cannot reach past half the distance between the eyes. Anything larger bound to an
+    // eye bone is a mis-bound part (a skull, a lid), and is named as such rather than as an off-center eyeball.
+    const other = bones[`eye_${side === 'L' ? 'R' : 'L'}`];
+    const limit = other === undefined ? Infinity : worldPosition(other).distanceTo(center) / 2;
+    const reach = (i: Instance) => { let far = 0; for (let v = 0; v < i.count; v++) far = Math.max(far, Math.hypot(i.rest[v * 3] - center.x, i.rest[v * 3 + 1] - center.y, i.rest[v * 3 + 2] - center.z)); return far; };
+    const balls = candidates.filter(i => reach(i) <= limit);
+    for (const wrong of candidates.filter(i => !balls.includes(i))) eyeProblems.push(`${wrong.label} is bound 100% to eye_${side} but reaches ${mm(reach(wrong))} from the eye center, too far for an eyeball: only the eyeball belongs to eye_${side}; bind the ${wrong.label} to head`);
+    for (const ball of balls) eyeballInstances.add(ball);
     if (!balls.length) { eyeProblems.push(`no mesh is bound 100% to eye_${side} (the eyeball)`); continue; }
     const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
     let radius = 0;
@@ -432,7 +464,22 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     : Array.isArray(teeth) && teeth.every(t => typeof t === 'string' && t) ? [] : ['extras.arkitFace.exposedTeeth must declare the teeth visible at rest as a list of names (empty when none show)'],
   `exposedTeeth declared: ${Array.isArray(teeth) ? JSON.stringify(teeth) : 'none'}`);
 
-  // 13. teeth
+  // 13. head binding: the skull, gums, upper teeth and every morph-bearing part ride `head`
+  const bindingProblems: string[] = [];
+  if (bones.head !== undefined) {
+    const jointName = (joint: number) => nodes[joint]?.name ?? `node ${joint}`;
+    for (const instance of all) {
+      if (!instance.skinned || eyeballInstances.has(instance)) continue;
+      const required = instance.targets.size > 0 || instance.names.some(n => /skull|gum|teeth|tooth|head|skin|face|lid/i.test(n));
+      if (!required) continue;
+      const off = new Set<string>();
+      for (let v = 0; v < instance.count; v++) if (instance.influence(v, bones.head) < BOUND) for (const joint of jointSet) if (joint !== bones.head && instance.influence(v, joint) > 1 - BOUND) off.add(jointName(joint));
+      if (off.size) bindingProblems.push(`${instance.label} is bound to ${[...off].join(', ')}, not head: the skull, gums, upper teeth and every morph-bearing part must be bound 100% to head (bind_rigid(obj, rig, 'head'))`);
+    }
+    check('head-binding', bindingProblems, 'the skull, teeth, gums and morph-bearing parts are bound 100% to head');
+  } else check('head-binding', [], '', 'the head bone is missing');
+
+  // 14. teeth
   const uppers = all.filter(i => upperTeeth(i.names)), lowers = all.filter(i => lowerTeeth(i.names));
   const teethProblems: string[] = [];
   if (!uppers.length) teethProblems.push('no upper teeth found: name the mesh or material with "teeth" and "upper" (for example teeth_upper)');
@@ -441,7 +488,6 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     const upperMove = motion('jawOpen', i => uppers.includes(i));
     measurements.teeth.upperMove = round(upperMove);
     if (upperMove >= UPPER_TEETH_TOLERANCE) teethProblems.push(`jawOpen moves the upper teeth by ${mm(upperMove)}; they must stay on the skull`);
-    if (bones.head !== undefined) for (const upper of uppers) if (!Array.from({ length: upper.count }, (_, v) => upper.influence(v, bones.head!)).every(w => w >= BOUND)) teethProblems.push(`${upper.label} is not bound 100% to head`);
   }
   if (lowers.length) {
     let before = 0, after = 0, count = 0;
@@ -455,21 +501,71 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   }
   check('teeth', teethProblems, 'upper teeth stay on the skull; jawOpen carries the lower teeth down');
 
-  // 14. mouth parts carried by the jaw
+  // 15. mouth parts carried by the jaw
   const parts = all.filter(i => tongue(i.names) || cavity(i.names));
   const partProblems = parts.filter(i => motion('jawOpen', x => x === i) < MIN_MORPH_MOTION).map(i => `jawOpen does not carry ${i.label} (moves < ${mm(MIN_MORPH_MOTION)})`);
   check('mouth-parts', partProblems, parts.length ? `jawOpen carries ${parts.map(i => i.label).join(', ')}` : 'no tongue or mouth-cavity meshes named by convention');
 
-  // 15. puppet jaw: the lower face drops with the teeth
-  const eyeballs = new Set(Object.values(measurements.eyes).flatMap(e => e?.eyeballs ?? []));
-  const skin = all.filter(i => !upperTeeth(i.names) && !lowerTeeth(i.names) && !tongue(i.names) && !cavity(i.names) && !eyeballs.has(i.label));
-  let chinDrop = 0;
+  // 16. puppet jaw: the chin, the face's lowest point, drops with the jaw (E3), not only the lips
+  const skin = all.filter(i => !mouthPart(i.names) && !socket(i.names) && !body(i.names) && !eyeballInstances.has(i));
+  let restLow = Infinity, openLow = Infinity, top = -Infinity;
   for (const instance of skin) {
-    const deltas = instance.targets.get('jawOpen');
-    if (deltas) for (let v = 0; v < instance.count; v++) chinDrop = Math.max(chinDrop, -deltas[v * 3 + 1]);
+    const open = positions(instance, { jawOpen: 1 });
+    for (let v = 0; v < instance.count; v++) { restLow = Math.min(restLow, instance.rest[v * 3 + 1]); openLow = Math.min(openLow, open[v * 3 + 1]); top = Math.max(top, instance.rest[v * 3 + 1]); }
   }
-  measurements.chinDrop = round(chinDrop);
-  check('puppet-jaw', chinDrop < MIN_CHIN_DROP ? [`jawOpen drops the face or chin plate by only ${mm(chinDrop)} (needs >= ${mm(MIN_CHIN_DROP)}): the chin must drop with the lower teeth`] : [], `jawOpen drops the chin by ${mm(chinDrop)}`);
+  if (skin.length && Number.isFinite(restLow)) {
+    const chinDrop = restLow - openLow, faceHeight = top - restLow, ratio = faceHeight > 0 ? chinDrop / faceHeight : 0;
+    Object.assign(measurements, { chinDrop: round(chinDrop), faceHeight: round(faceHeight), chinDropRatio: round(ratio) });
+    check('puppet-jaw', ratio < MIN_CHIN_DROP_RATIO - 1e-9 ? [`jawOpen=1 ${chinDrop < 0 ? `raises the face's lowest point (the chin) by ${mm(-chinDrop)}` : `drops the face's lowest point (the chin) by only ${mm(chinDrop)}, ${(ratio * 100).toFixed(1)}% of the ${mm(faceHeight)} face height`} (needs a drop of >= ${MIN_CHIN_DROP_RATIO * 100}%, ${mm(MIN_CHIN_DROP_RATIO * faceHeight)}): the chin and lower face outline must drop with the jaw, not only the lips; hinge the jaw by the ears (JawHinge.ear)`] : [],
+      `jawOpen=1 drops the chin (the face's lowest point) by ${mm(chinDrop)}, ${(ratio * 100).toFixed(1)}% of the ${mm(faceHeight)} face height`);
+  } else check('puppet-jaw', [], '', 'no face skin was found');
+
+  // 17. the upper lip and the face above it stay put
+  if (uppers.length) {
+    let gum = -Infinity;
+    for (const upper of uppers) for (let v = 0; v < upper.count; v++) gum = Math.max(gum, upper.rest[v * 3 + 1]);
+    let worst = 0, worstLabel = '';
+    for (const instance of skin) {
+      const deltas = instance.targets.get('jawOpen'); if (!deltas) continue;
+      for (let v = 0; v < instance.count; v++) {
+        if (instance.rest[v * 3 + 1] <= gum) continue;
+        const move = Math.hypot(deltas[v * 3], deltas[v * 3 + 1], deltas[v * 3 + 2]);
+        if (move > worst) { worst = move; worstLabel = instance.label; }
+      }
+    }
+    measurements.upperLipMove = round(worst);
+    check('upper-lip', worst > UPPER_LIP_TOLERANCE ? [`jawOpen moves ${worstLabel} above the upper teeth's gum line by ${mm(worst)} (allowed ${mm(UPPER_LIP_TOLERANCE)}): the upper lip and the face above the mouth must stay on the skull`] : [],
+      `the face above the upper teeth's gum line stays put under jawOpen (at most ${mm(worst)})`);
+  } else check('upper-lip', [], '', 'no upper teeth mark the gum line');
+
+  // 18. the mouth opens: between the teeth rows, a front view sees teeth, tongue or cavity, not skin
+  if (uppers.length && lowers.length) {
+    let bite = Infinity, lowTop = -Infinity, left = Infinity, right = -Infinity;
+    for (const upper of uppers) for (let v = 0; v < upper.count; v++) { bite = Math.min(bite, upper.rest[v * 3 + 1]); left = Math.min(left, upper.rest[v * 3]); right = Math.max(right, upper.rest[v * 3]); }
+    for (const lower of lowers) { const open = positions(lower, { jawOpen: 1 }); for (let v = 0; v < lower.count; v++) lowTop = Math.max(lowTop, open[v * 3 + 1]); }
+    if (lowTop >= bite) check('mouth-open', [`at jawOpen=1 the lower teeth's top still sits ${mm(lowTop - bite)} above the upper teeth's bite edge: the mouth does not open between the rows`], '');
+    else {
+      const height = (bite + lowTop) / 2, middle = (left + right) / 2, span = (right - left) / 2;
+      const xs = [middle, middle - span / 3, middle + span / 3];
+      const scene = all.map(instance => ({ instance, points: positions(instance, { jawOpen: 1 }) }));
+      const hits = xs.map(x => {
+        let best = -Infinity, hit: Instance | undefined;
+        for (const { instance, points } of scene) {
+          const t = instance.triangles;
+          for (let k = 0; k < t.length; k += 3) {
+            const z = rayZ(points, t[k], t[k + 1], t[k + 2], x, height);
+            if (z !== null && z > best) { best = z; hit = instance; }
+          }
+        }
+        return hit;
+      });
+      measurements.mouthOpen = { height: round(height), xs: xs.map(x => round(x)), hits: hits.map(h => h?.label ?? '(nothing)') };
+      const problems = hits.flatMap((hit, k) => hit && mouthPart(hit.names) ? [] : [hit
+        ? `jawOpen=1 does not open the mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, hits ${hit.label} before any teeth, tongue or mouth cavity (skin such as the upper lip covers the opening)`
+        : `jawOpen=1 opens a see-through mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, hits nothing (add a dark mouth cavity behind the lips)`]);
+      check('mouth-open', problems, `jawOpen=1 shows ${[...new Set(hits.map(h => h?.label ?? '(nothing)'))].join(', ')} between the lips`);
+    }
+  } else check('mouth-open', [], '', 'the upper or lower teeth were not found');
 
   const failures = checks.flatMap(c => c.problems.map(p => `${c.id}: ${p}`));
   return {

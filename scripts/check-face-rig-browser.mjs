@@ -1,6 +1,7 @@
 // Optional real Blender -> arkit-face/1 test head -> contract verifier -> offline viewer renders.
-// Needs Blender and Chromium. Writes renders and a contact sheet under .agent-meshes/face-rig-proof/<fixture>/.
-// Usage: node scripts/check-face-rig-browser.mjs [test_head|test_robot]
+// Needs Blender and Chromium. Writes renders, a contact sheet and a jaw sheet (neutral, jawOpen .5 and 1 from the
+// front, three-quarter and close up, with the measured chin drop) under .agent-meshes/face-rig-proof/<fixture>/.
+// Usage: node scripts/check-face-rig-browser.mjs [test_head|test_robot|test_frog]
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -29,7 +30,7 @@ const states = [
   ...['happy', 'sad', 'angry', 'surprised', 'scared'].map(name => [name, Object.fromEntries(Object.entries(presets[name]).filter(([k]) => !k.startsWith('eyeLook')))]),
 ];
 await writeFile(join(output, 'mesh-viewer.js'), await viewerScript());
-await writeFile(join(output, 'index.html'), `<!doctype html><meta charset="utf-8"><style>body{margin:0}#stage{width:420px;height:420px}</style><div id="stage"></div><script src="mesh-viewer.js"></script><script>window.ready=MeshViewer.mount(document.getElementById('stage'),{glb:'${bytes.toString('base64')}',autoplay:false,floor:false,orbit:false,background:'#e8e4dc',view:{position:[0.07,0.16,0.42],target:[0,0.13,0]}}).then(v=>window.viewer=v);</script>`);
+await writeFile(join(output, 'index.html'), `<!doctype html><meta charset="utf-8"><style>body{margin:0}#stage{width:420px;height:420px}</style><div id="stage"></div><script src="mesh-viewer.js"></script><script>window.ready=MeshViewer.mount(document.getElementById('stage'),{glb:'${bytes.toString('base64')}',autoplay:false,floor:false,orbit:false,background:'#e8e4dc',view:{position:[0.07,0.14,0.46],target:[0,0.11,0]}}).then(v=>window.viewer=v);</script>`);
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 420, height: 420 }, offline: true });
@@ -39,14 +40,16 @@ try {
   await page.goto(pathToFileURL(join(output, 'index.html')).href);
   await page.evaluate(() => window.ready);
   const tiles = [];
+  const shoot = (weights, view) => page.evaluate(([w, v]) => {
+    // A multi-material face is one glTF mesh but several three.js meshes: set each target on every one.
+    const meshes = []; viewer.root.traverse(o => { if (o.isMesh && o.morphTargetDictionary) meshes.push(o); });
+    viewer.resetMorph();
+    for (const mesh of meshes) for (const [target, weight] of Object.entries(w)) if (target in mesh.morphTargetDictionary) viewer.setMorph(mesh.name, target, weight);
+    if (v) viewer.view(v);
+    return viewer.screenshot();
+  }, [weights, view]);
   for (const [label, weights] of states) {
-    const image = await page.evaluate(w => {
-      // A multi-material face is one glTF mesh but several three.js meshes: set each target on every one.
-      const meshes = []; viewer.root.traverse(o => { if (o.isMesh && o.morphTargetDictionary) meshes.push(o); });
-      viewer.resetMorph();
-      for (const mesh of meshes) for (const [target, weight] of Object.entries(w)) if (target in mesh.morphTargetDictionary) viewer.setMorph(mesh.name, target, weight);
-      return viewer.screenshot();
-    }, weights);
+    const image = await shoot(weights);
     const file = `${label.replace(/[^a-z0-9]+/gi, '-')}.png`;
     await writeFile(join(output, file), Buffer.from(image.split(',')[1], 'base64'));
     tiles.push({ label, file });
@@ -55,6 +58,22 @@ try {
   const sheet = await browser.newPage({ viewport: { width: 1070, height: 1200 } });
   await sheet.goto(pathToFileURL(join(output, 'sheet.html')).href);
   await sheet.screenshot({ path: join(output, 'contact-sheet.png'), fullPage: true });
+  // The puppet jaw: neutral, jawOpen .5 and 1 from the front, three-quarter and close to the mouth.
+  const views = [['front', { position: [0, 0.11, 0.5], target: [0, 0.11, 0] }], ['three-quarter', { position: [0.34, 0.13, 0.36], target: [0, 0.11, 0] }],
+    ['mouth close-up', { position: [0.05, 0.09, 0.26], target: [0, 0.085, 0] }]];
+  const jawTiles = [];
+  for (const [view, spec] of views) for (const weight of [0, 0.5, 1]) {
+    const file = `jaw-${weight}-${view.replace(/[^a-z]+/g, '-')}.png`;
+    await writeFile(join(output, file), Buffer.from((await shoot({ jawOpen: weight }, spec)).split(',')[1], 'base64'));
+    jawTiles.push({ label: `jawOpen ${weight}, ${view}`, file });
+  }
+  const m = report.measurements;
+  const caption = `${fixture}: jawOpen=1 drops the chin ${(m.chinDrop * 1000).toFixed(1)} mm = ${(m.chinDropRatio * 100).toFixed(1)}% of the ${(m.faceHeight * 1000).toFixed(0)} mm face; lower teeth drop ${(m.teeth.lowerDrop * 1000).toFixed(1)} mm; upper lip moves ${(m.upperLipMove * 1000).toFixed(2)} mm; between the teeth rows the front view sees ${m.mouthOpen.hits.join(', ')}`;
+  await writeFile(join(output, 'jaw.html'), `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:13px sans-serif;background:#fff;padding:6px}p{margin:4px 0 8px}div{display:grid;grid-template-columns:repeat(3,300px);gap:6px}figure{margin:0}img{width:300px;height:300px}figcaption{text-align:center}</style><p>${caption}</p><div>${jawTiles.map(t => `<figure><img src="${t.file}"><figcaption>${t.label}</figcaption></figure>`).join('')}</div>`);
+  const jawPage = await browser.newPage({ viewport: { width: 930, height: 1040 } });
+  await jawPage.goto(pathToFileURL(join(output, 'jaw.html')).href);
+  await jawPage.screenshot({ path: join(output, 'jaw-sheet.png'), fullPage: true });
+  console.log(caption);
   assert.deepEqual(errors, []);
   console.log(`PASS face rig: contract ok, ${tiles.length} states rendered to ${join(output, 'contact-sheet.png')}`);
 } finally { await browser.close(); }

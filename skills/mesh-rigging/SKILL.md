@@ -68,15 +68,24 @@ mesh-build) with the face-rig helpers, which follow the `arkit-face/1` contract:
 zero rest weight, and `extras.arkitFace` on the root. Read the "Face-rig helpers" section of
 `<plugin-root>/scripts/blender_lib/README.md` for the API, and copy the working heads in
 `<plugin-root>/tests/fixtures/face-rig/` (`test_head.py` with lids and a puppet jaw,
-`test_robot.py` with shutters and a chin plate). The rules that are easy to get wrong:
+`test_robot.py` with shutters and a chin plate, `test_frog.py` with lid domes, brow ridges and
+exposed fangs). The rules that are easy to get wrong:
 
 - Morphs are linear: a lid swept across a round eye as one morph cuts into the eyeball
   mid-blink. Use `build_eye(..., style='lid')` (the lid radius is solved for 0.5 mm clearance at
   every weight) or `style='shutter'`; do not hand-roll lid morphs.
-- Drive `jawOpen` on every jaw-carried part from one `JawHinge`: `add_jaw_open(skin, jaw)` drops
-  the chin and lower face with the teeth (a puppet jaw, not a hole in a fixed face), and
-  `rigid=True` turns the lower teeth, tongue or a robot chin plate as one body. Cut the lip seam
-  with `slit_mouth` and add a dark `mouth_cavity_geometry` bag so an open mouth is never see-through.
+- A puppet jaw drops the chin, not only the lips. Hinge it at the back of the head, level with
+  the mouth line (by the ears): `jaw = JawHinge.ear(head_vertices, mouth_z, half_width)`. A pivot
+  in the middle of the head swings the chin back and up and only opens a hole at the lips. Drive
+  `jawOpen` on every jaw-carried part from that one jaw: `add_jaw_open(skin, jaw, min_chin_drop=.1)`
+  (rejects a chin that drops less than 10% of the head), and `rigid=True` for the lower teeth,
+  tongue or a robot chin plate.
+- Cut the lip seam with `slit_mouth` (it tags the upper and lower lip, so float rounding of the
+  mouth line never hangs the upper lip on the jaw). Add a dark `mouth_cavity_geometry` bag fitted
+  to the face with `surface=front_surface(skin_vertices, skin_faces)` so it never pokes through the
+  cheeks, and make fangs or buck teeth with `exposed_teeth_geometry` (declared in `exposedTeeth`).
+- Cut eye holes with `cut_hole` (a smooth rim), not `cut_faces` (stair steps). Brows on eye domes
+  (a frog) are `brow_ridge_geometry` ridges that slide over the lid dome.
 - Put every morph-bearing part in one mesh with `join_face_parts`: Unreal discards all morph
   names when a name repeats across glTF meshes. Keep only the eyeballs separate.
 - Name teeth materials `teeth_upper` and `teeth_lower`, and write the extras with
@@ -84,4 +93,5 @@ zero rest weight, and `extras.arkitFace` on the root. Read the "Face-rig helpers
 - Gaze is eye-bone rotation, not morphs: yaw about the eye bone's local Y, pitch about local X.
 
 Check every build with `mesh verify <head>.glb --contract arkit-face/1` (mesh-build) and look at
-blink, squint, jaw and emotion renders before calling the head done.
+blink, squint, jaw and emotion renders (front and three-quarter, jawOpen 0, .5 and 1) before calling
+the head done.

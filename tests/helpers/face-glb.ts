@@ -31,7 +31,7 @@ const EYE_RADIUS = 0.012;
 export const EYES: Record<'L' | 'R', Vec3> = { L: [0.03, 0.05, 0.07], R: [-0.03, 0.05, 0.07] };
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 
-function rotateX(point: Vec3, pivot: Vec3, degrees: number): Vec3 {
+export function rotateX(point: Vec3, pivot: Vec3, degrees: number): Vec3 {
   const t = degrees * Math.PI / 180, y = point[1] - pivot[1], z = point[2] - pivot[2];
   return [point[0], pivot[1] + y * Math.cos(t) - z * Math.sin(t), pivot[2] + y * Math.sin(t) + z * Math.cos(t)];
 }
@@ -85,12 +85,35 @@ function lids(side: 'L' | 'R', radius: number, sweeps = { blink: -30, squint: -1
   };
 }
 
-export const JAW_PIVOT: Vec3 = [0, 0, 0];
-const lowered = (points: Vec3[], below: number) => points.map(p => p[1] < below ? rotateX(p, JAW_PIVOT, 15) : p);
+export const JAW_DROP = 0.03;
+/** The mouth line (glTF y) and the slit's columns: the lips part for |x| <= MOUTH_HALF_WIDTH. */
+export const MOUTH_Y = -0.03, MOUTH_HALF_WIDTH = 0.02;
+const COLUMNS = 16, ROWS = 22, MOUTH_ROW = 9;
+const dropped = (p: Vec3): Vec3 => [p[0], p[1] - JAW_DROP, p[2]];
+
+/**
+ * The face: a plane at z = 0.06 with a slit along the mouth row. The slit's lower-lip vertices are duplicates
+ * appended after the grid (`lowerLip` lists them), so the lips part when `jawOpen` drops everything below the line.
+ */
+function slitFace(): { positions: Vec3[]; indices: number[]; below: boolean[]; upperSeam: number[] } {
+  const at = (i: number, j: number): Vec3 => [-0.08 + 0.16 * j / COLUMNS, -0.12 + 0.22 * i / ROWS, 0.06];
+  const positions: Vec3[] = [], below: boolean[] = [];
+  for (let i = 0; i <= ROWS; i++) for (let j = 0; j <= COLUMNS; j++) { positions.push(at(i, j)); below.push(i < MOUTH_ROW); }
+  const index = (i: number, j: number) => i * (COLUMNS + 1) + j;
+  const slit = (j: number) => Math.abs(at(MOUTH_ROW, j)[0]) < MOUTH_HALF_WIDTH + 1e-9;
+  const lower = new Map<number, number>(), upperSeam: number[] = [];
+  for (let j = 0; j <= COLUMNS; j++) if (slit(j)) { upperSeam.push(index(MOUTH_ROW, j)); lower.set(j, positions.length); positions.push(at(MOUTH_ROW, j)); below.push(true); }
+  const indices: number[] = [];
+  for (let i = 0; i < ROWS; i++) for (let j = 0; j < COLUMNS; j++) {
+    const top = (jj: number) => i + 1 === MOUTH_ROW && lower.has(jj) ? lower.get(jj)! : index(i + 1, jj);
+    indices.push(index(i, j), index(i, j + 1), top(j + 1), index(i, j), top(j + 1), top(j));
+  }
+  return { positions, indices, below, upperSeam };
+}
 
 /** A head that satisfies every computable clause of `arkit-face/1`. Mutate it to build negative fixtures. */
 export function passingHead(): SynthHead {
-  const face = grid(16, 22, (u, v) => [-0.08 + 0.16 * u, -0.12 + 0.22 * v, 0.06]);
+  const face = slitFace();
   const bump = (center: [number, number], dz = 0.003) => face.positions.map(p => {
     const d = Math.hypot(p[0] - center[0], p[1] - center[1]) / 0.025;
     const w = d >= 1 ? 0 : 1 - d * d * (3 - 2 * d);
@@ -102,23 +125,27 @@ export function passingHead(): SynthHead {
     browDownLeft: [0.03, 0.08], browDownRight: [-0.03, 0.08], browInnerUp: [0, 0.08], browOuterUpLeft: [0.055, 0.08], browOuterUpRight: [-0.055, 0.08],
     cheekSquintLeft: [0.05, 0.0], cheekSquintRight: [-0.05, 0.0],
   };
+  // A puppet jaw: everything below the mouth line (and the lower lip) drops, the chin outline with it.
   const faceMesh: SynthMesh = {
     name: 'face', material: 'skin', positions: face.positions, indices: face.indices,
-    targets: [{ name: 'jawOpen', positions: lowered(face.positions, -0.03) }, ...Object.entries(regions).map(([name, c]) => ({ name, positions: bump(c) }))],
+    targets: [{ name: 'jawOpen', positions: face.positions.map((p, i) => face.below[i] ? dropped(p) : p) }, ...Object.entries(regions).map(([name, c]) => ({ name, positions: bump(c) }))],
     bones: face.positions.map(() => 'head'),
   };
   const eye = (side: 'L' | 'R'): SynthMesh => {
     const ball = sphere(EYES[side], EYE_RADIUS);
     return { name: `eyeball_${side}`, material: 'eye_white', ...ball, targets: [], bones: ball.positions.map(() => `eye_${side}`) };
   };
-  const upperTeeth = box([0, -0.025, 0.07], [0.03, 0.006, 0.004]);
-  const lowerTeeth = box([0, -0.04, 0.07], [0.03, 0.006, 0.004]);
-  const tongue = box([0, -0.045, 0.065], [0.02, 0.004, 0.01]);
-  const skull = sphere([0, 0, -0.01], 0.09, 10, 16);
+  // Teeth, tongue and cavity sit behind the face plane; the lower ones ride the jaw.
+  const upperTeeth = box([0, -0.03, 0.05], [0.03, 0.008, 0.004]);
+  const lowerTeeth = box([0, -0.036, 0.048], [0.028, 0.008, 0.004]);
+  const tongue = box([0, -0.045, 0.044], [0.02, 0.01, 0.004]);
+  const cavity = grid(1, 1, (u, v) => [-0.03 + 0.06 * u, -0.08 + 0.06 * v, 0.04]);
+  const skull = sphere([0, 0, -0.04], 0.08, 10, 16);
+  const jaw = (points: Vec3[]) => points.map(dropped);
   return {
     rootName: 'Face rig',
     rootExtras: { arkitFace: extras() },
-    groups: { face: ['face', 'lids_L', 'lids_R', 'teeth_upper', 'teeth_lower', 'tongue'] },
+    groups: { face: ['face', 'lids_L', 'lids_R', 'teeth_upper', 'teeth_lower', 'tongue', 'mouth_cavity'] },
     joints: [
       { name: 'head', translation: [0, 0, 0], children: ['eye_L', 'eye_R'] },
       { name: 'eye_L', translation: EYES.L, children: [] },
@@ -128,11 +155,15 @@ export function passingHead(): SynthHead {
       { name: 'skull', material: 'skin', ...skull, targets: [], bones: skull.positions.map(() => 'head') },
       faceMesh, eye('L'), eye('R'), lids('L', 0.015), lids('R', 0.015),
       { name: 'teeth_upper', material: 'teeth_upper', ...upperTeeth, targets: [], bones: upperTeeth.positions.map(() => 'head') },
-      { name: 'teeth_lower', material: 'teeth_lower', ...lowerTeeth, targets: [{ name: 'jawOpen', positions: lowered(lowerTeeth.positions, 0) }], bones: lowerTeeth.positions.map(() => 'head') },
-      { name: 'tongue', material: 'tongue', ...tongue, targets: [{ name: 'jawOpen', positions: lowered(tongue.positions, 0) }], bones: tongue.positions.map(() => 'head') },
+      { name: 'teeth_lower', material: 'teeth_lower', ...lowerTeeth, targets: [{ name: 'jawOpen', positions: jaw(lowerTeeth.positions) }], bones: lowerTeeth.positions.map(() => 'head') },
+      { name: 'tongue', material: 'tongue', ...tongue, targets: [{ name: 'jawOpen', positions: jaw(tongue.positions) }], bones: tongue.positions.map(() => 'head') },
+      { name: 'mouth_cavity', material: 'mouth_cavity', ...cavity, targets: [{ name: 'jawOpen', positions: cavity.positions.map(p => p[1] < MOUTH_Y ? dropped(p) : p) }], bones: cavity.positions.map(() => 'head') },
     ],
   };
 }
+
+/** Vertex indices of the face's upper-lip seam (on the mouth line, inside the slit). */
+export function upperSeam(): number[] { return slitFace().upperSeam; }
 
 export function extras(morphs: string[] = REQUIRED): Record<string, unknown> {
   return {

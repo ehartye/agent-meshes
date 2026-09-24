@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { encodeHead, extras, mesh, passingHead, REQUIRED, sphere, EYES, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { encodeHead, extras, mesh, passingHead, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -14,12 +14,18 @@ describe('arkit-face/1 verifier', () => {
     expect(result.failures).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.contract).toBe('arkit-face/1');
-    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'extras', 'exposed-teeth', 'teeth', 'mouth-parts', 'puppet-jaw']);
+    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open']);
     expect(result.measurements.eyes.L!.radius).toBeCloseTo(0.012, 5);
     expect(result.measurements.eyes.L!.center[0]).toBeCloseTo(0.03, 5);
     expect(result.measurements.eyes.L!.minLidClearance).toBeGreaterThan(0.0005);
     expect(result.measurements.morphMotion.jawOpen).toBeGreaterThan(0.01);
     expect(result.measurements.teeth.lowerDrop).toBeGreaterThan(0.001);
+    // The chin (the face's lowest point) drops by the whole jaw drop: 30 mm of a 0.22 m face.
+    expect(result.measurements.chinDrop).toBeCloseTo(JAW_DROP, 5);
+    expect(result.measurements.faceHeight).toBeCloseTo(0.22, 5);
+    expect(result.measurements.chinDropRatio).toBeCloseTo(JAW_DROP / 0.22, 4);
+    expect(result.measurements.upperLipMove).toBe(0);
+    expect(result.measurements.mouthOpen).toMatchObject({ hits: ['face[mouth_cavity]', 'face[mouth_cavity]', 'face[mouth_cavity]'] });
     expect(result.measurements.inversionCombos).toBeGreaterThan(REQUIRED.length * 2);
     expect(result.measurements.height).toBeCloseTo(0.22, 3);
     expect(result.warnings.filter(w => /height/.test(w))).toEqual([]);
@@ -55,6 +61,12 @@ describe('arkit-face/1 verifier', () => {
     ['teeth', 'lower teeth that stay put', head => { const lower = mesh(head, 'teeth_lower'); lower.targets = []; }],
     ['teeth', 'no teeth named by the convention', head => { mesh(head, 'teeth_upper').material = 'enamel'; }],
     ['mouth-parts', 'a tongue left behind by the jaw', head => { mesh(head, 'tongue').targets = []; }],
+    ['head-binding', 'a skull bound to an eye bone', head => { const m = mesh(head, 'skull'); m.bones = m.bones!.map(() => 'eye_L'); }],
+    ['head-binding', 'upper teeth bound to an eye bone', head => { const m = mesh(head, 'teeth_upper'); m.bones = m.bones!.map(() => 'eye_R'); }],
+    ['puppet-jaw', 'a hole opening in a fixed face (only a lip band drops; the chin stays)', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; jaw.positions = face.positions.map((p, i) => jaw.positions[i][1] < p[1] && p[1] > MOUTH_Y - 0.0151 ? [p[0], p[1] - 0.01, p[2]] as Vec3 : p); }],
+    ['upper-lip', 'skin above the mouth line dropping with the jaw', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; jaw.positions = face.positions.map((p, i) => p[1] >= MOUTH_Y && p[1] <= MOUTH_Y + 0.0151 && Math.abs(p[0]) <= 0.03 ? [p[0], p[1] - 0.006, p[2]] as Vec3 : jaw.positions[i]); }],
+    ['mouth-open', 'an upper-lip seam carried by the jaw (the lip hangs like a curtain over the open mouth)', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; for (const i of upperSeam()) jaw.positions[i] = [face.positions[i][0], face.positions[i][1] - JAW_DROP, face.positions[i][2]]; }],
+    ['mouth-open', 'an open mouth that sees through the head (no teeth, tongue or cavity behind the lips)', head => { head.groups!.face = head.groups!.face.filter(n => n !== 'mouth_cavity'); head.meshes = head.meshes.filter(m => m.name !== 'mouth_cavity' && m.name !== 'skull'); }],
     ['puppet-jaw', 'a fixed face with only the teeth dropping', head => { const face = mesh(head, 'face'); face.targets = face.targets.map(t => t.name === 'jawOpen' ? { name: 'jawOpen', positions: face.positions.map((p, i) => i === 0 ? [p[0], p[1] + 0.002, p[2]] as Vec3 : p) } : t); }],
   ];
   for (const [id, label, mutate] of negatives) {
@@ -78,6 +90,19 @@ describe('arkit-face/1 verifier', () => {
     expect(result.measurements.eyes.L!.minLidClearance).toBeGreaterThan(0.0005);
   });
 
+  it('names the bone a skull is bound to instead of calling it a misplaced eyeball', async () => {
+    const result = await report(head => { const m = mesh(head, 'skull'); m.bones = m.bones!.map(() => 'eye_L'); });
+    expect(result.failures).toContain("head-binding: skull is bound to eye_L, not head: the skull, gums, upper teeth and every morph-bearing part must be bound 100% to head (bind_rigid(obj, rig, 'head'))");
+    expect(result.failures.filter(f => f.startsWith('eyes: '))).toEqual(["eyes: skull is bound 100% to eye_L but reaches 203.92 mm from the eye center, too far for an eyeball: only the eyeball belongs to eye_L; bind the skull to head"]);
+    expect(result.measurements.eyes.L!.eyeballs).toEqual(['eyeball_L']);
+  });
+
+  it('measures the puppet jaw at the lowest face point and reports the lower lip separately', async () => {
+    const result = await report(head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; jaw.positions = face.positions.map((p, i) => jaw.positions[i][1] < p[1] && p[1] > MOUTH_Y - 0.0151 ? [p[0], p[1] - 0.01, p[2]] as Vec3 : p); });
+    expect(result.measurements.chinDrop).toBe(0);
+    expect(result.failures).toContain("puppet-jaw: jawOpen=1 drops the face's lowest point (the chin) by only 0.00 mm, 0.0% of the 220.00 mm face height (needs a drop of >= 10%, 22.00 mm): the chin and lower face outline must drop with the jaw, not only the lips; hinge the jaw by the ears (JawHinge.ear)");
+  });
+
   it('explains why a morph name may not repeat across glTF meshes', async () => {
     const result = await report(head => { head.groups!.face = head.groups!.face.filter(n => n !== 'tongue'); });
     expect(result.failures).toContain('morph-names: jawOpen is on 2 glTF meshes (face, tongue); Unreal discards all morph names when a name repeats across meshes: put every morph-bearing part in one mesh (join_face_parts)');
@@ -85,7 +110,7 @@ describe('arkit-face/1 verifier', () => {
 
   it('finds teeth and mouth parts as material primitives of the one face mesh', async () => {
     const result = await report();
-    expect(result.checks.find(c => c.id === 'mouth-parts')!.message).toBe('jawOpen carries face[tongue]');
+    expect(result.checks.find(c => c.id === 'mouth-parts')!.message).toBe('jawOpen carries face[tongue], face[mouth_cavity]');
     expect(result.measurements.eyes.L!.eyeballs).toEqual(['eyeball_L']);
   });
 

@@ -26,8 +26,9 @@ it('verify --contract arkit-face/1 prints a JSON report and exits 0 or 1 with a 
   const failure = await cli('verify', bad, '--contract', 'arkit-face/1').then(() => undefined, error => error as { code: number; stdout: string; stderr: string });
   expect(failure?.code).toBe(1);
   expect(JSON.parse(failure!.stdout).ok).toBe(false);
-  expect(failure!.stderr).toMatch(/arkit-face\/1: 1 check failed/);
+  expect(failure!.stderr).toMatch(/arkit-face\/1: 2 checks failed/);
   expect(failure!.stderr).toMatch(/FAIL teeth: jawOpen lowers the lower teeth/);
+  expect(failure!.stderr).toMatch(/FAIL mouth-open: at jawOpen=1 the lower teeth's top still sits 2.00 mm above/);
 
   // Without --contract, verify keeps its plain glTF validation behavior.
   expect(JSON.parse((await cli('verify', good)).stdout)).toMatchObject({ ok: true, errors: 0 });

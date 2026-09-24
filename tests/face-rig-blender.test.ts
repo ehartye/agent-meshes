@@ -15,7 +15,7 @@ afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(p
 // Real Blender only: CI skips this, like the refine stage. Run it locally with Blender installed.
 const maybe = findBlender() ? it : it.skip;
 
-for (const fixture of ['test_head', 'test_robot']) maybe(`the helper-authored ${fixture} builds through agent-meshes build and passes arkit-face/1`, async () => {
+for (const fixture of ['test_head', 'test_robot', 'test_frog']) maybe(`the helper-authored ${fixture} builds through agent-meshes build and passes arkit-face/1`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-face-rig-')); directories.push(directory);
   const config = join(directory, 'build.json');
   await writeFile(config, JSON.stringify({ version: 1, name: fixture, blender: { script: resolve(`tests/fixtures/face-rig/${fixture}.py`) }, output: 'generated' }));
@@ -26,7 +26,10 @@ for (const fixture of ['test_head', 'test_robot']) maybe(`the helper-authored ${
   expect(report.ok).toBe(true);
   expect(report.measurements.eyes.L!.minLidClearance).toBeGreaterThanOrEqual(0.0005);
   expect(report.measurements.teeth.upperMove).toBe(0);
-  expect(report.measurements.chinDrop).toBeGreaterThan(0.01);
+  // E3: the chin (the face's lowest point) drops by at least 10% of the face height; the upper lip stays.
+  expect(report.measurements.chinDropRatio).toBeGreaterThanOrEqual(0.1);
+  expect(report.measurements.upperLipMove).toBeLessThanOrEqual(0.0005);
+  expect(report.measurements.mouthOpen!.hits.every(hit => /teeth|tongue|cavity/.test(hit))).toBe(true);
 
   const { json } = readGLB(bytes);
   const root = json.nodes![json.scenes![0].nodes![0]];
@@ -49,5 +52,9 @@ maybe('the face-rig wrappers validate, join and export inside real Blender', asy
   const passed = new Set(report.checks.filter(c => c.ok).map(c => c.id));
   for (const id of ['validator', 'skeleton', 'skinning', 'eyes', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'extras', 'exposed-teeth', 'puppet-jaw']) expect(passed, id).toContain(id);
   // The wrapper fixture has lower teeth only, so the teeth check names the missing upper row.
-  expect(report.failures).toEqual(['teeth: no upper teeth found: name the mesh or material with "teeth" and "upper" (for example teeth_upper)']);
+  expect(report.failures).toEqual([
+    'teeth: no upper teeth found: name the mesh or material with "teeth" and "upper" (for example teeth_upper)',
+    'upper-lip: skipped because no upper teeth mark the gum line',
+    'mouth-open: skipped because the upper or lower teeth were not found',
+  ]);
 }, 600000);
