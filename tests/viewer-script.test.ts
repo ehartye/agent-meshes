@@ -13,6 +13,8 @@ import type { createPlanarLinkage } from '../src/mechanisms/planar-linkage.ts';
 import type { createBeltDrive } from '../src/mechanisms/belt-drive.ts';
 
 const run = promisify(execFile);
+let bundled: Promise<string> | null = null;
+const bundle = () => (bundled ??= viewerScript());
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 
@@ -30,7 +32,7 @@ it('names eight camera views, mirrors the opposites, and rejects an unknown name
 });
 
 it('bundles a standalone viewer runtime exposing a global mount function', async () => {
-  const code = await viewerScript();
+  const code = await bundle();
   expect(code.length).toBeGreaterThan(100000);
   expect(code).toMatch(/MeshViewer\s*=/);
   expect(code).toContain('mount');
@@ -53,6 +55,13 @@ it('bundles a standalone viewer runtime exposing a global mount function', async
   expect(changed.points.length).toBe(420); expect(changed.points).not.toEqual(initial.points);
   expect(()=>figure.setTargets({leftHand:[NaN,0]})).toThrow(); expect(figure.snapshot()).toBe(changed);
   expect(figure.reset()).toBe(initial);
+}, 60000);
+
+it('exposes the multi-model stage and ID-render helpers on the global', async () => {
+  const scope = {} as { MeshViewer: { mountStage: unknown; countColors(image: { width: number; height: number; data: Uint8ClampedArray }): Record<string, number> } };
+  runInNewContext(await bundle(), scope);
+  expect(typeof scope.MeshViewer.mountStage).toBe('function');
+  expect(scope.MeshViewer.countColors({ width: 1, height: 1, data: new Uint8ClampedArray([1, 2, 3, 255]) })).toEqual({ '#010203': 1 });
 }, 60000);
 
 it('still inlines a working preview page that shares the viewer runtime', async () => {

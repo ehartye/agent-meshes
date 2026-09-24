@@ -1,7 +1,7 @@
 ---
 name: mesh-build
-description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, and the optional Blender refine stage.
-when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, set up a repeatable build.json, or smooth and feather a model in Blender.
+description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, and the optional Blender refine stage.
+when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, or smooth and feather a model in Blender.
 ---
 
 # Mesh build and delivery
@@ -75,6 +75,17 @@ network, defining `window.MeshViewer`. Inline the GLB as base64 so the page work
 Read [viewer API](references/viewer-api.md) for mount options and the puppet API (`setPose`,
 `setColor`, `setVisible`, `play`, `seek`, `bounds`, `screenshot`, `onFrame`) used for interactive
 pages and for scripted checks such as measuring foot contact over a stride.
+
+Several models on one page (a cast of characters, heads that look at each other) go on **one
+stage**, not several `mount` calls: `MeshViewer.mountStage(el, {models: {pip: {glb, position}, bolt:
+{glb, position, rotation, scale}}})` shares one renderer, camera and room, and `stage.model('pip')`
+is that model's own puppet plus `setPlacement`, `getPlacement` and `worldPoint(node, point?)` for
+aiming one model's gaze at another's eye bone. `stage.frame({model?, padding?})` fits the whole
+stage or one model. For pixel checks (is the iris hidden when blinking, did the teeth move),
+use `idRender({materials: {iris: '#0000ff'}, parts: {'teeth#0': '#00ff00'}, width, height})`
+on a viewer or a stage: every surface is drawn in one exact unlit color with the live morphs and
+skinning, the pixels come back as RGBA, and `MeshViewer.countColors(image)` tallies them. The
+viewer API reference has the key rules and a counting example.
 
 ## Done means looked at
 

@@ -37,10 +37,79 @@ Names are the part, bone and clip names from the project.
 | `play(clip?)`, `pause()`, `playing`, `clip`, `time`, `duration`, `speed`, `seek(seconds)` | Playback; clips are sampled directly, so `seek` then read works without a frame |
 | `bounds()` | World-space `Box3` of the visible, posed, skinned geometry |
 | `view(name or {position,target})`, `frame()` | Move the camera to one of the eight named views above (the model's `left` is -x, `right`/`side` +x, `front` +z) or an explicit position; `frame` fits the current bounds. An unknown name throws an `Error` that lists the valid names |
-| `setBackground(css or null)`, `screenshot()` | Change the background; PNG data URL of the current frame |
+| `setBackground(css or null)`, `screenshot({id?})` | Change the background; PNG data URL of the current frame, or of an ID render |
+| `idRender(options)` | Exact flat-color render for pixel checks; see below |
 | `onFrame(fn)` | Per-frame callback, returns an unsubscribe function |
 | `resize()`, `dispose()` | Handle a container resize by hand; release the WebGL context |
 | `renderer`, `scene`, `camera`, `controls` | The underlying three.js objects |
+
+## ID render (pixel checks)
+
+`viewer.idRender(options)` (and `stage.idRender`) renders once with every surface replaced by an
+unlit flat color and returns `{width, height, data}`: RGBA bytes, top row first. There is no
+lighting, tone mapping, color-space conversion, fog, environment, shadow or multisampling, so every
+pixel is exactly one of the requested colors. Current morph weights, poses and skinning are used.
+Normal materials, visibility, background and camera aspect are restored before it returns.
+
+| Option | Meaning |
+| --- | --- |
+| `materials` | `{materialName: '#rrggbb'}`; in a stage `model/materialName` limits a key to one model |
+| `parts` | `{part: '#rrggbb'}` or `{'part#slot': '#rrggbb'}` for one zero-based slot; `model/part` in a stage |
+| `background` | Clear color, default `#000000` |
+| `other` | Color for unmatched surfaces (default: the background, so they still occlude), or `null` to hide them |
+| `width`, `height` | Output pixels, 1 to 4096; default the viewer's CSS size |
+| `models` | Stage only: render just these models |
+
+Precedence is `part#slot`, then `part`, then material, and a `model/` key beats an unscoped one.
+Colors must be `#rrggbb`. A key that matches nothing throws, listing the names that exist, so a
+typo cannot silently count zero pixels. Outline hulls and the floor are not drawn.
+`screenshot({id: options})` returns the same render as a PNG data URL, and
+`MeshViewer.countColors(image)` returns `{'#rrggbb': pixels}`.
+
+```js
+const count = await page.evaluate(() => {
+  const pip = stage.model('pip');
+  pip.setMorph('face', 'eyeBlinkLeft', 1);
+  const image = stage.idRender({ models: ['pip'], materials: { iris: '#0000ff', skin: '#ff0000' }, width: 512, height: 512 });
+  return MeshViewer.countColors(image)['#0000ff'] ?? 0;   // 0 when the lid covers the iris
+});
+```
+
+## mountStage(container, options) → Promise<stage>
+
+Several models in one renderer, scene, camera, room and floor. Each model has its own placement and
+its own independent puppet.
+
+```js
+const stage = await MeshViewer.mountStage(el, {
+  models: {
+    pip: { glb: pipBase64, position: [-0.6, 0, 0], rotation: [0, 10, 0] },
+    bolt: { glb: boltBytes, position: [0.6, 0, 0], scale: 1.1 },
+  },
+  background: '#f4efe6', view: 'front',
+});
+const pip = stage.model('pip'), bolt = stage.model('bolt');
+pip.setMorph('face', 'jawOpen', 0.6);           // only Pip's jaw moves
+const target = pip.worldPoint('eye_L');          // world-space [x, y, z]
+bolt.worldPoint('eye_R');                        // aim Bolt's eye bone at `target`
+stage.frame();                                   // fit all models; stage.frame({model: 'pip'}) fits one
+```
+
+Stage options: `models` (`{name: {glb, position?, rotation?, scale?, autoplay?}}`; names are a
+letter then up to 63 letters, digits, `_` or `-`), `autoplay`, `background`, `orbit`, `floor`,
+`view` (default `front`), `outline`, `outlineColor`. Placement `rotation` is XYZ Euler degrees and
+`scale` is a positive number or triple. Unknown option names, invalid placements and duplicate
+names are rejected with a message before any WebGL context is created.
+
+| Member | Meaning |
+| --- | --- |
+| `models` | Model names in the order they were added |
+| `model(name)` | The model: the full puppet API above, plus `name`, `group`, `setPlacement(placement)` (omitted fields keep their value), `getPlacement()`, `worldPoint(node, point?)`, `observe(anchors)` in world space and `bounds()` |
+| `add(name, {glb, ...placement})`, `remove(name)` | Load another model later (a promise), or release one |
+| `bounds(model?)` | World `Box3` of all models, one name or a list |
+| `view(name or {position,target}, {model?, padding?})`, `frame({model?, padding?})` | Named views fit every box corner in the frustum (padding default 1.1); `frame` keeps the current direction |
+| `idRender(options)`, `screenshot({id?})` | As above; `models` limits the ID render to some models |
+| `setBackground`, `onFrame(fn)`, `resize`, `dispose`, `renderer`, `scene`, `camera`, `controls` | As for `mount` |
 
 ## Scripted checks
 
