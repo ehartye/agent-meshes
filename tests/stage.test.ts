@@ -128,9 +128,11 @@ describe('stage scene', () => {
     expect(round(stage.bounds('right').min.toArray())).toEqual([0.9, 0, -0.1]);
     expect(round(stage.bounds(['left']).max.toArray())).toEqual([-0.9, 1, 0.1]);
     expect(() => stage.bounds('nobody')).toThrow(/Unknown model "nobody"/);
+    const rightRoot = right.root;
     stage.remove('right');
     expect(stage.models).toEqual(['left']);
-    expect(right.root.parent).toBeNull();
+    expect(rightRoot.parent).toBeNull();
+    expect(() => right.root).toThrow(/Model "right" was removed from the stage/);
     expect(() => stage.model('right')).toThrow(/Unknown model "right"; use one of left/);
     expect(() => stage.remove('right')).toThrow(/Unknown model "right"/);
     expect(round(stage.bounds().max.toArray())).toEqual([-0.9, 1, 0.1]);

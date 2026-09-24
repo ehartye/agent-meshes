@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { Puppet } from '../render/puppet.ts';
+import type { Quality } from '../render/quality.ts';
 import { applyIdMaterials, idColor, resolveIdColors } from '../render/id-render.ts';
 import type { IdImage, IdRenderColors, IdTarget } from '../render/id-render.ts';
 
@@ -13,23 +14,26 @@ export function bytesOf(glb: GlbInput): ArrayBuffer {
   throw new Error('glb must be an ArrayBuffer, a Uint8Array or a base64 string');
 }
 
-/** The viewer's renderer: antialiased, ACES tone mapped, soft shadows, and a readable drawing buffer for screenshots. */
-export function createRenderer(container: HTMLElement, transparent: boolean): THREE.WebGLRenderer {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: transparent, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+/** The viewer's renderer: ACES tone mapped, a readable drawing buffer for screenshots, and the chosen antialiasing, pixel ratio and (soft, filtered) shadows. */
+export function createRenderer(container: HTMLElement, transparent: boolean, quality: Quality): THREE.WebGLRenderer {
+  const renderer = new THREE.WebGLRenderer({ antialias: quality.antialias, alpha: transparent, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(quality.pixelRatio); renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  // PCFShadowMap is three's filtered soft shadow (PCFSoftShadowMap is deprecated and warns).
+  renderer.shadowMap.enabled = quality.shadows; renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.domElement.style.display = 'block'; renderer.domElement.style.width = '100%'; renderer.domElement.style.height = '100%';
   container.append(renderer.domElement);
   return renderer;
 }
 
 /** Image-based light from a procedural room (soft fill, believable speculars, no assets), a hemisphere, key and fill. */
-export function addRoomLights(renderer: THREE.WebGLRenderer, scene: THREE.Scene): void {
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
-  scene.environmentIntensity = 0.55;
+export function addRoomLights(renderer: THREE.WebGLRenderer, scene: THREE.Scene, quality: Quality): void {
+  if (quality.environment) {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
+    scene.environmentIntensity = 0.55;
+  }
   scene.add(new THREE.HemisphereLight('#ffffff', '#718794', 1.3));
-  const key = new THREE.DirectionalLight('#fff2d8', 3.7); key.position.set(4, 8, 5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.normalBias = 0.025; scene.add(key);
+  const key = new THREE.DirectionalLight('#fff2d8', 3.7); key.position.set(4, 8, 5); key.castShadow = quality.shadows; key.shadow.mapSize.set(quality.shadowMapSize, quality.shadowMapSize); key.shadow.normalBias = 0.025; scene.add(key);
   const fill = new THREE.DirectionalLight('#b2e2f0', 1.2); fill.position.set(-5, 3, -3); scene.add(fill);
 }
 
@@ -51,7 +55,8 @@ export function addOutlines(puppet: Puppet, thickness: number, color = '#111111'
     for (let i = 0; i < pos.count; i++) pos.setXYZ(i, pos.getX(i) + nor.getX(i) * thickness, pos.getY(i) + nor.getY(i) * thickness, pos.getZ(i) + nor.getZ(i) * thickness);
     pos.needsUpdate = true;
     let hull: THREE.Mesh;
-    if (mesh instanceof THREE.SkinnedMesh) { const skinned = new THREE.SkinnedMesh(source, ink); mesh.parent!.add(skinned); skinned.bind(mesh.skeleton, mesh.bindMatrix); hull = skinned; }
+    // A skinned hull follows its part unculled, like the part itself (its rest sphere goes stale as it moves).
+    if (mesh instanceof THREE.SkinnedMesh) { const skinned = new THREE.SkinnedMesh(source, ink); mesh.parent!.add(skinned); skinned.bind(mesh.skeleton, mesh.bindMatrix); skinned.frustumCulled = false; hull = skinned; }
     else { hull = new THREE.Mesh(source, ink); mesh.parent!.add(hull); hull.position.copy(mesh.position); hull.quaternion.copy(mesh.quaternion); hull.scale.copy(mesh.scale); }
     hull.name = `${name}_outline`; hull.userData.outline = true; hull.castShadow = false; hull.receiveShadow = false; hull.renderOrder = -1;
     hulls.set(name, hull);

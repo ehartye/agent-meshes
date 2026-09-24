@@ -4,6 +4,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createPuppet } from '../render/puppet.ts';
 import type { Puppet } from '../render/puppet.ts';
 import { collectIdTargets } from '../render/id-render.ts';
+import { parseQuality } from '../render/quality.ts';
+import type { QualityInput } from '../render/quality.ts';
 import type { IdImage, IdRenderOptions } from '../render/id-render.ts';
 import type { GlbInput } from './room.ts';
 import { addFloor, addOutlines, addRoomLights, bytesOf, captureId, createRenderer, idImageURL } from './room.ts';
@@ -13,7 +15,8 @@ export { viewDirection, viewNames } from './views.ts';
 export type { ViewName, ViewSpec } from './views.ts';
 import { viewDirection } from './views.ts';
 import type { ViewName, ViewSpec } from './views.ts';
-export type { Pose, PoseInput, MaterialValues, MaterialInput } from '../render/puppet.ts';
+export type { Pose, PoseInput, MaterialValues, MaterialInput, Aim, AimOptions } from '../render/puppet.ts';
+export type { Quality, QualityInput, QualityOptions, QualityPreset } from '../render/quality.ts';
 export type { IdImage, IdRenderOptions, IdRenderColors } from '../render/id-render.ts';
 export { countColors } from '../render/id-render.ts';
 export { mountStage } from './stage.ts';
@@ -53,19 +56,22 @@ export interface MountOptions {
   outline?: number;
   /** Outline color. Default near-black. */
   outlineColor?: string;
+  /** Renderer quality: `high` (default), `fast` (no MSAA, pixel ratio 1, no shadows) or `{preset?, antialias?, pixelRatio?, shadows?}`. */
+  quality?: QualityInput;
 }
 /** Mount a rendered puppet inside a container element. The container decides the size. */
 export async function mount(container: HTMLElement, options: MountOptions) {
+  const quality = parseQuality(options.quality, devicePixelRatio);
   const gltf = await new GLTFLoader().parseAsync(bytesOf(options.glb), '');
   const puppet = createPuppet(gltf);
   const scene = new THREE.Scene();
   const background = options.background === undefined ? '#dce7eb' : options.background;
   if (background) scene.background = new THREE.Color(background);
-  const renderer = createRenderer(container, !background);
+  const renderer = createRenderer(container, !background, quality);
   const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 200);
   const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.enabled = options.orbit ?? true;
   scene.add(gltf.scene); gltf.scene.traverse(object => { object.castShadow = true; object.receiveShadow = true; });
-  addRoomLights(renderer, scene);
+  addRoomLights(renderer, scene, quality);
   const hulls = options.outline ? addOutlines(puppet, options.outline, options.outlineColor) : [];
   const floor = options.floor ?? true ? addFloor(scene, background) : null;
 
@@ -95,11 +101,14 @@ export async function mount(container: HTMLElement, options: MountOptions) {
     const dt = Math.min((now - last) / 1000, 0.1); last = now;
     puppet.update(dt); controls.update();
     for (const listener of frameListeners) listener(viewer);
+    // Every setter call since the last frame is applied here, once.
+    puppet.sync();
     renderer.render(scene, camera);
   });
   const idRender = (id: IdRenderOptions): IdImage => {
     if (id.models !== undefined) throw new Error('idRender models apply to a stage (MeshViewer.mountStage); a single-model viewer renders its one model');
     const { models: _models, ...rest } = id;
+    puppet.sync();
     return captureId(renderer, scene, camera, collectIdTargets([{ model: null, root: gltf.scene }]), rest, [...hulls, ...floor ? [floor] : []]);
   };
 
@@ -117,13 +126,14 @@ export async function mount(container: HTMLElement, options: MountOptions) {
     /** Render one frame now and return it as a PNG data URL; `{id}` returns the ID render instead. */
     screenshot(options?: { id?: IdRenderOptions }): string {
       if (options?.id) return idImageURL(idRender(options.id));
-      renderer.render(scene, camera); return renderer.domElement.toDataURL();
+      puppet.sync(); renderer.render(scene, camera); return renderer.domElement.toDataURL();
     },
     idRender,
     /** Run a callback before every rendered frame. Returns a function that removes it. */
     onFrame(listener: (viewer: Viewer) => void): () => void { frameListeners.add(listener); return () => frameListeners.delete(listener); },
     resize,
-    dispose(): void { renderer.setAnimationLoop(null); observer?.disconnect(); controls.dispose(); scene.environment?.dispose(); renderer.dispose(); renderer.domElement.remove(); },
+    /** Stop rendering, release the WebGL context and remove the canvas. */
+    dispose(): void { renderer.setAnimationLoop(null); observer?.disconnect(); controls.dispose(); scene.environment?.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); },
   };
   const viewer: Viewer = Object.assign(Object.create(puppet) as Puppet, extras);
   return viewer;

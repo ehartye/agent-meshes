@@ -79,8 +79,12 @@ pages and for scripted checks such as measuring foot contact over a stride.
 Several models on one page (a cast of characters, heads that look at each other) go on **one
 stage**, not several `mount` calls: `MeshViewer.mountStage(el, {models: {pip: {glb, position}, bolt:
 {glb, position, rotation, scale}}})` shares one renderer, camera and room, and `stage.model('pip')`
-is that model's own puppet plus `setPlacement`, `getPlacement` and `worldPoint(node, point?)` for
-aiming one model's gaze at another's eye bone. `stage.frame({model?, padding?})` fits the whole
+is that model's own puppet plus `setPlacement`, `getPlacement`, `worldPoint(node, point?)` and
+`aimBone(bone, worldPoint, {maxYaw, maxPitch})` for pointing one model's eyes at another. Setters
+(`setMorph`, `setMorphs`, `setPose`, `setPoses`, `aimBone`) are deferred to one application per
+frame, so drive faces from `onFrame` freely; a multi-primitive glTF face is driven by its node
+name (`setMorphs({face: {jawOpen: .4}})` reaches skin, lids and teeth); `quality: 'fast'` (no MSAA,
+shadows or environment map, pixel ratio 1) is what holds 30 fps for three heads under software GL. `stage.frame({model?, padding?})` fits the whole
 stage or one model. For pixel checks (is the iris hidden when blinking, did the teeth move),
 use `idRender({materials: {iris: '#0000ff'}, parts: {'teeth#0': '#00ff00'}, width, height})`
 on a viewer or a stage: every surface is drawn in one exact unlit color with the live morphs and

@@ -1,7 +1,7 @@
 import { Box3, Euler, Group, MathUtils, Vector3 } from 'three';
-import type { AnimationClip, Object3D } from 'three';
+import type { Object3D } from 'three';
 import { createPuppet } from './puppet.ts';
-import type { Puppet } from './puppet.ts';
+import type { GltfSource, Puppet } from './puppet.ts';
 import { finiteTriple } from './observation.ts';
 
 type Triple = [number, number, number];
@@ -66,7 +66,7 @@ export interface StageModelExtras {
   worldPoint(node: string, point?: Triple): Triple;
 }
 export type StageModel = Puppet & StageModelExtras;
-interface Entry { model: StageModel; placement: Placement; release(): void }
+interface Entry { model: StageModel; placement: Placement; sync(): void; release(): void }
 
 /**
  * Several glTF models in one scene graph, each with its own placement and independent puppet.
@@ -102,7 +102,7 @@ export function createStageScene() {
       if (entries.has(name)) throw new Error(`Model "${name}" already exists; remove it first or pick another name`);
     },
     /** Add a loaded glTF under `name` at `placement`. The puppet takes ownership of the scene. */
-    add(name: string, gltf: { scene: Object3D; animations: AnimationClip[] }, placement?: PlacementInput): StageModel {
+    add(name: string, gltf: GltfSource, placement?: PlacementInput): StageModel {
       stage.check(name);
       const parsed = parsePlacement(placement);
       const group = new Group(); group.name = `model:${name}`;
@@ -115,12 +115,18 @@ export function createStageScene() {
         getPlacement() { return structuredClone(record.placement); },
         worldPoint(node, point = [0, 0, 0]) { return [...puppet.observe({ point: { node, point } }).point] as Triple; },
       };
-      const model = Object.assign(Object.create(puppet) as Puppet, extras) as StageModel;
-      // Refresh skinning and bounds under the new parent.
-      puppet.seek(puppet.time);
+      // A handle kept after remove() must not silently drive a released model.
+      let released = false;
+      const model = new Proxy(Object.assign(Object.create(puppet) as Puppet, extras) as StageModel, {
+        get(target, key, receiver) {
+          if (released && key !== 'name') throw new Error(`Model "${name}" was removed from the stage`);
+          return Reflect.get(target, key, receiver);
+        },
+      });
       const record: Entry = {
-        model, placement: parsed,
+        model, placement: parsed, sync: puppet.sync,
         release() {
+          released = true;
           group.removeFromParent();
           group.traverse(object => {
             const mesh = object as Object3D & { geometry?: { dispose(): void }; material?: { dispose(): void } | { dispose(): void }[]; skeleton?: { dispose(): void } };
@@ -141,8 +147,10 @@ export function createStageScene() {
       for (const name of names(target)) box.union(entry(name).model.bounds());
       return box;
     },
-    /** Advance every model's playback. */
+    /** Advance every model's playback. Changes are applied by `sync`. */
     update(dt: number): void { for (const { model } of entries.values()) model.update(dt); },
+    /** Apply every model's pending setter and playback changes: once per frame, before rendering. */
+    sync(): void { for (const record of entries.values()) record.sync(); },
     /** Validate a model list (all models when omitted). */
     names,
   };

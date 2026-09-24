@@ -4,6 +4,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createStageScene, fitBoxDistance, parsePlacement } from '../render/stage.ts';
 import type { PlacementInput, StageModel } from '../render/stage.ts';
 import { collectIdTargets } from '../render/id-render.ts';
+import { parseQuality } from '../render/quality.ts';
+import type { QualityInput } from '../render/quality.ts';
 import type { IdImage, IdRenderOptions } from '../render/id-render.ts';
 import { addFloor, addOutlines, addRoomLights, bytesOf, captureId, createRenderer, idImageURL } from './room.ts';
 import type { GlbInput } from './room.ts';
@@ -29,12 +31,14 @@ export interface StageOptions {
   view?: ViewName | ViewSpec;
   outline?: number;
   outlineColor?: string;
+  /** Renderer quality: `high` (default), `fast` (no MSAA, pixel ratio 1, no shadows) or `{preset?, antialias?, pixelRatio?, shadows?}`. */
+  quality?: QualityInput;
 }
 /** Which models a camera or bounds call covers: one name, a list, or all when omitted. */
 export type StageTarget = string | readonly string[];
 export interface FrameOptions { model?: StageTarget; padding?: number }
 
-const stageOptionKeys = ['models', 'autoplay', 'background', 'orbit', 'floor', 'view', 'outline', 'outlineColor'];
+const stageOptionKeys = ['models', 'autoplay', 'background', 'orbit', 'floor', 'view', 'outline', 'outlineColor', 'quality'];
 const modelOptionKeys = ['glb', 'autoplay', 'position', 'rotation', 'scale'];
 function checkKeys(value: object, allowed: string[], label: string): void {
   for (const key of Object.keys(value)) if (!allowed.includes(key)) throw new Error(`Unknown ${label} option "${key}"; use ${allowed.join(', ')}`);
@@ -48,16 +52,17 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
   checkKeys(options, stageOptionKeys, 'mountStage');
   const initial = Object.entries(options.models ?? {});
   const content = createStageScene();
+  const quality = parseQuality(options.quality, devicePixelRatio);
   // Validate every name and placement before creating a WebGL context.
   for (const [name, model] of initial) { content.check(name); checkKeys(model, modelOptionKeys, `model "${name}"`); parsePlacement({ position: model.position, rotation: model.rotation, scale: model.scale }); }
   const scene = new THREE.Scene();
   const background = options.background === undefined ? '#dce7eb' : options.background;
   if (background) scene.background = new THREE.Color(background);
-  const renderer = createRenderer(container, !background);
+  const renderer = createRenderer(container, !background, quality);
   const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 200);
   const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.enabled = options.orbit ?? true;
   scene.add(content.root);
-  addRoomLights(renderer, scene);
+  addRoomLights(renderer, scene, quality);
   const floor = options.floor ?? true ? addFloor(scene, background) : null;
   const hulls = new Map<string, THREE.Mesh[]>();
   const autoplay = options.autoplay ?? !matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -111,7 +116,7 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
     // A model that fails to parse must not leave a live WebGL context behind.
     disposed = true; observer?.disconnect(); controls.dispose();
     for (const name of content.models) content.remove(name);
-    scene.environment?.dispose(); renderer.dispose(); renderer.domElement.remove();
+    scene.environment?.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
     throw error;
   }
 
@@ -121,11 +126,14 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
     const dt = Math.min((now - last) / 1000, 0.1); last = now;
     content.update(dt); controls.update();
     for (const listener of frameListeners) listener(stage);
+    // Every setter call since the last frame is applied here, once per model.
+    content.sync();
     renderer.render(scene, camera);
   });
 
   function idRender(id: IdRenderOptions): IdImage {
     const { models, ...rest } = id;
+    content.sync();
     const shown = content.names(models);
     const roots = shown.map(name => ({ model: name, root: content.model(name).root }));
     const hidden = content.models.filter(name => !shown.includes(name)).map(name => content.model(name).group);
@@ -161,17 +169,21 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
     /** Render one frame now and return it as a PNG data URL; `{id}` returns the ID render instead. */
     screenshot(options?: { id?: IdRenderOptions }): string {
       if (options?.id) return idImageURL(idRender(options.id));
-      renderer.render(scene, camera); return renderer.domElement.toDataURL();
+      content.sync(); renderer.render(scene, camera); return renderer.domElement.toDataURL();
     },
     /** Render once with every surface in an exact unlit color and return top-row-first RGBA pixels. */
     idRender,
+    /** Run a callback before every rendered frame (drive faces here). Returns a function that removes it. */
     onFrame(listener: (stage: Stage) => void): () => void { frameListeners.add(listener); return () => frameListeners.delete(listener); },
+    /** Apply every model's pending changes now. Rendering, getters and idRender already do this. */
+    sync(): void { content.sync(); },
     resize,
+    /** Stop rendering, release every model and the WebGL context, and remove the canvas. Model handles throw afterwards. */
     dispose(): void {
       if (disposed) return; disposed = true;
       renderer.setAnimationLoop(null); observer?.disconnect(); controls.dispose();
       for (const name of content.models) content.remove(name);
-      scene.environment?.dispose(); renderer.dispose(); renderer.domElement.remove();
+      scene.environment?.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
     },
   };
   if (content.models.length) stage.view(options.view ?? 'front');
@@ -191,6 +203,7 @@ export interface Stage {
   screenshot(options?: { id?: IdRenderOptions }): string;
   idRender(options: IdRenderOptions): IdImage;
   onFrame(listener: (stage: Stage) => void): () => void;
+  sync(): void;
   resize(): void;
   dispose(): void;
 }

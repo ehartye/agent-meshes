@@ -104,8 +104,8 @@ describe('authored GLB controls', () => {
     const root = new Group(), bone = new Bone(); bone.name = 'bone'; root.add(bone);
     const puppet = createPuppet({ scene: root, animations: [new AnimationClip('grow', 2, [new VectorKeyframeTrack('bone.scale', [0, 1, 2], [1, 1, 1, 2, 3, 1, 1, 1, 1])])] });
     puppet.seek(1); puppet.setPose('bone', { scale: [2, 1, 1] });
-    expect(bone.scale.toArray()).toEqual([4, 3, 1]); puppet.seek(1); expect(bone.scale.toArray()).toEqual([4, 3, 1]);
-    puppet.resetPose(); expect(bone.scale.toArray()).toEqual([2, 3, 1]);
+    expect(puppet.bone('bone').scale.toArray()).toEqual([4, 3, 1]); puppet.seek(1); expect(puppet.bone('bone').scale.toArray()).toEqual([4, 3, 1]);
+    puppet.resetPose(); expect(puppet.bone('bone').scale.toArray()).toEqual([2, 3, 1]);
   });
 
   it('binds named morph track elements and measures absolute targets while respecting hidden parents', () => {

@@ -61,9 +61,9 @@ const browser = await chromium.launch();
 try {
   const context = await browser.newContext({ offline: true, viewport: { width: 960, height: 960 } });
   const page = await context.newPage();
-  const errors = [];
+  const errors = [], warnings = [];
   page.on('pageerror', error => errors.push(error.message));
-  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); if (message.type() === 'warning') warnings.push(message.text()); });
   await page.goto(pathToFileURL(harness).href, { waitUntil: 'load' });
   await page.evaluate(() => window.ready);
 
@@ -204,13 +204,41 @@ try {
   for (const [name, url] of Object.entries(id.images)) await writeFile(join(evidence, `id-${name}.png`), Buffer.from(url.split(',')[1], 'base64'));
   await page.screenshot({ path: join(evidence, 'stage.png'), clip: { x: 0, y: 0, width: 960, height: 480 } });
 
+  // Face driving: setters are deferred to one sync per frame, batched setters validate first, and an eye aims at another model.
+  const driving = await page.evaluate(async () => {
+    const face = stage.model('face'), courier = stage.model('courier');
+    const teeth = face.object('teeth');
+    face.setMorphs({ teeth: { jawOpen: 0.75 } });
+    const pendingRaw = teeth.morphTargetInfluences[0], effective = face.getMorph('teeth', 'jawOpen');
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const renderedRaw = teeth.morphTargetInfluences[0];
+    let atomic = null; try { face.setMorphs({ teeth: { jawOpen: 0.1, jawOpn: 1 } }); } catch (e) { atomic = e.message; }
+    const target = face.worldPoint('eye_L');
+    const head = courier.bones.find(b => /head/.test(b));
+    const aim = courier.aimBone(head, target, { maxYaw: 80, maxPitch: 40 });
+    const o = courier.observe({ o: { node: head }, f: { node: head, point: [0, 0, 1] } });
+    const f = o.f.map((v, i) => v - o.o[i]), d = target.map((v, i) => v - o.o[i]);
+    const angle = Math.acos(Math.min(1, f.reduce((s, v, i) => s + v * d[i], 0) / Math.hypot(...f) / Math.hypot(...d))) * 180 / Math.PI;
+    courier.resetPose(); face.resetMorph();
+    return { pendingRaw, effective, renderedRaw, atomic, afterAtomic: face.getMorph('teeth', 'jawOpen'), aim, angle, skinCulled: (() => { let culled = 0; stage.scene.traverse(o => { if (o.isSkinnedMesh && o.frustumCulled) culled++; }); return culled; })() };
+  });
+  assert.equal(driving.pendingRaw, 0, 'a setter only records its input until the frame syncs');
+  assert.equal(driving.effective, 0.75, 'getters see pending writes');
+  assert.equal(driving.renderedRaw, 0.75, 'the render loop applies pending writes before drawing');
+  assert.match(driving.atomic, /Unknown morph target for teeth: jawOpn/);
+  assert.equal(driving.afterAtomic, 0, 'a rejected batch changes nothing');
+  assert.ok(!driving.aim.clamped && driving.angle < 0.01, `aimBone points the courier head at the face eye (${driving.angle}° off, ${JSON.stringify(driving.aim)})`);
+  assert.equal(driving.skinCulled, 0, 'skinned meshes are never culled by a stale sphere');
+
   // Add and remove at run time; dispose releases the context.
   const lifecycle = await page.evaluate(async () => {
     const extra = await stage.add('twin', { glb: document.getElementById('face').textContent, position: [2.4, 0, 0] });
     const listed = stage.models.slice(), twinEye = extra.worldPoint('eye_L');
     stage.remove('twin');
-    return { listed, after: stage.models, twinEye };
+    let stale = null; try { extra.setMorph('teeth', 'jawOpen', 1); } catch (e) { stale = e.message; }
+    return { listed, after: stage.models, twinEye, stale };
   });
+  assert.match(lifecycle.stale, /Model "twin" was removed from the stage/);
   assert.deepEqual(lifecycle.listed, ['fox', 'courier', 'face', 'twin']);
   assert.deepEqual(lifecycle.after, ['fox', 'courier', 'face']);
 
@@ -225,6 +253,32 @@ try {
   assert.deepEqual(Object.keys(single.counts).sort(), ['#000000', '#0000ff', '#00ff00', '#ff0000'], `single viewer ID render: ${JSON.stringify(single.counts)}`);
   assert.match(single.scoped, /idRender models apply to a stage/);
   assert.ok(single.hulls > 0, 'outline hulls are visible again after the ID render');
+
+  // Quality options trade image quality for frame time; dispose releases the WebGL context.
+  const quality = await page.evaluate(async () => {
+    const holder = document.createElement('div'); holder.style.cssText = 'width:320px;height:200px'; document.body.append(holder);
+    const glb = document.getElementById('face').textContent, read = s => {
+      let key = null; s.scene.traverse(o => { if (o.isDirectionalLight && o.castShadow) key = o; });
+      return { antialias: s.renderer.getContext().getContextAttributes().antialias, pixelRatio: s.renderer.getPixelRatio(), shadows: s.renderer.shadowMap.enabled, shadowType: s.renderer.shadowMap.type, mapSize: key ? key.shadow.mapSize.x : null, environment: !!s.scene.environment };
+    };
+    const high = await MeshViewer.mountStage(holder, { models: { a: { glb } }, autoplay: false });
+    const result = { high: read(high) };
+    const gl = high.renderer.getContext(); high.dispose(); result.highLost = gl.isContextLost();
+    const fast = await MeshViewer.mountStage(holder, { models: { a: { glb } }, autoplay: false, quality: 'fast' });
+    result.fast = read(fast); fast.dispose();
+    const mixed = await MeshViewer.mount(holder, { glb, autoplay: false, quality: { preset: 'fast', shadows: 512, pixelRatio: 0.5 } });
+    result.mixed = read(mixed); const mixedGl = mixed.renderer.getContext(); mixed.dispose(); result.viewerLost = mixedGl.isContextLost();
+    result.bad = await MeshViewer.mountStage(holder, { quality: { shadows: 1000 } }).then(() => null, e => e.message);
+    result.canvases = holder.querySelectorAll('canvas').length; holder.remove();
+    return result;
+  });
+  assert.deepEqual(quality.high, { antialias: true, pixelRatio: 1, shadows: true, shadowType: 1, mapSize: 2048, environment: true }, 'high quality is the default (PCFShadowMap, not the deprecated PCFSoftShadowMap)');
+  assert.deepEqual(quality.fast, { antialias: false, pixelRatio: 1, shadows: false, shadowType: 1, mapSize: null, environment: false });
+  assert.deepEqual(quality.mixed, { antialias: false, pixelRatio: 0.5, shadows: true, shadowType: 1, mapSize: 512, environment: false });
+  assert.equal(quality.highLost, true, 'stage.dispose releases the WebGL context');
+  assert.equal(quality.viewerLost, true, 'viewer.dispose releases the WebGL context');
+  assert.match(quality.bad, /quality shadows must be true, false or a power-of-two map size/);
+  assert.equal(quality.canvases, 0);
 
   // Bad input fails before or without leaving a canvas behind.
   const failures = await page.evaluate(async () => {
@@ -247,6 +301,7 @@ try {
   await page.evaluate(() => stage.dispose());
   assert.equal(await page.evaluate(() => document.querySelectorAll('canvas').length), 0, 'dispose removes the canvas');
   assert.deepEqual(errors, [], 'console errors');
+  assert.deepEqual(warnings.filter(w => /PCFSoftShadowMap/.test(w)), [], 'no deprecated shadow map warning');
   console.log(JSON.stringify({ closed: id.closed, open: id.open, posedFoxPixelsChanged: id.foxPixelsChanged }, null, 1));
   console.log(`Stage and ID render verified. Evidence in ${evidence}`);
 } finally {

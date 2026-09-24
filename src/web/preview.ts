@@ -18,7 +18,8 @@ async function start() {
   // Kept for existing browser checks that drive the page through window.meshPreview.
   Object.assign(window, { meshPreview: {
     viewer, gltf: { scene: viewer.root, animations: viewer.animations }, renderer: viewer.renderer, scene: viewer.scene, camera: viewer.camera,
-    seek: (time: number) => { viewer.seek(time); scrub.value = String(viewer.time); },
+    // Checks read bones straight off the scene, so apply the seek now rather than at the next frame.
+    seek: (time: number) => { viewer.seek(time); viewer.sync(); scrub.value = String(viewer.time); },
     setPlaying: (value: boolean) => { if (value) viewer.play(); else viewer.pause(); sync(); },
   } });
   document.getElementById('status')!.textContent = `${viewer.clips.length} clips · Drag to orbit · Scroll to zoom`;
