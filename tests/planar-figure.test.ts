@@ -108,7 +108,7 @@ describe('constrained planar dance figures',()=>{
       const pose=Object.fromEntries(keys.map((k,j)=>{const r=ranges[j];return[k,[r[0]+random()*(r[1]-r[0]),r[2]+random()*(r[3]-r[2])]]})) as unknown as PlanarTargets;
       checkSnapshot(f.setTargets(pose));
     }
-  });
+  },30_000); // 384 full solves: ~2 s locally, ~6 s on CI runners, over vitest's 5 s default
 
   it('has no branch flips or vertex correspondence jumps along a continuous gesture',()=>{
     const f=createPlanarFigure();let previous:PlanarFigureSnapshot|undefined;
