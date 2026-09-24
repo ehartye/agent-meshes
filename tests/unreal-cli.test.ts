@@ -20,7 +20,7 @@ it('merges the contract with --expect flags and prints the pretty report', async
   await run('head.glb', '--contract', 'arkit-face/1', '--expect-morphs', 'tongueOut, jawOpen', '--expect-bones', 'jaw', '--timeout', '90', '--log', 'run.log');
   expect(verifyUnreal).toHaveBeenCalledWith(expect.stringMatching(/head\.glb$/), expect.objectContaining({
     morphs: [...ARKIT_FACE_REQUIRED_MORPHS, 'tongueOut'], bones: [...ARKIT_FACE_REQUIRED_BONES, 'jaw'],
-    requireSkeletalMesh: true, contract: 'arkit-face/1', timeoutMs: 90000, logFile: expect.stringMatching(/run\.log$/), quiet: false,
+    requireSkeletalMesh: true, singleSkeletalMesh: true, contract: 'arkit-face/1', timeoutMs: 90000, logFile: expect.stringMatching(/run\.log$/), quiet: false,
   }));
   expect(JSON.parse(stdout)).toEqual({ ok: true, failures: [] });
   expect(stdout).toContain('\n  "ok"');
@@ -30,7 +30,7 @@ it('merges the contract with --expect flags and prints the pretty report', async
 it('prints one compact JSON line in --json mode and exits non-zero listing failures', async () => {
   verifyUnreal.mockResolvedValue({ ok: false, failures: ['missing bone "eye_R"'] });
   await run('head.glb', '--json');
-  expect(verifyUnreal.mock.calls[0][1]).toMatchObject({ morphs: [], bones: [], requireSkeletalMesh: false, quiet: true });
+  expect(verifyUnreal.mock.calls[0][1]).toMatchObject({ morphs: [], bones: [], requireSkeletalMesh: false, singleSkeletalMesh: false, quiet: true });
   expect(stdout.trim().split('\n')).toHaveLength(1);
   expect(JSON.parse(stdout).failures).toEqual(['missing bone "eye_R"']);
   expect(process.exitCode).toBe(1);

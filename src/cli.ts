@@ -117,7 +117,7 @@ export async function main(args = process.argv): Promise<void> {
     const morphs = [...new Set([...base.morphs, ...(options.expectMorphs ? unreal.parseNameList(String(options.expectMorphs)) : [])])];
     const bones = [...new Set([...base.bones, ...(options.expectBones ? unreal.parseNameList(String(options.expectBones)) : [])])];
     const report = await unreal.verifyUnreal(resolve(file), {
-      morphs, bones, requireSkeletalMesh: Boolean(options.contract) || morphs.length > 0 || bones.length > 0,
+      morphs, bones, requireSkeletalMesh: Boolean(options.contract) || morphs.length > 0 || bones.length > 0, singleSkeletalMesh: Boolean(options.contract),
       ...(options.contract ? { contract: String(options.contract) } : {}), timeoutMs: timeout * 1000,
       ...(options.log ? { logFile: resolve(options.log) } : {}), quiet: Boolean(options.json),
     });

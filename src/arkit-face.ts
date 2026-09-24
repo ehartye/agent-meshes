@@ -1,6 +1,6 @@
 /**
- * The `arkit-face/1` face-rig contract names, shared by every verifier (the glTF
- * `verify --contract` check and `verify-unreal`). Keep this the single copy.
+ * The `arkit-face/1` face-rig contract names, used by `verify-unreal` and exported for
+ * reuse so every verifier shares one copy. Keep this the single copy.
  */
 export const ARKIT_FACE_CONTRACT = 'arkit-face/1';
 

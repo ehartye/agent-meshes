@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { auditMorphNames, SHARED_MORPH_FIX, UE_FALLBACK_MORPH_NAME, type MorphNameAudit } from './gltf-morphs.ts';
+import { auditSkins, type SkinAudit } from './gltf-skins.ts';
 
 /**
  * Unreal destination check: import a GLB into a scratch UE project headlessly through
@@ -193,8 +194,8 @@ export interface UnrealRawReport {
   ok: boolean; engineVersion?: string; destination: string; importReturned: boolean; error?: string;
   assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: { path: string; lods: number; vertices: number[] }[];
 }
-/** What the GLB itself says before Unreal sees it: its morph name audit, or why it could not be read. */
-export interface UnrealPreflight { morphNames?: MorphNameAudit; error?: string }
+/** What the GLB itself says before Unreal sees it: its morph name and skin audits, or why it could not be read. */
+export interface UnrealPreflight { morphNames?: MorphNameAudit; skins?: SkinAudit; error?: string }
 export interface UnrealReport {
   tool: 'agent-meshes verify-unreal'; ok: boolean; failures: string[]; input: string;
   /** Findings that did not fail this run, such as a pre-flight issue Unreal happened to tolerate. */
@@ -240,12 +241,57 @@ export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, ru
   };
 }
 
-export interface UnrealExpectations { morphs: string[]; bones: string[]; requireSkeletalMesh: boolean }
+export interface UnrealExpectations {
+  morphs: string[]; bones: string[]; requireSkeletalMesh: boolean;
+  /** The rig contract these names come from, used in messages. */
+  contract?: string;
+  /** Fail when Unreal made more than one SkeletalMesh or Skeleton (a single-skin head must make one of each). */
+  singleSkeletalMesh?: boolean;
+}
 
-/** Every way the import falls short of the expectations; empty means it passed. Names must match verbatim. */
+const quoted = (names: readonly string[], limit = 8) => names.slice(0, limit).map(n => `"${n}"`).join(', ') + (names.length > limit ? ` and ${names.length - limit} more` : '');
+const assetName = (path: string) => `"${path.split('/').pop()}"`;
+const plural = (n: number, word: string) => n === 1 ? word : `${word}${/h$/.test(word) ? 'es' : 's'}`;
+
+/**
+ * Why the GLB's skinning makes Unreal split the rig from the morphs, read from the skin
+ * audit: no skin at all, a morph-bearing mesh node left out of the skin, or meshes bound to
+ * different skins. Interchange builds one SkeletalMesh and Skeleton per skin, and gives an
+ * unskinned mesh with morphs its own SkeletalMesh on a made-up one-bone skeleton. Null
+ * when one skin binds every morph-bearing node.
+ */
+export function skinStructureCause(audit: SkinAudit | undefined, bones: string[]): { cause: string; madeUpBones: boolean } | null {
+  if (!audit) return null;
+  const node = (n: SkinAudit['meshNodes'][number]) => `"${n.meshName ?? `mesh ${n.mesh}`}" (node "${n.name ?? n.node}")`;
+  const skinLabel = (skin: SkinAudit['skins'][number]) => `skin ${skin.skin}${skin.name ? ` "${skin.name}"` : ''}`;
+  const joints = bones.length ? ` with joints ${quoted(bones)}` : '';
+  const morphNodes = audit.meshNodes.filter(n => n.morphTargets > 0);
+  if (!audit.skins.length) {
+    const which = morphNodes.length ? ` ${morphNodes.map(node).join(', ')}` : '';
+    return { madeUpBones: true, cause: `the GLB has no skin, so Interchange gave the morph-bearing mesh${which} a made-up one-bone skeleton named after its node, and imported the unskinned meshes without morphs as StaticMeshes; add one skin${joints} and bind every mesh to it` };
+  }
+  const unskinned = morphNodes.filter(n => n.skin === null);
+  if (unskinned.length) {
+    const rig = [...audit.skins].sort((a, b) => bones.filter(j => b.joints.includes(j)).length - bones.filter(j => a.joints.includes(j)).length)[0];
+    const target = bones.some(j => rig.joints.includes(j)) ? `the skin with those joints (${skinLabel(rig)}: ${quoted(rig.joints)})` : `one skin${joints}`;
+    const one = unskinned.length === 1;
+    return { madeUpBones: true, cause: `the morph-bearing glTF ${one ? 'mesh' : 'meshes'} ${unskinned.map(node).join(', ')} ${one ? 'is' : 'are'} not skinned (the node has no "skin"), so Interchange imported ${one ? 'it as its own SkeletalMesh' : 'each as its own SkeletalMesh'} on a made-up one-bone skeleton, apart from the rig; bind ${one ? 'it' : 'them'} to ${target}` };
+  }
+  const used = audit.skins.filter(skin => skin.usedBy.length);
+  if (used.length > 1) {
+    return { madeUpBones: false, cause: `the GLB binds its meshes to ${used.length} different skins (${used.map(skin => `${skinLabel(skin)}: joints ${quoted(skin.joints)}, used by ${quoted(skin.usedBy)}`).join('; ')}), and Interchange builds a separate SkeletalMesh and Skeleton per skin; bind every mesh to one skin${joints}` };
+  }
+  return null;
+}
+
+/**
+ * Every way the import falls short of the expectations; empty means it passed. Names must
+ * match verbatim, and every expected morph and bone must be on ONE SkeletalMesh: a morph on
+ * one asset and a bone on another do not make a rig.
+ */
 export function checkUnrealReport(report: UnrealReport, expect: UnrealExpectations): string[] {
   const failures: string[] = [];
-  if (report.unreal.timedOutAfterMs) return [`Unreal did not finish within ${Math.round(report.unreal.timedOutAfterMs / 1000)} s and was stopped; see ${report.log.file}`];
+  if (report.unreal.timedOutAfterMs) return [`Unreal did not finish within ${Number((report.unreal.timedOutAfterMs / 1000).toFixed(3))} s and was stopped; see ${report.log.file}`];
   if (!report.log.windowFound) return ['the import script never ran (no AGENT_MESHES_IMPORT_BEGIN/END in the log)'];
   if (report.scriptError) return [`import script failed: ${report.scriptError.trim()}`];
   const errors = report.log.importErrors;
@@ -266,19 +312,58 @@ export function checkUnrealReport(report: UnrealReport, expect: UnrealExpectatio
         : `The GLB could not be audited. UE's glTF parser (GLTFAsset.cpp) does this when a morph name repeats across glTF meshes (then it drops every name in the file), repeats within a mesh, or a mesh's extras.targetNames count differs from its targets; if parts share morph names, ${SHARED_MORPH_FIX}.`;
     failures.push(`Unreal renamed ${how} to <file>_mesh_<m>_<i>_MorphTarget (for example "${renamed[0]}"), so those glTF morph names did not survive. ${cause}`);
   }
-  const missing = (kind: string, wanted: string[], have: string[], inFile: Set<string> | null) => {
+  // Checked against ONE SkeletalMesh: the one carrying the most expected morphs, then the most expected bones.
+  const meshes = report.skeletalMeshes;
+  const hits = (m: UnrealSkeletalMeshFacts) => [expect.morphs.filter(n => m.morphTargets.includes(n)).length, expect.bones.filter(n => m.bones.includes(n)).length];
+  const target = meshes.reduce<UnrealSkeletalMeshFacts | null>((best, m) => {
+    if (!best) return m;
+    const [a, b] = hits(m), [c, d] = hits(best);
+    return a > c || (a === c && b > d) ? m : best;
+  }, null);
+  const haveMorphs = target?.morphTargets ?? report.morphTargets, haveBones = target?.bones ?? report.bones;
+  const what = expect.contract ? `the ${expect.contract} contract` : 'the expected names';
+  const skins = report.preflight?.skins;
+  const structure = skinStructureCause(skins, expect.bones);
+  const becauseOf = structure ? ` Cause: ${structure.cause}.` : '';
+  const elsewhere = (names: string[], key: 'morphTargets' | 'bones') => names.filter(n => meshes.some(m => m !== target && m[key].includes(n)));
+  const missingBones = expect.bones.filter(n => !haveBones.includes(n));
+  const splitMorphs = elsewhere(expect.morphs.filter(n => !haveMorphs.includes(n)), 'morphTargets'), splitBones = elsewhere(missingBones, 'bones');
+  const explained = new Set<string>();
+  const split = Boolean(target && (splitMorphs.length || splitBones.length));
+  if (target && split) {
+    const holders = meshes.filter(m => m !== target && (splitMorphs.some(n => m.morphTargets.includes(n)) || splitBones.some(n => m.bones.includes(n))));
+    const [morphHits] = hits(target);
+    const carrier = expect.morphs.length
+      ? `SkeletalMesh ${assetName(target.path)} has ${morphHits} of the ${expect.morphs.length} morph targets, but its skeleton has only the ${plural(target.bones.length, 'bone')} ${quoted(target.bones)}`
+      : `SkeletalMesh ${assetName(target.path)} has the ${plural(target.bones.length, 'bone')} ${quoted(target.bones)}`;
+    const moved = [...splitMorphs, ...splitBones];
+    const rig = splitBones.length && morphHits ? ', so the rig cannot move the morph-bearing mesh in Unreal' : '';
+    failures.push(`no single SkeletalMesh carries ${what}: ${carrier}, while ${quoted(moved)} ${moved.length === 1 ? 'is' : 'are'} on ${holders.map(m => `SkeletalMesh ${assetName(m.path)}`).join(', ')}, a separate asset with its own skeleton${rig}.${becauseOf}`);
+    for (const n of moved) explained.add(n);
+    if (structure) for (const n of missingBones) explained.add(n);
+  } else if (target && missingBones.length && structure) {
+    const made = structure.madeUpBones ? ', which Interchange made up from the mesh node' : '';
+    failures.push(`missing ${plural(missingBones.length, 'bone')} ${quoted(missingBones)}: SkeletalMesh ${assetName(target.path)} has only the ${plural(target.bones.length, 'bone')} ${quoted(target.bones)}${made}. Cause: ${structure.cause}.`);
+    for (const n of missingBones) explained.add(n);
+  }
+  const skinJoints = skins ? new Set(skins.skins.flatMap(skin => skin.joints)) : null;
+  const missing = (kind: 'morph target' | 'bone', wanted: string[], have: string[], inFile: Set<string> | null) => {
     for (const name of wanted) {
-      if (have.includes(name)) continue;
+      if (have.includes(name) || explained.has(name)) continue;
       // Already explained by the rename failure above.
       if (kind === 'morph target' && renamed.length && (!inFile || inFile.has(name))) continue;
       const near = have.find(h => h.toLowerCase() === name.toLowerCase());
-      const why = near ? ` (Unreal has "${near}": names must survive verbatim)`
-        : !inFile ? '' : inFile.has(name) ? ' (the GLB has it; Unreal drops a morph that moves no triangle vertex)' : ` (the GLB has no ${kind} with this name)`;
+      const absent = kind === 'bone' ? ' (the GLB has no skin joint with this name)' : ` (the GLB has no ${kind} with this name)`;
+      const kept = kind === 'bone' ? '' : ' (the GLB has it; Unreal drops a morph that moves no triangle vertex)';
+      const why = near ? ` (Unreal has "${near}": names must survive verbatim)` : !inFile ? '' : inFile.has(name) ? kept : absent;
       failures.push(`missing ${kind} "${name}"${why}`);
     }
   };
-  missing('morph target', expect.morphs, report.morphTargets, glbNames);
-  missing('bone', expect.bones, report.bones, null);
+  missing('morph target', expect.morphs, haveMorphs, glbNames);
+  missing('bone', expect.bones, haveBones, skinJoints);
+  if (expect.singleSkeletalMesh && !split && (meshes.length > 1 || report.summary.skeletons > 1)) {
+    failures.push(`Unreal created ${meshes.length} ${plural(meshes.length, 'SkeletalMesh')} (${meshes.map(m => assetName(m.path)).join(', ')}) and ${report.summary.skeletons} ${plural(report.summary.skeletons, 'Skeleton')}, but ${what} needs one SkeletalMesh on one Skeleton, from a single glTF skin.${becauseOf}`);
+  }
   if (errors.length) failures.push(`${report.log.importErrors.length} import error(s): ${report.log.importErrors.join(' | ')}`);
   return failures;
 }
@@ -305,7 +390,7 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
   await stat(input).catch(() => { throw Object.assign(new Error(`GLB not found: ${input}`), { code: 'CLI_ARGUMENT_ERROR' }); });
   const bytes = new Uint8Array(await readFile(input));
   let preflight: UnrealPreflight;
-  try { preflight = { morphNames: auditMorphNames(bytes) }; } catch (error) { preflight = { error: (error as Error).message }; }
+  try { preflight = { morphNames: auditMorphNames(bytes), skins: auditSkins(bytes) }; } catch (error) { preflight = { error: (error as Error).message }; }
   const unreal = findUnreal();
   if (!unreal) {
     const found = preflight.morphNames?.issues.map(i => i.message) ?? [];

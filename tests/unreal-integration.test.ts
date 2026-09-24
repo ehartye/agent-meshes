@@ -2,6 +2,7 @@ import { afterAll, expect, it } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { contractExpectations } from '../src/arkit-face.ts';
 import { unrealAvailable, verifyUnreal } from '../src/unreal.ts';
 import { arkitFaceFixtureGLB } from './fixtures/arkit-face-glb.ts';
@@ -14,7 +15,9 @@ const fixture = async (name: string, options?: Parameters<typeof arkitFaceFixtur
   const dir = await mkdtemp(join(tmpdir(), 'verify unreal ')); dirs.push(dir); // a space in the path on purpose
   const file = join(dir, name); await writeFile(file, arkitFaceFixtureGLB(options)); return file;
 };
-const contract = { ...contractExpectations('arkit-face/1'), requireSkeletalMesh: true, contract: 'arkit-face/1', quiet: true };
+const contract = { ...contractExpectations('arkit-face/1'), requireSkeletalMesh: true, singleSkeletalMesh: true, contract: 'arkit-face/1', quiet: true };
+// Blender heads from the talking-heads bar's P9a round-2 evidence: good, head mesh left out of the skin, no skin at all.
+const head = (name: string) => fileURLToPath(new URL(`./fixtures/heads/${name}`, import.meta.url));
 
 maybe('imports an arkit-face GLB through Interchange with every morph and bone verbatim', async () => {
   const report = await verifyUnreal(await fixture('face fixture.glb'), contract);
@@ -33,7 +36,7 @@ maybe('fails, listing what Unreal is missing, when the GLB breaks the contract',
   const morphs = contract.morphs.filter(n => n !== 'jawOpen');
   const report = await verifyUnreal(await fixture('broken.glb', { morphs, bones: ['head', 'eye_L'] }), contract);
   expect(report.ok).toBe(false);
-  expect(report.failures).toEqual(['missing morph target "jawOpen" (the GLB has no morph target with this name)', 'missing bone "eye_R"']);
+  expect(report.failures).toEqual(['missing morph target "jawOpen" (the GLB has no morph target with this name)', 'missing bone "eye_R" (the GLB has no skin joint with this name)']);
 }, 40 * 60000);
 
 maybe('keeps every name verbatim for face and teeth as two primitives of one glTF mesh (the portable layout)', async () => {
@@ -64,4 +67,27 @@ maybe('reports only the import failure for a file Unreal cannot read', async () 
   expect(report.failures).toHaveLength(1);
   expect(report.failures[0]).toMatch(/^Unreal imported nothing/);
   expect(report.preflight.error).toMatch(/not a readable GLB/);
+}, 40 * 60000);
+
+maybe('passes the Blender head whose face, teeth, tongue and eyeballs share one skin', async () => {
+  const report = await verifyUnreal(head('bl-good.glb'), contract);
+  expect(report.failures).toEqual([]);
+  expect(report.summary).toMatchObject({ skeletalMeshes: 1, skeletons: 1 });
+}, 40 * 60000);
+
+maybe('fails when the morph-bearing mesh is left out of the skin, so Unreal splits morphs and bones across two SkeletalMeshes', async () => {
+  const report = await verifyUnreal(head('partialskin.glb'), contract);
+  expect(report.summary).toMatchObject({ skeletalMeshes: 2, skeletons: 2 });
+  expect(report.ok).toBe(false);
+  expect(report.failures).toHaveLength(1);
+  expect(report.failures[0]).toMatch(/^no single SkeletalMesh carries the arkit-face\/1 contract: SkeletalMesh "Head_[0-9a-f]+" has 21 of the 21 morph targets, but its skeleton has only the bone "Head_[0-9a-f]+", while "head", "eye_L", "eye_R" are on SkeletalMesh "Eyeball_L"/);
+  expect(report.failures[0]).toContain('Cause: the morph-bearing glTF mesh "Head" (node "Head") is not skinned');
+}, 40 * 60000);
+
+maybe('blames the missing skin, not bone spelling, for a head with no skin at all', async () => {
+  const report = await verifyUnreal(head('bl-noskin.glb'), contract);
+  expect(report.ok).toBe(false);
+  expect(report.failures).toHaveLength(1);
+  expect(report.failures[0]).toMatch(/^missing bones "head", "eye_L", "eye_R": SkeletalMesh "Head" has only the bone "Head", which Interchange made up from the mesh node\. Cause: the GLB has no skin/);
+  expect(report.failures[0]).not.toMatch(/names must survive verbatim/);
 }, 40 * 60000);

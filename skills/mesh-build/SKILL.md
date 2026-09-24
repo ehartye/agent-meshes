@@ -67,8 +67,9 @@ mesh verify-unreal prop.glb --expect-morphs open,close --expect-bones lid --json
 Imports the GLB headlessly into a cached scratch UE project through Interchange and prints a JSON
 report: the assets by class, and per SkeletalMesh its morph target names, bone names, LOD and
 vertex counts, plus the import errors and warnings from the Unreal log (whose path is in the
-report). `--contract arkit-face/1` requires a SkeletalMesh, the 21 ARKit morph names verbatim,
-the `head`/`eye_L`/`eye_R` bones and zero import errors. It exits 1 and lists `failures` otherwise.
+report). `--contract arkit-face/1` requires ONE SkeletalMesh that has the 21 ARKit morph names
+verbatim and whose own skeleton has `head`/`eye_L`/`eye_R`, only one SkeletalMesh and Skeleton in
+the import, and zero import errors. It exits 1 and lists `failures` otherwise, naming the cause.
 Unreal comes from `AGENT_MESHES_UNREAL` (the engine directory), the Epic launcher manifest or the
 usual install roots. Without one the command fails with `UNREAL_NOT_FOUND`: say so rather than
 claiming Unreal support. Later runs take seconds. A first run on a new engine can compile
@@ -88,8 +89,14 @@ and give every part every target (zero deltas where a part does not move). Morph
 as eyeballs can stay separate meshes. `verify-unreal` checks the GLB first, with no engine needed,
 and reports this as one failure naming the shared morphs and meshes. A name repeated inside one
 mesh, or an `extras.targetNames` count that differs from the target count, loses that mesh's names
-the same way. The check lives in `src/gltf-morphs.ts` (`auditMorphNames`), which other verifiers
-reuse.
+the same way. The check lives in `src/gltf-morphs.ts` (`auditMorphNames`), exported for reuse.
+
+**Bind every mesh to one skin.** Unreal makes one SkeletalMesh and Skeleton per glTF skin. A
+morph-bearing mesh node with no `skin` becomes its own SkeletalMesh on a made-up one-bone
+skeleton (`Head_<hash>`), apart from the eye rig, so the face cannot be moved by `head`/`eye_*`.
+A GLB with no skin at all gets only that made-up bone. `verify-unreal` reads the GLB's skins
+(`preflight.skins`, `src/gltf-skins.ts`) and names which of these it is. In Blender, parent every
+mesh (face and eyeballs) to the one armature with an Armature modifier before exporting.
 
 ## Embedding in a page
 

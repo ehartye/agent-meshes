@@ -9,6 +9,8 @@ import {
   scratchProject, unrealCommandLine, unrealImportName, type ParsedUnrealLog, type UnrealRawReport,
 } from '../src/unreal.ts';
 import { auditMorphNames } from '../src/gltf-morphs.ts';
+import { auditSkins } from '../src/gltf-skins.ts';
+import { readFileSync } from 'node:fs';
 import { verifyGLB } from '../src/export.ts';
 import { arkitFaceFixtureGLB } from './fixtures/arkit-face-glb.ts';
 
@@ -296,5 +298,79 @@ describe('checkUnrealReport: morph names Unreal threw away', () => {
     expect(failures).toEqual([
       "Unreal imported nothing (exit code 1): LogInterchangeEngine: Error: [ : '', Unknown] Invalid GLTF header! | LogInterchangeEngine: Error: There was no data to import in the provided source data.",
     ]);
+  });
+});
+
+describe('checkUnrealReport: one SkeletalMesh must carry the whole contract', () => {
+  const clean: ParsedUnrealLog = { importErrors: [], importWarnings: [], otherErrors: [], interchangeCompleted: true, windowFound: true };
+  const contract = { ...contractExpectations('arkit-face/1'), contract: 'arkit-face/1', requireSkeletalMesh: true, singleSkeletalMesh: true };
+  const head = (name: string) => new Uint8Array(readFileSync(new URL(`./fixtures/heads/${name}`, import.meta.url)));
+  const preflightOf = (bytes: Uint8Array) => ({ morphNames: auditMorphNames(bytes), skins: auditSkins(bytes) });
+  const base = '/Game/Verify/partialskin/partialskin/SkeletalMeshes';
+  const mesh = (name: string, morphTargets: string[], bones: string[]) =>
+    ({ path: `${base}/${name}`, skeleton: `${base}/${name}_Skeleton`, morphTargets, bones, lods: 1, vertices: [100], materialSlots: 1 });
+  // What UE 5.7 made of the critic's partialskin.glb (evidence P9a round 2): the eyes on the skin, the face on a made-up bone.
+  const split = (): UnrealRawReport => {
+    const meshes = [mesh('Eyeball_L', [], ['head', 'eye_L', 'eye_R']), mesh('Head_3459267b', [...ARKIT_FACE_REQUIRED_MORPHS], ['Head_3459267b'])];
+    return { ...structuredClone(RAW), skeletalMeshes: meshes, assets: meshes.flatMap(m => [{ path: m.path, class: 'SkeletalMesh' }, { path: m.skeleton, class: 'Skeleton' }]) };
+  };
+  const build = (raw: UnrealRawReport, preflight?: Parameters<typeof buildUnrealReport>[2]['preflight']) =>
+    buildUnrealReport(raw, clean, { input: 'partialskin.glb', editor: 'e', version: '5.7.3', exitCode: 0, logFile: 'l', elapsedMs: 1, ...(preflight ? { preflight } : {}) });
+
+  it('fails when the morphs and the head/eye bones are on two different SkeletalMeshes, and names the unskinned glTF mesh', () => {
+    const failures = checkUnrealReport(build(split(), preflightOf(head('partialskin.glb'))), contract);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/^no single SkeletalMesh carries the arkit-face\/1 contract/);
+    expect(failures[0]).toContain('SkeletalMesh "Head_3459267b"');
+    expect(failures[0]).toContain('"Eyeball_L"');
+    expect(failures[0]).toContain('the morph-bearing glTF mesh "Head" (node "Head") is not skinned');
+    expect(failures[0]).toContain('bind it to the skin with those joints (skin 0 "HeadRig": "head", "eye_L", "eye_R")');
+    expect(failures[0]).not.toMatch(/names must survive verbatim/);
+  });
+
+  it('fails the split even when the GLB could not be audited', () => {
+    const failures = checkUnrealReport(build(split()), contract);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/^no single SkeletalMesh carries the arkit-face\/1 contract/);
+    expect(failures[0]).not.toMatch(/Cause:/);
+  });
+
+  it('fails the split for --expect names too, without a contract', () => {
+    const failures = checkUnrealReport(build(split()), { morphs: ['jawOpen'], bones: ['eye_L'], requireSkeletalMesh: true });
+    expect(failures).toEqual([expect.stringMatching(/^no single SkeletalMesh carries the expected names/)]);
+  });
+
+  it('blames a missing skin, not spelling, when Interchange made the only bone up from the mesh node', () => {
+    const meshes = [{ ...mesh('Head', [...ARKIT_FACE_REQUIRED_MORPHS], ['Head']) }];
+    const raw: UnrealRawReport = { ...structuredClone(RAW), skeletalMeshes: meshes, staticMeshes: [{ path: `${base}/Eyeball_L`, lods: 1, vertices: [10] }, { path: `${base}/Eyeball_R`, lods: 1, vertices: [10] }] };
+    const failures = checkUnrealReport(build(raw, preflightOf(head('bl-noskin.glb'))), contract);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/^missing bones "head", "eye_L", "eye_R": SkeletalMesh "Head" has only the bone "Head"/);
+    expect(failures[0]).toContain('Cause: the GLB has no skin');
+    expect(failures[0]).not.toMatch(/names must survive verbatim/);
+  });
+
+  it('flags more than one SkeletalMesh from a single-skin head even when one of them meets the contract', () => {
+    const raw = structuredClone(RAW);
+    raw.skeletalMeshes.push(mesh('Hat', [], ['Hat']));
+    raw.assets.push({ path: `${base}/Hat`, class: 'SkeletalMesh' }, { path: `${base}/Hat_Skeleton`, class: 'Skeleton' });
+    const failures = checkUnrealReport(build(raw), contract);
+    expect(failures).toEqual([expect.stringMatching(/^Unreal created 2 SkeletalMeshes \("pip", "Hat"\) and 2 Skeletons, but the arkit-face\/1 contract needs one SkeletalMesh on one Skeleton/)]);
+    expect(checkUnrealReport(build(raw), { ...contract, singleSkeletalMesh: false })).toEqual([]);
+  });
+
+  it('names the bones the GLB never had, from its skin joints', () => {
+    const raw = structuredClone(RAW); raw.skeletalMeshes[0].bones = ['head', 'eye_L'];
+    const failures = checkUnrealReport(build(raw, preflightOf(arkitFaceFixtureGLB({ bones: ['head', 'eye_L'] }))), contract);
+    expect(failures).toEqual(['missing bone "eye_R" (the GLB has no skin joint with this name)']);
+  });
+
+  it('passes the good Blender head that imports as one SkeletalMesh', () => {
+    expect(checkUnrealReport(build(RAW, preflightOf(head('bl-good.glb'))), contract)).toEqual([]);
+  });
+
+  it('shows the real timeout, not a rounded one', () => {
+    const slow = buildUnrealReport(RAW, { ...clean, windowFound: false }, { input: 'x.glb', editor: 'e', version: '5.7.3', exitCode: -1, logFile: 'l.log', elapsedMs: 1, timeoutMs: 500 });
+    expect(checkUnrealReport(slow, contract)).toEqual(['Unreal did not finish within 0.5 s and was stopped; see l.log']);
   });
 });

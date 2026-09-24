@@ -12,7 +12,7 @@
  * Primitives of one mesh must also carry the same number of targets. The Interchange
  * pipeline option `bMergeMorphTargetsWithSameName` does not prevent any of this.
  *
- * Used by `verify-unreal` as a pre-flight and by the glTF `verify --contract` check.
+ * Used by `verify-unreal` as a pre-flight, and exported for reuse by other verifiers.
  */
 
 export interface GltfMesh { name?: string; extras?: { targetNames?: unknown }; primitives?: { targets?: unknown[] }[] }
