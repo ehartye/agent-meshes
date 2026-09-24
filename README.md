@@ -177,7 +177,7 @@ actual Blender export deforms in the offline public viewer.
 
 `mount(container, options)` fills the container and follows its size. `glb` is bytes or a base64 string, which works from `file://` where `fetch` does not. Options: `autoplay` (default follows `prefers-reduced-motion`), `background` (`null` for transparent), `orbit`, `floor`, `view` (`front`, `back`, `left`, `right` or its alias `side`, `top`, `bottom`, `perspective` or `{position, target}`; an unknown name throws an `Error` listing these), and `outline` (an ink outline of that thickness in meters behind every part, with `outlineColor`). The scene is lit by a procedural room environment plus a key and fill light, with soft shadows; shells carry ambient occlusion baked into their vertex colors from the distance field, so crevices read dark without any texture.
 
-The viewer exposes the puppet by name: `bones`, `parts`, `clips`; `setPose(bone, {rotation?, position?, scale?})` (scale multiplies the bone and everything it carries, so a longer leg moves its foot), `getPose`, `resetPose(bone?)`; `setColor`, `getColor`, `setVisible`; `setPattern(name, pattern | null)`, `getPattern(name)` (re-bake a dots/stripes/checks pattern on a shell or part from its kept base colors; a flat part moves its color into the vertices the first time, after which `setColor` tints it like a shell); `play(clip?)`, `pause`, `playing`, `clip`, `time`, `duration`, `speed`, `seek`; plus `view`, `frame`, `setBackground`, `screenshot`, `onFrame`, `resize`, `dispose`, and the underlying `renderer`, `scene`, `camera`, `controls`. Pose offsets compose on top of clip playback each frame. `node scripts/check-viewer-browser.mjs` verifies the runtime in Chromium.
+The viewer exposes the puppet by name: `bones`, `parts`, `clips`; `setPose(bone, {rotation?, position?, scale?})` (scale multiplies the bone and everything it carries, so a longer leg moves its foot), `setPoses({bone: pose})`, `aimBone(bone, worldPoint, {maxYaw?, maxPitch?})` (turns the bone's +Z at a world point and returns `{yaw, pitch, clamped}`), `getPose`, `resetPose(bone?)`; `setColor`, `getColor`, `setVisible`; `setPattern(name, pattern | null)`, `getPattern(name)` (re-bake a dots/stripes/checks pattern on a shell or part from its kept base colors; a flat part moves its color into the vertices the first time, after which `setColor` tints it like a shell); `play(clip?)`, `pause`, `playing`, `clip`, `time`, `duration`, `speed`, `seek`; plus `view`, `frame`, `setBackground`, `screenshot`, `idRender` (see below), `onFrame`, `sync`, `resize`, `dispose` (which also releases the WebGL context), and the underlying `renderer`, `scene`, `camera`, `controls`. Pose offsets compose on top of clip playback each frame. Setters only record their input: the whole pose and morph application runs once per frame before the render (or at the first read, since every getter, `observe`, `bounds` and `idRender` applies pending changes first), so a page can write dozens of morphs and poses per frame to several heads cheaply; call `sync()` before reading a bone or mesh you kept from earlier. The `quality` option (`'high'` default, `'fast'`, or `{preset?, antialias?, pixelRatio?, shadows?, environment?}`) trades image quality for frame time; `fast` turns off MSAA, shadows and the environment map at pixel ratio 1. `node scripts/check-viewer-browser.mjs` verifies the runtime in Chromium.
 
 `viewer.observe({hoof: {node: 'leg_L_front_hoof', point: [0, 0, 0]}}, relativeTo?)`
 returns frozen numeric points in world coordinates, or relative to another uniquely named node.
@@ -204,7 +204,7 @@ and unchanged live pose, playback, camera and pixels.
 
 Authored GLBs retain every material slot. `setColor(part, hex, slot?)` and `setMaterial(part, {metalness?, roughness?}, slot?)` update all slots when `slot` is omitted; `getColor(part, slot?)` and `getMaterial(part, slot?)` read the first slot by default. Slots are zero-based and isolated from other parts. `setPattern` rejects multi-material parts before changing them, so group colors remain intact.
 
-Playback supports imported position, rotation, scale and morph-weight tracks, restoring authored values when switching to a clip that leaves them unanimated. `setMorph(part, targetName, weight)` overrides a named morph after clip sampling; `getMorph(part, targetName)` reads its effective weight. Weights must be finite and may extend beyond 0..1. `resetMorph(part?, targetName?)` clears one target, one part, or all overrides, revealing the current clip or authored rest weights. Target names are available through `object(part).morphTargetDictionary`; `bounds()` measures the currently visible, morphed and skinned surface.
+Playback supports imported position, rotation, scale and morph-weight tracks, restoring authored values when switching to a clip that leaves them unanimated. `setMorph(part, targetName, weight)` overrides a named morph after clip sampling, and `setMorphs({part: {target: weight}})` sets many at once, validating all of them first. A glTF mesh with several primitives (skin, lids and teeth as material slots of one mesh, sharing morph names) loads as a group of per-primitive meshes; its node name (listed in `morphGroups`) addresses the morphs of every primitive at once, and `morphTargets(name)` lists a part's or group's target names; `getMorph(part, targetName)` reads its effective weight. Weights must be finite and may extend beyond 0..1. `resetMorph(part?, targetName?)` clears one target, one part, or all overrides, revealing the current clip or authored rest weights. Target names are available through `object(part).morphTargetDictionary`; `bounds()` measures the currently visible, morphed and skinned surface.
 
 `MeshViewer.createPlanarLinkage(spec)` creates a stateless analytic 2D mechanism without a
 renderer or physics engine. The same factory is available from `src/mechanisms/planar-linkage.ts`:
@@ -284,6 +284,45 @@ carver.dispose();
 Only one request runs at a time; one queued request is retained. Superseded requests and requests pending during `dispose()` resolve to `null`; invalid requests and worker errors reject. Invalid input does not supersede a valid active request. Returned geometry belongs to the caller: replacing/discarding it requires `dispose()`, and disposing the carver stops its worker without disposing previously returned meshes. A body or removed result can be empty: check `geometry.attributes.position.count === 0` and skip fitting/bounds calculations for it. The API never changes a camera, material, or scene. The standalone viewer embeds the worker and supports `file://` without network access; pages enforcing CSP must permit Blob workers. Node code can use `createSolid(field, {bounds,resolutions})` from `src/render/carving.ts` for the same synchronous kernel and typed-array results; its field function must remain immutable.
 
 Bounds must enclose the full uncut body with a positive field at every grid boundary sample. One to three resolutions (integers 16–192) are allowed, with at most four million samples per grid and six million across cached grids. Extraction also limits vertices/triangles. Validation happens before grid allocation; finite field samples and boundary clearance are checked when sampling. `stats` reports sampling/extraction timings, cache reuse and sample count, not a manifold certificate. Consistent tetrahedra share crossing vertices and orient faces from the local field. Final Float32 coordinates are welded, collapsed faces removed, and every remaining edge must have one triangle in each direction; precision-unsafe results reject. Shading normals estimate the resulting cut-field gradient. This is sampled geometry: small features, critical topology transitions, very thin removed layers and non-distance input fields require consumer checks at their chosen resolutions. Connectivity, vertex-fan manifoldness, self-intersection and a single removed piece are not universal guarantees. Preview/final resolution and debounce policy belong to the exhibit; a slower refinement remains asynchronous and is not a 60 fps promise.
+
+### Several models on one stage
+
+`MeshViewer.mountStage(container, options)` puts several GLB models into one viewer: one renderer, scene, camera, room and floor, so a page with three characters opens one WebGL context, not three. Each model has its own placement and its own independent puppet.
+
+```js
+const stage = await MeshViewer.mountStage(document.getElementById('stage'), {
+  models: {
+    pip:  { glb: pipBase64,  position: [-0.6, 0, 0], rotation: [0, 10, 0] },
+    bolt: { glb: boltBytes, position: [0.6, 0, 0], scale: 1.1 },
+  },
+  background: '#f4efe6',
+});
+const pip = stage.model('pip');
+pip.setMorph('face', 'jawOpen', 0.6);            // Bolt's jaw stays shut
+const mouth = pip.worldPoint('jaw', [0, 0, 0.1]); // world [x, y, z], through Pip's placement
+stage.model('bolt').aimBone('eye_L', mouth, { maxYaw: 30, maxPitch: 20 }); // Bolt looks at Pip
+stage.model('bolt').setPlacement({ rotation: [0, -15, 0] });
+stage.frame();                                    // fit every model; stage.frame({model: 'pip'}) fits one
+```
+
+Options are `models` (`{name: {glb, position?, rotation?, scale?, autoplay?}}`), `autoplay`, `background`, `orbit`, `floor`, `view` (default `front`), `outline`, `outlineColor` and `quality`. Names are a letter followed by up to 63 letters, digits, `_` or `-`; `rotation` is XYZ Euler degrees; `scale` is a positive number or triple. Unknown options, bad placements and duplicate names are rejected, naming the problem, before a WebGL context is created. `stage.model(name)` has the whole puppet API (`setPose`, `setMorph`, `setColor`, `play` and the rest, scoped to that model) plus `setPlacement` (omitted fields keep their value), `getPlacement`, `worldPoint(node, point?)`, and `observe`/`bounds` in world space. Unknown names throw, listing the models, and a handle used after its model is removed throws. The stage also has `models`, `add(name, model)` (a promise) and `remove(name)`, `bounds(model?)`, `view(name | {position, target}, {model?, padding?})` and `frame({model?, padding?})` (named views fit every corner of the chosen bounds in the frustum), `screenshot`, `idRender`, `onFrame`, `setBackground`, `resize`, `dispose` and the underlying three.js objects. `node scripts/check-stage-browser.mjs` verifies it in Chromium with three models. `node scripts/check-stage-perf-browser.mjs` drives three skinned 12.5k-vertex heads (one glTF face mesh with six primitives sharing 25 ARKit morphs, plus two eye poses, every frame) at 1280×720 in headless Chromium with software GL and asserts a median frame ≤ 33 ms and p95 ≤ 50 ms with `quality: 'fast'` (measured 16.7 ms and 33.4 ms; the default `high` quality measures about 117 ms).
+
+### ID render for pixel checks
+
+`viewer.idRender(options)` and `stage.idRender(options)` render once with every surface replaced by an unlit flat color and return `{width, height, data}`: RGBA bytes, top row first. The render skips lighting, tone mapping, color-space conversion, fog, the environment and shadows, and it draws into a single-sampled target, so every pixel is exactly one requested color and no edge blends two. It uses the live morph weights, poses and skinning. Afterwards the original materials, visibility, background and camera aspect are restored, and the temporary materials and target are disposed.
+
+```js
+const image = stage.idRender({
+  models: ['pip'],                                          // stage only; default all
+  materials: { iris: '#0000ff', 'pip/skin': '#ff0000' },    // material name, optionally model-scoped
+  parts: { 'teeth#0': '#00ff00' },                          // part, or part#slot
+  background: '#000000', other: '#808080',                  // other: null hides unmatched surfaces
+  width: 512, height: 512,
+});
+MeshViewer.countColors(image);   // {'#0000ff': 812, '#ff0000': 40110, ...}
+```
+
+Precedence is `part#slot`, then `part`, then material name, and a `model/` key beats an unscoped one. Unmatched surfaces take `other`, which defaults to the background color so they still occlude. Colors must be `#rrggbb`, and a key that matches nothing throws, listing the names that exist. Outline hulls and the floor are not drawn. `screenshot({id: options})` returns the same render as a lossless PNG data URL.
 
 ## Named-frame assemblies
 

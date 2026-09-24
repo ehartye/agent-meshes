@@ -1,12 +1,27 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { createPuppet } from '../render/puppet.ts';
 import type { Puppet } from '../render/puppet.ts';
+import { collectIdTargets } from '../render/id-render.ts';
+import { parseQuality } from '../render/quality.ts';
+import type { QualityInput } from '../render/quality.ts';
+import type { IdImage, IdRenderOptions } from '../render/id-render.ts';
+import type { GlbInput } from './room.ts';
+import { addFloor, addOutlines, addRoomLights, bytesOf, captureId, createRenderer, idImageURL } from './room.ts';
 
 export const version = '1';
-export type { Pose, PoseInput, MaterialValues, MaterialInput } from '../render/puppet.ts';
+export { viewDirection, viewNames } from './views.ts';
+export type { ViewName, ViewSpec } from './views.ts';
+import { viewDirection } from './views.ts';
+import type { ViewName, ViewSpec } from './views.ts';
+export type { Pose, PoseInput, MaterialValues, MaterialInput, Aim, AimOptions } from '../render/puppet.ts';
+export type { Quality, QualityInput, QualityOptions, QualityPreset } from '../render/quality.ts';
+export type { IdImage, IdRenderOptions, IdRenderColors } from '../render/id-render.ts';
+export { countColors } from '../render/id-render.ts';
+export { mountStage } from './stage.ts';
+export type { Stage, StageOptions, StageModelOptions, StageTarget, FrameOptions } from './stage.ts';
+export type { StageModel, Placement, PlacementInput } from '../render/stage.ts';
 export type { Anchor, Anchors, Observations, PoseSample, PoseSampler } from '../render/observation.ts';
 export { createAssembly, solveFrame } from '../render/assembly.ts';
 export type { Assembly, AssemblySpec, AssemblyPiece, AssemblyJoint, AssemblySnapshot, AssemblyAnchor, AssemblyAction, AssemblyMatrix, AssemblyPoint } from '../render/assembly.ts';
@@ -26,7 +41,7 @@ export type { BeltPoint, BeltPulley, BeltDriveSpec, BeltSegment, BeltDrive } fro
 
 export interface MountOptions {
   /** GLB bytes, or the GLB as a base64 string (works from file:// where fetch does not). */
-  glb: ArrayBuffer | Uint8Array | string;
+  glb: GlbInput;
   /** Start playing the first clip. Defaults to true unless the viewer prefers reduced motion. */
   autoplay?: boolean;
   /** Scene background color, or null for transparent. */
@@ -41,76 +56,24 @@ export interface MountOptions {
   outline?: number;
   /** Outline color. Default near-black. */
   outlineColor?: string;
+  /** Renderer quality: `high` (default), `fast` (no MSAA, pixel ratio 1, no shadows) or `{preset?, antialias?, pixelRatio?, shadows?}`. */
+  quality?: QualityInput;
 }
-/** Camera directions. `side` is the model's right (+x); `top` and `bottom` lean a hair off the pole so the orbit up vector stays defined. */
-export type ViewName = 'front' | 'back' | 'left' | 'right' | 'side' | 'top' | 'bottom' | 'perspective';
-export interface ViewSpec { position: [number, number, number]; target?: [number, number, number] }
-
-const directions: Record<ViewName, THREE.Vector3> = {
-  front: new THREE.Vector3(0, 0.12, 1), back: new THREE.Vector3(0, 0.12, -1),
-  left: new THREE.Vector3(-1, 0.12, 0), right: new THREE.Vector3(1, 0.12, 0), side: new THREE.Vector3(1, 0.12, 0),
-  top: new THREE.Vector3(0, 1, 0.0001), bottom: new THREE.Vector3(0, -1, 0.0001), perspective: new THREE.Vector3(1, 0.65, 1.4),
-};
-export const viewNames = Object.keys(directions) as ViewName[];
-/** The camera direction of a named view (a fresh vector); an unknown name throws an Error listing the valid names. */
-export function viewDirection(name: string): THREE.Vector3 {
-  const direction = Object.hasOwn(directions, name) ? directions[name as ViewName] : null;
-  if (!direction) throw new Error(`Unknown view "${name}"; use one of ${viewNames.join(', ')}, or {position, target}`);
-  return direction.clone();
-}
-
-function bytesOf(glb: MountOptions['glb']): ArrayBuffer {
-  if (typeof glb === 'string') return Uint8Array.from(atob(glb), char => char.charCodeAt(0)).buffer as ArrayBuffer;
-  if (glb instanceof Uint8Array) return glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength) as ArrayBuffer;
-  return glb;
-}
-
 /** Mount a rendered puppet inside a container element. The container decides the size. */
 export async function mount(container: HTMLElement, options: MountOptions) {
+  const quality = parseQuality(options.quality, devicePixelRatio);
   const gltf = await new GLTFLoader().parseAsync(bytesOf(options.glb), '');
   const puppet = createPuppet(gltf);
   const scene = new THREE.Scene();
   const background = options.background === undefined ? '#dce7eb' : options.background;
   if (background) scene.background = new THREE.Color(background);
-  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: !background, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.domElement.style.display = 'block'; renderer.domElement.style.width = '100%'; renderer.domElement.style.height = '100%';
-  container.append(renderer.domElement);
+  const renderer = createRenderer(container, !background, quality);
   const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 200);
   const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.enabled = options.orbit ?? true;
   scene.add(gltf.scene); gltf.scene.traverse(object => { object.castShadow = true; object.receiveShadow = true; });
-  // Image-based light from a procedural room: soft fill, believable speculars, no assets to load.
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture; pmrem.dispose();
-  scene.environmentIntensity = 0.55;
-  scene.add(new THREE.HemisphereLight('#ffffff', '#718794', 1.3));
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  const hulls = new Map<string, THREE.Mesh>();
-  if (options.outline) {
-    const thickness = options.outline, ink = new THREE.MeshBasicMaterial({ color: options.outlineColor ?? '#111111', side: THREE.BackSide });
-    for (const name of puppet.parts) {
-      const mesh = puppet.object(name);
-      // Inverted hull: the same geometry pushed out along its normals, drawn back-face only.
-      const source = mesh.geometry.clone(); if (!source.getAttribute('normal')) source.computeVertexNormals();
-      const pos = source.getAttribute('position'), nor = source.getAttribute('normal');
-      for (let i = 0; i < pos.count; i++) pos.setXYZ(i, pos.getX(i) + nor.getX(i) * thickness, pos.getY(i) + nor.getY(i) * thickness, pos.getZ(i) + nor.getZ(i) * thickness);
-      pos.needsUpdate = true;
-      let hull: THREE.Mesh;
-      if (mesh instanceof THREE.SkinnedMesh) { const skinned = new THREE.SkinnedMesh(source, ink); mesh.parent!.add(skinned); skinned.bind(mesh.skeleton, mesh.bindMatrix); hull = skinned; }
-      else { hull = new THREE.Mesh(source, ink); mesh.parent!.add(hull); hull.position.copy(mesh.position); hull.quaternion.copy(mesh.quaternion); hull.scale.copy(mesh.scale); }
-      hull.name = `${name}_outline`; hull.userData.outline = true; hull.castShadow = false; hull.receiveShadow = false; hull.renderOrder = -1;
-      hulls.set(name, hull);
-    }
-    const setVisible = puppet.setVisible.bind(puppet);
-    puppet.setVisible = (name, visible) => { setVisible(name, visible); const hull = hulls.get(name); if (hull) hull.visible = visible; };
-  }
-  const key = new THREE.DirectionalLight('#fff2d8', 3.7); key.position.set(4, 8, 5); key.castShadow = true; key.shadow.mapSize.set(2048, 2048); key.shadow.normalBias = 0.025; scene.add(key);
-  const fill = new THREE.DirectionalLight('#b2e2f0', 1.2); fill.position.set(-5, 3, -3); scene.add(fill);
-  let floor: THREE.Mesh | null = null;
-  if (options.floor ?? true) {
-    floor = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), background ? new THREE.MeshStandardMaterial({ color: background, roughness: 1 }) : new THREE.ShadowMaterial({ opacity: 0.18 }));
-    floor.rotation.x = -Math.PI / 2; floor.position.y = -0.012; floor.receiveShadow = true; scene.add(floor);
-  }
+  addRoomLights(renderer, scene, quality);
+  const hulls = options.outline ? addOutlines(puppet, options.outline, options.outlineColor) : [];
+  const floor = options.floor ?? true ? addFloor(scene, background) : null;
 
   function resize(): void {
     const width = Math.max(1, container.clientWidth), height = Math.max(1, container.clientHeight);
@@ -138,8 +101,16 @@ export async function mount(container: HTMLElement, options: MountOptions) {
     const dt = Math.min((now - last) / 1000, 0.1); last = now;
     puppet.update(dt); controls.update();
     for (const listener of frameListeners) listener(viewer);
+    // Every setter call since the last frame is applied here, once.
+    puppet.sync();
     renderer.render(scene, camera);
   });
+  const idRender = (id: IdRenderOptions): IdImage => {
+    if (id.models !== undefined) throw new Error('idRender models apply to a stage (MeshViewer.mountStage); a single-model viewer renders its one model');
+    const { models: _models, ...rest } = id;
+    puppet.sync();
+    return captureId(renderer, scene, camera, collectIdTargets([{ model: null, root: gltf.scene }]), rest, [...hulls, ...floor ? [floor] : []]);
+  };
 
   const extras: ViewerExtras = {
     renderer, scene, camera, controls, animations: gltf.animations,
@@ -152,12 +123,17 @@ export async function mount(container: HTMLElement, options: MountOptions) {
       controls.target.copy(center); camera.position.copy(center).add(direction.multiplyScalar(distance)); controls.update();
     },
     setBackground(color: string | null): void { scene.background = color ? new THREE.Color(color) : null; if (floor && floor.material instanceof THREE.MeshStandardMaterial && color) floor.material.color.set(color); },
-    /** Render one frame now and return it as a PNG data URL. */
-    screenshot(): string { renderer.render(scene, camera); return renderer.domElement.toDataURL(); },
+    /** Render one frame now and return it as a PNG data URL; `{id}` returns the ID render instead. */
+    screenshot(options?: { id?: IdRenderOptions }): string {
+      if (options?.id) return idImageURL(idRender(options.id));
+      puppet.sync(); renderer.render(scene, camera); return renderer.domElement.toDataURL();
+    },
+    idRender,
     /** Run a callback before every rendered frame. Returns a function that removes it. */
     onFrame(listener: (viewer: Viewer) => void): () => void { frameListeners.add(listener); return () => frameListeners.delete(listener); },
     resize,
-    dispose(): void { renderer.setAnimationLoop(null); observer?.disconnect(); controls.dispose(); scene.environment?.dispose(); renderer.dispose(); renderer.domElement.remove(); },
+    /** Stop rendering, release the WebGL context and remove the canvas. */
+    dispose(): void { renderer.setAnimationLoop(null); observer?.disconnect(); controls.dispose(); scene.environment?.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove(); },
   };
   const viewer: Viewer = Object.assign(Object.create(puppet) as Puppet, extras);
   return viewer;
@@ -167,7 +143,9 @@ export interface ViewerExtras {
   view(spec?: ViewName | ViewSpec, padding?: number): void;
   frame(padding?: number): void;
   setBackground(color: string | null): void;
-  screenshot(): string;
+  screenshot(options?: { id?: IdRenderOptions }): string;
+  /** Render once with every surface in an exact unlit color, and return the pixels. Normal materials are restored. */
+  idRender(options: IdRenderOptions): IdImage;
   onFrame(listener: (viewer: Viewer) => void): () => void;
   resize(): void;
   dispose(): void;
