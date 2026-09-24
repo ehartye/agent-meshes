@@ -6,8 +6,9 @@ import { join } from 'node:path';
 import { ARKIT_FACE_CONTRACT, ARKIT_FACE_REQUIRED_BONES, ARKIT_FACE_REQUIRED_MORPHS, contractExpectations } from '../src/arkit-face.ts';
 import {
   acquireProjectLock, buildUnrealReport, checkUnrealReport, findUnreal, parseNameList, parseUnrealLog,
-  scratchProject, unrealCommandLine, type ParsedUnrealLog, type UnrealRawReport,
+  scratchProject, unrealCommandLine, unrealImportName, type ParsedUnrealLog, type UnrealRawReport,
 } from '../src/unreal.ts';
+import { auditMorphNames } from '../src/gltf-morphs.ts';
 import { verifyGLB } from '../src/export.ts';
 import { arkitFaceFixtureGLB } from './fixtures/arkit-face-glb.ts';
 
@@ -91,6 +92,16 @@ describe('argument helpers', () => {
     expect(args).toContain('-script=C:/x/5e/try.py');
     expect(args).toContain('-abslog=C:/Users/a b/logs/run.log');
     for (const flag of ['-unattended', '-nullrhi', '-nosplash', '-nopause', '-nosound', '-stdout']) expect(args).toContain(flag);
+  });
+
+  it('does not start an UnrealTraceServer (TraceAuxiliary.cpp honors -notraceserver)', () => {
+    expect(unrealCommandLine({ project: 'p', script: 's', log: 'l' })).toContain('-notraceserver');
+  });
+
+  it('imports under a sanitized name, because UE names meshes and fallback morphs after the file', () => {
+    expect(unrealImportName('C:/a b/good head copy.glb')).toBe('good_head_copy');
+    expect(unrealImportName('/x/1st-head.v2.glb')).toBe('_1st_head_v2');
+    expect(unrealImportName('/x/.glb')).toBe('Model');
   });
 });
 
@@ -223,5 +234,67 @@ describe('checkUnrealReport', () => {
   it('checks arbitrary expectations without a contract', () => {
     expect(checkUnrealReport(build(RAW), { morphs: ['jawOpen', 'smile'], bones: ['head', 'spine'], requireSkeletalMesh: true }))
       .toEqual(['missing morph target "smile"', 'missing bone "spine"']);
+  });
+});
+
+describe('checkUnrealReport: morph names Unreal threw away', () => {
+  const clean: ParsedUnrealLog = { importErrors: [], importWarnings: [], otherErrors: [], interchangeCompleted: true, windowFound: true };
+  const contract = { ...contractExpectations('arkit-face/1'), requireSkeletalMesh: true };
+  const fallback = (count: number, meshes = 1) => Array.from({ length: meshes }, (_, m) => Array.from({ length: m ? 1 : count }, (_, i) => `good_mesh_${m}_${i}_MorphTarget`)).flat();
+  const discarded = (names: string[]) => { const raw = structuredClone(RAW); raw.skeletalMeshes[0].morphTargets = names; return raw; };
+  const build = (raw: UnrealRawReport, preflight?: Parameters<typeof buildUnrealReport>[2]['preflight'], log = clean, exitCode = 0) =>
+    buildUnrealReport(raw, log, { input: 'good.glb', editor: 'e', version: '5.7.3', exitCode, logFile: 'l', elapsedMs: 1, ...(preflight ? { preflight } : {}) });
+
+  it('reports one clear failure naming the cause, instead of a missing line per morph, for names shared across meshes', () => {
+    const morphNames = auditMorphNames(arkitFaceFixtureGLB({ layout: 'meshes' }));
+    const report = build(discarded(fallback(21, 2)), { morphNames });
+    const failures = checkUnrealReport(report, contract);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/^Unreal renamed every morph target to <file>_mesh_<m>_<i>_MorphTarget \(for example "good_mesh_0_0_MorphTarget"\)/);
+    expect(failures[0]).toContain('"jawOpen" (mesh 0 "Face", mesh 1 "Teeth")');
+    expect(failures[0]).toMatch(/GLTFAsset\.cpp/);
+    expect(failures[0]).toMatch(/one glTF mesh as separate primitives/);
+    expect(failures.join(' | ')).not.toMatch(/missing morph target/);
+  });
+
+  it('still lists bones, and morphs the GLB never had, next to the rename failure', () => {
+    const morphNames = auditMorphNames(arkitFaceFixtureGLB({ layout: 'meshes', morphs: contract.morphs.filter(n => n !== 'mouthFunnel' && n !== 'jawOpen') }));
+    const shared = auditMorphNames(arkitFaceFixtureGLB({ layout: 'meshes', morphs: contract.morphs.filter(n => n !== 'mouthFunnel') }));
+    expect(morphNames.issues).toEqual([]);
+    const raw = discarded(fallback(19, 2)); raw.skeletalMeshes[0].bones = ['head', 'eye_L'];
+    const failures = checkUnrealReport(build(raw, { morphNames: shared }), contract);
+    expect(failures).toHaveLength(3);
+    expect(failures[0]).toMatch(/^Unreal renamed every morph target/);
+    expect(failures.slice(1)).toEqual(['missing morph target "mouthFunnel" (the GLB has no morph target with this name)', 'missing bone "eye_R"']);
+  });
+
+  it('explains the possible causes when the GLB could not be audited', () => {
+    const failures = checkUnrealReport(build(discarded(fallback(21))), contract);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/^Unreal renamed every morph target/);
+    expect(failures[0]).toMatch(/repeats across glTF meshes/);
+    expect(failures[0]).toMatch(/one glTF mesh as separate primitives/);
+  });
+
+  it('fails a rename even without expectations, since every name was lost', () => {
+    const failures = checkUnrealReport(build(discarded(fallback(3))), { morphs: [], bones: [], requireSkeletalMesh: false });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/^Unreal renamed every morph target/);
+  });
+
+  it('keeps a shared-name finding as a warning when Unreal kept the names after all', () => {
+    const morphNames = auditMorphNames(arkitFaceFixtureGLB({ layout: 'meshes' }));
+    const report = build(RAW, { morphNames });
+    expect(checkUnrealReport(report, contract)).toEqual([]);
+    expect(report.warnings).toEqual([expect.stringContaining('"jawOpen" (mesh 0 "Face", mesh 1 "Teeth")')]);
+  });
+
+  it('reports only the import failure when Unreal imported nothing', () => {
+    const nothing: UnrealRawReport = { ok: true, destination: '/Game/Verify/bad', importReturned: false, assets: [], skeletalMeshes: [], staticMeshes: [] };
+    const log = { ...clean, importErrors: ["LogInterchangeEngine: Error: [ : '', Unknown] Invalid GLTF header!", 'LogInterchangeEngine: Error: There was no data to import in the provided source data.'] };
+    const failures = checkUnrealReport(build(nothing, { error: 'not a GLB or glTF file (bad magic)' }, log, 1), contract);
+    expect(failures).toEqual([
+      "Unreal imported nothing (exit code 1): LogInterchangeEngine: Error: [ : '', Unknown] Invalid GLTF header! | LogInterchangeEngine: Error: There was no data to import in the provided source data.",
+    ]);
   });
 });

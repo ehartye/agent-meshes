@@ -78,6 +78,19 @@ This proves the **import only**. Nothing is rendered or animated in Unreal. When
 say "imports into UE 5.7 via Interchange with names intact", not "works in Unreal". A missing
 morph often means a dead shape: Unreal drops morphs that move no triangle vertex.
 
+**Never put one morph name on two glTF meshes.** If `jawOpen` is on a Face mesh and on a separate
+Teeth mesh, UE 5.7's glTF parser (`GLTFAsset.cpp`) throws away *every* morph name in the file
+and renames them all `<file>_mesh_<m>_<i>_MorphTarget`. Three.js is fine with this, but Unreal is
+not, and no Interchange option (`bMergeMorphTargetsWithSameName` included) prevents it. Build all
+morph-bearing geometry (face, lids, lips, teeth, tongue, mouth cavity) as **one glTF mesh with one
+primitive per material**. In Blender, join those parts into one object with several materials,
+and give every part every target (zero deltas where a part does not move). Morph-free parts such
+as eyeballs can stay separate meshes. `verify-unreal` checks the GLB first, with no engine needed,
+and reports this as one failure naming the shared morphs and meshes. A name repeated inside one
+mesh, or an `extras.targetNames` count that differs from the target count, loses that mesh's names
+the same way. The check lives in `src/gltf-morphs.ts` (`auditMorphNames`), which other verifiers
+reuse.
+
 ## Embedding in a page
 
 `mesh viewer lib/mesh-viewer.js` writes the standalone runtime: one script, no build step, no

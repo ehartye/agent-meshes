@@ -5,6 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { auditMorphNames, SHARED_MORPH_FIX, UE_FALLBACK_MORPH_NAME, type MorphNameAudit } from './gltf-morphs.ts';
 
 /**
  * Unreal destination check: import a GLB into a scratch UE project headlessly through
@@ -101,7 +102,17 @@ export function parseNameList(value: string): string[] {
 const slashes = (path: string) => path.replace(/\\/g, '/');
 
 export function unrealCommandLine(paths: { project: string; script: string; log: string }): string[] {
-  return [slashes(paths.project), '-run=pythonscript', `-script=${slashes(paths.script)}`, '-unattended', '-nullrhi', '-nosplash', '-nopause', '-nosound', '-stdout', '-FullStdOutLogOutput', `-abslog=${slashes(paths.log)}`];
+  return [slashes(paths.project), '-run=pythonscript', `-script=${slashes(paths.script)}`, '-unattended', '-nullrhi', '-nosplash', '-nopause', '-nosound', '-notraceserver', '-stdout', '-FullStdOutLogOutput', `-abslog=${slashes(paths.log)}`];
+}
+
+/**
+ * The asset name a GLB is imported under. UE's glTF parser names meshes (and its fallback
+ * morph names) after the source file, and Interchange renames anything with spaces or
+ * punctuation again, logging "Duplicate morph target" warnings; so the GLB is imported
+ * from a copy with this name.
+ */
+export function unrealImportName(path: string): string {
+  return basename(path).replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1') || 'Model';
 }
 
 export function defaultUnrealCache(env: NodeJS.ProcessEnv = process.env): string {
@@ -182,8 +193,13 @@ export interface UnrealRawReport {
   ok: boolean; engineVersion?: string; destination: string; importReturned: boolean; error?: string;
   assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: { path: string; lods: number; vertices: number[] }[];
 }
+/** What the GLB itself says before Unreal sees it: its morph name audit, or why it could not be read. */
+export interface UnrealPreflight { morphNames?: MorphNameAudit; error?: string }
 export interface UnrealReport {
   tool: 'agent-meshes verify-unreal'; ok: boolean; failures: string[]; input: string;
+  /** Findings that did not fail this run, such as a pre-flight issue Unreal happened to tolerate. */
+  warnings: string[];
+  preflight: UnrealPreflight;
   unreal: { editor: string; version: string; engineVersion?: string; exitCode: number; timedOutAfterMs?: number };
   importer: 'Interchange'; verified: string; destination: string; importReturned: boolean; scriptError?: string;
   summary: { skeletalMeshes: number; skeletons: number; materials: number; textures: number; animations: number; staticMeshes: number };
@@ -196,12 +212,19 @@ export interface UnrealReport {
 
 const union = (lists: string[][]) => [...new Set(lists.flat())];
 
-export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, run: { input: string; editor: string; version: string; exitCode: number; logFile: string; elapsedMs: number; /** Set when the run was stopped at this timeout. */ timeoutMs?: number }): UnrealReport {
+export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, run: { input: string; editor: string; version: string; exitCode: number; logFile: string; elapsedMs: number; /** Set when the run was stopped at this timeout. */ timeoutMs?: number; preflight?: UnrealPreflight }): UnrealReport {
   const assetsByClass: Record<string, string[]> = {};
   for (const asset of raw.assets) (assetsByClass[asset.class] ??= []).push(asset.path);
+  const morphTargets = union(raw.skeletalMeshes.map(m => m.morphTargets));
+  const preflight = run.preflight ?? {};
+  const renamed = morphTargets.some(n => UE_FALLBACK_MORPH_NAME.test(n));
+  const warnings = [
+    ...(preflight.error ? [`pre-flight could not read the file: ${preflight.error}`] : []),
+    ...(renamed ? [] : (preflight.morphNames?.issues ?? []).map(issue => `pre-flight: ${issue.message}`)),
+  ];
   const count = (test: (cls: string) => boolean) => Object.entries(assetsByClass).filter(([cls]) => test(cls)).reduce((n, [, paths]) => n + paths.length, 0);
   return {
-    tool: 'agent-meshes verify-unreal', ok: true, failures: [], input: run.input,
+    tool: 'agent-meshes verify-unreal', ok: true, failures: [], input: run.input, warnings, preflight,
     unreal: { editor: run.editor, version: run.version, ...(raw.engineVersion ? { engineVersion: raw.engineVersion } : {}), exitCode: run.exitCode, ...(run.timeoutMs ? { timedOutAfterMs: run.timeoutMs } : {}) },
     importer: 'Interchange',
     verified: 'import only: Interchange created these assets headlessly (-nullrhi); nothing was rendered, animated or played at runtime',
@@ -212,7 +235,7 @@ export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, ru
       animations: count(c => /^Anim/.test(c)), staticMeshes: count(c => c === 'StaticMesh'),
     },
     assetsByClass, skeletalMeshes: raw.skeletalMeshes, staticMeshes: raw.staticMeshes,
-    morphTargets: union(raw.skeletalMeshes.map(m => m.morphTargets)), bones: union(raw.skeletalMeshes.map(m => m.bones)),
+    morphTargets, bones: union(raw.skeletalMeshes.map(m => m.bones)),
     log: { file: run.logFile, ...log }, elapsedMs: run.elapsedMs,
   };
 }
@@ -225,18 +248,38 @@ export function checkUnrealReport(report: UnrealReport, expect: UnrealExpectatio
   if (report.unreal.timedOutAfterMs) return [`Unreal did not finish within ${Math.round(report.unreal.timedOutAfterMs / 1000)} s and was stopped; see ${report.log.file}`];
   if (!report.log.windowFound) return ['the import script never ran (no AGENT_MESHES_IMPORT_BEGIN/END in the log)'];
   if (report.scriptError) return [`import script failed: ${report.scriptError.trim()}`];
+  const errors = report.log.importErrors;
+  if (!Object.keys(report.assetsByClass).length) {
+    // Nothing to compare names against: listing every expected name as missing would only bury the cause.
+    const code = report.unreal.exitCode ? ` (exit code ${report.unreal.exitCode})` : '';
+    return [`Unreal imported nothing${code}: ${errors.length ? errors.join(' | ') : `no import error was logged; see ${report.log.file}`}`];
+  }
   if (report.unreal.exitCode !== 0) failures.push(`Unreal exited with code ${report.unreal.exitCode}`);
   if (expect.requireSkeletalMesh && !report.skeletalMeshes.length) failures.push(`no SkeletalMesh was created (assets: ${Object.keys(report.assetsByClass).join(', ') || 'none'})`);
-  const missing = (kind: string, wanted: string[], have: string[]) => {
+  const audit = report.preflight?.morphNames;
+  const glbNames = audit ? new Set(audit.names) : null;
+  const renamed = report.morphTargets.filter(n => UE_FALLBACK_MORPH_NAME.test(n));
+  if (renamed.length) {
+    const how = renamed.length === report.morphTargets.length ? 'every morph target' : `${renamed.length} of ${report.morphTargets.length} morph targets`;
+    const cause = audit?.issues.length ? `Cause: ${audit.issues.map(i => i.message).join(' ')}`
+      : audit ? `The pre-flight audit found no name problem UE's glTF parser (GLTFAsset.cpp) is known to reject; see ${report.log.file}.`
+        : `The GLB could not be audited. UE's glTF parser (GLTFAsset.cpp) does this when a morph name repeats across glTF meshes (then it drops every name in the file), repeats within a mesh, or a mesh's extras.targetNames count differs from its targets; if parts share morph names, ${SHARED_MORPH_FIX}.`;
+    failures.push(`Unreal renamed ${how} to <file>_mesh_<m>_<i>_MorphTarget (for example "${renamed[0]}"), so those glTF morph names did not survive. ${cause}`);
+  }
+  const missing = (kind: string, wanted: string[], have: string[], inFile: Set<string> | null) => {
     for (const name of wanted) {
       if (have.includes(name)) continue;
+      // Already explained by the rename failure above.
+      if (kind === 'morph target' && renamed.length && (!inFile || inFile.has(name))) continue;
       const near = have.find(h => h.toLowerCase() === name.toLowerCase());
-      failures.push(`missing ${kind} "${name}"${near ? ` (Unreal has "${near}": names must survive verbatim)` : ''}`);
+      const why = near ? ` (Unreal has "${near}": names must survive verbatim)`
+        : !inFile ? '' : inFile.has(name) ? ' (the GLB has it; Unreal drops a morph that moves no triangle vertex)' : ` (the GLB has no ${kind} with this name)`;
+      failures.push(`missing ${kind} "${name}"${why}`);
     }
   };
-  missing('morph target', expect.morphs, report.morphTargets);
-  missing('bone', expect.bones, report.bones);
-  if (report.log.importErrors.length) failures.push(`${report.log.importErrors.length} import error(s): ${report.log.importErrors.join(' | ')}`);
+  missing('morph target', expect.morphs, report.morphTargets, glbNames);
+  missing('bone', expect.bones, report.bones, null);
+  if (errors.length) failures.push(`${report.log.importErrors.length} import error(s): ${report.log.importErrors.join(' | ')}`);
   return failures;
 }
 
@@ -260,8 +303,14 @@ async function pruneLogs(dir: string, keep: number) {
 export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): Promise<UnrealReport> {
   const input = resolve(glb);
   await stat(input).catch(() => { throw Object.assign(new Error(`GLB not found: ${input}`), { code: 'CLI_ARGUMENT_ERROR' }); });
+  const bytes = new Uint8Array(await readFile(input));
+  let preflight: UnrealPreflight;
+  try { preflight = { morphNames: auditMorphNames(bytes) }; } catch (error) { preflight = { error: (error as Error).message }; }
   const unreal = findUnreal();
-  if (!unreal) throw Object.assign(new Error(`Unreal Engine was not found. Install UE 5.x or set AGENT_MESHES_UNREAL to the engine directory (for example C:/Program Files/Epic Games/UE_5.7). Searched: ${defaultUnrealRoots().join(', ')}`), { code: 'UNREAL_NOT_FOUND' });
+  if (!unreal) {
+    const found = preflight.morphNames?.issues.map(i => i.message) ?? [];
+    throw Object.assign(new Error(`Unreal Engine was not found. Install UE 5.x or set AGENT_MESHES_UNREAL to the engine directory (for example C:/Program Files/Epic Games/UE_5.7). Searched: ${defaultUnrealRoots().join(', ')}${found.length ? `. The pre-flight check (no engine needed) already found: ${found.join(' ')}` : ''}`), { code: 'UNREAL_NOT_FOUND', preflight });
+  }
   const say = options.quiet ? () => {} : (options.progress ?? ((line: string) => { process.stderr.write(`verify-unreal: ${line}\n`); }));
   const cache = options.cacheDir ?? join(defaultUnrealCache(), unreal.version);
   await mkdir(cache, { recursive: true });
@@ -276,9 +325,13 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
     const logDir = join(cache, 'Logs'); await mkdir(logDir, { recursive: true }); await pruneLogs(logDir, 20);
     const logFile = options.logFile ? resolve(options.logFile) : join(logDir, `verify-${runId}.log`);
     await mkdir(dirname(logFile), { recursive: true }); await mkdir(work, { recursive: true });
-    const assetName = basename(input).replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1') || 'Model';
+    const assetName = unrealImportName(input);
+    // A self-contained .glb is imported from a copy named like the asset; a .gltf keeps its
+    // relative buffer and image URIs, so it is imported in place.
+    const source = /\.glb$/i.test(input) ? join(work, `${assetName}.glb`) : input;
+    if (source !== input) await writeFile(source, bytes);
     const request = join(work, 'request.json'), reportPath = join(work, 'report.json');
-    await writeFile(request, JSON.stringify({ glb: slashes(input), destination: `/Game/Verify/${assetName}`, report: slashes(reportPath) }));
+    await writeFile(request, JSON.stringify({ glb: slashes(source), destination: `/Game/Verify/${assetName}`, report: slashes(reportPath) }));
     const script = fileURLToPath(new URL('../scripts/unreal-verify-import.py', import.meta.url));
     const args = unrealCommandLine({ project, script, log: logFile });
     say(`Unreal ${unreal.version} at ${unreal.editor}`);
@@ -307,7 +360,8 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
       raw = { ok: false, destination: `/Game/Verify/${assetName}`, importReturned: false, assets: [], skeletalMeshes: [], staticMeshes: [],
         error: `Unreal wrote no report (exit code ${exitCode}); see ${logFile}` };
     }
-    const report = buildUnrealReport(raw, parseUnrealLog(logText), { input, editor: unreal.editor, version: unreal.version, exitCode, logFile, elapsedMs, ...(timedOut ? { timeoutMs } : {}) });
+    // Unreal logs the sanitized copy's temp path; show the user's file instead.
+    const report = buildUnrealReport(raw, parseUnrealLog(logText.split(slashes(source)).join(slashes(input))), { input, editor: unreal.editor, version: unreal.version, exitCode, logFile, elapsedMs, preflight, ...(timedOut ? { timeoutMs } : {}) });
     report.failures = checkUnrealReport(report, options);
     report.ok = report.failures.length === 0;
     report.expectations = { ...(options.contract ? { contract: options.contract } : {}), morphs: options.morphs, bones: options.bones };

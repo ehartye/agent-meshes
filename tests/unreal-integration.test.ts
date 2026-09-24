@@ -33,5 +33,35 @@ maybe('fails, listing what Unreal is missing, when the GLB breaks the contract',
   const morphs = contract.morphs.filter(n => n !== 'jawOpen');
   const report = await verifyUnreal(await fixture('broken.glb', { morphs, bones: ['head', 'eye_L'] }), contract);
   expect(report.ok).toBe(false);
-  expect(report.failures).toEqual(['missing morph target "jawOpen"', 'missing bone "eye_R"']);
+  expect(report.failures).toEqual(['missing morph target "jawOpen" (the GLB has no morph target with this name)', 'missing bone "eye_R"']);
+}, 40 * 60000);
+
+maybe('keeps every name verbatim for face and teeth as two primitives of one glTF mesh (the portable layout)', async () => {
+  const report = await verifyUnreal(await fixture('multi primitive head.glb', { layout: 'primitives' }), contract);
+  expect(report.failures).toEqual([]);
+  expect(report.preflight.morphNames?.issues).toEqual([]);
+  expect(report.morphTargets).toEqual(expect.arrayContaining(contract.morphs));
+  expect(report.morphTargets.some(n => /_MorphTarget$/.test(n))).toBe(false);
+  expect(report.skeletalMeshes[0].materialSlots).toBe(2);
+  expect(report.log.importWarnings.filter(w => /Duplicate morph target/.test(w))).toEqual([]);
+}, 40 * 60000);
+
+maybe('gives one clear failure, not a missing line per morph, when a morph name repeats across glTF meshes', async () => {
+  const report = await verifyUnreal(await fixture('good head copy.glb', { layout: 'meshes' }), contract);
+  expect(report.ok).toBe(false);
+  expect(report.failures).toHaveLength(1);
+  expect(report.failures[0]).toMatch(/^Unreal renamed every morph target to <file>_mesh_<m>_<i>_MorphTarget \(for example "good_head_copy_mesh_0_0_MorphTarget"\)/);
+  expect(report.failures[0]).toContain('"jawOpen" (mesh 0 "Face", mesh 1 "Teeth")');
+  expect(report.failures[0]).toMatch(/one glTF mesh as separate primitives/);
+  // Imported from a sanitized copy, so Interchange does not rename the names a second time.
+  expect(report.log.importWarnings.filter(w => /Duplicate morph target/.test(w))).toEqual([]);
+}, 40 * 60000);
+
+maybe('reports only the import failure for a file Unreal cannot read', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'verify unreal ')); dirs.push(dir);
+  const file = join(dir, 'corrupt.glb'); await writeFile(file, 'this is not a GLB at all');
+  const report = await verifyUnreal(file, contract);
+  expect(report.failures).toHaveLength(1);
+  expect(report.failures[0]).toMatch(/^Unreal imported nothing/);
+  expect(report.preflight.error).toMatch(/not a readable GLB/);
 }, 40 * 60000);
