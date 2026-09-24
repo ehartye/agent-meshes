@@ -102,6 +102,28 @@ export async function main(args = process.argv): Promise<void> {
     const result = await verifyGLB(await readFile(file)); process.stdout.write(`${JSON.stringify(result)}\n`);
     if (!result.ok) process.exitCode = 1;
   });
+  program.command('verify-unreal <file>').description('Import a GLB into a scratch Unreal project headlessly (Interchange) and report what Unreal created; import only, no runtime render')
+    .option('--contract <name>', 'Require a rig contract\'s names verbatim, for example arkit-face/1')
+    .option('--expect-morphs <list>', 'Comma-separated morph target names that must survive verbatim')
+    .option('--expect-bones <list>', 'Comma-separated bone names that must exist')
+    .option('--timeout <seconds>', 'Stop Unreal after this long (first runs compile shaders)', '1800')
+    .option('--log <file>', 'Write the Unreal log here instead of the cache Logs directory')
+    .option('--json', 'Print only one compact JSON line: no progress or pretty-printing').action(async (file, options) => {
+    const unreal = await import('./unreal.ts');
+    const { contractExpectations } = await import('./arkit-face.ts');
+    const base = options.contract ? contractExpectations(String(options.contract)) : { morphs: [], bones: [] };
+    const timeout = Number(options.timeout);
+    if (!Number.isFinite(timeout) || timeout <= 0) throw Object.assign(new Error('--timeout must be a positive number of seconds'), { code: 'CLI_ARGUMENT_ERROR' });
+    const morphs = [...new Set([...base.morphs, ...(options.expectMorphs ? unreal.parseNameList(String(options.expectMorphs)) : [])])];
+    const bones = [...new Set([...base.bones, ...(options.expectBones ? unreal.parseNameList(String(options.expectBones)) : [])])];
+    const report = await unreal.verifyUnreal(resolve(file), {
+      morphs, bones, requireSkeletalMesh: Boolean(options.contract) || morphs.length > 0 || bones.length > 0,
+      ...(options.contract ? { contract: String(options.contract) } : {}), timeoutMs: timeout * 1000,
+      ...(options.log ? { logFile: resolve(options.log) } : {}), quiet: Boolean(options.json),
+    });
+    process.stdout.write(`${options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2)}\n`);
+    if (!report.ok) process.exitCode = 1;
+  });
   program.command('refine <input> <output>').description('Optional Blender stage: subdivide, smooth and displace a GLB, keeping bones and clips')
     .option('--subdivide <levels>', 'Subdivision surface levels', '1')
     .option('--noise <strength>', 'Displacement strength from a clouds texture, in meters', '0')

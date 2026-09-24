@@ -1,7 +1,7 @@
 ---
 name: mesh-build
-description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, and the optional Blender refine stage.
-when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, or smooth and feather a model in Blender.
+description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, the optional Blender refine stage, and the headless Unreal import check.
+when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, smooth and feather a model in Blender, or check that a GLB imports into Unreal with its morphs and bones intact.
 ---
 
 # Mesh build and delivery
@@ -56,6 +56,27 @@ The refined GLB is verified again. A build that asks for refinement fails when B
 missing instead of shipping a coarser model. Renders still come from the unrefined project.
 Subdivision multiplies vertex count by about four per level, so keep shell resolution modest
 (around 44) on a model you will refine, and check the GLB size afterward.
+
+## Unreal import check
+
+```text
+mesh verify-unreal head.glb --contract arkit-face/1
+mesh verify-unreal prop.glb --expect-morphs open,close --expect-bones lid --json
+```
+
+Imports the GLB headlessly into a cached scratch UE project through Interchange and prints a JSON
+report: the assets by class, and per SkeletalMesh its morph target names, bone names, LOD and
+vertex counts, plus the import errors and warnings from the Unreal log (whose path is in the
+report). `--contract arkit-face/1` requires a SkeletalMesh, the 21 ARKit morph names verbatim,
+the `head`/`eye_L`/`eye_R` bones and zero import errors. It exits 1 and lists `failures` otherwise.
+Unreal comes from `AGENT_MESHES_UNREAL` (the engine directory), the Epic launcher manifest or the
+usual install roots. Without one the command fails with `UNREAL_NOT_FOUND`: say so rather than
+claiming Unreal support. Later runs take seconds. A first run on a new engine can compile
+shaders for minutes, so the default `--timeout` is 1800 s.
+
+This proves the **import only**. Nothing is rendered or animated in Unreal. When you report it,
+say "imports into UE 5.7 via Interchange with names intact", not "works in Unreal". A missing
+morph often means a dead shape: Unreal drops morphs that move no triangle vertex.
 
 ## Embedding in a page
 
