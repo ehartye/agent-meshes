@@ -423,17 +423,29 @@ class SurfaceFitTests(unittest.TestCase):
         spread = [math.dist(stairs[i], eye) for i in rim]
         self.assertGreater(max(spread) - min(spread), .2 * radius, 'cut_faces leaves a stair-stepped rim')
 
-        cut = cut_hole(head['vertices'], head['faces'], eye, radius)
-        distances = [math.dist(cut['vertices'][i], eye) for i in cut['boundary']]
-        self.assertGreater(len(distances), 12)
-        for d in distances: self.assertAlmostEqual(d, radius, delta=1e-6)
-        self.assertTrue(all(math.dist(v, eye) >= radius - 1e-6 for v in cut['vertices']), 'no skin is left inside the hole')
-        kept = [head['vertices'][cut['source'][i]] for i in range(len(cut['vertices']))]
-        self.assertEqual(folded_faces(kept, cut['vertices'], cut['faces']), [])
+        for blank, eye, radius in ((head, eye, radius), (ellipsoid_geometry((0, 0, .12), (.11, .085, .10), rings=56, segments=72), (.045, -.052, .182), .026)):
+            cut = cut_hole(blank['vertices'], blank['faces'], eye, radius)
+            # Every vertex on the hole's rim (edges used by one face near the eye) lies on the circle.
+            count = {}
+            for face in cut['faces']:
+                for a, b in zip(face, face[1:] + face[:1]): count[(min(a, b), max(a, b))] = count.get((min(a, b), max(a, b)), 0) + 1
+            rim = {i for (a, b), n in count.items() if n == 1 for i in (a, b) if math.dist(cut['vertices'][i], eye) < 2 * radius}
+            self.assertGreater(len(rim), 12)
+            self.assertEqual(rim, set(cut['boundary']) & rim)
+            for i in rim: self.assertAlmostEqual(math.dist(cut['vertices'][i], eye), radius, delta=1e-7)
+            self.assertTrue(all(math.dist(v, eye) >= radius - 1e-7 for v in cut['vertices']), 'no skin is left inside the hole')
+            # Clipping keeps each face's orientation: nothing folds.
+            for face, origin in zip(cut['faces'], cut['origin']):
+                before = normals(blank['vertices'], [blank['faces'][origin]])[0]
+                after = normals(cut['vertices'], [face])[0]
+                self.assertGreater(sum(a * b for a, b in zip(before, after)), 0)
+            closed = {k for k, n in count.items() if n == 2}
+            self.assertTrue(all(n <= 2 for n in count.values()))
+            self.assertTrue(closed)
         ellipse = cut_hole(head['vertices'], head['faces'], eye, (.02, .03, .015))
         for i in ellipse['boundary']:
             v = ellipse['vertices'][i]
-            self.assertAlmostEqual(sum(((v[k] - eye[k]) / r) ** 2 for k, r in enumerate((.02, .03, .015))), 1, delta=1e-5)
+            self.assertAlmostEqual(sum(((v[k] - eye[k]) / r) ** 2 for k, r in enumerate((.02, .03, .015))), 1, delta=1e-6)
 
 
 class BrowTests(unittest.TestCase):

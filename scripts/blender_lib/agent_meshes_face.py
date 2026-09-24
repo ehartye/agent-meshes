@@ -911,13 +911,14 @@ def front_surface(vertices, faces):
 def cut_hole(vertices, faces, center, radius):
     """Cut a smooth round (or elliptical) hole, for an eye or a mouth, into a skin mesh.
 
-    Removes every face with a vertex inside the ellipsoid around `center` (`radius`
-    is one distance or (rx, ry, rz)), then slides each rim vertex along its removed
-    edge onto the ellipsoid, so the rim lies exactly on it instead of in the stair
-    steps `cut_faces` leaves. The vertices stay on the original surface (they move
-    along its edges), and moves that would fold a face are backed off. Returns
-    {'vertices', 'faces', 'mapping' (old -> new or None), 'source' (new -> old),
-    'boundary' (new indices of the rim vertices)}.
+    Every face the sphere around `center` (or the ellipsoid, when `radius` is
+    (rx, ry, rz)) crosses is clipped exactly at it: the outside part is kept, with
+    new vertices where its edges cross the sphere, so the rim lies on the circle
+    instead of in the stair steps `cut_faces` leaves, stays on the original surface,
+    and no vertex moves (nothing can fold). Faces wholly inside are removed. Returns
+    {'vertices', 'faces', 'mapping' (old index -> new or None), 'source' (new index
+    -> old, or None for a rim vertex), 'origin' (the source face of each face) and
+    'boundary' (the rim vertices)}.
     """
     center = _vector(center, 3, 'Hole center')
     radii = (radius,) * 3 if isinstance(radius, Real) and not isinstance(radius, bool) else radius
@@ -925,41 +926,44 @@ def cut_hole(vertices, faces, center, radius):
     if min(radii) <= 0: raise ValueError('Hole radius must be positive')
     vertices = [_vector(v, 3, 'Vertex') for v in vertices]
     level = lambda p: math.sqrt(sum(((p[k] - center[k]) / radii[k]) ** 2 for k in range(3))) - 1
-    inside = [level(v) < 0 for v in vertices]
-    kept, removed = [], []
-    for face in faces:
-        (removed if any(inside[i] for i in face) else kept).append(tuple(face))
-    moves = {}
-    for face in removed:
-        for i in face:
-            if inside[i]: continue
-            for j in face:
-                if not inside[j]: continue
-                a, b = vertices[i], vertices[j]
-                low, high = 0.0, 1.0
-                for _ in range(60):
-                    mid = (low + high) / 2
-                    if level(_add(a, _mul(_sub(b, a), mid))) >= 0: low = mid
-                    else: high = mid
-                point = _add(a, _mul(_sub(b, a), low))
-                if i not in moves or math.dist(point, a) < math.dist(moves[i], a): moves[i] = point
-    used = sorted({i for face in kept for i in face})
-    mapping = [None] * len(vertices)
-    for new, old in enumerate(used): mapping[old] = new
-    new_faces = [tuple(mapping[i] for i in face) for face in kept]
-    rest = [vertices[i] for i in used]
-    share = {mapping[i]: 1.0 for i in moves if mapping[i] is not None}
-    target = lambda: [(_add(rest[k], _mul(_sub(moves[used[k]], rest[k]), share[k])) if k in share else rest[k]) for k in range(len(rest))]
-    moved = target()
-    for _ in range(12):
-        folded = folded_faces(rest, moved, new_faces)
-        if not folded: break
-        for index in folded:
-            for k in new_faces[index]:
-                if k in share: share[k] *= .5
-        moved = target()
-    boundary = sorted(k for k, s in share.items() if s == 1.0)
-    return {'vertices': moved, 'faces': new_faces, 'mapping': mapping, 'source': used, 'boundary': boundary}
+    values = [level(v) for v in vertices]
+    result, source, boundary, mapping, crossings = [], [], [], [None] * len(vertices), {}
+
+    def keep(i):
+        if mapping[i] is None:
+            mapping[i] = len(result)
+            result.append(vertices[i]); source.append(i)
+            if values[i] == 0: boundary.append(mapping[i])
+        return mapping[i]
+
+    def cross(outside, inside):
+        key = (outside, inside)
+        if key not in crossings:
+            a, b = vertices[outside], vertices[inside]
+            low, high = 0.0, 1.0
+            for _ in range(64):
+                mid = (low + high) / 2
+                if level(_add(a, _mul(_sub(b, a), mid))) >= 0: low = mid
+                else: high = mid
+            crossings[key] = len(result)
+            boundary.append(len(result))
+            result.append(_add(a, _mul(_sub(b, a), low))); source.append(None)
+        return crossings[key]
+
+    kept, origin = [], []
+    for index, face in enumerate(faces):
+        face = tuple(face)
+        inside = [values[i] < 0 for i in face]
+        if all(inside): continue
+        polygon = []
+        for k, i in enumerate(face):
+            j = face[(k + 1) % len(face)]
+            if not inside[k]: polygon.append(keep(i))
+            if inside[k] != inside[(k + 1) % len(face)]:
+                polygon.append(cross(i, j) if not inside[k] else cross(j, i))
+        polygon = [v for k, v in enumerate(polygon) if v != polygon[k - 1]]
+        if len(polygon) >= 3: kept.append(tuple(polygon)); origin.append(index)
+    return {'vertices': result, 'faces': kept, 'mapping': mapping, 'source': source, 'origin': origin, 'boundary': sorted(set(boundary))}
 
 
 def exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw', root=None, thickness=None, clearance=.0005, sizes=None):
