@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { auditMorphNames, SHARED_MORPH_FIX, UE_FALLBACK_MORPH_NAME, type MorphNameAudit } from './gltf-morphs.ts';
 import { auditSkins, type SkinAudit } from './gltf-skins.ts';
+import { ARKIT_FACE_CONTRACT } from './arkit-face.ts';
 
 /**
  * Unreal destination check: import a GLB into a scratch UE project headlessly through
@@ -189,7 +190,13 @@ export function parseUnrealLog(text: string): ParsedUnrealLog {
   return result;
 }
 
-export interface UnrealSkeletalMeshFacts { path: string; skeleton: string | null; morphTargets: string[]; bones: string[]; lods: number; vertices: number[]; materialSlots?: number }
+export interface UnrealSkeletalMeshFacts {
+  path: string; skeleton: string | null; morphTargets: string[]; bones: string[]; lods: number; vertices: number[]; materialSlots?: number;
+  /** The mesh's reference skeleton: each bone mapped to its parent bone, null for the root. */
+  boneParents?: Record<string, string | null>;
+  /** Why `boneParents` could not be read. */
+  boneParentsError?: string;
+}
 export interface UnrealRawReport {
   ok: boolean; engineVersion?: string; destination: string; importReturned: boolean; error?: string;
   assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: { path: string; lods: number; vertices: number[] }[];
@@ -207,8 +214,66 @@ export interface UnrealReport {
   assetsByClass: Record<string, string[]>; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: UnrealRawReport['staticMeshes'];
   morphTargets: string[]; bones: string[];
   log: { file: string; importErrors: string[]; importWarnings: string[]; otherErrors: string[]; interchangeCompleted: boolean; windowFound: boolean };
-  expectations?: { contract?: string; morphs: string[]; bones: string[] };
+  expectations?: { contract?: string; morphs: string[]; bones: string[]; parents?: Record<string, string | null> };
+  /**
+   * The GLB's rendered vertices (triangles' distinct vertices, from the pre-flight) against
+   * LOD 0 of every SkeletalMesh and StaticMesh Unreal made. Absent when the GLB was unreadable.
+   */
+  geometry?: UnrealGeometry;
   elapsedMs: number;
+}
+
+export interface UnrealGeometry {
+  glbVertices: number; unrealVertices: number;
+  /** glbVertices - unrealVertices (negative when Unreal split vertices). */
+  missing: number;
+  /** How many missing vertices welding may explain before the check fails. */
+  tolerance: number;
+  /** Mesh nodes Interchange's default pipeline is known to drop (see interchangeDroppedMeshNodes). */
+  droppedByInterchange: string[];
+}
+
+/**
+ * Share of the GLB's (already welded, see gltf-skins.ts) vertices that may still go missing.
+ * Derived from UE 5.7.3 runs on the P9a heads: SkeletalMeshes matched the pre-flight count
+ * exactly (3360, 1152, 2208, 1104, and 146 for the repeated-vertex fixture sphere), and a
+ * StaticMesh build welded 4 more of an eyeball's 1104 (0.36%); 1% leaves room for other meshes.
+ */
+export const UNREAL_WELD_TOLERANCE = 0.01;
+
+/**
+ * Mesh nodes that Interchange's default pipeline drops without a warning: in a file with at
+ * least one skinned mesh, `bAutoDetectMeshType` sets `bIgnoreStaticMeshes`
+ * (InterchangeGenericMeshPipeline.cpp, GetMeshesInformationFromTranslatedData, UE 5.7), so an
+ * unskinned mesh with no morph targets that is not parented under a joint is thrown away.
+ * A morph-bearing unskinned mesh still becomes its own SkeletalMesh, and a mesh parented to a
+ * joint is merged into the rig's SkeletalMesh (both seen in UE 5.7.3 runs).
+ */
+export function interchangeDroppedMeshNodes(audit: SkinAudit): SkinAudit['meshNodes'] {
+  if (!audit.meshNodes.some(n => n.skin !== null)) return [];
+  return audit.meshNodes.filter(n => n.skin === null && n.morphTargets === 0 && n.jointAncestor === null && (n.vertices ?? 1) > 0);
+}
+
+/** What the GLB should import as: every node's vertices, except that an unskinned static mesh reused by several nodes is one StaticMesh. */
+function expectedVertices(audit: SkinAudit): number | null {
+  if (audit.vertices === null) return null;
+  const counted = new Set<number>();
+  return audit.meshNodes.reduce((sum, n) => {
+    const shared = n.skin === null && n.morphTargets === 0 && n.jointAncestor === null;
+    if (shared && counted.has(n.mesh)) return sum;
+    counted.add(n.mesh);
+    return sum + (n.vertices ?? 0);
+  }, 0);
+}
+
+function geometryOf(raw: UnrealRawReport, audit: SkinAudit | undefined): UnrealGeometry | undefined {
+  const glbVertices = audit ? expectedVertices(audit) : null;
+  if (!audit || glbVertices === null) return undefined;
+  const unrealVertices = [...raw.skeletalMeshes, ...raw.staticMeshes].reduce((sum, m) => sum + (m.vertices[0] ?? 0), 0);
+  return {
+    glbVertices, unrealVertices, missing: glbVertices - unrealVertices, tolerance: Math.ceil(glbVertices * UNREAL_WELD_TOLERANCE),
+    droppedByInterchange: interchangeDroppedMeshNodes(audit).map(n => n.name ?? `node ${n.node}`),
+  };
 }
 
 const union = (lists: string[][]) => [...new Set(lists.flat())];
@@ -222,6 +287,7 @@ export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, ru
   const warnings = [
     ...(preflight.error ? [`pre-flight could not read the file: ${preflight.error}`] : []),
     ...(renamed ? [] : (preflight.morphNames?.issues ?? []).map(issue => `pre-flight: ${issue.message}`)),
+    ...(preflight.skins && preflight.skins.vertices === null ? ["pre-flight could not read the GLB's vertex data (external buffers, sparse or Draco-compressed accessors), so geometry Unreal dropped is not checked"] : []),
   ];
   const count = (test: (cls: string) => boolean) => Object.entries(assetsByClass).filter(([cls]) => test(cls)).reduce((n, [, paths]) => n + paths.length, 0);
   return {
@@ -237,7 +303,9 @@ export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, ru
     },
     assetsByClass, skeletalMeshes: raw.skeletalMeshes, staticMeshes: raw.staticMeshes,
     morphTargets, bones: union(raw.skeletalMeshes.map(m => m.bones)),
-    log: { file: run.logFile, ...log }, elapsedMs: run.elapsedMs,
+    log: { file: run.logFile, ...log },
+    ...(() => { const geometry = geometryOf(raw, preflight.skins); return geometry ? { geometry } : {}; })(),
+    elapsedMs: run.elapsedMs,
   };
 }
 
@@ -247,11 +315,92 @@ export interface UnrealExpectations {
   contract?: string;
   /** Fail when Unreal made more than one SkeletalMesh or Skeleton (a single-skin head must make one of each). */
   singleSkeletalMesh?: boolean;
+  /** Required bone parents: a bone mapped to its parent bone, or null for the skin's root joint. */
+  parents?: Record<string, string | null>;
 }
 
 const quoted = (names: readonly string[], limit = 8) => names.slice(0, limit).map(n => `"${n}"`).join(', ') + (names.length > limit ? ` and ${names.length - limit} more` : '');
 const assetName = (path: string) => `"${path.split('/').pop()}"`;
 const plural = (n: number, word: string) => n === 1 ? word : `${word}${/h$/.test(word) ? 'es' : 's'}`;
+const skinLabel = (skin: SkinAudit['skins'][number]) => `skin ${skin.skin}${skin.name ? ` "${skin.name}"` : ''}`;
+const nodeName = (n: SkinAudit['meshNodes'][number]) => n.name ?? `node ${n.node}`;
+const andList = (items: string[]) => items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+/** The skin that holds the rig: the one naming the most expected bones, then the one binding the most meshes. */
+const rigSkin = (audit: SkinAudit, bones: string[]) => [...audit.skins].sort((a, b) =>
+  bones.filter(j => b.joints.includes(j)).length - bones.filter(j => a.joints.includes(j)).length || b.usedBy.length - a.usedBy.length)[0];
+/** The root Interchange adds above a skin with several root joints, named after the armature node. */
+export const UNREAL_PROXY_ROOT = /_ProxyTrueRootJoint$/;
+
+/**
+ * Geometry that never reached Unreal: the GLB's rendered vertices against LOD 0 of every
+ * SkeletalMesh and StaticMesh, with the cause when the pre-flight predicts Interchange's drop.
+ */
+function geometryFailure(report: UnrealReport, expect: UnrealExpectations): string | null {
+  const g = report.geometry, audit = report.preflight?.skins;
+  if (!g || !audit) return null;
+  const dropped = interchangeDroppedMeshNodes(audit);
+  const droppedVertices = dropped.reduce((sum, n) => sum + (n.vertices ?? 0), 0);
+  const known = dropped.length > 0 && g.missing >= droppedVertices / 2;
+  if (g.missing <= g.tolerance && !known) return null;
+  const ue = [
+    ...report.skeletalMeshes.map(m => `SkeletalMesh ${assetName(m.path)} ${m.vertices[0] ?? 0}`),
+    ...(report.staticMeshes.length ? report.staticMeshes.map(m => `StaticMesh ${assetName(m.path)} ${m.vertices[0] ?? 0}`) : ['no StaticMesh']),
+  ].join(', ');
+  const head = `Unreal imported ${g.unrealVertices} of the GLB's ${g.glbVertices} vertices; ${g.missing} are missing`;
+  if (!known) {
+    return `${head} (more than the ${g.tolerance} welding can explain). GLB mesh nodes: ${audit.meshNodes.map(n => `"${nodeName(n)}" ${n.vertices}`).join(', ')}; Unreal: ${ue}. Look for the mesh Interchange skipped in ${report.log.file}.`;
+  }
+  const one = dropped.length === 1;
+  const rig = rigSkin(audit, expect.bones);
+  const eyes = expect.contract === ARKIT_FACE_CONTRACT ? `; under ${expect.contract}, weight each eyeball 100% to its eye bone (eye_L, eye_R)` : '';
+  return `${head} (Unreal: ${ue}). Cause: the mesh ${one ? 'node' : 'nodes'} ${dropped.map(n => `"${nodeName(n)}" (${n.vertices} vertices)`).join(', ')} ${one ? 'is' : 'are'} not bound to the skin (the node has no "skin", no morph targets and no skin joint above it). In a GLB with skinned meshes, Interchange's default pipeline drops every such static mesh without a warning (bAutoDetectMeshType sets bIgnoreStaticMeshes in InterchangeGenericMeshPipeline.cpp), so ${one ? 'it' : 'they'} never reached Unreal. Fix: bind ${one ? 'it' : 'them'} to ${skinLabel(rig)} (joints ${quoted(rig.joints)})${eyes}.`;
+}
+
+/**
+ * Bones whose parent breaks `expect.parents`, read from the target SkeletalMesh's reference
+ * skeleton (Interchange's proxy root above a root bone is allowed), or from the GLB's rig skin
+ * when Unreal gave no parents. The GLB's joint parents are given as the cause.
+ */
+function hierarchyFailure(report: UnrealReport, expect: UnrealExpectations, target: UnrealSkeletalMeshFacts | null, what: string): string | null {
+  const wanted = Object.entries(expect.parents ?? {});
+  if (!wanted.length) return null;
+  const audit = report.preflight?.skins;
+  const rig = audit?.skins.length ? rigSkin(audit, expect.bones) : undefined;
+  const glbWrong = (bone: string, want: string | null) => {
+    if (!rig || !(bone in rig.jointParents)) return false;
+    const got = rig.jointParents[bone];
+    return want === null ? got !== null && rig.joints.includes(got) : got !== want;
+  };
+  const seen = target?.boneParents ?? null;
+  const problems = wanted.filter(([bone, want]) => {
+    if (!seen) return glbWrong(bone, want);
+    if (!(bone in seen)) return false; // a missing bone is reported on its own
+    const got = seen[bone];
+    return want === null ? got !== null && !UNREAL_PROXY_ROOT.test(got) : got !== want;
+  });
+  if (!problems.length) return null;
+  const inGlb = problems.filter(([bone, want]) => glbWrong(bone, want));
+  const glbSentence = rig && inGlb.length
+    ? `${skinLabel(rig)} parents ${andList(inGlb.map(([bone]) => rig.jointParents[bone] === null ? `"${bone}" at the scene root` : `"${bone}" to "${rig.jointParents[bone]}"`))}${rig.roots.length > 1 ? `, so the skin has ${rig.roots.length} root joints (${quoted(rig.roots)})` : ''}`
+    : '';
+  let text: string;
+  if (seen) {
+    const parts = problems.map(([bone, want]) => {
+      const got = seen[bone];
+      return `"${bone}" is ${got === null ? 'a root bone' : `a child of "${got}"`}, ${want === null ? 'not the root' : `not of "${want}"`}`;
+    });
+    text = `in SkeletalMesh ${assetName(target!.path)}, ${parts.join('; ')}.`;
+    text += glbSentence ? ` In the GLB, ${glbSentence}.` : rig ? " The GLB's skin has the expected parents, so Interchange changed the hierarchy." : '';
+    const proxy = [...new Set(problems.map(([bone]) => seen[bone]).filter((p): p is string => p !== null && UNREAL_PROXY_ROOT.test(p)))];
+    if (proxy.length) text += ` ${quoted(proxy)} is the root Interchange adds above a skin with several root joints.`;
+  } else {
+    text = `in the GLB, ${glbSentence}.`;
+  }
+  const byParent = new Map<string | null, string[]>();
+  for (const [bone, want] of problems) byParent.set(want, [...(byParent.get(want) ?? []), bone]);
+  const fixes = [...byParent].map(([want, bones]) => want === null ? `make ${andList(bones.map(b => `"${b}"`))} the skin's only root joint` : `parent ${andList(bones.map(b => `"${b}"`))} to "${want}"`);
+  return `wrong bone hierarchy for ${what}: ${text} Fix: ${fixes.join(', and ')} (in Blender, set the bone's parent in the armature).`;
+}
 
 /**
  * Why the GLB's skinning makes Unreal split the rig from the morphs, read from the skin
@@ -263,7 +412,6 @@ const plural = (n: number, word: string) => n === 1 ? word : `${word}${/h$/.test
 export function skinStructureCause(audit: SkinAudit | undefined, bones: string[]): { cause: string; madeUpBones: boolean } | null {
   if (!audit) return null;
   const node = (n: SkinAudit['meshNodes'][number]) => `"${n.meshName ?? `mesh ${n.mesh}`}" (node "${n.name ?? n.node}")`;
-  const skinLabel = (skin: SkinAudit['skins'][number]) => `skin ${skin.skin}${skin.name ? ` "${skin.name}"` : ''}`;
   const joints = bones.length ? ` with joints ${quoted(bones)}` : '';
   const morphNodes = audit.meshNodes.filter(n => n.morphTargets > 0);
   if (!audit.skins.length) {
@@ -290,15 +438,24 @@ export function skinStructureCause(audit: SkinAudit | undefined, bones: string[]
  * one asset and a bone on another do not make a rig.
  */
 export function checkUnrealReport(report: UnrealReport, expect: UnrealExpectations): string[] {
-  const failures: string[] = [];
-  if (report.unreal.timedOutAfterMs) return [`Unreal did not finish within ${Number((report.unreal.timedOutAfterMs / 1000).toFixed(3))} s and was stopped; see ${report.log.file}`];
-  if (!report.log.windowFound) return ['the import script never ran (no AGENT_MESHES_IMPORT_BEGIN/END in the log)'];
-  if (report.scriptError) return [`import script failed: ${report.scriptError.trim()}`];
+  return reviewUnrealReport(report, expect).failures;
+}
+
+/**
+ * Failures (see checkUnrealReport) plus warnings: findings that do not fail the run, such as
+ * a GLB with several skins that Unreal merged into one correct SkeletalMesh anyway.
+ */
+export function reviewUnrealReport(report: UnrealReport, expect: UnrealExpectations): { failures: string[]; warnings: string[] } {
+  const failures: string[] = [], warnings: string[] = [];
+  const only = (failure: string) => ({ failures: [failure], warnings });
+  if (report.unreal.timedOutAfterMs) return only(`Unreal did not finish within ${Number((report.unreal.timedOutAfterMs / 1000).toFixed(3))} s and was stopped; see ${report.log.file}`);
+  if (!report.log.windowFound) return only('the import script never ran (no AGENT_MESHES_IMPORT_BEGIN/END in the log)');
+  if (report.scriptError) return only(`import script failed: ${report.scriptError.trim()}`);
   const errors = report.log.importErrors;
   if (!Object.keys(report.assetsByClass).length) {
     // Nothing to compare names against: listing every expected name as missing would only bury the cause.
     const code = report.unreal.exitCode ? ` (exit code ${report.unreal.exitCode})` : '';
-    return [`Unreal imported nothing${code}: ${errors.length ? errors.join(' | ') : `no import error was logged; see ${report.log.file}`}`];
+    return only(`Unreal imported nothing${code}: ${errors.length ? errors.join(' | ') : `no import error was logged; see ${report.log.file}`}`);
   }
   if (report.unreal.exitCode !== 0) failures.push(`Unreal exited with code ${report.unreal.exitCode}`);
   if (expect.requireSkeletalMesh && !report.skeletalMeshes.length) failures.push(`no SkeletalMesh was created (assets: ${Object.keys(report.assetsByClass).join(', ') || 'none'})`);
@@ -364,8 +521,16 @@ export function checkUnrealReport(report: UnrealReport, expect: UnrealExpectatio
   if (expect.singleSkeletalMesh && !split && (meshes.length > 1 || report.summary.skeletons > 1)) {
     failures.push(`Unreal created ${meshes.length} ${plural(meshes.length, 'SkeletalMesh')} (${meshes.map(m => assetName(m.path)).join(', ')}) and ${report.summary.skeletons} ${plural(report.summary.skeletons, 'Skeleton')}, but ${what} needs one SkeletalMesh on one Skeleton, from a single glTF skin.${becauseOf}`);
   }
+  const lost = geometryFailure(report, expect);
+  if (lost) failures.push(lost);
+  const hierarchy = hierarchyFailure(report, expect, target, what);
+  if (hierarchy) failures.push(hierarchy);
+  const used = skins?.skins.filter(skin => skin.usedBy.length) ?? [];
+  if (used.length > 1 && meshes.length === 1 && report.summary.skeletons <= 1) {
+    warnings.push(`pre-flight: the GLB binds its meshes to ${used.length} skins (${used.map(skin => `${skinLabel(skin)}: joints ${quoted(skin.joints)}, used by ${quoted(skin.usedBy)}`).join('; ')}). Unreal merged them into one SkeletalMesh here, but ${expect.contract ? `the ${expect.contract} contract asks for a single skin, and ` : ''}other importers may keep one skeleton per skin; bind every mesh to one skin.`);
+  }
   if (errors.length) failures.push(`${report.log.importErrors.length} import error(s): ${report.log.importErrors.join(' | ')}`);
-  return failures;
+  return { failures, warnings };
 }
 
 export interface VerifyUnrealOptions extends UnrealExpectations {
@@ -447,9 +612,10 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
     }
     // Unreal logs the sanitized copy's temp path; show the user's file instead.
     const report = buildUnrealReport(raw, parseUnrealLog(logText.split(slashes(source)).join(slashes(input))), { input, editor: unreal.editor, version: unreal.version, exitCode, logFile, elapsedMs, preflight, ...(timedOut ? { timeoutMs } : {}) });
-    report.failures = checkUnrealReport(report, options);
+    const review = reviewUnrealReport(report, options);
+    report.failures = review.failures; report.warnings.push(...review.warnings);
     report.ok = report.failures.length === 0;
-    report.expectations = { ...(options.contract ? { contract: options.contract } : {}), morphs: options.morphs, bones: options.bones };
+    report.expectations = { ...(options.contract ? { contract: options.contract } : {}), morphs: options.morphs, bones: options.bones, ...(options.parents && Object.keys(options.parents).length ? { parents: options.parents } : {}) };
     await rm(join(root, 'Content', 'Verify'), { recursive: true, force: true });
     return report;
   } finally {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ARKIT_FACE_CONTRACT, ARKIT_FACE_REQUIRED_BONES, ARKIT_FACE_REQUIRED_MORPHS, contractExpectations } from '../src/arkit-face.ts';
 import {
-  acquireProjectLock, buildUnrealReport, checkUnrealReport, findUnreal, parseNameList, parseUnrealLog,
+  acquireProjectLock, buildUnrealReport, checkUnrealReport, findUnreal, parseNameList, parseUnrealLog, reviewUnrealReport,
   scratchProject, unrealCommandLine, unrealImportName, type ParsedUnrealLog, type UnrealRawReport,
 } from '../src/unreal.ts';
 import { auditMorphNames } from '../src/gltf-morphs.ts';
@@ -25,7 +25,7 @@ describe('arkit-face/1 contract module', () => {
     expect(new Set(ARKIT_FACE_REQUIRED_MORPHS).size).toBe(21);
     expect(ARKIT_FACE_REQUIRED_MORPHS).toEqual(expect.arrayContaining(['eyeBlinkLeft', 'jawOpen', 'mouthFunnel', 'browInnerUp', 'cheekSquintRight']));
     expect(ARKIT_FACE_REQUIRED_BONES).toEqual(['head', 'eye_L', 'eye_R']);
-    expect(contractExpectations('arkit-face/1')).toEqual({ morphs: [...ARKIT_FACE_REQUIRED_MORPHS], bones: [...ARKIT_FACE_REQUIRED_BONES] });
+    expect(contractExpectations('arkit-face/1')).toEqual({ morphs: [...ARKIT_FACE_REQUIRED_MORPHS], bones: [...ARKIT_FACE_REQUIRED_BONES], parents: { head: null, eye_L: 'head', eye_R: 'head' } });
     expect(() => contractExpectations('arkit-face/2')).toThrow(/Unknown contract "arkit-face\/2"/);
   });
 });
@@ -307,11 +307,12 @@ describe('checkUnrealReport: one SkeletalMesh must carry the whole contract', ()
   const head = (name: string) => new Uint8Array(readFileSync(new URL(`./fixtures/heads/${name}`, import.meta.url)));
   const preflightOf = (bytes: Uint8Array) => ({ morphNames: auditMorphNames(bytes), skins: auditSkins(bytes) });
   const base = '/Game/Verify/partialskin/partialskin/SkeletalMeshes';
-  const mesh = (name: string, morphTargets: string[], bones: string[]) =>
-    ({ path: `${base}/${name}`, skeleton: `${base}/${name}_Skeleton`, morphTargets, bones, lods: 1, vertices: [100], materialSlots: 1 });
+  const mesh = (name: string, morphTargets: string[], bones: string[], vertices = 100) =>
+    ({ path: `${base}/${name}`, skeleton: `${base}/${name}_Skeleton`, morphTargets, bones, lods: 1, vertices: [vertices], materialSlots: 1 });
   // What UE 5.7 made of the critic's partialskin.glb (evidence P9a round 2): the eyes on the skin, the face on a made-up bone.
   const split = (): UnrealRawReport => {
-    const meshes = [mesh('Eyeball_L', [], ['head', 'eye_L', 'eye_R']), mesh('Head_3459267b', [...ARKIT_FACE_REQUIRED_MORPHS], ['Head_3459267b'])];
+    // Vertex counts as UE 5.7.3 imported partialskin.glb: the two eyeballs 2208, the face 1152.
+    const meshes = [mesh('Eyeball_L', [], ['head', 'eye_L', 'eye_R'], 2208), mesh('Head_3459267b', [...ARKIT_FACE_REQUIRED_MORPHS], ['Head_3459267b'], 1152)];
     return { ...structuredClone(RAW), skeletalMeshes: meshes, assets: meshes.flatMap(m => [{ path: m.path, class: 'SkeletalMesh' }, { path: m.skeleton, class: 'Skeleton' }]) };
   };
   const build = (raw: UnrealRawReport, preflight?: Parameters<typeof buildUnrealReport>[2]['preflight']) =>
@@ -341,8 +342,8 @@ describe('checkUnrealReport: one SkeletalMesh must carry the whole contract', ()
   });
 
   it('blames a missing skin, not spelling, when Interchange made the only bone up from the mesh node', () => {
-    const meshes = [{ ...mesh('Head', [...ARKIT_FACE_REQUIRED_MORPHS], ['Head']) }];
-    const raw: UnrealRawReport = { ...structuredClone(RAW), skeletalMeshes: meshes, staticMeshes: [{ path: `${base}/Eyeball_L`, lods: 1, vertices: [10] }, { path: `${base}/Eyeball_R`, lods: 1, vertices: [10] }] };
+    const meshes = [{ ...mesh('Head', [...ARKIT_FACE_REQUIRED_MORPHS], ['Head'], 1152) }];
+    const raw: UnrealRawReport = { ...structuredClone(RAW), skeletalMeshes: meshes, staticMeshes: [{ path: `${base}/Eyeball_L`, lods: 1, vertices: [1100] }, { path: `${base}/Eyeball_R`, lods: 1, vertices: [1100] }] };
     const failures = checkUnrealReport(build(raw, preflightOf(head('bl-noskin.glb'))), contract);
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatch(/^missing bones "head", "eye_L", "eye_R": SkeletalMesh "Head" has only the bone "Head"/);
@@ -366,11 +367,115 @@ describe('checkUnrealReport: one SkeletalMesh must carry the whole contract', ()
   });
 
   it('passes the good Blender head that imports as one SkeletalMesh', () => {
-    expect(checkUnrealReport(build(RAW, preflightOf(head('bl-good.glb'))), contract)).toEqual([]);
+    const raw = structuredClone(RAW); raw.skeletalMeshes[0].vertices = [3360]; // UE 5.7.3 kept all of bl-good's vertices
+    expect(checkUnrealReport(build(raw, preflightOf(head('bl-good.glb'))), contract)).toEqual([]);
   });
 
   it('shows the real timeout, not a rounded one', () => {
     const slow = buildUnrealReport(RAW, { ...clean, windowFound: false }, { input: 'x.glb', editor: 'e', version: '5.7.3', exitCode: -1, logFile: 'l.log', elapsedMs: 1, timeoutMs: 500 });
     expect(checkUnrealReport(slow, contract)).toEqual(['Unreal did not finish within 0.5 s and was stopped; see l.log']);
+  });
+});
+
+describe('reviewUnrealReport: geometry Unreal dropped, the bone hierarchy and extra skins', () => {
+  const clean: ParsedUnrealLog = { importErrors: [], importWarnings: [], otherErrors: [], interchangeCompleted: true, windowFound: true };
+  const contract = { ...contractExpectations('arkit-face/1'), contract: 'arkit-face/1', requireSkeletalMesh: true, singleSkeletalMesh: true };
+  const head = (name: string) => new Uint8Array(readFileSync(new URL(`./fixtures/heads/${name}`, import.meta.url)));
+  const preflightOf = (bytes: Uint8Array) => ({ morphNames: auditMorphNames(bytes), skins: auditSkins(bytes) });
+  const GOOD_PARENTS = { head: null, eye_L: 'head', eye_R: 'head' };
+  /** One SkeletalMesh the way UE 5.7.3 imported the round-3 heads (vertex counts and parents from the real runs). */
+  const imported = (name: string, vertices: number, boneParents: Record<string, string | null> = GOOD_PARENTS, staticMeshes: UnrealRawReport['staticMeshes'] = []): UnrealRawReport => {
+    const base = `/Game/Verify/${name}/${name}/SkeletalMeshes`;
+    return {
+      ...structuredClone(RAW), staticMeshes,
+      assets: [{ path: `${base}/${name}`, class: 'SkeletalMesh' }, { path: `${base}/${name}_Skeleton`, class: 'Skeleton' }, ...staticMeshes.map(m => ({ path: m.path, class: 'StaticMesh' }))],
+      skeletalMeshes: [{ path: `${base}/${name}`, skeleton: `${base}/${name}_Skeleton`, morphTargets: [...ARKIT_FACE_REQUIRED_MORPHS], bones: Object.keys(boneParents), boneParents, lods: 1, vertices: [vertices], materialSlots: 4 }],
+    };
+  };
+  const build = (raw: UnrealRawReport, file: string) =>
+    buildUnrealReport(raw, clean, { input: file, editor: 'e', version: '5.7.3', exitCode: 0, logFile: 'l', elapsedMs: 1, preflight: preflightOf(head(file)) });
+
+  it('passes the good heads, Blender-built and derived, with every vertex accounted for', () => {
+    for (const file of ['bl-good.glb', 'bl3-good.glb']) {
+      const report = build(imported(file.replace('.glb', '').replace('-', '_'), 3360), file);
+      expect(reviewUnrealReport(report, contract)).toEqual({ failures: [], warnings: [] });
+      expect(report.geometry).toEqual({ glbVertices: 3360, unrealVertices: 3360, missing: 0, tolerance: 34, droppedByInterchange: [] });
+    }
+  });
+
+  it('fails a head whose eyeballs are not bound to the skin, because Interchange silently drops them', () => {
+    for (const file of ['C-static-eyes.glb', 'bl3-staticeyes.glb']) {
+      const report = build(imported(file.replace(/\W/g, '_'), 1152), file);
+      const { failures } = reviewUnrealReport(report, contract);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatch(/^Unreal imported 1152 of the GLB's 3360 vertices; 2208 are missing/);
+      expect(failures[0]).toContain('"Eyeball_L" (1104 vertices), "Eyeball_R" (1104 vertices)');
+      expect(failures[0]).toMatch(/not bound to the skin/);
+      expect(failures[0]).toMatch(/drops .* without a warning/);
+      expect(failures[0]).toMatch(/bind them to skin 0 "HeadRig"/);
+      expect(failures[0]).toMatch(/each eyeball 100% to its eye bone/);
+      expect(report.geometry?.droppedByInterchange).toEqual(['Eyeball_L', 'Eyeball_R']);
+    }
+  });
+
+  it('fails even without a contract, since geometry vanished', () => {
+    const report = build(imported('C_static_eyes', 1152), 'C-static-eyes.glb');
+    const { failures } = reviewUnrealReport(report, { morphs: [], bones: [], requireSkeletalMesh: false });
+    expect(failures).toEqual([expect.stringMatching(/^Unreal imported 1152 of the GLB's 3360 vertices/)]);
+    expect(failures[0]).not.toMatch(/eye bone/);
+  });
+
+  it('accepts eyeballs parented to the eye bones, which Interchange merges into the SkeletalMesh', () => {
+    const parents = { head: null, eye_L: 'head', Eyeball_L: 'eye_L', eye_R: 'head', Eyeball_R: 'eye_R' };
+    expect(reviewUnrealReport(build(imported('C2', 3360, parents), 'C2-static-eyes-parented-to-eye-bones.glb'), contract).failures).toEqual([]);
+  });
+
+  it('tolerates the few vertices StaticMesh builds weld, but not a missing mesh without a known cause', () => {
+    // bl-noskin in UE 5.7.3: the face on a made-up bone, each eyeball a StaticMesh of 1100 of its 1104 vertices.
+    const statics = ['Eyeball_L', 'Eyeball_R'].map(n => ({ path: `/Game/Verify/bl_noskin/bl_noskin/StaticMeshes/${n}`, lods: 1, vertices: [1100] }));
+    const noskin = build(imported('Head', 1152, { Head: null }, statics), 'bl-noskin.glb');
+    expect(noskin.geometry).toMatchObject({ glbVertices: 3360, unrealVertices: 3352, missing: 8 });
+    expect(reviewUnrealReport(noskin, contract).failures.join(' | ')).not.toMatch(/vertices/);
+    const lost = reviewUnrealReport(build(imported('bl_good', 3000), 'bl-good.glb'), contract).failures;
+    expect(lost).toEqual([expect.stringMatching(/^Unreal imported 3000 of the GLB's 3360 vertices; 360 are missing \(more than the 34 welding can explain\)/)]);
+    expect(lost[0]).toContain('GLB mesh nodes: "Eyeball_L" 1104, "Eyeball_R" 1104, "Head" 1152');
+    expect(lost[0]).toContain('Unreal: SkeletalMesh "bl_good" 3000, no StaticMesh');
+  });
+
+  it("fails eye bones that are not children of head, from Unreal's reference skeleton, and explains the proxy root", () => {
+    const proxy = { HeadRig_ProxyTrueRootJoint: null, head: 'HeadRig_ProxyTrueRootJoint', eye_L: 'HeadRig_ProxyTrueRootJoint', eye_R: 'HeadRig_ProxyTrueRootJoint' };
+    const { failures } = reviewUnrealReport(build(imported('E', 3360, proxy), 'E-eyes-not-under-head.glb'), contract);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/^wrong bone hierarchy for the arkit-face\/1 contract: in SkeletalMesh "E", "eye_L" is a child of "HeadRig_ProxyTrueRootJoint", not of "head"; "eye_R" is a child of "HeadRig_ProxyTrueRootJoint", not of "head"\./);
+    expect(failures[0]).toContain('In the GLB, skin 0 "HeadRig" parents "eye_L" to "HeadRig" and "eye_R" to "HeadRig"');
+    expect(failures[0]).toContain('3 root joints ("head", "eye_L", "eye_R")');
+    expect(failures[0]).toContain('"HeadRig_ProxyTrueRootJoint" is the root Interchange adds');
+    expect(failures[0]).toMatch(/parent "eye_L" and "eye_R" to "head"/);
+  });
+
+  it('fails an eye bone parented to the other eye, and a flat Blender armature', () => {
+    const chained = reviewUnrealReport(build(imported('E2', 3360, { head: null, eye_R: 'head', eye_L: 'eye_R' }), 'E2-eye_L-under-eye_R.glb'), contract).failures;
+    expect(chained).toEqual([expect.stringMatching(/^wrong bone hierarchy for the arkit-face\/1 contract: in SkeletalMesh "E2", "eye_L" is a child of "eye_R", not of "head"\. In the GLB, skin 0 "HeadRig" parents "eye_L" to "eye_R"/)]);
+    const flat = { HeadRig_ProxyTrueRootJoint: null, eye_L: 'HeadRig_ProxyTrueRootJoint', eye_R: 'HeadRig_ProxyTrueRootJoint', head: 'HeadRig_ProxyTrueRootJoint' };
+    expect(reviewUnrealReport(build(imported('bl3_flat', 3360, flat), 'bl3-flat.glb'), contract).failures).toEqual([expect.stringMatching(/^wrong bone hierarchy .*"eye_L" is a child of "HeadRig_ProxyTrueRootJoint", not of "head"; "eye_R"/)]);
+  });
+
+  it("fails head under another bone, but allows Interchange's proxy root above head alone", () => {
+    const under = reviewUnrealReport(build(imported('bl_good', 3360, { neck: null, head: 'neck', eye_L: 'head', eye_R: 'head' }), 'bl-good.glb'), contract).failures;
+    expect(under).toEqual([expect.stringMatching(/"head" is a child of "neck", not the root/)]);
+    const proxied = { HeadRig_ProxyTrueRootJoint: null, head: 'HeadRig_ProxyTrueRootJoint', eye_L: 'head', eye_R: 'head' };
+    expect(reviewUnrealReport(build(imported('bl_good', 3360, proxied), 'bl-good.glb'), contract).failures).toEqual([]);
+  });
+
+  it("falls back to the GLB's joint parents when Unreal gave none", () => {
+    const raw = imported('E', 3360); delete raw.skeletalMeshes[0].boneParents;
+    expect(reviewUnrealReport(build(raw, 'E-eyes-not-under-head.glb'), contract).failures).toEqual([expect.stringMatching(/^wrong bone hierarchy for the arkit-face\/1 contract: in the GLB, skin 0 "HeadRig" parents "eye_L" to "HeadRig" and "eye_R" to "HeadRig"/)]);
+  });
+
+  it('warns, without failing, when a head uses two skins that Unreal merged into one correct SkeletalMesh', () => {
+    const review = reviewUnrealReport(build(imported('A_two_skins', 3360), 'A-two-skins.glb'), contract);
+    expect(review.failures).toEqual([]);
+    expect(review.warnings).toEqual([expect.stringMatching(/^pre-flight: the GLB binds its meshes to 2 skins \(skin 0 "HeadRig": joints "head", "eye_L", "eye_R", used by "Eyeball_L", "Eyeball_R"; skin 1 "FaceOnly": joints "head", used by "Head"\)\. Unreal merged them into one SkeletalMesh here, but the arkit-face\/1 contract asks for a single skin/)]);
+    expect(checkUnrealReport(build(imported('A_two_skins', 3360), 'A-two-skins.glb'), contract)).toEqual([]);
   });
 });

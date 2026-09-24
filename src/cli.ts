@@ -111,13 +111,13 @@ export async function main(args = process.argv): Promise<void> {
     .option('--json', 'Print only one compact JSON line: no progress or pretty-printing').action(async (file, options) => {
     const unreal = await import('./unreal.ts');
     const { contractExpectations } = await import('./arkit-face.ts');
-    const base = options.contract ? contractExpectations(String(options.contract)) : { morphs: [], bones: [] };
+    const base = options.contract ? contractExpectations(String(options.contract)) : { morphs: [], bones: [], parents: {} };
     const timeout = Number(options.timeout);
     if (!Number.isFinite(timeout) || timeout <= 0) throw Object.assign(new Error('--timeout must be a positive number of seconds'), { code: 'CLI_ARGUMENT_ERROR' });
     const morphs = [...new Set([...base.morphs, ...(options.expectMorphs ? unreal.parseNameList(String(options.expectMorphs)) : [])])];
     const bones = [...new Set([...base.bones, ...(options.expectBones ? unreal.parseNameList(String(options.expectBones)) : [])])];
     const report = await unreal.verifyUnreal(resolve(file), {
-      morphs, bones, requireSkeletalMesh: Boolean(options.contract) || morphs.length > 0 || bones.length > 0, singleSkeletalMesh: Boolean(options.contract),
+      morphs, bones, parents: base.parents, requireSkeletalMesh: Boolean(options.contract) || morphs.length > 0 || bones.length > 0, singleSkeletalMesh: Boolean(options.contract),
       ...(options.contract ? { contract: String(options.contract) } : {}), timeoutMs: timeout * 1000,
       ...(options.log ? { logFile: resolve(options.log) } : {}), quiet: Boolean(options.json),
     });

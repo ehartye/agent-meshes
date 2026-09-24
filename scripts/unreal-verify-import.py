@@ -17,6 +17,22 @@ def asset_class(obj):
     return obj.get_class().get_name()
 
 
+def bone_parents(mesh):
+    """Each bone of the mesh's reference skeleton mapped to its parent bone (None for the root).
+
+    USkinnedMeshComponent::GetParentBone (SkinnedMeshComponent.cpp, UE 5.7) reads the skinned
+    asset's reference skeleton, so a transient, unregistered component is enough.
+    """
+    component = unreal.new_object(unreal.SkeletalMeshComponent)
+    component.set_skeletal_mesh_asset(mesh)
+    parents = {}
+    for index in range(component.get_num_bones()):
+        name = component.get_bone_name(index)
+        parent = component.get_parent_bone(name)
+        parents[str(name)] = None if parent is None or str(parent) == 'None' else str(parent)
+    return parents
+
+
 def skeletal_mesh_facts(mesh):
     facts = {'path': mesh.get_path_name().split('.')[0], 'morphTargets': [str(n) for n in mesh.get_all_morph_target_names()]}
     skeleton = mesh.get_editor_property('skeleton')
@@ -24,6 +40,10 @@ def skeletal_mesh_facts(mesh):
     # UAnimPoseExtensions::GetReferencePose / GetBoneNames (AnimationBlueprintLibrary AnimPose.h, UE 5.7):
     # the skeleton's reference pose lists every bone in reference-skeleton order.
     facts['bones'] = [str(n) for n in unreal.AnimPoseExtensions.get_bone_names(unreal.AnimPoseExtensions.get_reference_pose(skeleton))] if skeleton else []
+    try:
+        facts['boneParents'] = bone_parents(mesh)
+    except Exception:
+        facts['boneParentsError'] = traceback.format_exc()
     subsystem = unreal.get_editor_subsystem(unreal.SkeletalMeshEditorSubsystem)
     lods = subsystem.get_lod_count(mesh)
     facts['lods'] = lods

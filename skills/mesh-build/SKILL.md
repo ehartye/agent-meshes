@@ -65,11 +65,13 @@ mesh verify-unreal prop.glb --expect-morphs open,close --expect-bones lid --json
 ```
 
 Imports the GLB headlessly into a cached scratch UE project through Interchange and prints a JSON
-report: the assets by class, and per SkeletalMesh its morph target names, bone names, LOD and
-vertex counts, plus the import errors and warnings from the Unreal log (whose path is in the
-report). `--contract arkit-face/1` requires ONE SkeletalMesh that has the 21 ARKit morph names
-verbatim and whose own skeleton has `head`/`eye_L`/`eye_R`, only one SkeletalMesh and Skeleton in
-the import, and zero import errors. It exits 1 and lists `failures` otherwise, naming the cause.
+report: the assets by class, and per SkeletalMesh its morph target names, bone names and bone
+parents, LOD and vertex counts, plus the import errors and warnings from the Unreal log (whose path
+is in the report). `--contract arkit-face/1` requires ONE SkeletalMesh that has the 21 ARKit morph
+names verbatim and whose own skeleton has `head` as its root with `eye_L`/`eye_R` as children of
+`head`, only one SkeletalMesh and Skeleton in the import, and zero import errors. Every run, with or
+without a contract, also fails when geometry vanished: fewer vertices reached Unreal than the GLB
+renders (`geometry` in the report). It exits 1 and lists `failures` otherwise, naming the cause.
 Unreal comes from `AGENT_MESHES_UNREAL` (the engine directory), the Epic launcher manifest or the
 usual install roots. Without one the command fails with `UNREAL_NOT_FOUND`: say so rather than
 claiming Unreal support. Later runs take seconds. A first run on a new engine can compile
@@ -97,6 +99,14 @@ skeleton (`Head_<hash>`), apart from the eye rig, so the face cannot be moved by
 A GLB with no skin at all gets only that made-up bone. `verify-unreal` reads the GLB's skins
 (`preflight.skins`, `src/gltf-skins.ts`) and names which of these it is. In Blender, parent every
 mesh (face and eyeballs) to the one armature with an Armature modifier before exporting.
+
+**Unbound meshes vanish from the import.** In a GLB that has a skin, Interchange silently drops
+every mesh node with no `skin`, no morphs and no joint above it: no StaticMesh, no warning. The
+easy mistake is building eyeballs with a `blender_lib` source and not passing them to `bind_skin`:
+the head imports with no eyes. `verify-unreal` compares the GLB's welded vertex count with what
+Unreal imported and fails naming the dropped nodes. Bind the eyeballs to the skin, 100% to
+`eye_L`/`eye_R`. Eye bones must be children of `head` (a flat armature fails the hierarchy check),
+and a GLB with two skins that Unreal happened to merge only warns.
 
 ## Embedding in a page
 
