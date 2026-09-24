@@ -5,3 +5,5 @@ coverage/
 artifacts/
 *.log
 .worktrees/
+.claude/worktrees/
+__pycache__/
