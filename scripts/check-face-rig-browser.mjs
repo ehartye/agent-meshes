@@ -68,7 +68,30 @@ try {
     jawTiles.push({ label: `jawOpen ${weight}, ${view}`, file });
   }
   const m = report.measurements;
-  const caption = `${fixture}: jawOpen=1 drops the chin ${(m.chinDrop * 1000).toFixed(1)} mm = ${(m.chinDropRatio * 100).toFixed(1)}% of the ${(m.faceHeight * 1000).toFixed(0)} mm face; lower teeth drop ${(m.teeth.lowerDrop * 1000).toFixed(1)} mm; upper lip moves ${(m.upperLipMove * 1000).toFixed(2)} mm; between the teeth rows the front view sees ${m.mouthOpen.hits.join(', ')}`;
+  // E3 in pixels: an exact ID render (512 px tall, front view) of the silhouette, the upper and the lower teeth.
+  const pixels = weight => page.evaluate(w => {
+    const meshes = []; viewer.root.traverse(o => { if (o.isMesh && o.morphTargetDictionary) meshes.push(o); });
+    viewer.resetMorph();
+    for (const mesh of meshes) if ('jawOpen' in mesh.morphTargetDictionary) viewer.setMorph(mesh.name, 'jawOpen', w);
+    viewer.view({ position: [0, 0.11, 0.6], target: [0, 0.11, 0] });
+    // The silhouette with everything drawn; the teeth alone (other: null hides the rest) so lips never occlude them.
+    const shape = viewer.idRender({ materials: {}, other: '#ff0000', background: '#000000', width: 512, height: 512 });
+    const image = viewer.idRender({ materials: { teeth_upper: '#0000ff', teeth_lower: '#00ff00' }, other: null, background: '#000000', width: 512, height: 512 });
+    const stats = { top: Infinity, bottom: -1, upper: [0, 0, 0, Infinity, -Infinity], lower: [0, 0, 0] };
+    for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+      const i = (y * image.width + x) * 4, r = image.data[i], g = image.data[i + 1], b = image.data[i + 2];
+      if (shape.data[i]) { stats.top = Math.min(stats.top, y); stats.bottom = Math.max(stats.bottom, y); }
+      if (b > 128) { stats.upper[0]++; stats.upper[1] += x; stats.upper[2] += y; stats.upper[3] = Math.min(stats.upper[3], x); stats.upper[4] = Math.max(stats.upper[4], x); }
+      if (g > 128) { stats.lower[0]++; stats.lower[1] += x; stats.lower[2] += y; }
+    }
+    return stats;
+  }, weight);
+  const [shut, open] = [await pixels(0), await pixels(1)];
+  const lowerShift = open.lower[2] / open.lower[0] - (shut.lower[0] ? shut.lower[2] / shut.lower[0] : NaN);
+  const upperShift = open.upper[2] / open.upper[0] - shut.upper[2] / shut.upper[0];
+  const width = shut.upper[4] - shut.upper[3] + 1;
+  const e3 = `ID render 512 px: silhouette bottom drops ${open.bottom - shut.bottom} px = ${(100 * (open.bottom - shut.bottom) / (shut.bottom - shut.top)).toFixed(1)}% of the ${shut.bottom - shut.top} px chin-to-crown silhouette; lower teeth centroid drops ${lowerShift.toFixed(1)} px = ${(100 * lowerShift / width).toFixed(0)}% of the ${width} px upper-teeth (mouth) width; upper teeth move ${upperShift.toFixed(2)} px (teeth drawn alone, unoccluded)`;
+  const caption = `${fixture}: jawOpen=1 drops the chin ${(m.chinDrop * 1000).toFixed(1)} mm = ${(m.chinDropRatio * 100).toFixed(1)}% of the ${(m.faceHeight * 1000).toFixed(0)} mm face; lower teeth drop ${(m.teeth.lowerDrop * 1000).toFixed(1)} mm; upper lip moves ${(m.upperLipMove * 1000).toFixed(2)} mm; between the teeth rows the front view sees ${m.mouthOpen.hits.join(', ')}. ${e3}`;
   await writeFile(join(output, 'jaw.html'), `<!doctype html><meta charset="utf-8"><style>body{margin:0;font:13px sans-serif;background:#fff;padding:6px}p{margin:4px 0 8px}div{display:grid;grid-template-columns:repeat(3,300px);gap:6px}figure{margin:0}img{width:300px;height:300px}figcaption{text-align:center}</style><p>${caption}</p><div>${jawTiles.map(t => `<figure><img src="${t.file}"><figcaption>${t.label}</figcaption></figure>`).join('')}</div>`);
   const jawPage = await browser.newPage({ viewport: { width: 930, height: 1040 } });
   await jawPage.goto(pathToFileURL(join(output, 'jaw.html')).href);

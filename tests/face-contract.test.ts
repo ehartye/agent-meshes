@@ -105,7 +105,10 @@ describe('arkit-face/1 verifier', () => {
 
   it('explains why a morph name may not repeat across glTF meshes', async () => {
     const result = await report(head => { head.groups!.face = head.groups!.face.filter(n => n !== 'tongue'); });
-    expect(result.failures).toContain('morph-names: jawOpen is on 2 glTF meshes (face, tongue); Unreal discards all morph names when a name repeats across meshes: put every morph-bearing part in one mesh (join_face_parts)');
+    const failure = result.failures.find(f => f.startsWith('morph-names: '))!;
+    expect(failure).toMatch(/"jawOpen" \(mesh \d+ "face", mesh \d+ "tongue"\)/);
+    expect(failure).toMatch(/discards every morph target name in the file/);
+    expect(failure).toMatch(/join_face_parts/);
   });
 
   it('finds teeth and mouth parts as material primitives of the one face mesh', async () => {

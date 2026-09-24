@@ -1,5 +1,7 @@
 import { Matrix3, Matrix4, Vector3 } from 'three';
-import { ARKIT_FACE_CONTRACT, ARKIT_FACE_OPTIONAL_MORPHS, ARKIT_FACE_REQUIRED_BONES, ARKIT_FACE_REQUIRED_MORPHS } from './arkit-face.ts';
+import { ARKIT_FACE_BONE_PARENTS, ARKIT_FACE_CONTRACT, ARKIT_FACE_OPTIONAL_MORPHS, ARKIT_FACE_REQUIRED_BONES, ARKIT_FACE_REQUIRED_MORPHS } from './arkit-face.ts';
+import { morphNameAudit } from './gltf-morphs.ts';
+import { auditSkins } from './gltf-skins.ts';
 import { verifyGLB } from './export.ts';
 import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument } from './gltf-read.ts';
 
@@ -257,23 +259,28 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   const all = instances(doc, graph);
   const worldPosition = (node: number) => new Vector3().setFromMatrixPosition(graph.world.get(node) ?? new Matrix4());
 
-  // 2. skeleton
+  // 2. skeleton: the skin audit verify-unreal shares (one skin, the contract bones, head -> eye_L/eye_R)
+  const skinFacts = auditSkins(bytes);
   const skins = json.skins ?? [];
   const skeletonProblems: string[] = [];
-  if (skins.length !== 1) skeletonProblems.push(`found ${skins.length} skins; the contract needs a single skin`);
+  if (skinFacts.skins.length !== 1) skeletonProblems.push(`found ${skinFacts.skins.length} skins; the contract needs a single skin (Unreal builds one SkeletalMesh per skin)`);
   const jointSet = skins[0]?.joints ?? [];
+  const facts = skinFacts.skins[0];
   const bone = (name: string) => jointSet.find(j => nodes[j]?.name === name);
   const bones = Object.fromEntries(ARKIT_FACE_REQUIRED_BONES.map(name => [name, bone(name)])) as Record<string, number | undefined>;
   const missingBones = ARKIT_FACE_REQUIRED_BONES.filter(name => bones[name] === undefined);
   if (missingBones.length) skeletonProblems.push(`the skin lacks bone(s) ${missingBones.join(', ')}`);
-  for (const eye of ['eye_L', 'eye_R']) if (bones[eye] !== undefined && bones.head !== undefined && graph.parent.get(bones[eye]!) !== bones.head) skeletonProblems.push(`${eye} is not a child of head`);
-  if (bones.head !== undefined && jointSet.includes(graph.parent.get(bones.head) ?? -1)) skeletonProblems.push('head is not the root bone of the skin');
+  if (facts) for (const [name, parent] of Object.entries(ARKIT_FACE_BONE_PARENTS)) {
+    if (bones[name] === undefined) continue;
+    if (parent === null) { if (!facts.roots.includes(name) || facts.roots.length !== 1) skeletonProblems.push(`${name} is not the root bone of the skin (roots: ${facts.roots.join(', ') || 'none'})`); }
+    else if (facts.jointParents[name] !== parent) skeletonProblems.push(`${name} is not a child of ${parent} (its parent is ${facts.jointParents[name] ?? 'the scene root'})`);
+  }
   if (bones.eye_L !== undefined && bones.eye_R !== undefined && worldPosition(bones.eye_L).x <= worldPosition(bones.eye_R).x) skeletonProblems.push("eye_L must be the character's left eye, on the +X side of eye_R");
   check('skeleton', skeletonProblems, 'one skin with head, eye_L and eye_R');
 
   // 3. skinning
-  const unskinned = all.filter(i => !i.skinned).map(i => i.label);
-  check('skinning', unskinned.length ? [`mesh(es) not bound to the skin: ${unskinned.join(', ')}`] : [], 'every mesh is bound to the skin');
+  const unskinned = skinFacts.meshNodes.filter(n => n.skin === null).map(n => n.name ?? n.meshName ?? `node ${n.node}`);
+  check('skinning', unskinned.length ? [`mesh node(s) not bound to the skin: ${unskinned.join(', ')}`] : [], 'every mesh is bound to the skin');
 
   // 4. eyes
   const eyes: Partial<Record<'L' | 'R', { center: Vector3; radius: number }>> = {};
@@ -319,34 +326,16 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     check('orientation', problems, 'Y-up with the face looking down +Z');
   } else check('orientation', [], '', 'the eyes were not found');
 
-  // 6. morph names
-  const namingProblems: string[] = [];
-  const fileMorphs: string[] = [];
-  (json.meshes ?? []).forEach((mesh, m) => {
-    const names = Array.isArray(mesh.extras?.targetNames) ? mesh.extras!.targetNames as unknown[] : undefined;
-    const counts = mesh.primitives.map(p => p.targets?.length ?? 0);
-    const count = Math.max(0, ...counts);
-    if (!count) return;
-    const label = mesh.name ?? `mesh ${m}`;
-    if (!names) { namingProblems.push(`${label} has ${count} morph targets but no extras.targetNames`); return; }
-    if (names.length !== count || counts.some(c => c !== count)) namingProblems.push(`${label} names ${names.length} targets but its primitives carry ${counts.join('/')}`);
-    const seen = new Set<string>();
-    for (const name of names) {
-      if (typeof name !== 'string' || !name) { namingProblems.push(`${label} has an unnamed morph target`); continue; }
-      if (seen.has(name)) namingProblems.push(`${label} repeats the morph name ${name}`);
-      seen.add(name);
-      if (!fileMorphs.includes(name)) fileMorphs.push(name);
-      const like = ARKIT_CURVES.includes(name) ? undefined : nearMiss(name);
-      if (like) namingProblems.push(`${label} has "${name}", which looks like the ARKit name "${like}" (names must match exactly)`);
-      if ((ARKIT_GAZE_CURVES as readonly string[]).includes(name)) warnings.push(`${label} has a ${name} morph; gaze curves drive the eye bones, not morphs`);
-    }
-  });
-  const owners = new Map<string, string[]>();
-  (json.meshes ?? []).forEach((mesh, m) => {
-    const names = Array.isArray(mesh.extras?.targetNames) ? mesh.extras!.targetNames as unknown[] : [];
-    for (const name of new Set(names.filter((n): n is string => typeof n === 'string'))) owners.set(name, [...owners.get(name) ?? [], mesh.name ?? `mesh ${m}`]);
-  });
-  for (const [name, meshes] of owners) if (meshes.length > 1) namingProblems.push(`${name} is on ${meshes.length} glTF meshes (${meshes.join(', ')}); Unreal discards all morph names when a name repeats across meshes: put every morph-bearing part in one mesh (join_face_parts)`);
+  // 6. morph names: the layout audit verify-unreal shares, plus exact ARKit spelling
+  const audit = morphNameAudit(json as Parameters<typeof morphNameAudit>[0]);
+  const namingProblems: string[] = audit.issues.map(issue => issue.code === 'MORPH_NAME_SHARED_ACROSS_MESHES' ? `${issue.message} In Blender, join_face_parts does this.` : issue.message);
+  const fileMorphs = audit.names;
+  for (const entry of audit.meshes) for (const name of new Set(entry.targetNames ?? [])) {
+    const label = entry.name ?? `mesh ${entry.mesh}`;
+    const like = ARKIT_CURVES.includes(name) ? undefined : nearMiss(name);
+    if (like) namingProblems.push(`${label} has "${name}", which looks like the ARKit name "${like}" (names must match exactly)`);
+    if ((ARKIT_GAZE_CURVES as readonly string[]).includes(name)) warnings.push(`${label} has a ${name} morph; gaze curves drive the eye bones, not morphs`);
+  }
   const missingMorphs = ARKIT_FACE_REQUIRED_MORPHS.filter(name => !fileMorphs.includes(name));
   if (missingMorphs.length) namingProblems.unshift(`missing required morph(s): ${missingMorphs.join(', ')}`);
   measurements.morphs = fileMorphs;
