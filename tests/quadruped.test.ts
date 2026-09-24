@@ -163,7 +163,7 @@ it('rotating equine gallop hooves clear the floor and loop without a position or
     const first = sample(0), last = sample(1 - 1e-7);
     last.forEach((point, i) => expect(point.distanceTo(first[i])).toBeLessThan(.00001));
   } finally { built.dispose(); }
-});
+}, 30_000); // samples a full rotating gallop: ~1 s locally, over 5 s on loaded Windows CI runners
 
 for (const species of ['equine', 'vulpine'] as const) it(`${species} gallop pitches the trunk nose-down at the top of the leap and level at touchdown`, () => {
   const rows = legSamples(species, 'gallop');
