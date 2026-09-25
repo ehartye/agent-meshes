@@ -3,7 +3,7 @@ import { ARKIT_FACE_BONE_PARENTS, ARKIT_FACE_CONTRACT, ARKIT_FACE_OPTIONAL_MORPH
 import { morphNameAudit } from './gltf-morphs.ts';
 import { auditSkins } from './gltf-skins.ts';
 import { verifyGLB } from './export.ts';
-import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument } from './gltf-read.ts';
+import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument, type GLTFMaterial } from './gltf-read.ts';
 
 /**
  * `arkit-face/1` verifier: every clause of the face-rig contract that can be computed from a GLB.
@@ -16,9 +16,14 @@ import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument } from 
  * - All morph-bearing parts share one glTF mesh (one primitive per material): Unreal discards
  *   every morph name in a file when a name repeats across glTF meshes.
  * - Teeth are primitives whose material (or mesh/node) name contains `teeth` or `tooth` together
- *   with `upper` or `lower` (for example the materials `teeth_upper` and `teeth_lower`). Names
- *   containing `tongue`, or `cavity`, `throat` or `mouth_interior`, mark the mouth parts `jawOpen`
- *   must carry.
+ *   with `upper` or `lower` (for example the materials `teeth_upper` and `teeth_lower`). Teeth that
+ *   show at rest (buck teeth, fangs) have their own material whose name also contains `exposed`
+ *   (`teeth_exposed` rides the skull like the upper row; `teeth_exposed_lower` rides the jaw), and
+ *   `extras.arkitFace.exposedTeeth` lists that name. Names containing `tongue`, or `cavity`,
+ *   `throat` or `mouth_interior`, mark the mouth parts `jawOpen` must carry; `socket` marks the
+ *   dark cup behind an eye, which no view may see.
+ * - Alpha-blended, alpha-masked and transmissive materials hide nothing: they are left out of
+ *   every coverage ray test, and the face's parts may not use them.
  */
 export const ARKIT_GAZE_CURVES = Object.freeze(['Left', 'Right'].flatMap(side => ['Up', 'Down', 'In', 'Out'].map(d => `eyeLook${d}${side}`)));
 export const ARKIT_CURVES = Object.freeze([...new Set([...ARKIT_FACE_REQUIRED_MORPHS, ...ARKIT_FACE_OPTIONAL_MORPHS, ...ARKIT_GAZE_CURVES,
@@ -54,12 +59,35 @@ export const EYE_COVERAGE_STATES: readonly { kind: 'closed' | 'narrow' | 'wide';
   { kind: 'closed', blink: 1, squint: 0, wide: 0 }, { kind: 'closed', blink: 1, squint: 1, wide: 0 },
   { kind: 'closed', blink: 1, squint: 0, wide: 1 }, { kind: 'closed', blink: 1, squint: 1, wide: 1 },
 ];
+/**
+ * Oblique eye views: the front, 3/4 at 35 and 45 degrees of yaw to each side, and each of those 20 degrees above and
+ * below. The 3/4 view exists to catch "looks fine only from the front": a gap between the lids and the skin's eye hole.
+ */
+export const OBLIQUE_VIEWS: readonly { yaw: number; pitch: number }[] = Object.freeze([-45, -35, 0, 35, 45].flatMap(yaw => [-20, 0, 20].map(pitch => ({ yaw, pitch }))));
+/** Rays across each eye's oblique window (about 1 mm apart on an 18 mm eye). */
+export const OBLIQUE_GRID = 64;
+/**
+ * E2 lid follow must be measurable: eyeLookUp = 1 (eyeWide = lidFollow.up) lifts the upper lid's edge, and
+ * eyeLookDown = 1 (eyeBlink = lidFollow.down) lowers it, by at least this much in a front view (about 2 px at 512 px
+ * for a 0.23 m head framed like the E2 render).
+ */
+export const MIN_LID_FOLLOW = 0.0015;
 const LID_MOTION = 0.00001, UPPER_TEETH_TOLERANCE = 0.0001, BOUND = 0.999, PIVOT_TOLERANCE = 0.001;
 
 export interface FaceCheck { id: string; ok: boolean; message: string; problems: string[] }
 /** Front rays cast across one eyeball: how many reach it, at neutral and in each coverage state (keyed by its weights). */
 export interface EyeCoverage { samples: number; neutral: number; visible: Record<string, number> }
-interface EyeMeasure { center: number[]; radius: number; minLidClearance: number | null; eyeballs: string[]; lidVertices: number; coverage: EyeCoverage | null }
+/**
+ * Oblique rays around one eye, from every `OBLIQUE_VIEWS` direction in every lid and emotion state: how many were cast
+ * and how many found the socket or the inside of the head first (a leak); `window` is the aimed disk's radius.
+ */
+export interface EyeOblique { views: number; states: number; rays: number; leaks: number; window: number; worst: string | null }
+/** How far lid follow moves the upper lid's edge in a front view: up at eyeLookUp = 1, down at eyeLookDown = 1 (m). */
+export interface EyeLidFollow { up: number; down: number; restTop: number }
+interface EyeMeasure {
+  center: number[]; radius: number; minLidClearance: number | null; eyeballs: string[]; lidVertices: number; coverage: EyeCoverage | null;
+  oblique: EyeOblique | null; lidFollow: EyeLidFollow | null;
+}
 export interface FaceContractReport {
   contract: typeof ARKIT_FACE_CONTRACT; ok: boolean; failures: string[]; warnings: string[]; checks: FaceCheck[];
   validator: { errors: number; warnings: number };
@@ -79,6 +107,8 @@ export interface FaceContractReport {
 
 interface Instance {
   label: string; names: string[]; skinned: boolean; skin?: number; count: number;
+  /** Why the primitive's material lets light through (alpha blend or mask, transmission), or null when opaque. */
+  transparent: string | null; morphMesh: boolean;
   rest: Float64Array; targets: Map<string, Float64Array>; triangles: Uint32Array;
   influence: (vertex: number, joint: number) => number;
 }
@@ -88,14 +118,27 @@ const mm = (value: number) => `${(value * 1000).toFixed(2)} mm`;
 const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const union = (...values: number[]) => 1 - values.reduce((product, value) => product * (1 - Math.min(1, Math.max(0, value))), 1);
-const upperTeeth = (names: string[]) => names.some(n => /teeth|tooth/i.test(n) && /upper/i.test(n));
-const lowerTeeth = (names: string[]) => names.some(n => /teeth|tooth/i.test(n) && /lower/i.test(n));
+const toothName = (n: string) => /teeth|tooth/i.test(n);
+/** Teeth meant to show at rest: `teeth_exposed` (on the skull) or `teeth_exposed_lower` (on the jaw). */
+const exposedTeeth = (names: string[]) => names.some(n => toothName(n) && /exposed/i.test(n));
+const upperTeeth = (names: string[]) => names.some(n => toothName(n) && (/upper/i.test(n) || (/exposed/i.test(n) && !/lower/i.test(n))));
+const lowerTeeth = (names: string[]) => names.some(n => toothName(n) && /lower/i.test(n));
 const tongue = (names: string[]) => names.some(n => /tongue/i.test(n));
 const cavity = (names: string[]) => names.some(n => /cavity|throat|mouth[_ -]?interior/i.test(n));
 const socket = (names: string[]) => names.some(n => /socket/i.test(n));
 /** Parts below the head that the chin measurement ignores (a neck, collar or body does not open with the jaw). */
 const body = (names: string[]) => names.some(n => /neck|collar|body|torso|shoulder/i.test(n));
 const mouthPart = (names: string[]) => upperTeeth(names) || lowerTeeth(names) || tongue(names) || cavity(names);
+
+/** Why a material lets light through (so it hides nothing), or null when it is opaque. */
+function seeThrough(material: GLTFMaterial | undefined): string | null {
+  if (!material) return null;
+  if (material.alphaMode === 'BLEND') return 'alphaMode BLEND';
+  if (material.alphaMode === 'MASK') return `alphaMode MASK (cutoff ${material.alphaCutoff ?? 0.5})`;
+  const transmission = (material.extensions?.KHR_materials_transmission as { transmissionFactor?: unknown } | undefined)?.transmissionFactor;
+  if (typeof transmission === 'number' && transmission > 0) return `KHR_materials_transmission ${transmission}`;
+  return null;
+}
 
 function instances(doc: GLTFDocument, graph: ReturnType<typeof sceneGraph>): Instance[] {
   const { json } = doc, result: Instance[] = [];
@@ -119,7 +162,8 @@ function instances(doc: GLTFDocument, graph: ReturnType<typeof sceneGraph>): Ins
     mesh.primitives.forEach((primitive, p) => {
       if (primitive.attributes.POSITION === undefined) return;
       const position = readAccessor(doc, primitive.attributes.POSITION), count = position.count;
-      const material = primitive.material === undefined ? '' : json.materials?.[primitive.material]?.name ?? '';
+      const materialJson = primitive.material === undefined ? undefined : json.materials?.[primitive.material];
+      const material = materialJson?.name ?? '';
       const names = [mesh.name ?? '', node.name ?? '', material].filter(Boolean);
       const label = `${node.name || mesh.name || `node ${nodeIndex}`}${mesh.primitives.length > 1 ? `[${material || p}]` : ''}`;
       const matrices: Matrix4[] = new Array(count);
@@ -171,7 +215,7 @@ function instances(doc: GLTFDocument, graph: ReturnType<typeof sceneGraph>): Ins
         joints.forEach((set, s) => { for (let k = 0; k < 4; k++) { const w = weights[s][vertex * 4 + k]; total += w; if (set[vertex * 4 + k] === joint) on += w; } });
         return total > 0 ? on / total : 0;
       };
-      result.push({ label, names, skinned, skin: node.skin, count, rest, targets, triangles: triangles(doc, primitive, count), influence });
+      result.push({ label, names, skinned, skin: node.skin, count, rest, targets, triangles: triangles(doc, primitive, count), influence, transparent: seeThrough(materialJson), morphMesh: targetNames.length > 0 });
     });
   }
   return result;
@@ -208,12 +252,34 @@ function rayZ(points: Float64Array, a: number, b: number, c: number, x: number, 
   return u * points[a * 3 + 2] + v * points[b * 3 + 2] + w * points[c * 3 + 2];
 }
 
-/** A front-view depth buffer over a grid of (x, y) rays: the frontmost z and which part owns it. */
-interface Raster { x0: number; y0: number; step: number; nx: number; ny: number; depth: Float64Array; owner: Int32Array }
+/**
+ * A view-space depth buffer over a grid of (x, y) rays looking down -z: the frontmost z, which part owns it and whether
+ * the ray met that triangle's front (1, counter-clockwise as seen) or back (-1).
+ */
+interface Raster { x0: number; y0: number; step: number; nx: number; ny: number; depth: Float64Array; owner: Int32Array; facing: Int8Array }
 
 function raster(x0: number, x1: number, y0: number, y1: number, columns: number): Raster {
   const step = Math.max(x1 - x0, 1e-9) / (columns - 1), nx = columns, ny = Math.max(2, Math.ceil((y1 - y0) / step) + 1);
-  return { x0, y0, step, nx, ny, depth: new Float64Array(nx * ny).fill(-Infinity), owner: new Int32Array(nx * ny).fill(-1) };
+  return { x0, y0, step, nx, ny, depth: new Float64Array(nx * ny).fill(-Infinity), owner: new Int32Array(nx * ny).fill(-1), facing: new Int8Array(nx * ny) };
+}
+
+/** An orthographic view looking at the face from `yaw` degrees toward +X and `pitch` degrees above (glTF: the face looks down +Z). */
+function viewBasis(yaw: number, pitch: number): number[] {
+  const t = yaw * Math.PI / 180, p = pitch * Math.PI / 180;
+  const z = [Math.sin(t) * Math.cos(p), Math.sin(p), Math.cos(t) * Math.cos(p)], x = [Math.cos(t), 0, -Math.sin(t)];
+  const y = [z[1] * x[2] - z[2] * x[1], z[2] * x[0] - z[0] * x[2], z[0] * x[1] - z[1] * x[0]];
+  return [...x, ...y, ...z];
+}
+
+function toView(points: Float64Array, basis: number[]): Float64Array {
+  const out = new Float64Array(points.length);
+  for (let i = 0; i < points.length; i += 3) {
+    const x = points[i], y = points[i + 1], z = points[i + 2];
+    out[i] = x * basis[0] + y * basis[1] + z * basis[2];
+    out[i + 1] = x * basis[3] + y * basis[4] + z * basis[5];
+    out[i + 2] = x * basis[6] + y * basis[7] + z * basis[8];
+  }
+  return out;
 }
 
 /** Rasterize triangles into the buffer, keeping the frontmost (largest z) surface per ray. */
@@ -234,7 +300,7 @@ function draw(target: Raster, points: Float64Array, tris: Uint32Array, owner: nu
         const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, w = 1 - u - v;
         if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue;
         const z = u * points[a + 2] + v * points[b + 2] + w * points[c + 2], k = j * nx + i;
-        if (z > depth[k]) { depth[k] = z; target.owner[k] = owner; }
+        if (z > depth[k]) { depth[k] = z; target.owner[k] = owner; target.facing[k] = d > 0 ? 1 : -1; }
       }
     }
   }
@@ -358,7 +424,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     const offset = Math.hypot((min[0] + max[0]) / 2 - center.x, (min[1] + max[1]) / 2 - center.y, (min[2] + max[2]) / 2 - center.z);
     if (offset > PIVOT_TOLERANCE) eyeProblems.push(`eye_${side} pivots ${mm(offset)} from its eyeball's center (allowed ${mm(PIVOT_TOLERANCE)})`);
     eyes[side] = { center, radius, balls };
-    measurements.eyes[side] = { center: center.toArray().map(v => round(v)), radius: round(radius), minLidClearance: null, eyeballs: balls.map(b => b.label), lidVertices: 0, coverage: null };
+    measurements.eyes[side] = { center: center.toArray().map(v => round(v)), radius: round(radius), minLidClearance: null, eyeballs: balls.map(b => b.label), lidVertices: 0, coverage: null, oblique: null, lidFollow: null };
   }
   check('eyes', eyeProblems, 'each eyeball is bound 100% to its eye bone, which pivots at its center');
 
@@ -492,7 +558,8 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   // 10b. eye coverage: front rays across each eyeball, lids, skin and everything else in front of it
   if (eyes.L && eyes.R) {
     const coverageProblems: string[] = [];
-    const occluders = all.filter(i => !eyeballInstances.has(i));
+    // A see-through lid hides nothing, whatever its geometry says.
+    const occluders = all.filter(i => !eyeballInstances.has(i) && !i.transparent);
     for (const side of ['L', 'R'] as const) {
       const suffix = side === 'L' ? 'Left' : 'Right', { center, radius, balls } = eyes[side]!;
       const names = { blink: `eyeBlink${suffix}`, squint: `eyeSquint${suffix}`, wide: `eyeWide${suffix}` };
@@ -529,6 +596,124 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     check('eye-coverage', coverageProblems, `front rays across each eyeball: every full blink (alone, with squint 1, with wide 1) covers it, and blink .25/.5/.75 and squint show nothing outside the neutral opening`);
   } else check('eye-coverage', [], '', 'the eyes were not found');
 
+  // 10c. oblique eye views: from the front, 3/4 and above and below, nothing around an eye opens into the socket
+  // cavity or the inside of the head. The lids must meet the skin all the way around the eye hole.
+  if (eyes.L && eyes.R) {
+    const scene = all.filter(i => !i.transparent);
+    const sides = ['L', 'R'] as const;
+    // Aim at a disk around each eye that reaches past the skin's eye-hole rim (open edges within two eyeball radii),
+    // 1.6 to 2 eyeball radii wide: open edges farther out (a hair cap's fringe) are not the eye's.
+    const windows = Object.fromEntries(sides.map(side => {
+      const { center, radius } = eyes[side]!;
+      let rim = 0;
+      for (const instance of scene) {
+        if (eyeballInstances.has(instance)) continue;
+        const used = new Map<string, number>(), t = instance.triangles;
+        for (let k = 0; k < t.length; k += 3) for (const [a, b] of [[t[k], t[k + 1]], [t[k + 1], t[k + 2]], [t[k + 2], t[k]]]) {
+          const key = a < b ? `${a},${b}` : `${b},${a}`; used.set(key, (used.get(key) ?? 0) + 1);
+        }
+        for (const [key, n] of used) {
+          if (n !== 1) continue;
+          for (const v of key.split(',').map(Number)) {
+            const d = Math.hypot(instance.rest[v * 3] - center.x, instance.rest[v * 3 + 1] - center.y, instance.rest[v * 3 + 2] - center.z);
+            if (d <= 2 * radius) rim = Math.max(rim, d);
+          }
+        }
+      }
+      return [side, Math.min(2 * radius, Math.max(1.6 * radius, 1.1 * rim))];
+    })) as Record<'L' | 'R', number>;
+    // Every lid state the coverage check judges, lid follow at full gaze, and every emotion preset (brows and cheeks move the rim).
+    const both = (state: { blink: number; squint: number; wide: number }) => Object.fromEntries(['Left', 'Right'].flatMap(s => ([['eyeBlink', state.blink], ['eyeSquint', state.squint], ['eyeWide', state.wide]] as const).filter(([, w]) => w).map(([name, w]) => [`${name}${s}`, w])));
+    const states: { label: string; weights: Record<string, number> }[] = [{ label: 'neutral', weights: {} }];
+    for (const state of EYE_COVERAGE_STATES) states.push({ label: Object.entries({ blink: state.blink, squint: state.squint, wide: state.wide }).filter(([, w]) => w).map(([k, w]) => `${k} ${w}`).join(' + '), weights: both(state) });
+    states.push({ label: `eyeLookUp 1 (eyeWide ${follow.up})`, weights: both({ blink: 0, squint: 0, wide: follow.up }) });
+    states.push({ label: `eyeLookDown 1 (eyeBlink ${follow.down})`, weights: both({ blink: follow.down, squint: 0, wide: 0 }) });
+    for (const combo of combos) if (/ preset$/.test(combo.label) && combo.label !== 'neutral preset') states.push({ label: combo.label, weights: combo.weights });
+    const seen = Object.fromEntries(sides.map(side => [side, { rays: 0, leaks: 0, worst: null as string | null, worstLeaks: 0, problems: [] as { leaks: number; text: string }[] }]));
+    for (const state of states) {
+      const moved = scene.map(instance => Object.values(state.weights).some(Boolean) ? positions(instance, state.weights) : instance.rest);
+      for (const { yaw, pitch } of OBLIQUE_VIEWS) {
+        const basis = viewBasis(yaw, pitch), points = moved.map(p => toView(p, basis));
+        const view = `yaw ${yaw >= 0 ? '+' : ''}${yaw} pitch ${pitch >= 0 ? '+' : ''}${pitch}`;
+        for (const side of sides) {
+          const { center, balls, radius } = eyes[side]!, rho = windows[side];
+          const c = toView(Float64Array.from(center.toArray()), basis), o = toView(Float64Array.from(eyes[side === 'L' ? 'R' : 'L']!.center.toArray()), basis);
+          const window = raster(c[0] - rho, c[0] + rho, c[1] - rho, c[1] + rho, OBLIQUE_GRID);
+          scene.forEach((instance, k) => draw(window, points[k], instance.triangles, k));
+          const hits = new Map<string, number>();
+          let rays = 0, leaks = 0;
+          for (let j = 0; j < window.ny; j++) for (let i = 0; i < window.nx; i++) {
+            const dx = window.x0 + i * window.step - c[0], dy = window.y0 + j * window.step - c[1];
+            if (dx * dx + dy * dy > rho * rho) continue;
+            rays++;
+            const k = j * window.nx + i, owner = window.owner[k] >= 0 ? scene[window.owner[k]] : undefined;
+            if (!owner || balls.includes(owner) || eyeballInstances.has(owner)) continue;
+            // The socket cup is never meant to be seen. A back face behind the eye's center means the ray went through a
+            // gap into the head when it lies in the socket region (within 1.8 eyeball radii of the center) or the ray
+            // passed within 1.2 eyeball radii of the center (through the eye hole) to reach it. Other back faces (under
+            // a hair cap, seen past the head's outline) are not the eye's business.
+            const x = window.x0 + i * window.step, y = window.y0 + j * window.step, z = window.depth[k];
+            const inside = window.facing[k] < 0 && z < c[2] && (Math.hypot(x - c[0], y - c[1], z - c[2]) < 1.8 * radius || dx * dx + dy * dy <= (1.2 * radius) ** 2);
+            const what = socket(owner.names) ? owner.label : inside ? `the inside of ${owner.label}` : undefined;
+            if (!what) continue;
+            // A leak nearer the other eye belongs to that eye's window.
+            if (Math.hypot(x - o[0], y - o[1], z - o[2]) < Math.hypot(x - c[0], y - c[1], z - c[2])) continue;
+            leaks++; hits.set(what, (hits.get(what) ?? 0) + 1);
+          }
+          const record = seen[side];
+          record.rays += rays; record.leaks += leaks;
+          if (leaks) {
+            const eyeLabel = [...new Set(balls.map(b => b.label.replace(/\[.*\]$/, '')))].join(', ');
+            const text = `${state.label} seen from ${view}: ${leaks} of ${rays} rays around ${eyeLabel} reach ${[...hits.keys()].join(' and ')} through a gap between the lids and the skin's eye hole (the lids must meet the skin all the way round: open lid eyes with eye_hole(), whose skin wall and lining seal the eye; keep a shutter eye's hole inside its blades and housing)`;
+            record.problems.push({ leaks, text });
+            if (leaks > record.worstLeaks) { record.worstLeaks = leaks; record.worst = `${state.label} from ${view}`; }
+          }
+        }
+      }
+    }
+    const obliqueProblems: string[] = [];
+    for (const side of sides) {
+      const record = seen[side];
+      measurements.eyes[side]!.oblique = { views: OBLIQUE_VIEWS.length, states: states.length, rays: record.rays, leaks: record.leaks, window: round(windows[side]), worst: record.worst };
+      const ranked = record.problems.sort((a, b) => b.leaks - a.leaks);
+      obliqueProblems.push(...ranked.slice(0, 4).map(p => p.text));
+      if (ranked.length > 4) obliqueProblems.push(`eye_${side}: ${ranked.length - 4} more state and view combinations leak (${record.leaks} of ${record.rays} oblique rays in all)`);
+    }
+    check('eye-oblique', obliqueProblems, `from the front, 3/4 (35-45 degrees of yaw) and 20 degrees above and below, in ${states.length} lid and emotion states, no ray around either eye reaches the socket or the inside of the head`);
+  } else check('eye-oblique', [], '', 'the eyes were not found');
+
+  // 10d. lid follow (E2): eyeLookUp lifts the upper lid's edge and eyeLookDown lowers it, measurably, in a front view
+  if (eyes.L && eyes.R) {
+    const followProblems: string[] = [];
+    const occluders = all.filter(i => !eyeballInstances.has(i) && !i.transparent);
+    for (const side of ['L', 'R'] as const) {
+      const suffix = side === 'L' ? 'Left' : 'Right', { center, radius, balls } = eyes[side]!;
+      // One thin column of front rays down the middle of the eye, 0.1 mm apart: the highest one that reaches the eyeball.
+      const top = (weights: Record<string, number>) => {
+        const column = raster(center.x - 0.0001, center.x + 0.0001, center.y - radius, center.y + radius, 3);
+        for (const ball of balls) draw(column, ball.rest, ball.triangles, -2);
+        const eyeball = Float64Array.from(column.depth), front = raster(center.x - 0.0001, center.x + 0.0001, center.y - radius, center.y + radius, 3);
+        occluders.forEach((instance, k) => draw(front, Object.values(weights).some(Boolean) ? positions(instance, weights) : instance.rest, instance.triangles, k));
+        let highest = -Infinity;
+        for (let j = 0; j < column.ny; j++) { const k = j * column.nx + 1; if (eyeball[k] > -Infinity && eyeball[k] > front.depth[k]) highest = Math.max(highest, column.y0 + j * column.step); }
+        return highest;
+      };
+      const rest = top({}), up = top({ [`eyeWide${suffix}`]: follow.up }), down = top({ [`eyeBlink${suffix}`]: follow.down });
+      const lift = Number.isFinite(rest) && Number.isFinite(up) ? up - rest : 0, drop = Number.isFinite(rest) ? rest - (Number.isFinite(down) ? down : center.y - radius) : 0;
+      measurements.eyes[side]!.lidFollow = { up: round(lift), down: round(drop), restTop: Number.isFinite(rest) ? round((rest - center.y) / radius, 4) : 0 };
+      if (!Number.isFinite(rest)) { followProblems.push(`eye_${side}: no eyeball shows down the middle of the eye at rest, so lid follow cannot be seen`); continue; }
+      if (rest >= center.y + 0.98 * radius) followProblems.push(`eye_${side}: the top of the eyeball shows at rest, so no upper lid edge is there to follow the gaze (E2 needs a strip of upper lid at rest)`);
+      if (lift < MIN_LID_FOLLOW) followProblems.push(`eyeLookUp${suffix}=1 (eyeWide${suffix}=${follow.up}, lidFollow.up) lifts the upper lid's edge by ${mm(lift)} in a front view; E2 needs >= ${mm(MIN_LID_FOLLOW)} (about 2 px at 512 px): raise lidFollow.up or the lids' wide travel`);
+      if (drop < MIN_LID_FOLLOW) followProblems.push(`eyeLookDown${suffix}=1 (eyeBlink${suffix}=${follow.down}, lidFollow.down) lowers the upper lid's edge by ${mm(drop)} in a front view; E2 needs >= ${mm(MIN_LID_FOLLOW)}: raise lidFollow.down`);
+    }
+    check('lid-follow', followProblems, `lid follow moves the upper lid's edge by >= ${mm(MIN_LID_FOLLOW)} up (lidFollow.up ${follow.up}) and down (lidFollow.down ${follow.down}) in a front view`);
+  } else check('lid-follow', [], '', 'the eyes were not found');
+
+  // 10e. opaque face parts: a see-through lid, skin or tooth can render the eye open while the geometry says it is closed
+  const clear = all.filter(i => i.transparent && !eyeballInstances.has(i) && (i.morphMesh || i.names.some(n => /skin|lid|teeth|tooth|face|skull|socket|cavity|tongue/i.test(n))));
+  check('materials', clear.map(i => `${i.label} uses ${i.transparent}: the skin, lids, teeth and every face part must be opaque (a see-through lid shows the eye open while its geometry says closed; only eyeballs may be transparent)`),
+    'the skin, lids, teeth and other face parts are opaque');
+
   // 11-12. extras
   const carriers = [...graph.world.keys()].filter(n => isRecord(nodes[n]?.extras) && isRecord((nodes[n].extras as Record<string, unknown>).arkitFace));
   const rootCarriers = carriers.filter(n => graph.roots.includes(n));
@@ -540,23 +725,33 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   const teeth = face?.exposedTeeth;
   const teethProblemsAtRest: string[] = [];
   const toothParts = all.filter(i => upperTeeth(i.names) || lowerTeeth(i.names));
+  const declared = Array.isArray(teeth) ? teeth.filter((t): t is string => typeof t === 'string' && !!t) : [];
+  // A declared name must be an exposed-teeth part: its own material (named like teeth_exposed), not a whole row.
+  for (const name of declared) {
+    const parts = toothParts.filter(i => i.names.includes(name));
+    if (!parts.length) teethProblemsAtRest.push(`exposedTeeth lists "${name}", but no teeth material or mesh has that name: give the teeth that show at rest (buck teeth, fangs) their own material named like teeth_exposed and list that name`);
+    else if (!parts.every(i => exposedTeeth(i.names))) teethProblemsAtRest.push(`exposedTeeth lists "${name}", which names ${parts.map(i => i.label).join(', ')}, a teeth row rather than exposed teeth: the verifier could not tell a row poking through the lips from buck teeth. Put the teeth meant to show in their own material named like teeth_exposed and list that name`);
+  }
   if (toothParts.length) {
-    // Front rays over the teeth rows at rest: a closed face shows no teeth unless exposedTeeth declares them.
+    // Front rays over the teeth rows at rest: a closed face shows only the teeth exposedTeeth declares.
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const part of toothParts) for (let v = 0; v < part.count; v++) { x0 = Math.min(x0, part.rest[v * 3]); x1 = Math.max(x1, part.rest[v * 3]); y0 = Math.min(y0, part.rest[v * 3 + 1]); y1 = Math.max(y1, part.rest[v * 3 + 1]); }
-    const scene = all.filter(i => !eyeballInstances.has(i)), front = raster(x0, x1, y0, y1, 96), mask = raster(x0, x1, y0, y1, 96);
+    const scene = all.filter(i => !eyeballInstances.has(i) && !i.transparent), front = raster(x0, x1, y0, y1, 96), mask = raster(x0, x1, y0, y1, 96);
     scene.forEach((instance, k) => draw(front, instance.rest, instance.triangles, k));
     for (const part of toothParts) draw(mask, part.rest, part.triangles, 0);
     let samples = 0, visible = 0;
-    const shown = new Set<string>();
+    const shown = new Map<Instance, number>();
     for (let k = 0; k < mask.depth.length; k++) {
       if (mask.depth[k] === -Infinity) continue;
       samples++;
       const owner = front.owner[k] >= 0 ? scene[front.owner[k]] : undefined;
-      if (owner && toothParts.includes(owner)) { visible++; shown.add(owner.label); }
+      if (owner && toothParts.includes(owner)) { visible++; shown.set(owner, (shown.get(owner) ?? 0) + 1); }
     }
     measurements.restTeeth = { samples, visible };
-    if (visible && Array.isArray(teeth) && teeth.length === 0) teethProblemsAtRest.push(`at rest ${visible} of ${samples} front rays over the teeth land on ${[...shown].join(', ')} before the lips or jaw plate, but extras.arkitFace.exposedTeeth is empty: tuck the teeth behind the closed mouth or declare them`);
+    for (const [part, rays] of shown) {
+      if (exposedTeeth(part.names) && declared.some(name => part.names.includes(name))) continue;
+      teethProblemsAtRest.push(`at rest ${rays} of ${samples} front rays over the teeth land on ${part.label} before the lips or jaw plate, but only teeth in their own material named like teeth_exposed and listed in extras.arkitFace.exposedTeeth (now ${JSON.stringify(declared)}) may show: tuck ${part.label} behind the closed mouth${exposedTeeth(part.names) ? ` or list "${part.names[part.names.length - 1]}"` : ', or move the teeth meant to show into a teeth_exposed material and declare it'}`);
+    }
   }
   check('exposed-teeth', !face ? ['extras.arkitFace is missing, so exposedTeeth is undeclared']
     : Array.isArray(teeth) && teeth.every(t => typeof t === 'string' && t) ? teethProblemsAtRest : ['extras.arkitFace.exposedTeeth must declare the teeth visible at rest as a list of names (empty when none show)'],

@@ -8,9 +8,13 @@ import { Matrix4, Quaternion, Vector3 } from 'three';
 export interface GLTFJson {
   scene?: number; scenes?: { nodes?: number[]; extras?: unknown }[];
   nodes?: GLTFNode[]; meshes?: GLTFMesh[]; skins?: { joints: number[]; inverseBindMatrices?: number; skeleton?: number }[];
-  materials?: { name?: string }[]; accessors?: GLTFAccessor[];
+  materials?: GLTFMaterial[]; accessors?: GLTFAccessor[];
   bufferViews?: { buffer: number; byteOffset?: number; byteLength: number; byteStride?: number }[];
   buffers?: { byteLength: number; uri?: string }[];
+}
+export interface GLTFMaterial {
+  name?: string; alphaMode?: string; alphaCutoff?: number; doubleSided?: boolean;
+  pbrMetallicRoughness?: { baseColorFactor?: number[] } & Record<string, unknown>; extensions?: Record<string, unknown>;
 }
 export interface GLTFNode { name?: string; children?: number[]; mesh?: number; skin?: number; matrix?: number[]; translation?: number[]; rotation?: number[]; scale?: number[]; weights?: number[]; extras?: unknown }
 export interface GLTFPrimitive { attributes: Record<string, number>; indices?: number; material?: number; mode?: number; targets?: Record<string, number>[] }

@@ -1,13 +1,14 @@
 """Tin-can robot for the arkit-face/1 fixtures (Bolt's design), authored only with the agent-meshes face helpers.
 
-Recessed shutter eyes behind a flat face plate, rigid brow plates, a skull and a hinged chin plate with thick
-edges, grille teeth, and a rubber mouth edge that carries the smile, frown, stretch and funnel shapes.
+Recessed shutter eyes behind a flat face plate (each hole sealed by `shutter_hole`: a tube back from the plate and a
+cap behind the eye, so no view through it finds the head's inside), rigid brow plates, a skull and a hinged chin
+plate with thick edges, grille teeth, and a rubber mouth edge that carries the smile, frown, stretch and funnel shapes.
 Blender coordinates: Z up, meters, the face looks down -Y, character left is +X.
 """
 from agent_meshes_author import (
-    JawHinge, add_jaw_open, brow_plate_geometry, build_eye, cut_hole, ellipsoid_geometry, face_contract, face_skeleton,
+    JawHinge, add_jaw_open, brow_plate_geometry, build_eye, ellipsoid_geometry, face_contract, face_skeleton,
     front_surface, join_face_parts, material, mesh_from_geometry, mouth_cavity_geometry, rubber_mouth_geometry, shape_key,
-    split_plates, symmetric_offsets, teeth_row_geometry,
+    shutter_hole, split_plates, symmetric_offsets, teeth_row_geometry,
 )
 
 CENTER, HALF = (0, 0, .13), (.075, .065, .10)   # a tin can 150 x 130 x 200 mm with rounded edges
@@ -26,9 +27,11 @@ def build():
 
     blank = ellipsoid_geometry(CENTER, HALF, rings=48, segments=64, exponent=6)
     vertices, faces = blank['vertices'], blank['faces']
-    for eye in (EYE_L, EYE_R):
-        cut = cut_hole(vertices, faces, (eye[0], -.064, eye[2]), .018)
-        vertices, faces = cut['vertices'], cut['faces']
+    holes = {}
+    for side, eye in (('L', EYE_L), ('R', EYE_R)):
+        # surface=None: shutter_hole checks the blades against the holed face itself.
+        holes[side] = shutter_hole(vertices, faces, eye, EYE_RADIUS, hole_radius=.018, aperture=.021)
+        vertices, faces = holes[side]['vertices'], holes[side]['faces']
     front = front_surface(vertices, faces)
     jaw = JawHinge.ear(vertices, MOUTH_Z, MOUTH_HALF_WIDTH, angle=14, drop=.012)
 
@@ -66,8 +69,8 @@ def build():
 
     parts, eyeballs = [skull, plate, edge, cavity, upper, lower] + brows, []
     for side, center in (('L', EYE_L), ('R', EYE_R)):
-        # surface= rejects blades that would slide out through the face plate.
-        eye = build_eye(rig, side, center, EYE_RADIUS, style='shutter', lid_material=dark_tin, aperture=.021, surface=front)
+        # The blades shutter_hole built (and checked against the face plate), in a housing inside the sealed tube.
+        eye = build_eye(rig, side, center, EYE_RADIUS, style='shutter', lid_material=dark_tin, hole=holes[side])
         eyeballs.append(eye['eyeball'])
         parts += [eye['lids'], eye['socket']]
 

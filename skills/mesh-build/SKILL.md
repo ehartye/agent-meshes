@@ -162,8 +162,13 @@ moving at least 1 mm, no flipped triangles at 0.5/1 or across the emotion preset
 `jawOpen` = 1, lid clearance of eyeball radius + 0.5 mm at blink .25/.5/.75/1 alone and with
 squint, eye coverage (front rays across each eyeball must all hit a lid or skin at blink 1 alone,
 with squint 1 and with wide 1, and show nothing outside the neutral opening mid-blink or at
-squint), the `extras.arkitFace` schema and `exposedTeeth` (teeth that show at rest must be
-declared), the skull, teeth and every
+squint), oblique eye views (rays from the front, 3/4 at 35-45 degrees of yaw and 20 degrees above
+and below, in every lid and emotion state, must never reach the socket or the inside of the head:
+the lids must meet the skin all the way round, which `eye_hole` builds), lid follow (the upper
+lid's edge moves at least 1.5 mm up at eyeLookUp = 1 and down at eyeLookDown = 1), opaque face
+materials (an alpha-blended or masked lid, skin or tooth fails, and hides nothing in any ray
+check), the `extras.arkitFace` schema and `exposedTeeth` (teeth that show at rest must be in
+their own `teeth_exposed` material and declared; a row poking through the lips fails), the skull, teeth and every
 morph-bearing part bound to `head` (a skull bound to an eye bone is named as such), upper teeth
 fixed and lower teeth, tongue and cavity carried by `jawOpen`, the chin (the face's lowest point)
 dropping by at least 10% of the face height at `jawOpen` = 1, the face above the upper teeth's

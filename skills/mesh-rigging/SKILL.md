@@ -93,7 +93,17 @@ exposed fangs). The rules that are easy to get wrong:
   mouth line never hangs the upper lip on the jaw). Add a dark `mouth_cavity_geometry` bag fitted
   to the face with `surface=front_surface(skin_vertices, skin_faces)` so it never pokes through the
   cheeks, and make fangs or buck teeth with `exposed_teeth_geometry` (declared in `exposedTeeth`).
-- Cut eye holes with `cut_hole` (a smooth rim), not `cut_faces` (stair steps). Brows on eye domes
+- Open lid eyes with `eye_hole(vertices, faces, center, radius, **lid_options)` and pass it to
+  `build_eye(..., hole=...)`: it shapes the skin from the lids (mound, socket dip, a window cut
+  and a wall and lining that seal the eye), so the skin meets the lids all the way round and no
+  3/4 view looks into the head. A sphere cut (`cut_hole`) leaves a black hole beside the lids in
+  3/4 view whatever its radius. Robot shutter eyes take `shutter_hole` (a sealed tube back from
+  the face plate, with the blades checked against it) and `build_eye(style='shutter', hole=...)`.
+  Mask brow and cheek offsets near the eyes with `mask=eye_hole_mask(*holes)`.
+- Teeth that show at rest get their own material, `teeth_exposed`, listed in `exposed_teeth`.
+- Brows on a round skin face: `skin_brow_geometry(front_surface(...), side, inner, outer)`. The
+  helpers write `lidFollow.up` .8 so looking up visibly lifts the lids (E2).
+- Cut other holes with `cut_hole` (a smooth rim), not `cut_faces` (stair steps). Brows on eye domes
   (a frog) are `brow_ridge_geometry` ridges that slide over the lid dome.
 - Put every morph-bearing part in one mesh with `join_face_parts`: Unreal discards all morph
   names when a name repeats across glTF meshes. Keep only the eyeballs separate.

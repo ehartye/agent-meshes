@@ -145,12 +145,12 @@ written under ignored `.agent-meshes/skin-proof/`.
 repeats them. `agent_meshes_author` re-exports all of them, so one import works:
 
 ```python
-from agent_meshes_author import (face_skeleton, build_eye, JawHinge, add_jaw_open,
-    slit_mouth, cut_hole, front_surface, teeth_row_geometry, exposed_teeth_geometry,
-    mouth_cavity_geometry, tongue_geometry, brow_ridge_geometry, chin_drop,
-    brow_plate_geometry, split_plates, rubber_mouth_geometry, eye_coverage_problems,
-    mesh_from_geometry, soft_offset, symmetric_offsets, shape_key,
-    join_face_parts, face_contract, recommended_gaze)
+from agent_meshes_author import (face_skeleton, build_eye, eye_hole, eye_hole_mask,
+    JawHinge, add_jaw_open, slit_mouth, cut_hole, front_surface, teeth_row_geometry,
+    exposed_teeth_geometry, mouth_cavity_geometry, tongue_geometry, brow_ridge_geometry,
+    skin_brow_geometry, chin_drop, brow_plate_geometry, split_plates,
+    rubber_mouth_geometry, eye_coverage_problems, mesh_from_geometry, soft_offset,
+    symmetric_offsets, shape_key, join_face_parts, face_contract, recommended_gaze)
 ```
 
 They follow the face contract in `arkit-face/1` and Blender's axes: **Z up,
@@ -159,11 +159,12 @@ this into Y up with the face looking down +Z). Angles are degrees. Geometry
 helpers are pure Python and return `{'vertices', 'faces', ...}` dicts in world
 coordinates; the Blender wrappers build objects with identity transforms. The
 pure-Python checks run with `python tests/blender_face_geometry.py`. The complete
-worked examples are `tests/fixtures/face-rig/test_head.py` (round eyes, lids, an
-ear-hinged puppet jaw), `test_robot.py` (Bolt's tin can: recessed shutter eyes,
-brow plates, a skull and chin plate with thick edges, grille teeth, a rubber mouth
-edge) and `test_frog.py` (a wide frog: lid domes with brow ridges, saw teeth,
-two exposed fangs, a cavity fitted to the curved face).
+worked examples are `tests/fixtures/face-rig/test_head.py` (round eyes in
+`eye_hole` sockets, lids, an ear-hinged puppet jaw), `test_robot.py` (Bolt's tin
+can: recessed shutter eyes in `shutter_hole` tubes, brow plates, a skull and chin plate with
+thick edges, grille teeth, a rubber mouth edge) and `test_frog.py` (a wide frog:
+eyes in mounded `eye_hole` domes with brow ridges, saw teeth, two exposed fangs in
+their own `teeth_exposed` material, a cavity fitted to the curved face).
 
 ### Skeleton, binding and one face mesh
 
@@ -174,10 +175,13 @@ with an identity rest rotation: gaze yaw is a turn about the bone's local Y (up)
 pitch about its local X. `bind_rigid(mesh, rig, bone='head')` binds every vertex
 100% to one bone.
 
-`join_face_parts(parts, name='face', rig=None, bone='head')` joins every
-morph-bearing part (skin, lids, sockets, teeth, tongue, mouth cavity) into **one**
+`join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60)` joins
+every morph-bearing part (skin, lids, teeth, tongue, mouth cavity) into **one**
 mesh object, keeping each part's materials, smooth flags and shape keys; a part
-without a key keeps its rest shape in it. It is required: Unreal discards *every*
+without a key keeps its rest shape in it. `None` parts are skipped (a sealed eye
+has no socket). Edges where the surface turns by more than `sharp_angle` degrees
+(the fold from skin into an eye hole's wall, a lid's rim) are marked sharp, so
+smooth shading does not smear across them. It is required: Unreal discards *every*
 morph name in a file when a name repeats across glTF meshes, and the jaw, for
 one, moves the skin, the lower teeth, the tongue and the cavity. The object
 exports as one glTF mesh with one primitive per material, all carrying the same
@@ -186,24 +190,110 @@ result is bound to `bone`. Eyeballs stay separate: they are bound to their eye
 bones and carry no morphs. The pure `join_geometry(parts)` does the same for
 geometry dicts.
 
-### Eyes: eyeball, lids or shutters, socket
+### Eyes: eyeball, lids or shutters, and the skin's eye hole
 
 `build_eye(rig, side, center, radius, style='lid', lid_material=None,
 socket_material=None, eye_materials=None, iris=26, pupil=12, socket=True,
-**options)` builds one eye (`side` is `'L'` or `'R'`, and `center` must be the eye
-bone's head):
+margin=6, hole=None, **options)` builds one eye (`side` is `'L'` or `'R'`, and
+`center` must be the eye bone's head):
 
 - `eyeball_<side>`: a sphere whose poles lie on the gaze axis, with rings on the
   iris and pupil borders and three material slots `eye_white`, `eye_iris`,
-  `eye_pupil`, bound 100% to `eye_<side>` (`eyeball_geometry`).
+  `eye_pupil`, bound 100% to `eye_<side>` (`eyeball_geometry`). `eye_materials`
+  overrides them and **must keep those three names in that order** (the ID render
+  and the verifier find eyeballs by them); other names are rejected.
 - `lids_<side>`: the lids with `eyeBlink<Side>`, `eyeSquint<Side>` and
   `eyeWide<Side>` shape keys, bound to `head`. `options` go to `lid_geometry`
-  (`style='lid'`) or `shutter_geometry` (`style='shutter'`).
-- `eye_socket_<side>`: a dark cup between the eyeball and the lids, open toward
-  the front, that hides the head's interior (`socket_geometry`).
+  (`style='lid'`) or `shutter_geometry` (`style='shutter'`). With `hole` (an
+  `eye_hole` result) the lids are the ones the hole was shaped around: pass the
+  lid options to `eye_hole`, not here.
+- The part behind the eye: a lid eye with `hole` gets none (`socket` is None): the
+  hole's lining seals the eye. A shutter eye gets `eye_housing_<side>`, a cup in the
+  blades' material, a bezel you may see around the lens when the blades open. A lid
+  eye without `hole` gets `eye_socket_<side>`, a dark cup opening past
+  `eye_window(lids, margin)` (the legacy `cut_hole` path: the verifier's
+  `eye-oblique` check fails it wherever it shows).
 
 It returns `{'eyeball', 'lids', 'socket', 'geometry'}`; `geometry` reports the lid
 radii, `min_clearance` and the achieved `squint_ratio`.
+
+**The eye hole: the skin must meet the lids all the way round.** Round 3 cut eye
+holes with `cut_hole` at 1.32 eyeball radii and found a black hole beside each eye
+in 3/4 view: the lids ended in a hard cut at their outer corners and lay well
+inside the rim (the rim of a sphere cut sits near the eye center on a curved
+head), so the view ran past them into the dark socket. No hole radius fixes that:
+a smaller hole covers the eye's inner corner, a larger one opens more gap. So for
+lid eyes the hole is shaped from the lids:
+
+`eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005,
+blend=None, max_edge=None, socket=25, lining_gap=.0001, lining_rings=5,
+**lid_options)` takes the head blank and the same lid options as the eye
+(`opening`, `meet`, `wide`, ...), builds that `lid_geometry`, and:
+
+1. **Mound.** Skin nearer the eye center than the lids' outer surface plus
+   `clearance` is pushed out along its direction from the center (blended over
+   `blend`, default 0.2 eyeball radii), so the lids never poke out of the skin and
+   their ends stay hidden. A skin that runs through the eye (the frog's) becomes a
+   dome over it.
+2. **Socket dip.** Skin much farther out is drawn in over `socket` degrees around
+   the window (fading out by 3.2 eyeball radii), so the rim hugs the lids instead
+   of opening a deep funnel where the face lies far in front of the eye (beside the
+   nose).
+3. **Window.** The skin is clipped along `eye_window(lids, margin)`: every
+   direction from the eye center within `margin` degrees of the lids' opening
+   envelope (between the lower lid's lowest edge and the upper lid's highest edge
+   over every blink, squint and wide mix), with round ends. The lids cover every
+   other direction inside it, in every state, and reach past it.
+4. **Wall and lining.** From every rim vertex a skin wall runs toward the eye
+   center, through the lids (which slide through it), to just under the nearest
+   any lid vertex comes; there it becomes a lining that wraps the eyeball to a pole
+   behind it. A ray that enters the window meets only lids, eyeball, wall or
+   lining, never the head's inside; and a front view still sees the eyeball up to
+   the lid edges, however wide they open. The wall and lining share the rim's
+   vertices, so the skin stays one closed surface and no morph can crack it.
+
+Edges near the eye are split to `max_edge` (default 0.2 eyeball radii) first; each
+vertex costs a delta in every morph target, so keep an eye on file size (E8: 3 MB).
+Call `eye_hole` once per eye on the blank, before `slit_mouth` and any shape keys,
+and pass the result to `build_eye(..., hole=...)`. It returns `{'vertices',
+'faces', 'lids', 'window', 'rim', 'wall', 'pushed', 'rim_radius', 'lining',
+'mound', 'socket'}`: `mound` is the rim's radius where the skin was reshaped (a
+brow ridge's dome radius on a mounded eye).
+
+**Skin shapes near an eye hole** (brows, cheeks) must leave its rim, wall and
+lining still: a strong brow offset drags the rim over its wall and folds the skin
+there. Pass `mask=eye_hole_mask(*holes)` to their `soft_offset` or
+`symmetric_offsets`: 0 on the rim and everything inside the mound, rising smoothly
+over the socket band and half an eyeball radius. The worked examples do this.
+
+```python
+holes = {}
+for side, eye in (('L', EYE_L), ('R', EYE_R)):
+    holes[side] = eye_hole(vertices, faces, eye, EYE_RADIUS, opening=OPENING)
+    vertices, faces = holes[side]['vertices'], holes[side]['faces']
+head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces}, [skin])
+slit_mouth(head, MOUTH_Z, MOUTH_HALF_WIDTH)
+still = eye_hole_mask(*holes.values())
+left, right = symmetric_offsets(rest, brow_center, .02, (0, 0, -.004), mask=still)
+...
+eye = build_eye(rig, 'L', EYE_L, EYE_RADIUS, lid_material=skin, hole=holes['L'])
+parts.append(eye['lids'])               # eye['socket'] is None: the lining seals the eye
+```
+
+**Shutter eyes** (a robot's flat face) take `shutter_hole(vertices, faces, center,
+eye_radius, hole_radius=None, max_edge=None, cap_rings=5, **shutter_options)`: it
+clips the face plate within `hole_radius` of the gaze axis (default: the blades'
+half-width, at most 1.12 eyeball radii), runs the rim straight back along the gaze
+axis to the eye center's depth (a tube the blades slide through) and caps it behind
+the eyeball, then builds `shutter_geometry` against the holed plate (rejecting
+blades that would slide out through it). A plain `cut_hole` in a single-layer tin
+skin lets a view from below or the side look past the housing into the head (the
+round-3 Bolt). Pass the result to `build_eye(..., style='shutter', hole=...)`,
+which keeps the housing. The face plate must stand at least one eyeball radius in
+front of the eye center. The `arkit-face/1` verifier's
+`eye-oblique` check casts rays around each eye from the front, 3/4 (35 and 45
+degrees of yaw) and 20 degrees above and below, in every lid and emotion state,
+and fails any that reach the socket or the inside of the head.
 
 **Why lids need solving.** glTF morphs are linear: a vertex travels a straight
 chord between rest and target, which dips toward the eye center by
@@ -211,7 +301,7 @@ chord between rest and target, which dips toward the eye center by
 the eyeball mid-blink. `lid_geometry(center, eye_radius, opening=(45, 38, 30),
 meet=-8, overlap=4, clearance=.0005, thickness=None, squint=.45,
 squint_upper_share=.35, wide=(10, 4), span_margin=15, columns=24, rows=8,
-gap=None, min_radius=None, corner=1.25)` makes upper and lower lids as thick
+gap=None, min_radius=None, corner=1.25, tuck=4)` makes upper and lower lids as thick
 spherical shells whose rows keep their yaw (a meridian) and slide in elevation
 between a fixed anchor and the lid edge, like a rolling curtain:
 
@@ -232,6 +322,9 @@ between a fixed anchor and the lid edge, like a rolling curtain:
   checks every morph and morph sum for folded faces (`folded_faces`) and rejects
   settings that fold: raise `corner` or widen the opening and let the skin hide
   the corners.
+- Toward the corners the lower lid's edge rises up to `tuck` degrees past the meet
+  line, behind the upper lid, so where the lids meet they overlap instead of
+  abutting on different radii (an oblique view would find a slit between them).
 
 `shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=0,
 overlap=None, clearance=.0005, thickness=None, blade_height=None, squint=.45,
@@ -344,6 +437,15 @@ fangs) and `'grille'` (a robot's rectangular blocks). `sizes` holds one
 the materials `teeth_upper` and `teeth_lower`**: the verifier finds teeth by that
 convention.
 
+**Exposed teeth get their own material.** Round 3's buck teeth shared
+`teeth_upper` with the hidden upper row, so the verifier could not tell them from
+a row poking through the lips. Name the material of teeth that show at rest
+`teeth_exposed` (they ride the skull like the upper row; `teeth_exposed_lower`
+rides the jaw) and declare that name: `face_contract(..., exposed_teeth=['teeth_exposed'])`.
+The verifier fails any tooth that shows at rest unless its material is an
+exposed-teeth material listed in `exposedTeeth`, and any listed name that is not
+one.
+
 `exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw',
 root=None, thickness=None, clearance=.0005, sizes=None)` makes upper teeth that
 show with the mouth closed: Mossjaw's fangs, Pip's buck teeth. One tooth hangs
@@ -353,7 +455,8 @@ skin below the line (measured on its vertices, reported as `clearance`), so the
 closed lower lip never cuts it and drops away behind it when the jaw opens.
 `surface` is the skin's front: `front_surface(vertices, faces)` returns a
 function (x, z) -> y of the frontmost skin point (None beside the head). Name
-the material `teeth_upper`, bind it to `head` and list it in `exposedTeeth`.
+the material `teeth_exposed` (`EXPOSED_TEETH_MATERIAL`), bind it to `head` and
+list it in `exposedTeeth`.
 
 `mouth_cavity_geometry(center, width, height, depth, rings=8, segments=32,
 surface=None, inset=.004)` is a dark bag behind the lips, open to the front, so
@@ -378,20 +481,42 @@ returns the (Left, Right) pair, mirrored across x = 0; `mirror_x(point)` mirrors
 one point. Brows, cheeks and mouth shapes are usually one or two of these per
 side. `ellipsoid_geometry(center, radii)` is a closed head blank, and
 `cut_faces(vertices, faces, remove)` drops the faces whose centroid
-`remove(centroid)` accepts (a chin plate) and reindexes the rest. Its rim
-follows the mesh's faces, so a round hole comes out stair-stepped.
+`remove(centroid)` accepts (a hair cap's front, a chin plate) and reindexes the
+rest. **It returns a 3-tuple** `(vertices, faces, mapping)`, where `mapping[old]`
+is the new index or None. Its rim follows the mesh's faces, so a round hole comes
+out stair-stepped.
 
-`cut_hole(vertices, faces, center, radius)` cuts a smooth hole for an eye (or a
-mouth): it removes every face with a vertex inside the sphere (or the
-ellipsoid, when `radius` is (rx, ry, rz)) and slides each rim vertex along its
-removed edge onto it, so the rim lies exactly on the circle and stays on the
-original surface. Moves that would fold a face are backed off. It returns
-`{'vertices', 'faces', 'mapping', 'source', 'boundary'}`.
+`cut_hole(vertices, faces, center, radius)` cuts a smooth round (or elliptical,
+when `radius` is (rx, ry, rz)) hole: every face the sphere crosses is clipped
+exactly at it, so the rim lies on the circle, stays on the original surface and no
+vertex moves. **It returns a dict** `{'vertices', 'faces', 'mapping'` (old index ->
+new or None)`, 'source'` (new index -> old, None for a rim vertex)`, 'origin'` (the
+source face of each face)`, 'boundary'` (the rim vertices)`}`. Use it for mouths
+and other openings; **eyes take `eye_hole` (lids) or `shutter_hole` (shutters)**,
+which seal the hole (above).
+
+**Brows.** Pick by the head:
+
+- A skin-faced head (a kid): `skin_brow_geometry(surface, side, inner, outer,
+  height=.004, thickness=.0016, arch=.002, down=.004, inner_up=.004,
+  outer_up=.004, standoff=.0003)` lays a tapered brow on the forehead: `inner` and
+  `outer` are the (x, z) of the left brow's ends (side 'R' mirrors them), every
+  cross-section sits `standoff` in front of `surface` (`front_surface(...)` of the
+  skin with its eye holes cut), and each morph moves the brow over the face and
+  lays it back on the skin, so it slides instead of sinking: `browDown<Side>`
+  lowers the inner end by `down` (the outer a third as much), `browInnerUp` and
+  `browOuterUp<Side>` lift the ends (meters). Give it a hair material. Keep the
+  skin's own brow offsets (masked with `eye_hole_mask`) or leave them out; the
+  brow carries the expression. A hair cap must clear the brows.
+- Eyes in domes (a frog, a creature): `brow_ridge_geometry` below, on the mound
+  (`radius=hole['mound']`).
+- A robot: `brow_plate_geometry` (robot plates, below).
 
 `brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50,
 height=12, thickness=None, arch=4, down=12, inner_up=10, outer_up=10)` builds a
 brow ridge for eyes that sit in domes (a frog, a creature): a tapered ridge on
-the sphere of `radius` around the eye center (pass the lid's outer radius,
+the sphere of `radius` around the eye center (pass the eye hole's `mound`, where
+the skin lies over the lids; without an eye hole, the lid's outer radius,
 `upper_radius + thickness` from `build_eye(...)['geometry']`), from `inner`
 degrees toward the nose to `outer` degrees away, at `elevation` degrees above
 the gaze axis. Its morphs turn it over the dome about the eye center:
@@ -441,10 +566,23 @@ exposed_teeth=(), drop_missing=True)` collects the morph names from `objects`,
 builds the `extras.arkitFace` object (`face_contract_extras`) and attaches it to
 `root`: the rig, which is the scene's only root node once the meshes are bound.
 It holds `contract: "arkit-face/1"`, the `morphs` list, `gaze.yawMax/pitchMax`,
-`lidFollow` (default down .35, up .25), the six `emotions` (default: the
+`lidFollow` (`DEFAULT_LID_FOLLOW`: down .35, up .8), the six `emotions` (default: the
 canonical concept-sheet presets, `CANONICAL_EMOTIONS`, with morph curves the head
 lacks dropped) and `exposedTeeth` (the teeth visible at rest; `[]` when none).
-All 21 required morphs must exist. `validate_face_contract_extras(extras, morphs)`
+All 21 required morphs must exist.
+
+**Lid follow must be visible.** E2 wants the upper lid's edge higher at
+`eyeLookUp` = 1 (`eyeWide` = `lidFollow.up`) and lower at `eyeLookDown` = 1
+(`eyeBlink` = `lidFollow.down`). The contract's fallback `up` of .25 lifts the
+default lids (wide 10 degrees) by under a pixel at 512 px (round 3: Pip 0 px,
+Bolt 1 px), and the wide travel cannot grow much: blink 1 + wide 1 must still
+close. So the helpers tie lid follow to the wide travel and write `up` .8: a lift
+of 1.7-2.8 mm on 12-20 mm eyes, and on the default shutters (wide .2 radii) 1.9-2.6
+mm. The verifier's `lid-follow` check measures the edge in a front view and fails
+a lift or drop under 1.5 mm (about 2 px at 512 px). If you shrink `wide`, raise
+`lid_follow={'down': .35, 'up': ...}` to match.
+
+`validate_face_contract_extras(extras, morphs)`
 lists schema problems. `ARKIT_REQUIRED`, `ARKIT_OPTIONAL`, `ARKIT_GAZE` and
 `ARKIT_NAMES` (all 52 ARKit curves) are exported.
 

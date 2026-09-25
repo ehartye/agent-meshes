@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { encodeHead, extras, mesh, passingHead, relid, shutterEye, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { encodeHead, extras, mesh, passingHead, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -14,7 +14,7 @@ describe('arkit-face/1 verifier', () => {
     expect(result.failures).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.contract).toBe('arkit-face/1');
-    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-coverage', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open']);
+    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-coverage', 'eye-oblique', 'lid-follow', 'materials', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open']);
     expect(result.measurements.eyes.L!.radius).toBeCloseTo(0.012, 5);
     expect(result.measurements.eyes.L!.center[0]).toBeCloseTo(0.03, 5);
     expect(result.measurements.eyes.L!.minLidClearance).toBeGreaterThan(0.0005);
@@ -25,6 +25,14 @@ describe('arkit-face/1 verifier', () => {
     for (const label of ['eyeBlinkLeft=1', 'eyeBlinkLeft=1 + eyeSquintLeft=1', 'eyeBlinkLeft=1 + eyeWideLeft=1', 'eyeBlinkLeft=1 + eyeSquintLeft=1 + eyeWideLeft=1']) expect(coverage.visible[label], label).toBe(0);
     expect(coverage.visible['eyeBlinkLeft=0.5']).toBeLessThan(coverage.neutral);
     expect(coverage.visible['eyeWideLeft=1']).toBeGreaterThanOrEqual(coverage.neutral);
+    // Oblique rays (front, 3/4 at 35-45 degrees of yaw, 20 degrees above and below) never find the socket or the inside of the head.
+    const oblique = result.measurements.eyes.L!.oblique!;
+    expect(oblique.views).toBe(15);
+    expect(oblique.rays).toBeGreaterThan(10000);
+    expect(oblique.leaks).toBe(0);
+    // Lid follow moves the upper lid's edge measurably: 2 mm up at eyeLookUp = 1, more down at eyeLookDown = 1.
+    expect(result.measurements.eyes.L!.lidFollow!.up).toBeGreaterThan(0.0015);
+    expect(result.measurements.eyes.L!.lidFollow!.down).toBeGreaterThan(0.0015);
     expect(result.measurements.restTeeth).toMatchObject({ visible: 0 });
     expect(result.measurements.restTeeth!.samples).toBeGreaterThan(100);
     expect(result.measurements.morphMotion.jawOpen).toBeGreaterThan(0.01);
@@ -65,12 +73,24 @@ describe('arkit-face/1 verifier', () => {
     ['eye-coverage', 'lids that do not meet at blink 1 (a slit of eyeball stays open)', head => relid(head, 'R', { ...LID_SWEEPS, upper: { ...LID_SWEEPS.upper, blink: -30 } })],
     ['eye-coverage', 'a blink that drops the lower lid (eyeball shows over the lid mid-blink)', head => relid(head, 'L', { ...LID_SWEEPS, lower: { ...LID_SWEEPS.lower, blink: -20 } })],
     ['eye-coverage', 'lids that part at blink 1 + wide 1 (surprised plus an idle blink)', head => relid(head, 'L', { upper: { ...LID_SWEEPS.upper, blink: -42, wide: 12 }, lower: { ...LID_SWEEPS.lower, blink: 24 } })],
+    ['eye-oblique', "lids that stop short of the skin's eye hole over a dark socket (the round-3 black hole beside the eye)", head => socketGap(head, 'L')],
+    ['lid-follow', 'lid follow up too small to see (the round-3 defaults: eyeWide .25 of a small lift)', head => { head.rootExtras = { arkitFace: { ...extras(), lidFollow: { down: 0.35, up: 0.25 } } }; }],
+    ['lid-follow', 'lid follow down too small to see', head => { head.rootExtras = { arkitFace: { ...extras(), lidFollow: { down: 0.02, up: 1 } } }; }],
+    ['materials', 'lids with an alpha-blended material (they render see-through while the verifier counts them closed)', head => { head.materialProps = { lid: { alphaMode: 'BLEND' } }; }],
+    ['materials', 'skin with an alpha-masked material', head => { head.materialProps = { skin: { alphaMode: 'MASK', alphaCutoff: 0.5 } }; }],
+    ['materials', 'transmissive teeth', head => { head.materialProps = { teeth_upper: { extensions: { KHR_materials_transmission: { transmissionFactor: 1 } } } }; }],
+    ['eye-coverage', 'transparent lids at blink 1 (they occlude nothing)', head => { head.materialProps = { lid: { alphaMode: 'BLEND', pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 0] } } }; }],
     ['extras', 'missing extras', head => { head.rootExtras = undefined; }],
     ['extras', 'a wrong contract version', head => { head.rootExtras = { arkitFace: { ...extras(), contract: 'arkit-face/2' } }; }],
     ['extras', 'a morph list that does not match the file', head => { head.rootExtras = { arkitFace: extras([...REQUIRED, 'tongueOut']) }; }],
     ['extras', 'an emotion curve that is not ARKit', head => { const e = extras(); (e.emotions as Record<string, Record<string, number>>).happy.grin = 1; head.rootExtras = { arkitFace: e }; }],
     ['exposed-teeth', 'upper teeth pushed through a closed face at rest with exposedTeeth []', head => { const upper = mesh(head, 'teeth_upper'); upper.positions = upper.positions.map(p => [p[0], p[1], p[2] + 0.02] as Vec3); }],
     ['exposed-teeth', 'undeclared exposed teeth', head => { const e = extras(); delete e.exposedTeeth; head.rootExtras = { arkitFace: e }; }],
+    ['exposed-teeth', 'the whole upper row poking through the lips while exposedTeeth names teeth_upper (round 3 could not tell it from buck teeth)', head => {
+      const upper = mesh(head, 'teeth_upper'); upper.positions = upper.positions.map(p => [p[0], p[1], p[2] + 0.02] as Vec3);
+      head.rootExtras = { arkitFace: { ...extras(), exposedTeeth: ['teeth_upper'] } };
+    }],
+    ['exposed-teeth', 'exposedTeeth naming a part the file does not have', head => { head.rootExtras = { arkitFace: { ...extras(), exposedTeeth: ['fangs'] } }; }],
     ['teeth', 'upper teeth moved by jawOpen', head => { const upper = mesh(head, 'teeth_upper'); upper.targets = [{ name: 'jawOpen', positions: upper.positions.map(p => [p[0], p[1] - 0.01, p[2]] as Vec3) }]; }],
     ['teeth', 'lower teeth that stay put', head => { const lower = mesh(head, 'teeth_lower'); lower.targets = []; }],
     ['teeth', 'no teeth named by the convention', head => { mesh(head, 'teeth_upper').material = 'enamel'; }],
@@ -109,13 +129,48 @@ describe('arkit-face/1 verifier', () => {
     expect(result.measurements.eyes.L!.coverage!.visible['eyeBlinkLeft=1 + eyeSquintLeft=1']).toBe(0);
   });
 
-  it('accepts teeth showing at rest when exposedTeeth declares them', async () => {
+  it('accepts buck teeth showing at rest in their own teeth_exposed material when exposedTeeth declares it', async () => {
+    const result = await report(head => {
+      const buck = { ...mesh(head, 'teeth_upper'), name: 'buck_teeth', material: 'teeth_exposed' };
+      buck.positions = buck.positions.map(p => [p[0] * 0.3, p[1], p[2] + 0.02] as Vec3); buck.bones = buck.positions.map(() => 'head');
+      head.meshes.push(buck); head.groups!.face.push('buck_teeth');
+      head.rootExtras = { arkitFace: { ...extras(), exposedTeeth: ['teeth_exposed'] } };
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.measurements.restTeeth!.visible).toBeGreaterThan(0);
+    // Exposed teeth ride the skull like the upper row: jawOpen must not move them.
+    expect(result.measurements.teeth.upperMove).toBe(0);
+  });
+
+  it('names the teeth that show at rest but are not declared exposed', async () => {
     const result = await report(head => {
       const upper = mesh(head, 'teeth_upper'); upper.positions = upper.positions.map(p => [p[0], p[1], p[2] + 0.02] as Vec3);
-      head.rootExtras = { arkitFace: { ...extras(), exposedTeeth: ['buck teeth'] } };
+      head.rootExtras = { arkitFace: { ...extras(), exposedTeeth: ['teeth_upper'] } };
     });
-    expect(failed(result)).not.toContain('exposed-teeth');
-    expect(result.measurements.restTeeth!.visible).toBeGreaterThan(0);
+    const failure = result.failures.find(f => f.startsWith('exposed-teeth: '))!;
+    expect(failure).toMatch(/face\[teeth_upper\]/);
+    expect(failure).toMatch(/teeth_exposed/);
+  });
+
+  it('finds the socket beside the eye in 3/4 view that the front rays miss, and names the fix', async () => {
+    const result = await report(head => socketGap(head, 'L'));
+    expect(failed(result)).not.toContain('eye-coverage');
+    const failure = result.failures.find(f => f.startsWith('eye-oblique: '))!;
+    expect(failure).toMatch(/eye_socket/);
+    expect(failure).toMatch(/yaw [+-]\d+/);
+    expect(failure).toMatch(/eye_hole/);
+    expect(result.measurements.eyes.L!.oblique!.leaks).toBeGreaterThan(0);
+    expect(result.measurements.eyes.R!.oblique!.leaks).toBe(0);
+    expect(result.failures.filter(f => /eyeball_R/.test(f))).toEqual([]);
+  });
+
+  it('reports how far lid follow moves the upper lid and fails a lift under 1.5 mm', async () => {
+    const result = await report(head => { head.rootExtras = { arkitFace: { ...extras(), lidFollow: { down: 0.35, up: 0.25 } } }; });
+    const failure = result.failures.find(f => f.startsWith('lid-follow: '))!;
+    expect(failure).toMatch(/eyeLookUpLeft=1/);
+    expect(failure).toMatch(/lidFollow\.up/);
+    expect(result.measurements.eyes.L!.lidFollow!.up).toBeLessThan(0.0015);
+    expect(result.measurements.eyes.L!.lidFollow!.up).toBeGreaterThan(0);
   });
 
   it('calls a mouth without a cavity see-through even when the ray finds the back of the skull', async () => {

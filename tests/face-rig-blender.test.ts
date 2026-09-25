@@ -30,6 +30,15 @@ for (const fixture of ['test_head', 'test_robot', 'test_frog']) maybe(`the helpe
   expect(report.measurements.chinDropRatio).toBeGreaterThanOrEqual(0.1);
   expect(report.measurements.upperLipMove).toBeLessThanOrEqual(0.0005);
   expect(report.measurements.mouthOpen!.hits.every(hit => /teeth|tongue|cavity/.test(hit))).toBe(true);
+  // Oblique views (front, 3/4, above and below) never find the socket or the inside of the head, in any lid or
+  // emotion state; lid follow moves the upper lid's edge visibly both ways (E2).
+  for (const side of ['L', 'R'] as const) {
+    expect(report.measurements.eyes[side]!.oblique).toMatchObject({ views: 15, leaks: 0 });
+    expect(report.measurements.eyes[side]!.lidFollow!.up).toBeGreaterThanOrEqual(0.0015);
+    expect(report.measurements.eyes[side]!.lidFollow!.down).toBeGreaterThanOrEqual(0.0015);
+  }
+  // Every file stays within E8's 3 MB, the eye holes' extra skin included.
+  expect(bytes.length).toBeLessThan(3_000_000);
 
   const { json } = readGLB(bytes);
   const root = json.nodes![json.scenes![0].nodes![0]];
@@ -50,9 +59,12 @@ maybe('the face-rig wrappers validate, join and export inside real Blender', asy
   const bytes = await readFile(result.output);
   const report = await verifyFaceContract(bytes);
   const passed = new Set(report.checks.filter(c => c.ok).map(c => c.id));
-  for (const id of ['validator', 'skeleton', 'skinning', 'eyes', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'extras', 'exposed-teeth', 'puppet-jaw']) expect(passed, id).toContain(id);
-  // The wrapper fixture has lower teeth only, so the teeth check names the missing upper row.
+  for (const id of ['validator', 'skeleton', 'skinning', 'eyes', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-oblique', 'materials', 'extras', 'exposed-teeth', 'puppet-jaw']) expect(passed, id).toContain(id);
+  // The wrapper fixture has lower teeth only, so the teeth check names the missing upper row; its eyes sit behind an
+  // uncut skin, so no lid edge shows to follow the gaze.
   expect(report.failures).toEqual([
+    'lid-follow: eye_L: no eyeball shows down the middle of the eye at rest, so lid follow cannot be seen',
+    'lid-follow: eye_R: no eyeball shows down the middle of the eye at rest, so lid follow cannot be seen',
     'teeth: no upper teeth found: name the mesh or material with "teeth" and "upper" (for example teeth_upper)',
     'upper-lip: skipped because no upper teeth mark the gum line',
     'mouth-open: skipped because the upper or lower teeth were not found',

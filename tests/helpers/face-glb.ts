@@ -21,6 +21,8 @@ export interface SynthHead {
   extraSkin?: boolean; dropBounds?: boolean;
   /** glTF mesh name -> part names encoded as its primitives (one morph-name list per glTF mesh). */
   groups?: Record<string, string[]>;
+  /** Extra glTF material fields by material name (alphaMode, extensions, ...). */
+  materialProps?: Record<string, Record<string, unknown>>;
 }
 
 export const REQUIRED = ['eyeBlinkLeft', 'eyeBlinkRight', 'eyeSquintLeft', 'eyeSquintRight', 'eyeWideLeft', 'eyeWideRight', 'jawOpen',
@@ -53,11 +55,38 @@ export function sphere(center: Vec3, radius: number, rings = 8, segments = 12): 
   return { positions, indices };
 }
 
-function grid(columns: number, rows: number, at: (u: number, v: number) => Vec3): { positions: Vec3[]; indices: number[] } {
+function grid(columns: number, rows: number, at: (u: number, v: number) => Vec3, flip = false): { positions: Vec3[]; indices: number[] } {
   const positions: Vec3[] = [], indices: number[] = [];
   for (let i = 0; i <= rows; i++) for (let j = 0; j <= columns; j++) positions.push(at(j / columns, i / rows));
   const index = (i: number, j: number) => i * (columns + 1) + j;
-  for (let i = 0; i < rows; i++) for (let j = 0; j < columns; j++) indices.push(index(i, j), index(i, j + 1), index(i + 1, j + 1), index(i, j), index(i + 1, j + 1), index(i + 1, j));
+  for (let i = 0; i < rows; i++) for (let j = 0; j < columns; j++) {
+    const quad = [index(i, j), index(i, j + 1), index(i + 1, j + 1), index(i, j), index(i + 1, j + 1), index(i + 1, j)];
+    indices.push(...(flip ? quad.reverse() : quad));
+  }
+  return { positions, indices };
+}
+
+/** A closed slab between two (u, v) sheets, `at(u, v, 0)` and `at(u, v, 1)`, wound outward. */
+function slab(columns: number, rows: number, at: (u: number, v: number, layer: number) => Vec3): { positions: Vec3[]; indices: number[] } {
+  const positions: Vec3[] = [], indices: number[] = [];
+  for (let layer = 0; layer < 2; layer++) for (let i = 0; i <= rows; i++) for (let j = 0; j <= columns; j++) positions.push(at(j / columns, i / rows, layer));
+  const index = (layer: number, i: number, j: number) => layer * (rows + 1) * (columns + 1) + i * (columns + 1) + j;
+  const quad = (a: number, b: number, c: number, d: number) => indices.push(a, b, c, a, c, d);
+  for (let i = 0; i < rows; i++) for (let j = 0; j < columns; j++) {
+    quad(index(1, i, j), index(1, i, j + 1), index(1, i + 1, j + 1), index(1, i + 1, j));
+    quad(index(0, i, j), index(0, i + 1, j), index(0, i + 1, j + 1), index(0, i, j + 1));
+  }
+  const rim: [number, number][][] = [];
+  for (let j = 0; j < columns; j++) rim.push([[0, j], [0, j + 1]], [[rows, j + 1], [rows, j]]);
+  for (let i = 0; i < rows; i++) rim.push([[i + 1, 0], [i, 0]], [[i, columns], [i + 1, columns]]);
+  for (const [[ai, aj], [bi, bj]] of rim) quad(index(1, bi, bj), index(1, ai, aj), index(0, ai, aj), index(0, bi, bj));
+  // Signed volume: flip every face if the slab came out inside-out.
+  let volume = 0;
+  for (let t = 0; t < indices.length; t += 3) {
+    const [a, b, c] = [positions[indices[t]], positions[indices[t + 1]], positions[indices[t + 2]]];
+    volume += a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0]);
+  }
+  if (volume < 0) for (let t = 0; t < indices.length; t += 3) [indices[t + 1], indices[t + 2]] = [indices[t + 2], indices[t + 1]];
   return { positions, indices };
 }
 
@@ -65,21 +94,27 @@ function box(center: Vec3, size: Vec3) {
   return grid(1, 1, (u, v) => add(center, [(u - 0.5) * size[0], (v - 0.5) * size[1], size[2] / 2]));
 }
 
-/** Rotations (degrees, + raises the lid) of each lid for each morph: blink overshoots the meet line so blink + wide still closes. */
-export const LID_SWEEPS = { upper: { blink: -56, squint: -10, wide: 5 }, lower: { blink: 32, squint: 8, wide: -5 } };
+/**
+ * Rotations (degrees, + raises the lid) of each lid for each morph: blink overshoots the meet line so blink + wide still
+ * closes. Wide lifts the upper lid 10 degrees, so lid follow (eyeWide = lidFollow.up at eyeLookUp = 1) lifts its edge 2 mm.
+ */
+export const LID_SWEEPS = { upper: { blink: -56, squint: -10, wide: 10 }, lower: { blink: 32, squint: 8, wide: -5 } };
 
 /**
  * Upper and lower lids: spherical patches around the eye, wide enough to cover the whole eyeball, each turned about
  * the eye's X axis for each morph. At rest the opening runs from 30 degrees below the gaze axis to 35 above.
  */
-function lids(side: 'L' | 'R', radius: number, sweeps = LID_SWEEPS): SynthMesh {
+function lids(side: 'L' | 'R', radius: number, sweeps = LID_SWEEPS, span = 84): SynthMesh {
   const center = EYES[side], suffix = side === 'L' ? 'Left' : 'Right';
-  const at = (r: number, yaw: number, elevation: number): Vec3 => {
-    const y = yaw * Math.PI / 180, e = elevation * Math.PI / 180;
-    return add(center, [r * Math.cos(e) * Math.sin(y), r * Math.sin(e), r * Math.cos(e) * Math.cos(y)]);
+  // Latitude bands about the eye's X axis (the blink axis): `turn` degrees up from the gaze axis, `side` toward +X.
+  const at = (r: number, across: number, turn: number): Vec3 => {
+    const b = across * Math.PI / 180, a = turn * Math.PI / 180;
+    return add(center, [r * Math.sin(b), r * Math.cos(b) * Math.sin(a), r * Math.cos(b) * Math.cos(a)]);
   };
-  const upper = grid(16, 16, (u, v) => at(radius, -89 + 178 * u, 150 - 115 * v));
-  const lower = grid(16, 16, (u, v) => at(radius - 0.0005, -89 + 178 * u, -30 - 120 * v));
+  // Closed 0.4 mm shells, as the helpers' lids are, reaching almost to the X axis on each side, so turning them for a
+  // blink never uncovers the eye's flanks.
+  const upper = slab(32, 24, (u, v, layer) => at(radius - 0.0004 + 0.0004 * layer, -span + 2 * span * u, 150 - 115 * v));
+  const lower = slab(32, 24, (u, v, layer) => at(radius - 0.001 + 0.0004 * layer, -span + 2 * span * u, -30 - 120 * v));
   const positions = [...upper.positions, ...lower.positions];
   const indices = [...upper.indices, ...lower.indices.map(i => i + upper.positions.length)];
   const turn = (state: 'blink' | 'squint' | 'wide') => [
@@ -101,8 +136,9 @@ function lids(side: 'L' | 'R', radius: number, sweeps = LID_SWEEPS): SynthMesh {
  * Skin in front of the lids with a hole for the opening, as a head's socket rim does: turning lid patches never meet
  * at the far corners of the eye, so the skin hides the corners and the lids close the hole.
  */
-function eyeMask(side: 'L' | 'R'): SynthMesh {
-  const [cx, cy] = EYES[side], z = EYES[side][2] + 0.016, hole = { x: 0.0065, low: -0.006, high: 0.0065 }, reach = 0.02;
+function eyeMask(side: 'L' | 'R', hole = { x: 0.0065, low: -0.006, high: 0.011 }): SynthMesh {
+  // The hole's top clears the upper lid's edge (8.6 mm above the eye center) so a strip of lid shows at rest.
+  const [cx, cy] = EYES[side], z = EYES[side][2] + 0.016, reach = 0.02;
   const positions: Vec3[] = [], indices: number[] = [];
   const quad = (x0: number, x1: number, y0: number, y1: number) => {
     const base = positions.length;
@@ -112,6 +148,22 @@ function eyeMask(side: 'L' | 'R'): SynthMesh {
   quad(-reach, reach, hole.high, reach); quad(-reach, reach, -reach, hole.low);
   quad(-reach, -hole.x, hole.low, hole.high); quad(hole.x, reach, hole.low, hole.high);
   return { name: `eye_mask_${side}`, material: 'skin', positions, indices, targets: [], bones: positions.map(() => 'head') };
+}
+
+/**
+ * The skin wall at the eye's flanks: past 50 degrees of yaw, where the lids' opening band runs on around the eye, a
+ * static skin band just outside both lids closes it, so no oblique view looks between the lids into the head.
+ */
+function eyeCorners(side: 'L' | 'R'): SynthMesh {
+  const center = EYES[side];
+  const at = (yaw: number, elevation: number, r: number): Vec3 => {
+    const y = yaw * Math.PI / 180, e = elevation * Math.PI / 180;
+    return add(center, [r * Math.cos(e) * Math.sin(y), r * Math.sin(e), r * Math.cos(e) * Math.cos(y)]);
+  };
+  const outer = slab(8, 8, (u, v, layer) => at(50 + 80 * u, 50 - 95 * v, 0.0156 + 0.0004 * layer));
+  const inner = slab(8, 8, (u, v, layer) => at(-50 - 80 * u, 50 - 95 * v, 0.0156 + 0.0004 * layer));
+  const positions = [...outer.positions, ...inner.positions], indices = [...outer.indices, ...inner.indices.map(i => i + outer.positions.length)];
+  return { name: `eye_corners_${side}`, material: 'skin', positions, indices, targets: [], bones: positions.map(() => 'head') };
 }
 
 /**
@@ -141,6 +193,21 @@ export function shutterEye(head: SynthHead, side: 'L' | 'R', blade: number, over
     bones: positions.map(() => 'head'),
   };
   head.meshes = head.meshes.filter(m => m.name !== `eye_mask_${side}`);
+}
+
+/**
+ * The round-3 critic's black hole beside the eye: a dark socket cup around the lids with nothing joining the skin's
+ * eye-hole rim to the lids. The skin (the eye mask) stands 1 mm in front of the lids, so a front view sees only lids
+ * and eyeball; from 3/4, rays slip under the rim, past the lids' flanks, into the socket.
+ */
+export function socketGap(head: SynthHead, side: 'L' | 'R'): void {
+  const center = EYES[side], radius = 0.0175, cup = sphere(center, radius, 16, 24), indices: number[] = [];
+  // Keep the triangles more than 60 degrees from the gaze axis (+Z), wound to face the eye.
+  for (let t = 0; t < cup.indices.length; t += 3) {
+    const tri = cup.indices.slice(t, t + 3), z = tri.reduce((sum, i) => sum + cup.positions[i][2] - center[2], 0) / 3;
+    if (z < radius * Math.cos(Math.PI / 3)) indices.push(tri[0], tri[2], tri[1]);
+  }
+  head.meshes.push({ name: `eye_socket_${side}`, material: 'eye_socket', positions: cup.positions, indices, targets: [], bones: cup.positions.map(() => 'head') });
 }
 
 /** Rebuild one eye's lids with other sweeps (for negative fixtures). */
@@ -217,7 +284,7 @@ export function passingHead(): SynthHead {
     ],
     meshes: [
       { name: 'skull', material: 'skin', ...skull, targets: [], bones: skull.positions.map(() => 'head') },
-      faceMesh, eye('L'), eye('R'), lids('L', 0.015), lids('R', 0.015), eyeMask('L'), eyeMask('R'),
+      faceMesh, eye('L'), eye('R'), lids('L', 0.015), lids('R', 0.015), eyeMask('L'), eyeMask('R'), eyeCorners('L'), eyeCorners('R'),
       { name: 'teeth_upper', material: 'teeth_upper', ...upperTeeth, targets: [], bones: upperTeeth.positions.map(() => 'head') },
       { name: 'teeth_lower', material: 'teeth_lower', ...lowerTeeth, targets: [{ name: 'jawOpen', positions: jaw(lowerTeeth.positions) }], bones: lowerTeeth.positions.map(() => 'head') },
       { name: 'tongue', material: 'tongue', ...tongue, targets: [{ name: 'jawOpen', positions: jaw(tongue.positions) }], bones: tongue.positions.map(() => 'head') },
@@ -232,7 +299,7 @@ export function upperSeam(): number[] { return slitFace().upperSeam; }
 export function extras(morphs: string[] = REQUIRED): Record<string, unknown> {
   return {
     contract: 'arkit-face/1', morphs: [...morphs],
-    gaze: { yawMax: 25, pitchMax: 18 }, lidFollow: { down: 0.35, up: 0.25 },
+    gaze: { yawMax: 25, pitchMax: 18 }, lidFollow: { down: 0.35, up: 1 },
     emotions: {
       neutral: {},
       happy: { mouthSmileLeft: 0.9, mouthSmileRight: 0.9, jawOpen: 0.25, cheekSquintLeft: 0.6, cheekSquintRight: 0.6, eyeSquintLeft: 0.2, eyeSquintRight: 0.2, browOuterUpLeft: 0.3, browOuterUpRight: 0.3 },
@@ -319,7 +386,7 @@ export function encodeHead(head: SynthHead): Uint8Array {
   const binary = Buffer.concat(chunks);
   const document = {
     asset: { version: '2.0', generator: 'agent-meshes synthetic face' }, scene: 0, scenes: [{ nodes: [0] }], nodes, meshes, skins,
-    materials: materials.map(name => ({ name, pbrMetallicRoughness: { baseColorFactor: [0.8, 0.6, 0.5, 1], metallicFactor: 0, roughnessFactor: 0.5 } })),
+    materials: materials.map(name => ({ name, pbrMetallicRoughness: { baseColorFactor: [0.8, 0.6, 0.5, 1], metallicFactor: 0, roughnessFactor: 0.5 }, ...head.materialProps?.[name] })),
     accessors, bufferViews, buffers: [{ byteLength: binary.length + ((4 - binary.length % 4) % 4) }],
   };
   let json = Buffer.from(JSON.stringify(document));

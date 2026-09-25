@@ -4,7 +4,7 @@ build() asserts wrapper behavior inside Blender, then returns a small joined fac
 """
 import json
 from agent_meshes_author import (
-    EXTRAS_PROPERTY, SEAM_ATTRIBUTE, JawHinge, add_jaw_open, chin_drop, build_eye, ellipsoid_geometry, face_contract_extras, face_skeleton,
+    EXTRAS_PROPERTY, SEAM_ATTRIBUTE, JawHinge, add_jaw_open, chin_drop, build_eye, ellipsoid_geometry, eye_hole, face_contract_extras, face_skeleton,
     join_face_parts, material, mesh_from_geometry, set_face_contract, shape_key, slit_mouth, ARKIT_REQUIRED,
 )
 
@@ -25,6 +25,14 @@ def build():
     rejects(lambda: face_skeleton((0, 0, 0), (-.03, 0, 0), (.03, 0, 0)), 'left')
     rejects(lambda: build_eye(rig, 'L', (.031, -.07, .14), .012), 'pivots')
     rejects(lambda: build_eye(rig, 'X', (.03, -.07, .14), .012), 'side')
+    # Eye material overrides must keep the names the ID render and the verifier look for.
+    rejects(lambda: build_eye(rig, 'L', (.03, -.07, .14), .012, eye_materials=[material('white', (1, 1, 1)), material('eye_iris', (0, 0, 1)), material('eye_pupil', (0, 0, 0))]), 'eye_white')
+    # build_eye reuses an eye_hole's lids: lid options belong to eye_hole, and the hole must be this eye's.
+    blank_hole = eye_hole(ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=32, segments=48)['vertices'],
+                          ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=32, segments=48)['faces'], (.03, -.07, .14), .012)
+    rejects(lambda: build_eye(rig, 'L', (.03, -.07, .14), .012, hole=blank_hole, opening=(45, 38, 30)), 'eye_hole')
+    rejects(lambda: build_eye(rig, 'L', (.03, -.07, .14), .013, hole=blank_hole), 'another eye')
+    rejects(lambda: build_eye(rig, 'L', (.03, -.07, .14), .012, style='shutter', hole=blank_hole), 'shutters')
 
     skin_material = material('skin', (.6, .4, .3))
     blank = ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=32, segments=48)

@@ -6,7 +6,7 @@ Check: node scripts/agent-meshes.mjs verify <output>/model.glb --contract arkit-
 Blender coordinates: Z up, meters, the face looks down -Y, character left is +X.
 """
 from agent_meshes_author import (
-    JawHinge, add_jaw_open, build_eye, cut_hole, ellipsoid_geometry, face_contract, face_skeleton, front_surface,
+    JawHinge, add_jaw_open, build_eye, ellipsoid_geometry, eye_hole, eye_hole_mask, face_contract, face_skeleton, front_surface,
     join_face_parts, material, mesh_from_geometry, mouth_cavity_geometry, recommended_gaze, shape_key, slit_mouth, soft_offset,
     symmetric_offsets, teeth_row_geometry, tongue_geometry,
 )
@@ -22,12 +22,14 @@ def build():
     skin = material('skin', (.62, .36, .24), roughness=.55)
     rig = face_skeleton(head=(0, 0, .09), eye_left=EYE_L, eye_right=EYE_R, name='Face rig')
 
-    # Head blank with smooth round eye holes; the lids, sockets and eyeballs fill them.
+    # Head blank with eye holes shaped from the lids (eye_hole, with build_eye's lid options): the skin mounds over
+    # the lids, opens along their window and walls down into them, so no view sees past the lids into the head.
     blank = ellipsoid_geometry(HEAD_CENTER, HEAD_RADII, rings=48, segments=64)
     vertices, faces = blank['vertices'], blank['faces']
-    for eye in (EYE_L, EYE_R):
-        cut = cut_hole(vertices, faces, eye, .0185)
-        vertices, faces = cut['vertices'], cut['faces']
+    holes = {}
+    for side, eye in (('L', EYE_L), ('R', EYE_R)):
+        holes[side] = eye_hole(vertices, faces, eye, EYE_RADIUS, opening=OPENING)
+        vertices, faces = holes[side]['vertices'], holes[side]['faces']
     front = front_surface(vertices, faces)
     # A puppet jaw hinged at the back of the head, level with the mouth: the chin drops with the lips.
     jaw = JawHinge.ear(vertices, MOUTH_Z, MOUTH_HALF_WIDTH)
@@ -35,7 +37,9 @@ def build():
     slit_mouth(head, MOUTH_Z, MOUTH_HALF_WIDTH)
     rest = [tuple(v.co) for v in head.data.vertices]
 
-    # Brows, cheeks and mouth shapes: soft offsets, mirrored for the right side.
+    # Brows, cheeks and mouth shapes: soft offsets, mirrored for the right side. The mask leaves the eye holes' rims,
+    # walls and linings still, so a brow never drags the rim over its wall.
+    still = eye_hole_mask(*holes.values())
     pairs = {
         'browDown': ((.032, -.075, .168), .02, (0, 0, -.004)),
         'browOuterUp': ((.048, -.068, .168), .02, (0, 0, .004)),
@@ -45,10 +49,10 @@ def build():
         'mouthStretch': ((.022, -.08, MOUTH_Z), .016, (.004, 0, -.001)),
     }
     for name, (center, radius, offset) in pairs.items():
-        left, right = symmetric_offsets(rest, center, radius, offset)
+        left, right = symmetric_offsets(rest, center, radius, offset, mask=still)
         shape_key(head, f'{name}Left', left)
         shape_key(head, f'{name}Right', right)
-    shape_key(head, 'browInnerUp', soft_offset(rest, (0, -.08, .165), .025, (0, 0, .004)))
+    shape_key(head, 'browInnerUp', soft_offset(rest, (0, -.08, .165), .025, (0, 0, .004), mask=still))
     shape_key(head, 'mouthFunnel', soft_offset(rest, (0, -.083, MOUTH_Z), (.026, .02, .016), (0, -.004, 0)))
 
     add_jaw_open(head, jaw, min_chin_drop=.1)
@@ -71,9 +75,10 @@ def build():
     parts.append(tongue)
 
     for side, center in (('L', EYE_L), ('R', EYE_R)):
-        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, style='lid', opening=OPENING)
+        # The same lids the hole was shaped around; its lining seals the eye, so there is no dark socket cup.
+        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, style='lid', hole=holes[side])
         eyeballs.append(eye['eyeball'])
-        parts += [eye['lids'], eye['socket']]
+        parts.append(eye['lids'])
 
     # Unreal drops every morph name when one repeats across glTF meshes: one morph-bearing mesh.
     face = join_face_parts(parts, 'face', rig=rig)

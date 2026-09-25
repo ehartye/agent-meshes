@@ -13,7 +13,9 @@ import unittest
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
 import agent_meshes_author
+from agent_meshes_face import _clip, _quality, _refine
 from agent_meshes_face import (
+    DEFAULT_LID_FOLLOW, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry,
     ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
     eye_coverage, eye_coverage_problems, brow_plate_geometry, split_plates, rubber_mouth_geometry,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
@@ -151,9 +153,11 @@ class LidTests(unittest.TestCase):
         self.assertAlmostEqual(edges['yaw'][center], 0)
         self.assertAlmostEqual(edges['upper'][center]['rest'], 38)
         self.assertAlmostEqual(edges['lower'][center]['rest'], -30)
-        for upper, lower in zip(edges['upper'], edges['lower']):
+        for yaw, upper, lower in zip(edges['yaw'], edges['upper'], edges['lower']):
             self.assertLessEqual(upper['blink'], lower['blink'] - 4 + 1e-9, 'upper lid passes in front of the lower lid')
-            self.assertGreaterEqual(upper['squint'], lower['squint'])
+            # Past the corners the lower lid tucks up behind the upper one (4 degrees), so they overlap, never abut.
+            self.assertGreaterEqual(upper['squint'], lower['squint'] - 4 - 1e-9)
+            if abs(yaw) >= 45: self.assertAlmostEqual(lower['rest'] - upper['rest'], 4)
         self.assertGreater(edges['upper'][center]['squint'], edges['lower'][center]['squint'] + 10)
 
     def test_squint_outside_the_contract_band_is_rejected(self):
@@ -749,7 +753,8 @@ class ContractExtrasTests(unittest.TestCase):
         face = extras['arkitFace']
         self.assertEqual(face['contract'], 'arkit-face/1')
         self.assertEqual(face['gaze'], {'yawMax': 28, 'pitchMax': 18})
-        self.assertEqual(face['lidFollow'], {'down': .35, 'up': .25})
+        # The contract's fallback lift (.25) is under a pixel; the helpers write .8 so E2's lid follow shows.
+        self.assertEqual(face['lidFollow'], {'down': .35, 'up': .8})
         self.assertEqual(face['exposedTeeth'], ['upper incisors'])
         self.assertEqual(face['emotions']['angry']['noseSneerLeft'], .7)
         self.assertEqual(face['emotions']['sad']['eyeLookDownLeft'], .4)
@@ -798,6 +803,173 @@ class GlbExtrasTests(unittest.TestCase):
             self.assertEqual(data[-4:], b'\x01\x02\x03\x04')
             with self.assertRaises(ValueError):
                 merge_glb_node_extras(path, {'missing': {}})
+
+
+def edge_uses(faces):
+    uses = {}
+    for face in faces:
+        for a, b in zip(face, face[1:] + face[:1]): uses.setdefault((min(a, b), max(a, b)), []).append((a, b))
+    return uses
+
+
+def triangles_of(faces):
+    return [(face[0], face[k], face[k + 1]) for face in faces for k in range(1, len(face) - 1)]
+
+
+class EyeHoleTests(unittest.TestCase):
+    """eye_hole shapes the skin from the lids: a mound over them, a window cut, and a wall and lining that seal the eye."""
+    HEAD = ((0, 0, .12), (.085, .09, .115))
+    EYE, R, OPENING = (.033, -.067, .145), .014, (45, 38, 30)
+
+    def hole(self, **options):
+        blank = ellipsoid_geometry(*self.HEAD, rings=48, segments=64)
+        return eye_hole(blank['vertices'], blank['faces'], self.EYE, self.R, opening=self.OPENING, **options)
+
+    def test_the_window_holds_every_edge_travel_with_round_ends_inside_the_lids_reach(self):
+        lids = lid_geometry(self.EYE, self.R, opening=self.OPENING)
+        window = eye_window(lids, margin=6)
+
+        def point(yaw, elevation, r=.02):
+            y, e = math.radians(yaw), math.radians(elevation)
+            return (self.EYE[0] + r * math.cos(e) * math.sin(y), self.EYE[1] - r * math.cos(e) * math.cos(y), self.EYE[2] + r * math.sin(e))
+        for yaw, upper, lower in zip(lids['edges']['yaw'], lids['edges']['upper'], lids['edges']['lower']):
+            if max(upper.values()) <= min(lower.values()): continue  # closed there in every state
+            for elevation in list(upper.values()) + list(lower.values()):
+                self.assertLess(window['level'](point(yaw, elevation)), 0, (yaw, elevation))
+            # Where the eye can open, the whole travel lies at least the margin inside.
+            for elevation in (max(upper.values()), min(lower.values())):
+                self.assertLess(window['level'](point(yaw, elevation)), -5.9, (yaw, elevation))
+        # The ends are round: past the widest opening point by the margin, the window closes.
+        widest = max(abs(y) for y, _ in window['envelope'])
+        self.assertGreater(window['level'](point(widest + 12, lids['meet'])), 5)
+        self.assertLess(window['level'](point(widest + 3, lids['meet'] + 2)), 0)
+        # Everything the window opens onto is covered by the lids: their span reaches past it.
+        self.assertLess(widest + 6, lids['edges']['yaw'][-1])
+        self.assertLess(window['polar_max'], 75)
+        with self.assertRaisesRegex(ValueError, 'shutter|cut_hole'):
+            eye_window(shutter_geometry(self.EYE, self.R))
+
+    def test_the_skin_stays_closed_and_meets_the_lids_all_round(self):
+        hole = self.hole()
+        vertices, faces, lids = hole['vertices'], hole['faces'], hole['lids']
+        uses = edge_uses(faces)
+        self.assertTrue(all(len(u) == 2 and u[0] == u[1][::-1] for u in uses.values()), 'one closed, consistently wound skin')
+        outer = lids['upper_radius'] + lids['thickness']
+        self.assertGreater(len(hole['rim']), 40)
+        for i in hole['rim']:
+            self.assertGreaterEqual(math.dist(vertices[i], self.EYE), outer + .00025 - 1e-9, 'the rim sits outside the lids')
+            self.assertAlmostEqual(hole['window']['level'](vertices[i]), 0, delta=3)
+        self.assertLessEqual(hole['rim_radius'][1], 1.3 * hole['mound'], 'the socket dip keeps the rim close to the lids')
+        wall = {v for f in hole['wall'] for v in faces[f]} - set(hole['rim'])
+        low, high = hole['lining']
+        for i, v in enumerate(vertices):
+            r = math.dist(v, self.EYE)
+            if i in wall:
+                self.assertGreaterEqual(r, self.R + .00025 - 1e-9, 'the lining never touches the eyeball')
+                self.assertLessEqual(r, high + 1e-9, 'the wall ends under the lids')
+            elif r < 3 * self.R:
+                self.assertGreaterEqual(r, outer - 1e-6, 'no skin inside the lids: they never poke out')
+        self.assertLess(low, lids['lower_radius'])
+        self.assertLess(high, lids['upper_radius'])
+        # No slivers in the skin: a sliver flips under the smallest morph. The wall and lining are narrow strips
+        # between close rim vertices, but never degenerate.
+        walls = set(hole['wall'])
+        self.assertGreater(min(_quality(vertices, t) for t in triangles_of([f for i, f in enumerate(faces) if i not in walls])), 1e-3)
+        self.assertGreater(min(_quality(vertices, t) for t in triangles_of([faces[i] for i in walls])), 1e-5)
+
+    def test_a_skin_that_runs_through_the_eye_is_mounded_over_it(self):
+        # The frog's skin passes 5.7 mm above its eye's center: the mound pushes it out over the lids.
+        blank = ellipsoid_geometry((0, 0, .12), (.11, .085, .10), rings=56, segments=72)
+        eye = (.045, -.052, .182)
+        hole = eye_hole(blank['vertices'], blank['faces'], eye, .02, opening=(48, 36, 28))
+        outer = hole['lids']['upper_radius'] + hole['lids']['thickness']
+        self.assertGreater(hole['pushed'], 100)
+        self.assertGreaterEqual(hole['rim_radius'][0], outer)
+
+    def test_the_morph_mask_keeps_rim_wall_and_lining_still(self):
+        hole = self.hole()
+        mask = eye_hole_mask(hole)
+        vertices, faces = hole['vertices'], hole['faces']
+        sealed = {v for f in hole['wall'] for v in faces[f]}
+        self.assertTrue(all(mask(vertices[i]) == 0 for i in sealed))
+        self.assertEqual(mask((.03, -.07, .06)), 1.0, 'the face far from the eye (the cheek by the mouth) moves freely')
+        self.assertTrue([v for v in vertices if 0 < mask(v) < 1], 'the mask fades in smoothly')
+
+    def test_refinement_splits_long_edges_near_the_eye_without_cracks_or_slivers(self):
+        blank = ellipsoid_geometry(*self.HEAD, rings=24, segments=32)
+        near = lambda p: math.dist(p, self.EYE) < .03
+        vertices, faces = _refine(blank['vertices'], blank['faces'], near, .003)
+        closed_and_consistent(self, vertices, faces)
+        self.assertAlmostEqual(signed_volume(vertices, faces), signed_volume(blank['vertices'], blank['faces']), delta=1e-6)
+        for a, b in edge_uses(faces):
+            if near(vertices[a]) or near(vertices[b]): self.assertLessEqual(math.dist(vertices[a], vertices[b]), .003 + 1e-12)
+        self.assertGreater(min(_quality(vertices, t) for t in triangles_of(faces) if any(near(vertices[i]) for i in t)), .03)
+
+    def test_snapping_the_clip_leaves_no_rim_slivers(self):
+        blank = ellipsoid_geometry(*self.HEAD, rings=48, segments=64)
+        level = lambda p: math.dist(p, self.EYE) - .0185
+        exact, snapped = _clip(blank['vertices'], blank['faces'], level), _clip(blank['vertices'], blank['faces'], level, snap=.15)
+        worst = lambda cut: min(_quality(cut['vertices'], t) for t in triangles_of(cut['faces']))
+        self.assertGreaterEqual(worst(snapped), worst(exact))
+        for i in snapped['boundary']: self.assertAlmostEqual(math.dist(snapped['vertices'][i], self.EYE), .0185, delta=.0015)
+
+    def test_default_lid_follow_lifts_the_lid_edge_you_can_see(self):
+        # E2: eyeLookUp = 1 sets eyeWide = lidFollow.up; the edge's lift must show at 512 px (the verifier asks 1.5 mm).
+        for radius in (.012, .014, .018):
+            lids = lid_geometry(CENTER, radius)
+            top = max(range(len(lids['vertices']) // 2), key=lambda i: -abs(lids['vertices'][i][0] - CENTER[0]) * 1e3
+                      + (lids['edges']['upper'][len(lids['edges']['yaw']) // 2]['rest'] > 0))
+            # The upper lid's edge vertex in the middle column: the one wide lifts most.
+            lifts = [lids['morphs']['wide'][i][2] - lids['vertices'][i][2] for i in range(len(lids['vertices']) // 2)]
+            lift = DEFAULT_LID_FOLLOW['up'] * max(lifts)
+            with self.subTest(radius=radius):
+                self.assertGreaterEqual(lift, .0015)
+                self.assertGreaterEqual(DEFAULT_LID_FOLLOW['up'] * lids['wide'][0], 8, 'the helpers tie lid follow to the wide travel')
+
+
+class ShutterHoleTests(unittest.TestCase):
+    """shutter_hole seals a robot's face-plate eye hole: a tube straight back and a cap behind the eye."""
+
+    def test_the_hole_is_a_sealed_tube_the_blades_slide_through(self):
+        blank = ellipsoid_geometry((0, 0, .13), (.075, .065, .10), rings=48, segments=64, exponent=6)
+        eye, r = (.032, -.0415, .16), .016
+        hole = shutter_hole(blank['vertices'], blank['faces'], eye, r, hole_radius=.018, aperture=.021)
+        vertices, faces = hole['vertices'], hole['faces']
+        uses = edge_uses(faces)
+        self.assertTrue(all(len(u) == 2 and u[0] == u[1][::-1] for u in uses.values()), 'one closed, consistently wound skin')
+        for i in hole['rim']:
+            self.assertAlmostEqual(math.hypot(vertices[i][0] - eye[0], vertices[i][2] - eye[2]), .018, delta=.0015)
+            self.assertLess(vertices[i][1], eye[1] - r, 'the rim is on the face plate, in front of the eye')
+        sealed = {v for f in hole['wall'] for v in faces[f]} - set(hole['rim'])
+        for i in sealed:
+            self.assertGreater(math.dist(vertices[i], eye), r + .001, 'the tube and cap never touch the eyeball')
+            self.assertGreaterEqual(vertices[i][1], eye[1] - 1e-9, 'the tube runs back to the eye center, the cap behind it')
+        self.assertEqual(hole['lids']['style'], 'shutter')
+        self.assertGreaterEqual(hole['lids']['skin_clearance'], .0005, 'the blades were checked against the holed plate')
+        with self.assertRaisesRegex(ValueError, 'recess'):
+            shutter_hole(blank['vertices'], blank['faces'], (.032, -.06, .16), r, hole_radius=.018, aperture=.021)
+
+
+class SkinBrowTests(unittest.TestCase):
+    def test_a_brow_lies_on_the_skin_and_slides_over_it(self):
+        head = ellipsoid_geometry((0, 0, .12), (.092, .086, .104), rings=40, segments=56)
+        front = front_surface(head['vertices'], head['faces'])
+        left = skin_brow_geometry(front, 'L', inner=(.02, .167), outer=(.054, .164))
+        right = skin_brow_geometry(front, 'R', inner=(.02, .167), outer=(.054, .164))
+        self.assertEqual(sorted(left['morphs']), ['browDownLeft', 'browInnerUp', 'browOuterUpLeft'])
+        self.assertEqual(sorted(right['morphs']), ['browDownRight', 'browInnerUp', 'browOuterUpRight'])
+        closed_and_consistent(self, left['vertices'], left['faces'])
+        self.assertGreater(signed_volume(left['vertices'], left['faces']), 0)
+        for a, b in zip(left['vertices'], right['vertices']): self.assertAlmostEqual(a[0], -b[0])
+        for name, target in [('rest', left['vertices'])] + list(left['morphs'].items()):
+            with self.subTest(pose=name):
+                for x, y, z in target:
+                    skin = front(x, z)
+                    self.assertIsNotNone(skin)
+                    self.assertLess(y, skin, 'the brow stays in front of the forehead')
+        down = left['morphs']['browDownLeft']
+        self.assertLess(down[0][2], left['vertices'][0][2] - .003, 'browDown lowers the inner end')
+        with self.assertRaises(ValueError): skin_brow_geometry(front, 'X', (.02, .167), (.054, .164))
 
 
 if __name__ == '__main__':
