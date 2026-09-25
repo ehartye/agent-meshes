@@ -1436,11 +1436,13 @@ class GlbMorphPruneTests(unittest.TestCase):
             self.assertEqual(jaw[100], (0.0, 0.0, 0.0))
             self.assertEqual(jaw_accessor['min'], [0, 0, 0])
             self.assertAlmostEqual(jaw_accessor['max'][1], .002, places=7)
-            # Pure-noise normals and all-zero targets become zero accessors: no bufferView, no sparse (glTF zero-fills).
+            # Pure-noise normals and all-zero targets become zero-filled sparse accessors holding one explicit zero
+            # (Unreal's importer drops a primitive whose target accessor has neither data nor sparse values).
             for index in (targets[0]['NORMAL'], targets[1]['POSITION'], targets[1]['NORMAL']):
                 self.assertNotIn('bufferView', document['accessors'][index])
-                self.assertNotIn('sparse', document['accessors'][index])
+                self.assertEqual(document['accessors'][index]['sparse']['count'], 1)
                 self.assertEqual(document['accessors'][index]['count'], 2000)
+                self.assertEqual(set(accessor(index)), {(0.0, 0.0, 0.0)})
             # The base positions and the image are untouched; views stay 4-byte aligned.
             base = accessor(document['meshes'][0]['primitives'][0]['attributes']['POSITION'])
             self.assertAlmostEqual(base[1999][0], 1.999, places=6)

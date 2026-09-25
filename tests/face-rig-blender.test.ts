@@ -7,7 +7,8 @@ import { authorGLB } from '../src/author.ts';
 import { findBlender } from '../src/refine.ts';
 import { verifyFaceContract } from '../src/face-contract.ts';
 import { readAccessor, readGLB } from '../src/gltf-read.ts';
-import { ARKIT_FACE_REQUIRED_MORPHS } from '../src/arkit-face.ts';
+import { ARKIT_FACE_REQUIRED_MORPHS, contractExpectations } from '../src/arkit-face.ts';
+import { unrealAvailable, verifyUnreal } from '../src/unreal.ts';
 
 const directories: string[] = [];
 // Each fixture's mouth line (glTF y) and half width.
@@ -106,3 +107,15 @@ maybe('the face-rig wrappers validate, join and export inside real Blender', asy
     'mouth-open: skipped because the upper or lower teeth were not found',
   ]);
 }, 600000);
+
+// Blender and Unreal both: export_glb stores morphs sparse (prune_glb_morphs), and Unreal must import every vertex.
+const both = findBlender() && unrealAvailable() && !process.env.AGENT_MESHES_SKIP_UNREAL ? it : it.skip;
+both('a helper-authored head with pruned, sparse morphs imports into Unreal intact', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-face-unreal-')); directories.push(directory);
+  const config = join(directory, 'build.json');
+  await writeFile(config, JSON.stringify({ version: 1, name: 'test_kid', blender: { script: resolve('tests/fixtures/face-rig/test_kid.py') }, output: 'generated' }));
+  const built = await buildAsset(config);
+  const report = await verifyUnreal(join(built.output, 'model.glb'), { ...contractExpectations('arkit-face/1'), requireSkeletalMesh: true, singleSkeletalMesh: true, contract: 'arkit-face/1', quiet: true });
+  expect(report.failures).toEqual([]);
+  expect(report.geometry?.missing).toBeLessThanOrEqual(report.geometry!.tolerance);
+}, 40 * 60000);

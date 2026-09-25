@@ -86,10 +86,11 @@ After Blender's exporter it runs `prune_glb_morphs(path)`: Blender writes a NORM
 delta for every vertex of every shape key, and on a face nearly all are float
 noise (at most 1.5e-7), about 1.2 MB a head, which also keeps Blender's own
 sparse option from ever applying. Deltas at most `MORPH_POSITION_EPSILON` (1e-6 m)
-or `MORPH_NORMAL_EPSILON` (1e-4) become zero; a target left all zero becomes a
-data-less accessor (glTF zero-fills it) and one with few moving vertices a sparse
-accessor, with POSITION min/max recomputed. Base attributes, indices, images and
-animation are copied untouched. The four face fixtures shrink by 40-55% (the
+or `MORPH_NORMAL_EPSILON` (1e-4) become zero, and a target with few moving
+vertices becomes a sparse accessor (an all-zero one keeps a single explicit zero:
+Unreal's importer drops a primitive whose target accessor has no data at all),
+with POSITION min/max recomputed. `verify-unreal` imports the result intact. Base attributes, indices, images and
+animation are copied untouched. The face fixtures shrink by 40-45% (the
 talking-head test head from 1.64 to 0.98 MB).
 
 `bind_skin(mesh, armature, weights)` binds an authored mesh to existing deform

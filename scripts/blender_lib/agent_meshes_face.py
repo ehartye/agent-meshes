@@ -2852,9 +2852,10 @@ def prune_glb_morphs(path, position_epsilon=MORPH_POSITION_EPSILON, normal_epsil
     also keeps its sparse-accessor option from ever kicking in: about 1.2 MB a head
     (E8 allows 3 MB). Every morph target delta whose largest component is at most
     `position_epsilon` (POSITION, meters) or `normal_epsilon` (NORMAL and TANGENT) is
-    set to zero; a target left all zero becomes an accessor with no data (glTF
-    zero-fills it), one with few deltas a sparse accessor (the moving vertices'
-    indices and values), and a dense one keeps a plain buffer view. POSITION min and
+    set to zero; a target with few deltas becomes a sparse accessor (the moving
+    vertices' indices and values over glTF's zero fill; an all-zero one keeps one
+    explicit zero, since Unreal's importer drops a primitive whose target accessor
+    has neither data nor sparse values), and a dense one keeps a plain buffer view. POSITION min and
     max are recomputed, base attributes, indices, images and animation data are
     copied untouched, and every buffer view stays 4-byte aligned. `export_glb` runs
     it after Blender's exporter. Returns {'before', 'after' (bytes), 'targets'
@@ -2945,11 +2946,14 @@ def prune_glb_morphs(path, position_epsilon=MORPH_POSITION_EPSILON, normal_epsil
             elif v != (0.0, 0.0, 0.0): stats['dropped'] += 1
         for key in ('bufferView', 'byteOffset', 'sparse'): a.pop(key, None)
         count = a['count']
-        if kept and len(kept) * (12 + (2 if count < 65536 else 4)) < count * 12:
+        if len(kept) * (12 + (2 if count < 65536 else 4)) < count * 12:
+            # Unreal's glTF importer drops a primitive whose target accessor has neither data nor sparse values, so an
+            # all-zero target keeps one explicit zero.
+            stored = kept or [(0, (0.0, 0.0, 0.0))]
             wide = count >= 65536
-            indices = struct.pack(f'<{len(kept)}{"I" if wide else "H"}', *[n for n, _ in kept])
-            flat = struct.pack(f'<{3 * len(kept)}f', *[c for _, v in kept for c in v])
-            a['sparse'] = {'count': len(kept), 'indices': {'bufferView': append(indices), 'componentType': 5125 if wide else 5123},
+            indices = struct.pack(f'<{len(stored)}{"I" if wide else "H"}', *[n for n, _ in stored])
+            flat = struct.pack(f'<{3 * len(stored)}f', *[c for _, v in stored for c in v])
+            a['sparse'] = {'count': len(stored), 'indices': {'bufferView': append(indices), 'componentType': 5125 if wide else 5123},
                            'values': {'bufferView': append(flat)}}
         elif kept:
             dense = [(0.0, 0.0, 0.0)] * count
