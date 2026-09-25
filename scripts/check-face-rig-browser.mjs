@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { authorGLB } from '../src/author.ts';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { viewerScript } from '../src/preview-html.ts';
+import { previewHTML, viewerScript } from '../src/preview-html.ts';
 
 const fixture = process.argv[2] ?? 'test_head';
 if (!/^test_[a-z]+$/.test(fixture)) throw new Error(`Unknown fixture ${fixture}`);
@@ -95,6 +95,23 @@ try {
   const jawPage = await browser.newPage({ viewport: { width: 930, height: 1040 } });
   await jawPage.goto(pathToFileURL(join(output, 'jaw.html')).href);
   await jawPage.screenshot({ path: join(output, 'jaw-sheet.png'), fullPage: true });
+  // The build's preview.html for a morph-only head: no clip controls, a slider per morph and the emotion presets.
+  await writeFile(join(output, 'preview.html'), await previewHTML(fixture, bytes));
+  const preview = await browser.newPage({ viewport: { width: 1100, height: 760 }, offline: true });
+  preview.on('pageerror', e => errors.push(e.message));
+  await preview.goto(pathToFileURL(join(output, 'preview.html')).href);
+  await preview.waitForFunction(() => /morphs/.test(document.getElementById('status').textContent));
+  const page2 = await preview.evaluate(() => ({
+    clipHidden: document.getElementById('clip').hidden, sliders: [...document.querySelectorAll('input[data-morph]')].map(i => i.dataset.morph),
+    presets: [...document.querySelectorAll('button[data-preset]')].map(b => b.dataset.preset),
+  }));
+  assert.equal(page2.clipHidden, true);
+  assert.ok(page2.sliders.includes('jawOpen') && page2.sliders.length >= 21, `morph sliders: ${page2.sliders.length}`);
+  assert.deepEqual(page2.presets, ['neutral', 'happy', 'sad', 'angry', 'surprised', 'scared']);
+  await preview.click('button[data-preset="surprised"]');
+  const surprised = await preview.evaluate(() => ({ jaw: document.querySelector('input[data-morph="jawOpen"]').value, weight: window.meshPreview.viewer.getMorph('face', 'jawOpen') }));
+  assert.ok(Number(surprised.jaw) > 0.3 && surprised.weight === Number(surprised.jaw), JSON.stringify(surprised));
+  await preview.screenshot({ path: join(output, 'preview.png') });
   console.log(caption);
   assert.deepEqual(errors, []);
   console.log(`PASS face rig: contract ok, ${tiles.length} states rendered to ${join(output, 'contact-sheet.png')}`);

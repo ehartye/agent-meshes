@@ -36,7 +36,8 @@ Keep a `build.json` beside the source in the project:
 saved project). Paths resolve relative to the config. `mesh build build.json` produces, in an
 isolated state, `project.mesh.json`, `model.glb`, `verification.json`, `front.png`, `side.png`,
 `perspective.png`, `<clip>.png` contact sheets, and a self-contained offline `preview.html` with
-orbit, playback and scrub. `--no-preview` skips the browser entirely; `--no-preview-page` keeps
+orbit, playback and scrub (and, for a model with morphs, a slider per morph and the emotion
+presets from `extras.arkitFace`). `--no-preview` skips the browser entirely; `--no-preview-page` keeps
 the PNGs but skips the 1 MB preview page when your own page embeds the GLB. The output directory
 is replaced only when it is marked as owned by that config, so never point `output` at a
 directory holding other work. A failed build leaves the previous output in place; after a crash,
