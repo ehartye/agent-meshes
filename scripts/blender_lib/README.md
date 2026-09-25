@@ -82,6 +82,15 @@ or absence of zero-area faces; assess the resulting shape and its deformations t
 skins, animations, named morphs and authored rest weights. It does not apply
 geometry modifiers, which can discard morph topology. Resolve required modifiers
 before creating shape keys. The build runner normally calls this function for you.
+After Blender's exporter it runs `prune_glb_morphs(path)`: Blender writes a NORMAL
+delta for every vertex of every shape key, and on a face nearly all are float
+noise (at most 1.5e-7), about 1.2 MB a head, which also keeps Blender's own
+sparse option from ever applying. Deltas at most `MORPH_POSITION_EPSILON` (1e-6 m)
+or `MORPH_NORMAL_EPSILON` (1e-4) become zero; a target left all zero becomes a
+data-less accessor (glTF zero-fills it) and one with few moving vertices a sparse
+accessor, with POSITION min/max recomputed. Base attributes, indices, images and
+animation are copied untouched. The four face fixtures shrink by 40-55% (the
+talking-head test head from 1.64 to 0.98 MB).
 
 `bind_skin(mesh, armature, weights)` binds an authored mesh to existing deform
 bones and returns its new Armature modifier. Supply a dense list/tuple with one
@@ -266,7 +275,8 @@ blend=None, max_edge=None, socket=25, lining_gap=.0001, lining_rings=5,
    round every eye (`bevel=0` gives it back).
 
 Edges near the eye are split to `max_edge` (default 0.2 eyeball radii) first; each
-vertex costs a delta in every morph target, so keep an eye on file size (E8: 3 MB).
+vertex costs a delta in every morph target that moves it (only those, since
+`export_glb` stores sparse morphs), so keep an eye on file size (E8: 3 MB).
 Call `eye_hole` once per eye on the blank, before `slit_mouth` and any shape keys,
 and pass the result to `build_eye(..., hole=...)`. It returns `{'vertices',
 'faces', 'lids', 'window', 'rim', 'wall', 'pushed', 'rim_radius', 'lining',

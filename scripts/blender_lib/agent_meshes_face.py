@@ -20,7 +20,7 @@ __all__ = [
     'eye_window', 'eye_hole', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
     'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
-    'merge_glb_node_extras', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
+    'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
 
@@ -2812,6 +2812,162 @@ def merge_glb_node_extras(path, extras_by_node):
     temporary = path.with_name(path.name + '.extras.tmp')
     temporary.write_bytes(struct.pack('<4sII', b'glTF', 2, 12 + len(body)) + body)
     temporary.replace(path)
+
+
+# Morph deltas at or below these are float noise, not motion: Blender writes normal deltas of ~1e-7 on every vertex of
+# every shape key (about 1.2 MB on a talking head). A micron of position and 1e-4 of a unit normal (0.006 degrees) are
+# far below anything a renderer shows.
+MORPH_POSITION_EPSILON = 1e-6
+MORPH_NORMAL_EPSILON = 1e-4
+
+
+def _read_glb(path):
+    data = Path(path).read_bytes()
+    magic, version, length = struct.unpack_from('<4sII', data)
+    if magic != b'glTF' or version != 2 or length != len(data): raise ValueError('Not a glTF 2.0 binary file')
+    chunks, offset = [], 12
+    while offset < len(data):
+        size, kind = struct.unpack_from('<I4s', data, offset)
+        chunks.append([kind, data[offset + 8:offset + 8 + size]])
+        offset += 8 + size
+    if not chunks or chunks[0][0] != b'JSON': raise ValueError('GLB has no leading JSON chunk')
+    return json.loads(chunks[0][1].decode('utf-8')), chunks
+
+
+def _write_glb(path, document, chunks):
+    text = json.dumps(document, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    chunks[0][1] = text + b' ' * (-len(text) % 4)
+    body = b''.join(struct.pack('<I4s', len(chunk), kind) + chunk for kind, chunk in chunks)
+    path = Path(path)
+    temporary = path.with_name(path.name + '.glb.tmp')
+    temporary.write_bytes(struct.pack('<4sII', b'glTF', 2, 12 + len(body)) + body)
+    temporary.replace(path)
+
+
+def prune_glb_morphs(path, position_epsilon=MORPH_POSITION_EPSILON, normal_epsilon=MORPH_NORMAL_EPSILON):
+    """Drop float-noise morph deltas from a GLB in place, storing the rest as sparse accessors.
+
+    Blender's glTF exporter writes a NORMAL delta for every vertex of every shape key,
+    and on a talking head nearly all of them are float noise (at most 1.5e-7), which
+    also keeps its sparse-accessor option from ever kicking in: about 1.2 MB a head
+    (E8 allows 3 MB). Every morph target delta whose largest component is at most
+    `position_epsilon` (POSITION, meters) or `normal_epsilon` (NORMAL and TANGENT) is
+    set to zero; a target left all zero becomes an accessor with no data (glTF
+    zero-fills it), one with few deltas a sparse accessor (the moving vertices'
+    indices and values), and a dense one keeps a plain buffer view. POSITION min and
+    max are recomputed, base attributes, indices, images and animation data are
+    copied untouched, and every buffer view stays 4-byte aligned. `export_glb` runs
+    it after Blender's exporter. Returns {'before', 'after' (bytes), 'targets'
+    (target accessors rewritten), 'values' (deltas kept), 'dropped' (non-zero
+    deltas dropped)}.
+    """
+    position_epsilon, normal_epsilon = _number(position_epsilon, 'Position epsilon', 0), _number(normal_epsilon, 'Normal epsilon', 0)
+    before = Path(path).stat().st_size
+    document, chunks = _read_glb(path)
+    stats = {'before': before, 'after': before, 'targets': 0, 'values': 0, 'dropped': 0}
+    binary_index = next((i for i, (kind, _) in enumerate(chunks) if kind == b'BIN\x00'), None)
+    buffers, views, accessors = document.get('buffers', []), document.get('bufferViews', []), document.get('accessors', [])
+    # Only a single self-contained buffer, with no extension that points into buffer views, is rewritten.
+    if binary_index is None or len(buffers) != 1 or 'uri' in buffers[0] or any(v.get('buffer', 0) != 0 for v in views): return stats
+    if any(key in (document.get('extensionsUsed') or []) for key in ('KHR_draco_mesh_compression', 'EXT_meshopt_compression')): return stats
+    binary = chunks[binary_index][1]
+    epsilon = {}
+    for mesh in document.get('meshes', []):
+        for primitive in mesh.get('primitives', []):
+            for target in primitive.get('targets', []) or []:
+                for attribute, index in target.items():
+                    limit = position_epsilon if attribute == 'POSITION' else normal_epsilon
+                    epsilon[index] = min(limit, epsilon.get(index, limit))
+    shared = {i for i, a in enumerate(accessors) if i not in epsilon}
+    for i in epsilon:
+        a = accessors[i]
+        if a.get('componentType') != 5126 or a.get('type') != 'VEC3' or a.get('normalized'): shared.add(i)
+    targets = [i for i in epsilon if i not in shared]
+
+    def view_bytes(index):
+        v = views[index]
+        start = v.get('byteOffset', 0)
+        return binary[start:start + v['byteLength']], v.get('byteStride')
+
+    def read(accessor):
+        count = accessor['count']
+        values = [(0.0, 0.0, 0.0)] * count
+        if 'bufferView' in accessor:
+            data, stride = view_bytes(accessor['bufferView'])
+            stride, start = stride or 12, accessor.get('byteOffset', 0)
+            values = [struct.unpack_from('<3f', data, start + i * stride) for i in range(count)]
+        sparse = accessor.get('sparse')
+        if sparse:
+            fmt = {5121: 'B', 5123: 'H', 5125: 'I'}[sparse['indices']['componentType']]
+            data, _ = view_bytes(sparse['indices']['bufferView'])
+            where = struct.unpack_from(f'<{sparse["count"]}{fmt}', data, sparse['indices'].get('byteOffset', 0))
+            data, _ = view_bytes(sparse['values']['bufferView'])
+            flat = struct.unpack_from(f'<{3 * sparse["count"]}f', data, sparse['values'].get('byteOffset', 0))
+            values = list(values)
+            for n, i in enumerate(where): values[i] = flat[n * 3:n * 3 + 3]
+        return values
+
+    # Buffer views still used by anything other than the rewritten targets are copied as they are.
+    used = set()
+    for i, a in enumerate(accessors):
+        if i in targets: continue
+        if 'bufferView' in a: used.add(a['bufferView'])
+        if 'sparse' in a: used.update((a['sparse']['indices']['bufferView'], a['sparse']['values']['bufferView']))
+    for image in document.get('images', []):
+        if 'bufferView' in image: used.add(image['bufferView'])
+    out, new_views, remap = bytearray(), [], {}
+
+    def append(blob, extra=None):
+        out.extend(bytes(-len(out) % 4))
+        view = {'buffer': 0, 'byteOffset': len(out), 'byteLength': len(blob)}
+        if extra: view.update(extra)
+        out.extend(blob)
+        new_views.append(view)
+        return len(new_views) - 1
+
+    for index in sorted(used):
+        data, _ = view_bytes(index)
+        remap[index] = append(data, {k: v for k, v in views[index].items() if k not in ('buffer', 'byteOffset', 'byteLength')})
+    for i, a in enumerate(accessors):
+        if i in targets: continue
+        if 'bufferView' in a: a['bufferView'] = remap[a['bufferView']]
+        if 'sparse' in a:
+            a['sparse']['indices']['bufferView'] = remap[a['sparse']['indices']['bufferView']]
+            a['sparse']['values']['bufferView'] = remap[a['sparse']['values']['bufferView']]
+    for image in document.get('images', []):
+        if 'bufferView' in image: image['bufferView'] = remap[image['bufferView']]
+    for i in targets:
+        a = accessors[i]
+        values = read(a)
+        kept = []
+        for n, v in enumerate(values):
+            if max(abs(v[0]), abs(v[1]), abs(v[2])) > epsilon[i]: kept.append((n, v))
+            elif v != (0.0, 0.0, 0.0): stats['dropped'] += 1
+        for key in ('bufferView', 'byteOffset', 'sparse'): a.pop(key, None)
+        count = a['count']
+        if kept and len(kept) * (12 + (2 if count < 65536 else 4)) < count * 12:
+            wide = count >= 65536
+            indices = struct.pack(f'<{len(kept)}{"I" if wide else "H"}', *[n for n, _ in kept])
+            flat = struct.pack(f'<{3 * len(kept)}f', *[c for _, v in kept for c in v])
+            a['sparse'] = {'count': len(kept), 'indices': {'bufferView': append(indices), 'componentType': 5125 if wide else 5123},
+                           'values': {'bufferView': append(flat)}}
+        elif kept:
+            dense = [(0.0, 0.0, 0.0)] * count
+            for n, v in kept: dense[n] = v
+            a['bufferView'] = append(struct.pack(f'<{3 * count}f', *[c for v in dense for c in v]), {'target': 34962})
+        if 'min' in a or 'max' in a or any(t.get('POSITION') == i for m in document.get('meshes', []) for p in m.get('primitives', []) for t in p.get('targets', []) or []):
+            points = [v for _, v in kept] + ([(0.0, 0.0, 0.0)] if len(kept) < count else [])
+            a['min'] = [min(p[k] for p in points) for k in range(3)]
+            a['max'] = [max(p[k] for p in points) for k in range(3)]
+        stats['targets'] += 1
+        stats['values'] += len(kept)
+    out.extend(bytes(-len(out) % 4))
+    document['bufferViews'] = new_views
+    buffers[0]['byteLength'] = len(out)
+    chunks[binary_index][1] = bytes(out)
+    _write_glb(path, document, chunks)
+    stats['after'] = Path(path).stat().st_size
+    return stats
 
 
 # ---------------------------------------------------------------- Blender wrappers

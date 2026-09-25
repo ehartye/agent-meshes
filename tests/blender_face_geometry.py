@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blende
 import agent_meshes_author
 from agent_meshes_face import _clip, _quality, _refine, _sharp_edges
 from agent_meshes_face import (
-    DEFAULT_LID_FOLLOW, attach_to_skin, nose_geometry, sculpt_lips, sculpt_skin, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
+    DEFAULT_LID_FOLLOW, attach_to_skin, nose_geometry, prune_glb_morphs, sculpt_lips, sculpt_skin, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
     ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
     eye_coverage, eye_coverage_problems, brow_plate_geometry, split_plates, rubber_mouth_geometry,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
@@ -1355,6 +1355,106 @@ class LipTests(unittest.TestCase):
         blank = ellipsoid_geometry(*self.HEAD, rings=24, segments=32)
         with self.assertRaises(ValueError): sculpt_lips(blank['vertices'], blank['faces'], self.MOUTH_Z, 0)
         with self.assertRaisesRegex(ValueError, 'skin'): sculpt_lips(blank['vertices'], blank['faces'], .5, self.HW)
+
+
+class GlbMorphPruneTests(unittest.TestCase):
+    """prune_glb_morphs drops float-noise morph deltas (Blender writes ~1e-7 normal deltas on every vertex) as sparse data."""
+
+    def glb(self, count=2000):
+        """A mesh with `count` vertices, two morph targets and an unrelated image bufferView."""
+        base = [(i * .001, 0.0, 0.0) for i in range(count)]
+        real = [(0.0, .002, 0.0) if i < 30 else (3e-8, 0.0, -1e-7) for i in range(count)]
+        real[40] = (0.0, 0.0, 2e-6)  # two microns: kept (above the position epsilon)
+        noise_normal = [(1.2e-7, -1.5e-7, 0.0)] * count
+        silent = [(0.0, 0.0, 0.0)] * count
+        blobs = [struct.pack(f'<{3 * count}f', *[c for v in vectors for c in v]) for vectors in (base, real, noise_normal, silent, noise_normal)]
+        image = bytes([0x89]) + b'PNG....'
+        views, binary = [], b''
+        for blob in blobs + [image]:
+            views.append({'buffer': 0, 'byteOffset': len(binary), 'byteLength': len(blob)})
+            binary += blob + bytes(-len(blob) % 4)
+        views[0]['target'] = 34962
+        accessor = lambda view, extra={}: dict({'bufferView': view, 'componentType': 5126, 'count': count, 'type': 'VEC3'}, **extra)
+        document = {
+            'asset': {'version': '2.0'}, 'buffers': [{'byteLength': len(binary)}], 'bufferViews': views,
+            'accessors': [accessor(0, {'min': [0, 0, 0], 'max': [(count - 1) * .001, 0, 0]}), accessor(1, {'min': [0, 0, -1e-7], 'max': [3e-8, .002, 2e-6]}),
+                          accessor(2), accessor(3, {'min': [0, 0, 0], 'max': [0, 0, 0]}), accessor(4)],
+            'images': [{'bufferView': 5, 'mimeType': 'image/png'}],
+            'meshes': [{'primitives': [{'attributes': {'POSITION': 0}, 'targets': [{'POSITION': 1, 'NORMAL': 2}, {'POSITION': 3, 'NORMAL': 4}]}],
+                        'extras': {'targetNames': ['jawOpen', 'browInnerUp']}}],
+        }
+        text = json.dumps(document).encode()
+        text += b' ' * (-len(text) % 4)
+        body = struct.pack('<I4s', len(text), b'JSON') + text + struct.pack('<I4s', len(binary), b'BIN' + bytes(1)) + binary
+        return struct.pack('<4sII', b'glTF', 2, 12 + len(body)) + body
+
+    def read(self, data):
+        json_length, = struct.unpack_from('<I', data, 12)
+        document = json.loads(data[20:20 + json_length])
+        binary = data[20 + json_length + 8:]
+
+        def view(index):
+            v = document['bufferViews'][index]
+            return binary[v.get('byteOffset', 0):v.get('byteOffset', 0) + v['byteLength']]
+
+        def accessor(index):
+            a = document['accessors'][index]
+            values = [(0.0, 0.0, 0.0)] * a['count']
+            if 'bufferView' in a:
+                flat = struct.unpack_from(f'<{3 * a["count"]}f', view(a['bufferView']), a.get('byteOffset', 0))
+                values = [tuple(flat[i * 3:i * 3 + 3]) for i in range(a['count'])]
+            if 'sparse' in a:
+                sp = a['sparse']
+                fmt = {5123: 'H', 5125: 'I'}[sp['indices']['componentType']]
+                where = struct.unpack_from(f'<{sp["count"]}{fmt}', view(sp['indices']['bufferView']), sp['indices'].get('byteOffset', 0))
+                flat = struct.unpack_from(f'<{3 * sp["count"]}f', view(sp['values']['bufferView']), sp['values'].get('byteOffset', 0))
+                for n, i in enumerate(where): values[i] = tuple(flat[n * 3:n * 3 + 3])
+            return values
+        return document, accessor, view
+
+    def test_noise_goes_and_real_deltas_stay_as_sparse_morph_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'model.glb'
+            path.write_bytes(self.glb())
+            before = path.stat().st_size
+            stats = prune_glb_morphs(path)
+            data = path.read_bytes()
+            self.assertEqual(struct.unpack_from('<4sII', data), (b'glTF', 2, len(data)))
+            self.assertLess(len(data), before / 3, 'four of five 24 kB vertex blocks were noise or zeros')
+            self.assertEqual((stats['before'], stats['after'], stats['targets']), (before, len(data), 4))
+            document, accessor, view = self.read(data)
+            self.assertEqual(document['buffers'][0]['byteLength'], len(data) - 20 - struct.unpack_from('<I', data, 12)[0] - 8)
+            targets = document['meshes'][0]['primitives'][0]['targets']
+            # The real jawOpen deltas survive, sparse, with the noise under them gone.
+            jaw_accessor = document['accessors'][targets[0]['POSITION']]
+            self.assertIn('sparse', jaw_accessor)
+            self.assertNotIn('bufferView', jaw_accessor)
+            self.assertEqual(jaw_accessor['sparse']['count'], 31)
+            jaw = accessor(targets[0]['POSITION'])
+            for i in range(30): self.assertAlmostEqual(jaw[i][1], .002, places=7)
+            self.assertAlmostEqual(jaw[40][2], 2e-6, places=9)
+            self.assertEqual(jaw[100], (0.0, 0.0, 0.0))
+            self.assertEqual(jaw_accessor['min'], [0, 0, 0])
+            self.assertAlmostEqual(jaw_accessor['max'][1], .002, places=7)
+            # Pure-noise normals and all-zero targets become zero accessors: no bufferView, no sparse (glTF zero-fills).
+            for index in (targets[0]['NORMAL'], targets[1]['POSITION'], targets[1]['NORMAL']):
+                self.assertNotIn('bufferView', document['accessors'][index])
+                self.assertNotIn('sparse', document['accessors'][index])
+                self.assertEqual(document['accessors'][index]['count'], 2000)
+            # The base positions and the image are untouched; views stay 4-byte aligned.
+            base = accessor(document['meshes'][0]['primitives'][0]['attributes']['POSITION'])
+            self.assertAlmostEqual(base[1999][0], 1.999, places=6)
+            self.assertEqual(view(document['images'][0]['bufferView'])[:4], bytes([0x89]) + b'PNG')
+            for v in document['bufferViews']: self.assertEqual(v.get('byteOffset', 0) % 4, 0)
+
+    def test_a_second_pass_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'model.glb'
+            path.write_bytes(self.glb(300))
+            prune_glb_morphs(path)
+            once = path.read_bytes()
+            prune_glb_morphs(path)
+            self.assertEqual(path.read_bytes(), once)
 
 if __name__ == '__main__':
     unittest.main()

@@ -377,6 +377,8 @@ def export_glb(path, objects):
     Geometry modifiers must be resolved by the author before adding morphs;
     applying them here would discard morph topology. Original selection is
     restored after export. This function deliberately preserves authored weights.
+    Morph deltas that are float noise (at most a micron, or 1e-4 of a normal) are
+    dropped after export and the rest stored as sparse accessors (`prune_glb_morphs`).
     """
     import bpy
     objects = list(objects)
@@ -395,9 +397,11 @@ def export_glb(path, objects):
         # Blender's exporter drops JSON-shaped custom properties; write root extras (for
         # example the arkit-face/1 contract from set_face_contract) into the GLB directly.
         import json
-        from agent_meshes_face import EXTRAS_PROPERTY, merge_glb_node_extras
+        from agent_meshes_face import EXTRAS_PROPERTY, merge_glb_node_extras, prune_glb_morphs
         extras = {obj.name: json.loads(obj[EXTRAS_PROPERTY]) for obj in objects if EXTRAS_PROPERTY in obj.keys()}
         if extras: merge_glb_node_extras(path, extras)
+        # Blender writes float-noise normal deltas (~1e-7) for every vertex of every shape key: about 1.2 MB a face.
+        prune_glb_morphs(path)
     finally:
         bpy.ops.object.select_all(action='DESELECT')
         for obj in previous_selection: obj.select_set(True)

@@ -181,3 +181,9 @@ ball is judged against the ball). It exits 1 and prints
 `teeth_lower`. It does not render: a dark open mouth, gaze and shading still need looking at. `node <plugin-root>/scripts/check-face-rig-browser.mjs [test_head|test_robot|test_frog|test_kid]`
 renders the helper-built test heads, including a jaw sheet (jawOpen 0, .5, 1 from the front,
 three-quarter and close up) captioned with the measured chin drop.
+
+File size: Blender's exporter writes a float-noise normal delta (about 1e-7) for every vertex of
+every shape key, about 1.2 MB on a talking head. The Blender authoring stage (`export_glb`)
+drops deltas under 1e-6 m (positions) and 1e-4 (normals) and stores the rest as sparse
+accessors (`prune_glb_morphs`), so a head's morph data grows only with the vertices each shape
+really moves. Keep each face GLB under 3 MB (E8).
