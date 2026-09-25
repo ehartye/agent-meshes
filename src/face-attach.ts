@@ -6,7 +6,8 @@
  * is part of an eye when an eye morph moves it (lids, shutters), it is named `socket`, or it lies wholly inside the
  * reach of that eye's lids (a shutter housing); part of the mouth when it is teeth, tongue or cavity; skin when it is
  * at least a third the size of the largest piece (a head, a skull or chin plate, a hair cap). Every other piece is an
- * attached part, and it is judged against the skin and the lids (a lowered brow may rest on a lid).
+ * attached part, and it is judged against the skin and the lids (a lowered brow may rest on a lid). A part that fails
+ * there but sits on a larger attached part that passes (a nostril on a nose ball) is judged against that host too.
  *
  * Contact is measured along the part's length: its surface is sampled densely and cut into slices across its longest
  * axis, and every slice must come within `ATTACH_TOLERANCE` of the skin (or dip into it). A ridge that touches the
@@ -31,6 +32,8 @@ export interface AttachedPart {
    * horn), which may stand out from the head but must touch it somewhere.
    */
   contact: 'lies' | 'root';
+  /** The attached part(s) this one sits on, when it touches them rather than the skin (a nostril on a nose ball). */
+  host?: string;
 }
 export interface AttachReport { parts: AttachedPart[]; problems: string[] }
 
@@ -195,8 +198,7 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
   // The farthest any morph moves any vertex: how far skin can travel toward a part.
   let reachOf = 0;
   for (const s of surfaces) for (const d of s.targets.values()) for (let v = 0; v < s.count; v++) reachOf = Math.max(reachOf, Math.hypot(d[v * 3], d[v * 3 + 1], d[v * 3 + 2]));
-  const report: AttachReport = { parts: [], problems: [] };
-  for (const piece of parts) {
+  const judge = (piece: Piece, against: Piece[], host?: string): { entry: AttachedPart; problems: string[] } => {
     const labels = [...new Set(piece.tris.map(([i]) => surfaces[i].label))];
     const morphs = morphNames.filter(name => piece.verts.some(([i, v]) => moves(surfaces[i], v, [name])));
     const center = [0, 1, 2].map(k => (piece.lo[k] + piece.hi[k]) / 2);
@@ -229,7 +231,7 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
     // Contact triangles that could come near the part in any pose: within SEARCH plus the largest morph motion.
     const expand = SEARCH + reachOf;
     const candidates: [number, number][] = [];
-    for (const other of contact) for (const [i, t] of other.tris) {
+    for (const other of against) for (const [i, t] of other.tris) {
       const s = surfaces[i], q = s.rest;
       const tri = [s.triangles[t], s.triangles[t + 1], s.triangles[t + 2]];
       if ([0, 1, 2].some(k => Math.max(...tri.map(v => q[v * 3 + k])) < piece.lo[k] - expand || Math.min(...tri.map(v => q[v * 3 + k])) > piece.hi[k] + expand)) continue;
@@ -257,10 +259,12 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
     };
     const measured = evaluate(null);
     const entry: AttachedPart = { part: label, vertices: piece.verts.length, center: center.map(c => round(c)), morphs, restGap: round(measured.gap), gap: round(measured.gap), worst: 'rest', poses: 1, restVisible: round(measured.visible, 4), contact: lies ? 'lies' : 'root' };
+    if (host) entry.host = host;
+    const skin = host ? `the skin or ${host}, the part it sits on,` : 'the skin';
     const problems: string[] = [];
     const fix = 'lay it on the skin (brow_ridge_geometry(..., skin=...), skin_brow_geometry) or seat it with attach_to_skin(part, skin, depth=...)';
     if (measured.gap > ATTACH_TOLERANCE) problems.push(lies
-      ? `${label} floats ${mm(measured.gap)} off the skin at rest along ${measured.floating} of its ${count} slices (allowed ${mm(ATTACH_TOLERANCE)}): a part joined to the face must sit on the skin along its whole length with no air gap; ${fix}`
+      ? `${label} floats ${mm(measured.gap)} off ${skin} at rest along ${measured.floating} of its ${count} slices (allowed ${mm(ATTACH_TOLERANCE)}): a part joined to the face must sit on the skin along its whole length with no air gap; ${fix}`
       : `${label} floats ${mm(measured.gap)} off the head at rest: an ear, fin or horn may stand out from the head but must touch it at its root; sink its root into the skin (attach_to_skin(part, skin, depth=...))`);
     // Every morph that moves the part or the skin and lids near it, at weight 1.
     const near = (s: AttachSurface, q: Float64Array, v: number) => q[v * 3] >= piece.lo[0] - SEARCH && q[v * 3] <= piece.hi[0] + SEARCH && q[v * 3 + 1] >= piece.lo[1] - SEARCH && q[v * 3 + 1] <= piece.hi[1] + SEARCH && q[v * 3 + 2] >= piece.lo[2] - SEARCH && q[v * 3 + 2] <= piece.hi[2] + SEARCH;
@@ -270,12 +274,32 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
       const result = evaluate(name);
       entry.poses++;
       if (result.gap > entry.gap) { entry.gap = round(result.gap); entry.worst = `${name}=1`; }
-      if (result.gap > ATTACH_TOLERANCE && measured.gap <= ATTACH_TOLERANCE) problems.push(`${name}=1 lifts ${label} ${mm(result.gap)} off the skin${lies ? ` along ${result.floating} of its ${count} slices` : ''} (allowed ${mm(ATTACH_TOLERANCE)}): the part must follow the skin while its morphs play; give it the skin's own deltas with attach_to_skin(part, skin) and keep its own morphs on the skin`);
+      if (result.gap > ATTACH_TOLERANCE && measured.gap <= ATTACH_TOLERANCE) problems.push(`${name}=1 lifts ${label} ${mm(result.gap)} off ${skin}${lies ? ` along ${result.floating} of its ${count} slices` : ''} (allowed ${mm(ATTACH_TOLERANCE)}): the part must follow the skin while its morphs play; give it the skin's own deltas with attach_to_skin(part, skin) and keep its own morphs on the skin`);
       if (measured.visible > 0 && result.visible < ATTACH_MIN_VISIBLE * measured.visible) problems.push(`${name}=1 buries ${label} in the skin: ${(result.visible * 100).toFixed(0)}% of it shows, against ${(measured.visible * 100).toFixed(0)}% at rest (it sinks where the skin moves and the part does not); carry the skin's ${name} deltas on it with attach_to_skin(part, skin)`);
     }
-    report.parts.push(entry);
-    report.problems.push(...problems.slice(0, 3));
-    if (problems.length > 3) report.problems.push(`${label}: ${problems.length - 3} more morphs lift or bury it`);
+    if (problems.length > 3) problems.splice(3, problems.length - 3, `${label}: ${problems.length - 3} more morphs lift or bury it`);
+    return { entry, problems };
+  };
+  // Judge every part against the skin and lids first. A part that fails may sit on another attached part instead (a
+  // nostril seated on a nose ball with attach_to_skin(bead, ball)): judge it again against the skin, the lids and the
+  // larger parts that passed and lie within reach of it, until nothing changes (a chain of parts settles in turn).
+  const results = new Map(parts.map(piece => [piece, judge(piece, contact)]));
+  const shortLabel = (piece: Piece) => results.get(piece)!.entry.part.replace(/ moved by .*$/, '');
+  const tried = new Map<Piece, number>();
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const piece of parts) {
+      if (!results.get(piece)!.problems.length) continue;
+      const hosts = parts.filter(other => other !== piece && !results.get(other)!.problems.length && size(other) > size(piece)
+        && [0, 1, 2].every(k => other.lo[k] <= piece.hi[k] + SEARCH && other.hi[k] >= piece.lo[k] - SEARCH));
+      if (hosts.length <= (tried.get(piece) ?? 0)) continue;
+      tried.set(piece, hosts.length);
+      const again = judge(piece, [...contact, ...hosts], hosts.map(shortLabel).join(' + '));
+      if (!again.problems.length) changed = true;
+      if (!again.problems.length || again.entry.gap < results.get(piece)!.entry.gap) results.set(piece, again);
+    }
   }
+  const report: AttachReport = { parts: [], problems: [] };
+  for (const piece of parts) { const { entry, problems } = results.get(piece)!; report.parts.push(entry); report.problems.push(...problems); }
   return report;
 }

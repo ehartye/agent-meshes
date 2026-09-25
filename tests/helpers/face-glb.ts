@@ -470,3 +470,27 @@ export function ear(head: SynthHead, gap = 0): void {
   const e = slab(4, 4, (u, v, layer) => [0.078 + gap + 0.03 * u, -0.015 + 0.03 * v, -0.045 + 0.01 * layer]);
   head.meshes.push({ name: 'ear_L', material: 'ear', ...e, targets: [], bones: e.positions.map(() => 'head') });
 }
+
+/**
+ * A nose ball (5 mm, half sunk in the face) that rides the skin's noseSneerLeft, with two nostril beads seated on its
+ * lower slope, clear of the face itself: parts attached to an attached part (attach_to_skin(bead, ball)).
+ * `gap` moves the beads out from the ball (1.2 mm beads: a gap over 1.2 mm leaves air between them).
+ */
+export function ballNose(head: SynthHead, gap = 0, swell = 0.003): void {
+  const center: Vec3 = [0, 0, 0.06], face = mesh(head, 'face');
+  const lift = (p: Vec3) => { const d = Math.hypot(p[0] - center[0], p[1] - center[1]) / 0.02; return d >= 1 ? 0 : swell * (1 - d * d * (3 - 2 * d)); };
+  face.targets.push({ name: 'noseSneerLeft', positions: face.positions.map(p => [p[0], p[1], p[2] + lift(p)] as Vec3) });
+  const ride = (points: Vec3[]) => [{ name: 'noseSneerLeft', positions: points.map(p => [p[0], p[1], p[2] + lift(p)] as Vec3) }];
+  const ball = sphere(center, 0.005, 12, 16);
+  head.meshes.push({ name: 'nose_ball', material: 'skin', ...ball, bones: ball.positions.map(() => 'head'), targets: ride(ball.positions) });
+  head.groups!.face.push('nose_ball');
+  for (const [side, x] of [['L', 0.45], ['R', -0.45]] as const) {
+    const length = Math.hypot(x, 0.75, 0.5), direction: Vec3 = [x / length, -0.75 / length, 0.5 / length];
+    // The bead is half sunk in the ball (plus `gap` out), so it touches the ball, not the face.
+    const at = 0.005 + gap;
+    const bead = sphere(add(center, [direction[0] * at, direction[1] * at, direction[2] * at]), 0.0012, 8, 12);
+    head.meshes.push({ name: `nostril_${side}`, material: 'nostril', ...bead, bones: bead.positions.map(() => 'head'), targets: ride(bead.positions) });
+    head.groups!.face.push(`nostril_${side}`);
+  }
+  head.rootExtras = { arkitFace: { ...(head.rootExtras!.arkitFace as Record<string, unknown>), morphs: [...REQUIRED, 'noseSneerLeft'] } };
+}

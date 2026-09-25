@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { browBar, ear, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { ballNose, browBar, ear, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -235,6 +235,29 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     }
     expect(parts[0].morphs).toEqual(['browDownLeft', 'browInnerUp']);
     expect(parts[1].morphs).toEqual(['noseSneerLeft']);
+  });
+
+  it('judges nostrils seated on a nose ball against the ball they sit on, not only the skin', async () => {
+    const result = await report(head => ballNose(head));
+    expect(result.failures).toEqual([]);
+    const parts = result.measurements.attached;
+    expect(parts).toHaveLength(3);
+    const beads = parts.filter(p => /nostril/.test(p.part));
+    expect(beads).toHaveLength(2);
+    const ball = parts.find(p => !/nostril/.test(p.part))!;
+    for (const bead of beads) {
+      expect(ball.part.startsWith(bead.host!)).toBe(true);
+      expect(bead.gap).toBeLessThanOrEqual(0.0005);
+    }
+    expect(ball.host).toBeUndefined();
+  });
+
+  it('still fails a nostril floating off the nose ball, measured against the ball', async () => {
+    const result = await report(head => ballNose(head, 0.003));
+    const failures = result.failures.filter(f => f.startsWith('attached-parts: '));
+    expect(failures.length).toBeGreaterThanOrEqual(2);
+    expect(failures[0]).toMatch(/nostril/);
+    expect(failures[0]).toMatch(/[1-3]\.\d\d mm off the skin or face\[skin\] part at/);
   });
 
   it('lets an ear stand out from the head as long as its root touches it', async () => {
