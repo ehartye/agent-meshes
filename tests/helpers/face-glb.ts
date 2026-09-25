@@ -494,3 +494,48 @@ export function ballNose(head: SynthHead, gap = 0, swell = 0.003): void {
   }
   head.rootExtras = { arkitFace: { ...(head.rootExtras!.arkitFace as Record<string, unknown>), morphs: [...REQUIRED, 'noseSneerLeft'] } };
 }
+
+/**
+ * A heavy brow ridge lying along a skin dome (Mossjaw's brow): a 30 mm dome beside the head with a ridge wrapped 120
+ * degrees round it, `lift` proud. The ridge's top lies farther out than its base, so at its ends the top reaches past
+ * the base along the ridge's chord. `gap` lifts the whole ridge off the dome.
+ */
+export function domeRidge(head: SynthHead, lift = 0.006, gap = 0): void {
+  const center: Vec3 = [0.16, 0.02, 0.035], radius = 0.03;
+  const dome = sphere(center, radius, 16, 24);
+  head.meshes.push({ name: 'dome', material: 'skin', ...dome, bones: dome.positions.map(() => 'head'), targets: [] });
+  const at = (u: number, v: number, layer: number): Vec3 => {
+    const yaw = (-60 + 120 * u) * Math.PI / 180, elevation = (20 + 16 * (v - 0.5)) * Math.PI / 180;
+    const r = layer ? radius + gap + 0.0002 + lift * Math.sin(Math.PI * v) : radius + gap - 0.0003;
+    return [center[0] + r * Math.cos(elevation) * Math.sin(yaw), center[1] + r * Math.sin(elevation), center[2] + r * Math.cos(elevation) * Math.cos(yaw)];
+  };
+  const ridge = slab(24, 6, at);
+  head.meshes.push({ name: 'ridge', material: 'ridge', ...ridge, bones: ridge.positions.map(() => 'head'), targets: [] });
+}
+
+/** A horn at the outer end of the left brow: a 3 mm cone whose root sinks 1 mm into the eye mask, pointing out and up. */
+export function horn(head: SynthHead, gap = 0): void {
+  const root: Vec3 = [0.052, EYES.L[1] + 0.02, MASK_Z - 0.001 + gap], axis: Vec3 = [0.35, 0.45, 0.82];
+  const length = Math.hypot(...axis), dir = axis.map(a => a / length) as Vec3;
+  const u: Vec3 = [dir[2], 0, -dir[0]], ul = Math.hypot(...u), uu = u.map(a => a / ul) as Vec3;
+  const w: Vec3 = [dir[1] * uu[2] - dir[2] * uu[1], dir[2] * uu[0] - dir[0] * uu[2], dir[0] * uu[1] - dir[1] * uu[0]];
+  const positions: Vec3[] = [], indices: number[] = [], segments = 12, rings = 6;
+  for (let k = 0; k <= rings; k++) {
+    const t = k / rings, r = 0.003 * (1 - t) + 0.0003 * t, c = add(root, dir.map(a => a * 0.016 * t) as Vec3);
+    for (let j = 0; j < segments; j++) {
+      const a = 2 * Math.PI * j / segments;
+      positions.push(add(c, [0, 1, 2].map(i => r * (Math.cos(a) * uu[i] + Math.sin(a) * w[i])) as Vec3));
+    }
+  }
+  const tip = positions.length; positions.push(add(root, dir.map(a => a * 0.0165) as Vec3));
+  const base = positions.length; positions.push(root);
+  for (let k = 0; k < rings; k++) for (let j = 0; j < segments; j++) {
+    const a = k * segments + j, b = k * segments + (j + 1) % segments;
+    indices.push(a, b, b + segments, a, b + segments, a + segments);
+  }
+  for (let j = 0; j < segments; j++) {
+    indices.push(rings * segments + j, rings * segments + (j + 1) % segments, tip);
+    indices.push((j + 1) % segments, j, base);
+  }
+  head.meshes.push({ name: 'horn_L', material: 'horn', positions, indices, bones: positions.map(() => 'head'), targets: [] });
+}

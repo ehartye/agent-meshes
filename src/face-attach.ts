@@ -16,7 +16,7 @@
 export const ATTACH_TOLERANCE = 0.0005;
 /** A morph that leaves less than this share of a part's rest visibility above the skin buries it. */
 export const ATTACH_MIN_VISIBLE = 0.5;
-const SLICE = 0.0015, MAX_SLICES = 32, SAMPLE = 0.0015, CELL = 0.002, SEARCH = 0.012, SKIN_SHARE = 1 / 3, EYE_REACH = 1.1;
+const STANDS_OUT = 0.003, SLICE = 0.0015, MAX_SLICES = 32, SAMPLE = 0.0015, CELL = 0.002, SEARCH = 0.012, SKIN_SHARE = 1 / 3, EYE_REACH = 1.1;
 
 export interface AttachSurface {
   label: string; names: string[]; count: number; rest: Float64Array; targets: Map<string, Float64Array>; triangles: Uint32Array;
@@ -28,8 +28,9 @@ export interface AttachedPart {
   restVisible: number;
   /**
    * `lies` for a part on the face (in front of the eyes' depth less an eyeball radius): brows, ridges, nostrils, which
-   * must touch the skin along their whole length; `root` for an appendage beside or behind the eyes (an ear, a fin, a
-   * horn), which may stand out from the head but must touch it somewhere.
+   * must touch the skin along their whole length; `root` for an appendage beside or behind the eyes (an ear, a fin) or
+   * one that stands out of the skin more than 3 mm and more than half its own size (a horn at a brow corner),
+   * which may stand out from the head but must touch it somewhere.
    */
   contact: 'lies' | 'root';
   /** The attached part(s) this one sits on, when it touches them rather than the skin (a nostril on a nose ball). */
@@ -75,8 +76,12 @@ function closest(p: number[], a: number[], b: number[], c: number[], out: number
   return set(a[0] + ab0 * v + ac0 * w, a[1] + ab1 * v + ac1 * w, a[2] + ab2 * v + ac2 * w);
 }
 
-/** Signed distances from points to a triangle soup (outward normals: positive outside), capped at SEARCH. */
-function signedDistances(points: number[][], tris: number[][][]): Float64Array {
+/**
+ * Signed distances from points to a triangle soup (outward normals: positive outside), capped at SEARCH. With `feet`,
+ * each point's nearest surface point is written there (NaN when nothing lies within SEARCH).
+ */
+function signedDistances(points: number[][], tris: number[][][], feet?: Float64Array): Float64Array {
+  if (feet) feet.fill(NaN);
   const out = new Float64Array(points.length).fill(SEARCH);
   if (!tris.length) return out;
   const cell = (v: number) => Math.floor(v / CELL);
@@ -116,6 +121,7 @@ function signedDistances(points: number[][], tris: number[][][]): Float64Array {
       }
     }
     if (owner < 0 || Math.sqrt(found) > SEARCH) return;
+    if (feet) { feet[n * 3] = best[0]; feet[n * 3 + 1] = best[1]; feet[n * 3 + 2] = best[2]; }
     const normal = normals[owner], side = (p[0] - best[0]) * normal[0] + (p[1] - best[1]) * normal[1] + (p[2] - best[2]) * normal[2];
     out[n] = side < 0 ? -Math.sqrt(found) : Math.sqrt(found);
   });
@@ -202,7 +208,6 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
     const labels = [...new Set(piece.tris.map(([i]) => surfaces[i].label))];
     const morphs = morphNames.filter(name => piece.verts.some(([i, v]) => moves(surfaces[i], v, [name])));
     const center = [0, 1, 2].map(k => (piece.lo[k] + piece.hi[k]) / 2);
-    const lies = !eyes.length || center[2] >= Math.min(...eyes.map(e => e.center[2] - e.radius));
     const label = `${labels.join(' + ')} part at (${center.map(c => (c * 1000).toFixed(0)).join(', ')}) mm${morphs.length ? ` moved by ${morphs.slice(0, 3).join(', ')}${morphs.length > 3 ? ', ...' : ''}` : ''}`;
     // Sample the part's surface: barycentric points on each triangle, about SAMPLE apart.
     const samples: { i: number; a: number; b: number; c: number; u: number; v: number }[] = [];
@@ -217,17 +222,6 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
       const q = positions[sample.i], w = 1 - sample.u - sample.v;
       return [0, 1, 2].map(k => w * q[sample.a * 3 + k] + sample.u * q[sample.b * 3 + k] + sample.v * q[sample.c * 3 + k]);
     };
-    // Slices across the longest axis (the principal axis of the rest samples).
-    const rest = samples.map(s => at(pose(null), s));
-    const mean = [0, 1, 2].map(k => rest.reduce((sum, p) => sum + p[k], 0) / rest.length);
-    const cov = [0, 1, 2].map(r => [0, 1, 2].map(c => rest.reduce((sum, p) => sum + (p[r] - mean[r]) * (p[c] - mean[c]), 0)));
-    let axis = [1, 1, 1];
-    for (let n = 0; n < 50; n++) { const next = [0, 1, 2].map(r => cov[r][0] * axis[0] + cov[r][1] * axis[1] + cov[r][2] * axis[2]); const len = Math.hypot(...next) || 1; axis = next.map(x => x / len); }
-    const along = rest.map(p => (p[0] - mean[0]) * axis[0] + (p[1] - mean[1]) * axis[1] + (p[2] - mean[2]) * axis[2]);
-    const from = Math.min(...along), length = Math.max(...along) - from;
-    const count = Math.min(MAX_SLICES, Math.max(1, Math.ceil(length / SLICE)));
-    const slice = along.map(t => Math.min(count - 1, Math.floor((t - from) / (length || 1) * count)));
-
     // Contact triangles that could come near the part in any pose: within SEARCH plus the largest morph motion.
     const expand = SEARCH + reachOf;
     const candidates: [number, number][] = [];
@@ -237,9 +231,7 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
       if ([0, 1, 2].some(k => Math.max(...tri.map(v => q[v * 3 + k])) < piece.lo[k] - expand || Math.min(...tri.map(v => q[v * 3 + k])) > piece.hi[k] + expand)) continue;
       candidates.push([i, t]);
     }
-    const evaluate = (name: string | null) => {
-      const positions = pose(name);
-      const points = samples.map(s => at(positions, s));
+    const trianglesNear = (positions: Float64Array[], points: number[][]) => {
       const lo = [0, 1, 2].map(k => Math.min(...points.map(p => p[k])) - SEARCH), hi = [0, 1, 2].map(k => Math.max(...points.map(p => p[k])) + SEARCH);
       const tris: number[][][] = [];
       for (const [i, t] of candidates) {
@@ -248,6 +240,35 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
         for (let k = 0; k < 3 && !outside; k++) outside = Math.max(q[a + k], q[b + k], q[c + k]) < lo[k] || Math.min(q[a + k], q[b + k], q[c + k]) > hi[k];
         if (!outside) tris.push([[q[a], q[a + 1], q[a + 2]], [q[b], q[b + 1], q[b + 2]], [q[c], q[c + 1], q[c + 2]]]);
       }
+      return tris;
+    };
+    // Slices along the part's length, by where each sample meets the skin: each rest sample is replaced by its nearest
+    // skin point (its footprint) before it is placed along the principal axis, so the top of a thick ridge curved round
+    // a dome shares its slice with the base under it instead of reaching past the base at the ends.
+    const rest = samples.map(s => at(pose(null), s));
+    const feet = new Float64Array(rest.length * 3);
+    const restDistance = signedDistances(rest, trianglesNear(pose(null), rest), feet);
+    const foot = rest.map((p, n) => Number.isNaN(feet[n * 3]) ? p : [feet[n * 3], feet[n * 3 + 1], feet[n * 3 + 2]]);
+    const mean = [0, 1, 2].map(k => foot.reduce((sum, p) => sum + p[k], 0) / foot.length);
+    const cov = [0, 1, 2].map(r => [0, 1, 2].map(c => foot.reduce((sum, p) => sum + (p[r] - mean[r]) * (p[c] - mean[c]), 0)));
+    let axis = [1, 1, 1];
+    for (let n = 0; n < 50; n++) { const next = [0, 1, 2].map(r => cov[r][0] * axis[0] + cov[r][1] * axis[1] + cov[r][2] * axis[2]); const len = Math.hypot(...next) || 1; axis = next.map(x => x / len); }
+    const along = foot.map(p => (p[0] - mean[0]) * axis[0] + (p[1] - mean[1]) * axis[1] + (p[2] - mean[2]) * axis[2]);
+    const from = Math.min(...along), length = Math.max(...along) - from;
+    const count = Math.min(MAX_SLICES, Math.max(1, Math.ceil(length / SLICE)));
+    const slice = along.map(t => Math.min(count - 1, Math.floor((t - from) / (length || 1) * count)));
+    // A part lies on the face (brows, ridges, nostrils: touching along its whole length) unless it sits beside or behind
+    // the eyes (an ear, a fin) or stands out of the skin more than half its own size (a horn at a brow corner).
+    // How far it rises above its own nearest point (a part floating clear of the skin is not an appendage for that).
+    const within = [...restDistance].filter(d => d < SEARCH), height = within.length ? Math.max(...within) - Math.min(...within) : 0;
+    const behind = eyes.length > 0 && center[2] < Math.min(...eyes.map(e => e.center[2] - e.radius));
+    const span = Math.max(...[0, 1, 2].map(k => piece.hi[k] - piece.lo[k]));
+    const lies = !behind && !(height > STANDS_OUT && height > 0.5 * span);
+
+    const evaluate = (name: string | null) => {
+      const positions = pose(name);
+      const points = samples.map(s => at(positions, s));
+      const tris = trianglesNear(positions, points);
       const distance = signedDistances(points, tris);
       const low = new Float64Array(count).fill(Infinity);
       let outside = 0;

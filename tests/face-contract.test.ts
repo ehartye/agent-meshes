@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { ballNose, browBar, ear, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { ballNose, browBar, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -258,6 +258,25 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(failures.length).toBeGreaterThanOrEqual(2);
     expect(failures[0]).toMatch(/nostril/);
     expect(failures[0]).toMatch(/[1-3]\.\d\d mm off the skin or face\[skin\] part at/);
+  });
+
+  it('slices a thick ridge curved round a dome along its own length, so its ends are not judged by their tops', async () => {
+    const result = await report(head => domeRidge(head));
+    expect(result.failures).toEqual([]);
+    const ridge = result.measurements.attached.find(p => /ridge/.test(p.part))!;
+    expect(ridge.contact).toBe('lies');
+    expect(ridge.gap).toBeLessThanOrEqual(0.0005);
+    // A ridge that really floats is still caught.
+    const floating = await report(head => domeRidge(head, 0.006, 0.002));
+    expect(floating.failures.some(f => /attached-parts: .*ridge.* floats/.test(f))).toBe(true);
+  });
+
+  it('judges a horn at the brow corner as an appendage rooted in the skin, not a part lying on it', async () => {
+    const result = await report(head => horn(head));
+    expect(result.failures).toEqual([]);
+    expect(result.measurements.attached.find(p => /horn/.test(p.part))).toMatchObject({ contact: 'root' });
+    const loose = await report(head => horn(head, 0.006));
+    expect(loose.failures.some(f => /attached-parts: .*horn.* off the head/.test(f))).toBe(true);
   });
 
   it('lets an ear stand out from the head as long as its root touches it', async () => {
