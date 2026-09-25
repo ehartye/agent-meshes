@@ -104,7 +104,13 @@ exposed fangs). The rules that are easy to get wrong:
 - Brows on a round skin face: `skin_brow_geometry(front_surface(...), side, inner, outer)`. The
   helpers write `lidFollow.up` .8 so looking up visibly lifts the lids (E2).
 - Cut other holes with `cut_hole` (a smooth rim), not `cut_faces` (stair steps). Brows on eye domes
-  (a frog) are `brow_ridge_geometry` ridges that slide over the lid dome.
+  (a frog) are `brow_ridge_geometry(..., skin=..., hole=...)` ridges that lie on the skin itself
+  and slide over it; a ridge on the dome's sphere floats over the skin.
+- Small parts joined to the face (nostrils, freckles, warts, horns) go through
+  `attach_to_skin(part, head, depth=...)` after the head's shape keys are added: it seats the
+  part and gives it the skin's own morph deltas at its footprint, so `noseSneer` lifts nostrils
+  with the snout instead of burying them. Nothing may float off the skin or sink under a morph
+  (the verifier's `attached-parts` check).
 - Put every morph-bearing part in one mesh with `join_face_parts`: Unreal discards all morph
   names when a name repeats across glTF meshes. Keep only the eyeballs separate.
 - Name teeth materials `teeth_upper` and `teeth_lower`, and write the extras with

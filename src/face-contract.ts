@@ -3,6 +3,7 @@ import { ARKIT_FACE_BONE_PARENTS, ARKIT_FACE_CONTRACT, ARKIT_FACE_OPTIONAL_MORPH
 import { morphNameAudit } from './gltf-morphs.ts';
 import { auditSkins } from './gltf-skins.ts';
 import { verifyGLB } from './export.ts';
+import { attachedParts, type AttachedPart } from './face-attach.ts';
 import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument, type GLTFMaterial } from './gltf-read.ts';
 
 /**
@@ -24,6 +25,8 @@ import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument, type G
  *   dark cup behind an eye, which no view may see.
  * - Alpha-blended, alpha-masked and transmissive materials hide nothing: they are left out of
  *   every coverage ray test, and the face's parts may not use them.
+ * - Small parts joined to the face (brows, ridges, nostrils) are found by geometry, not names
+ *   (see `face-attach.ts`), and must sit on the skin at rest and at every morph.
  */
 export const ARKIT_GAZE_CURVES = Object.freeze(['Left', 'Right'].flatMap(side => ['Up', 'Down', 'In', 'Out'].map(d => `eyeLook${d}${side}`)));
 export const ARKIT_CURVES = Object.freeze([...new Set([...ARKIT_FACE_REQUIRED_MORPHS, ...ARKIT_FACE_OPTIONAL_MORPHS, ...ARKIT_GAZE_CURVES,
@@ -102,6 +105,8 @@ export interface FaceContractReport {
     /** Front rays over the teeth rows at rest: how many land on teeth before anything else (declared exposedTeeth may show). */
     restTeeth: { samples: number; visible: number } | null;
     eyes: Partial<Record<'L' | 'R', EyeMeasure>>; teeth: { upperMove: number | null; lowerDrop: number | null };
+    /** Small parts joined to the face (brows, ridges, nostrils): their worst gap to the skin at rest and at each morph. */
+    attached: AttachedPart[];
   };
 }
 
@@ -256,11 +261,11 @@ function rayZ(points: Float64Array, a: number, b: number, c: number, x: number, 
  * A view-space depth buffer over a grid of (x, y) rays looking down -z: the frontmost z, which part owns it and whether
  * the ray met that triangle's front (1, counter-clockwise as seen) or back (-1).
  */
-interface Raster { x0: number; y0: number; step: number; nx: number; ny: number; depth: Float64Array; owner: Int32Array; facing: Int8Array }
+interface Raster { x0: number; y0: number; step: number; nx: number; ny: number; depth: Float64Array; owner: Int32Array; facing: Int8Array; tri: Int32Array }
 
 function raster(x0: number, x1: number, y0: number, y1: number, columns: number): Raster {
   const step = Math.max(x1 - x0, 1e-9) / (columns - 1), nx = columns, ny = Math.max(2, Math.ceil((y1 - y0) / step) + 1);
-  return { x0, y0, step, nx, ny, depth: new Float64Array(nx * ny).fill(-Infinity), owner: new Int32Array(nx * ny).fill(-1), facing: new Int8Array(nx * ny) };
+  return { x0, y0, step, nx, ny, depth: new Float64Array(nx * ny).fill(-Infinity), owner: new Int32Array(nx * ny).fill(-1), facing: new Int8Array(nx * ny), tri: new Int32Array(nx * ny).fill(-1) };
 }
 
 /** An orthographic view looking at the face from `yaw` degrees toward +X and `pitch` degrees above (glTF: the face looks down +Z). */
@@ -300,7 +305,7 @@ function draw(target: Raster, points: Float64Array, tris: Uint32Array, owner: nu
         const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, w = 1 - u - v;
         if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue;
         const z = u * points[a + 2] + v * points[b + 2] + w * points[c + 2], k = j * nx + i;
-        if (z > depth[k]) { depth[k] = z; target.owner[k] = owner; target.facing[k] = d > 0 ? 1 : -1; }
+        if (z > depth[k]) { depth[k] = z; target.owner[k] = owner; target.facing[k] = d > 0 ? 1 : -1; target.tri[k] = t / 3; }
       }
     }
   }
@@ -359,7 +364,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     if (skippedBecause) checks.push({ id, ok: false, message: `skipped: ${skippedBecause}`, problems: [`skipped because ${skippedBecause}`] });
     else checks.push({ id, ok: problems.length === 0, message: problems.length ? problems[0] : message, problems });
   };
-  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, restTeeth: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null } };
+  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, restTeeth: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null }, attached: [] };
 
   // 1. glTF validator
   const validation = await verifyGLB(bytes);
@@ -630,6 +635,13 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     states.push({ label: `eyeLookDown 1 (eyeBlink ${follow.down})`, weights: both({ blink: follow.down, squint: 0, wide: 0 }) });
     for (const combo of combos) if (/ preset$/.test(combo.label) && combo.label !== 'neutral preset') states.push({ label: combo.label, weights: combo.weights });
     const seen = Object.fromEntries(sides.map(side => [side, { rays: 0, leaks: 0, worst: null as string | null, worstLeaks: 0, problems: [] as { leaks: number; text: string }[] }]));
+    // Lid triangles (any vertex an eye morph moves): a leak with no lid near its ray went through the skin away from the lids.
+    const lidTriangles = scene.map(instance => {
+      const moved = (v: number) => ['Left', 'Right'].some(side => ['eyeBlink', 'eyeSquint', 'eyeWide'].some(m => { const d = instance.targets.get(`${m}${side}`); return !!d && Math.hypot(d[v * 3], d[v * 3 + 1], d[v * 3 + 2]) > LID_MOTION; }));
+      const t = instance.triangles, kept: number[] = [];
+      for (let k = 0; k < t.length; k += 3) if (moved(t[k]) || moved(t[k + 1]) || moved(t[k + 2])) kept.push(t[k], t[k + 1], t[k + 2]);
+      return Uint32Array.from(kept);
+    });
     for (const state of states) {
       const moved = scene.map(instance => Object.values(state.weights).some(Boolean) ? positions(instance, state.weights) : instance.rest);
       for (const { yaw, pitch } of OBLIQUE_VIEWS) {
@@ -641,7 +653,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
           const window = raster(c[0] - rho, c[0] + rho, c[1] - rho, c[1] + rho, OBLIQUE_GRID);
           scene.forEach((instance, k) => draw(window, points[k], instance.triangles, k));
           const hits = new Map<string, number>();
-          let rays = 0, leaks = 0;
+          let rays = 0, leaks = 0, holes = 0, nearLids: Uint8Array | null = null, far = 0;
           for (let j = 0; j < window.ny; j++) for (let i = 0; i < window.nx; i++) {
             const dx = window.x0 + i * window.step - c[0], dy = window.y0 + j * window.step - c[1];
             if (dx * dx + dy * dy > rho * rho) continue;
@@ -659,12 +671,26 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
             // A leak nearer the other eye belongs to that eye's window.
             if (Math.hypot(x - o[0], y - o[1], z - o[2]) < Math.hypot(x - c[0], y - c[1], z - c[2])) continue;
             leaks++; hits.set(what, (hits.get(what) ?? 0) + 1);
+            if (!nearLids) {
+              // Lid coverage in this view, grown by 3 rays each way.
+              const lids = raster(window.x0, window.x0 + (window.nx - 1) * window.step, window.y0, window.y0 + (window.ny - 1) * window.step, window.nx);
+              scene.forEach((_, n) => draw(lids, points[n], lidTriangles[n], n));
+              const grown = new Uint8Array(lids.nx * lids.ny);
+              for (let jj = 0; jj < lids.ny; jj++) for (let ii = 0; ii < lids.nx; ii++) if (lids.owner[jj * lids.nx + ii] >= 0)
+                for (let b = Math.max(0, jj - 3); b <= Math.min(lids.ny - 1, jj + 3); b++) for (let a = Math.max(0, ii - 3); a <= Math.min(lids.nx - 1, ii + 3); a++) grown[b * lids.nx + a] = 1;
+              nearLids = grown;
+            }
+            const nearLid = nearLids[k] === 1;
+            if (!nearLid) { holes++; far = Math.max(far, Math.hypot(dx, dy)); }
           }
           const record = seen[side];
           record.rays += rays; record.leaks += leaks;
           if (leaks) {
             const eyeLabel = [...new Set(balls.map(b => b.label.replace(/\[.*\]$/, '')))].join(', ');
-            const text = `${state.label} seen from ${view}: ${leaks} of ${rays} rays around ${eyeLabel} reach ${[...hits.keys()].join(' and ')} through a gap between the lids and the skin's eye hole (the lids must meet the skin all the way round: open lid eyes with eye_hole(), whose skin wall and lining seal the eye; keep a shutter eye's hole inside its blades and housing)`;
+            const reached = [...hits.keys()].join(' and ');
+            const text = holes === leaks
+              ? `${state.label} seen from ${view}: ${leaks} of ${rays} rays around ${eyeLabel} reach ${reached} through a hole in the skin away from the lids (up to ${mm(far)} from the eye center, where no lid lies): the surface has an opening there; close it (the eye's own hole is not the leak)`
+              : `${state.label} seen from ${view}: ${leaks} of ${rays} rays around ${eyeLabel} reach ${reached} through a gap between the lids and the skin's eye hole (the lids must meet the skin all the way round: open lid eyes with eye_hole(), whose skin wall and lining seal the eye; keep a shutter eye's hole inside its blades and housing)${holes ? `; ${holes} of them pass through a hole in the skin away from the lids` : ''}`;
             record.problems.push({ leaks, text });
             if (leaks > record.worstLeaks) { record.worstLeaks = leaks; record.worst = `${state.label} from ${view}`; }
           }
@@ -688,22 +714,35 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     const occluders = all.filter(i => !eyeballInstances.has(i) && !i.transparent);
     for (const side of ['L', 'R'] as const) {
       const suffix = side === 'L' ? 'Left' : 'Right', { center, radius, balls } = eyes[side]!;
-      // One thin column of front rays down the middle of the eye, 0.1 mm apart: the highest one that reaches the eyeball.
+      // One thin column of front rays down the middle of the eye, 0.1 mm apart: the highest one that reaches the eyeball,
+      // and what hides the eyeball just above it (the lid edge, or a part in front of it such as a hair fringe).
       const top = (weights: Record<string, number>) => {
         const column = raster(center.x - 0.0001, center.x + 0.0001, center.y - radius, center.y + radius, 3);
         for (const ball of balls) draw(column, ball.rest, ball.triangles, -2);
         const eyeball = Float64Array.from(column.depth), front = raster(center.x - 0.0001, center.x + 0.0001, center.y - radius, center.y + radius, 3);
         occluders.forEach((instance, k) => draw(front, Object.values(weights).some(Boolean) ? positions(instance, weights) : instance.rest, instance.triangles, k));
-        let highest = -Infinity;
-        for (let j = 0; j < column.ny; j++) { const k = j * column.nx + 1; if (eyeball[k] > -Infinity && eyeball[k] > front.depth[k]) highest = Math.max(highest, column.y0 + j * column.step); }
-        return highest;
+        let highest = -Infinity, row = -1;
+        for (let j = 0; j < column.ny; j++) { const k = j * column.nx + 1; if (eyeball[k] > -Infinity && eyeball[k] > front.depth[k]) { highest = Math.max(highest, column.y0 + j * column.step); row = j; } }
+        let blocker: { instance: Instance; lid: boolean } | null = null;
+        for (let j = row + 1; row >= 0 && j < column.ny; j++) {
+          const k = j * column.nx + 1;
+          if (eyeball[k] === -Infinity || front.owner[k] < 0) continue;
+          const instance = occluders[front.owner[k]], t = front.tri[k] * 3, lid = (v: number) => ['eyeBlink', 'eyeSquint', 'eyeWide'].some(m => { const d = instance.targets.get(`${m}${suffix}`); return !!d && Math.hypot(d[v * 3], d[v * 3 + 1], d[v * 3 + 2]) > LID_MOTION; });
+          blocker = { instance, lid: [0, 1, 2].some(n => lid(instance.triangles[t + n])) };
+          break;
+        }
+        return { highest, blocker };
       };
-      const rest = top({}), up = top({ [`eyeWide${suffix}`]: follow.up }), down = top({ [`eyeBlink${suffix}`]: follow.down });
+      const restView = top({}), upView = top({ [`eyeWide${suffix}`]: follow.up }), downView = top({ [`eyeBlink${suffix}`]: follow.down });
+      const rest = restView.highest, up = upView.highest, down = downView.highest;
       const lift = Number.isFinite(rest) && Number.isFinite(up) ? up - rest : 0, drop = Number.isFinite(rest) ? rest - (Number.isFinite(down) ? down : center.y - radius) : 0;
       measurements.eyes[side]!.lidFollow = { up: round(lift), down: round(drop), restTop: Number.isFinite(rest) ? round((rest - center.y) / radius, 4) : 0 };
       if (!Number.isFinite(rest)) { followProblems.push(`eye_${side}: no eyeball shows down the middle of the eye at rest, so lid follow cannot be seen`); continue; }
       if (rest >= center.y + 0.98 * radius) followProblems.push(`eye_${side}: the top of the eyeball shows at rest, so no upper lid edge is there to follow the gaze (E2 needs a strip of upper lid at rest)`);
-      if (lift < MIN_LID_FOLLOW) followProblems.push(`eyeLookUp${suffix}=1 (eyeWide${suffix}=${follow.up}, lidFollow.up) lifts the upper lid's edge by ${mm(lift)} in a front view; E2 needs >= ${mm(MIN_LID_FOLLOW)} (about 2 px at 512 px): raise lidFollow.up or the lids' wide travel`);
+      const hidden = upView.blocker && !upView.blocker.lid ? upView.blocker.instance.label : null;
+      if (lift < MIN_LID_FOLLOW) followProblems.push(`eyeLookUp${suffix}=1 (eyeWide${suffix}=${follow.up}, lidFollow.up) lifts the upper lid's edge by ${mm(lift)} in a front view; E2 needs >= ${mm(MIN_LID_FOLLOW)} (about 2 px at 512 px): ${hidden
+        ? `the eye is hidden above there by ${hidden}, not by the lid, so the rising lid edge goes behind it; move ${hidden} (a hair fringe, a brow or a skin rim) off the eye's upper opening (more lidFollow.up or wide travel cannot help)`
+        : "raise lidFollow.up or the lids' wide travel"}`);
       if (drop < MIN_LID_FOLLOW) followProblems.push(`eyeLookDown${suffix}=1 (eyeBlink${suffix}=${follow.down}, lidFollow.down) lowers the upper lid's edge by ${mm(drop)} in a front view; E2 needs >= ${mm(MIN_LID_FOLLOW)}: raise lidFollow.down`);
     }
     check('lid-follow', followProblems, `lid follow moves the upper lid's edge by >= ${mm(MIN_LID_FOLLOW)} up (lidFollow.up ${follow.up}) and down (lidFollow.down ${follow.down}) in a front view`);
@@ -713,6 +752,14 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   const clear = all.filter(i => i.transparent && !eyeballInstances.has(i) && (i.morphMesh || i.names.some(n => /skin|lid|teeth|tooth|face|skull|socket|cavity|tongue/i.test(n))));
   check('materials', clear.map(i => `${i.label} uses ${i.transparent}: the skin, lids, teeth and every face part must be opaque (a see-through lid shows the eye open while its geometry says closed; only eyeballs may be transparent)`),
     'the skin, lids, teeth and other face parts are opaque');
+
+  // 10f. attached parts: brows, ridges, nostrils and other small parts sit on the skin at rest and while morphs play
+  const attached = attachedParts(all.filter(i => !eyeballInstances.has(i) && !i.transparent),
+    (['L', 'R'] as const).filter(side => eyes[side]).map(side => ({ center: eyes[side]!.center.toArray() as [number, number, number], radius: eyes[side]!.radius, suffix: side === 'L' ? 'Left' as const : 'Right' as const })), fileMorphs);
+  measurements.attached = attached.parts;
+  check('attached-parts', attached.problems, attached.parts.length
+    ? `${attached.parts.length} attached part(s) sit on the skin at rest and at every morph (worst gap ${(Math.max(...attached.parts.map(p => p.gap)) * 1000).toFixed(2)} mm)`
+    : 'no small parts are joined to the face');
 
   // 11-12. extras
   const carriers = [...graph.world.keys()].filter(n => isRecord(nodes[n]?.extras) && isRecord((nodes[n].extras as Record<string, unknown>).arkitFace));

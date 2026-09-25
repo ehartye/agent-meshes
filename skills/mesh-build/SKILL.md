@@ -173,7 +173,9 @@ morph-bearing part bound to `head` (a skull bound to an eye bone is named as suc
 fixed and lower teeth, tongue and cavity carried by `jawOpen`, the chin (the face's lowest point)
 dropping by at least 10% of the face height at `jawOpen` = 1, the face above the upper teeth's
 gum line staying put, and a mouth that opens (between the teeth rows the front view meets teeth,
-tongue or cavity, not skin; a ray that passes the teeth into the head is see-through). It exits 1 and prints
+tongue or cavity, not skin; a ray that passes the teeth into the head is see-through), and every
+small part joined to the face (brows, ridges, nostrils) sitting on the skin at rest and at each
+morph (`attached-parts`: no air gap along its length, not buried by a skin shape). It exits 1 and prints
 `FAIL <check>: <problem>` lines on stderr. Teeth are found by the materials `teeth_upper` and
 `teeth_lower`. It does not render: a dark open mouth, gaze and shading still need looking at. `node <plugin-root>/scripts/check-face-rig-browser.mjs [test_head|test_robot|test_frog]`
 renders the helper-built test heads, including a jaw sheet (jawOpen 0, .5, 1 from the front,

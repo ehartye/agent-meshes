@@ -150,7 +150,8 @@ from agent_meshes_author import (face_skeleton, build_eye, eye_hole, eye_hole_ma
     exposed_teeth_geometry, mouth_cavity_geometry, tongue_geometry, brow_ridge_geometry,
     skin_brow_geometry, chin_drop, brow_plate_geometry, split_plates,
     rubber_mouth_geometry, eye_coverage_problems, mesh_from_geometry, soft_offset,
-    symmetric_offsets, shape_key, join_face_parts, face_contract, recommended_gaze)
+    symmetric_offsets, shape_key, join_face_parts, face_contract, recommended_gaze,
+    attach_to_skin, skin_contact)
 ```
 
 They follow the face contract in `arkit-face/1` and Blender's axes: **Z up,
@@ -163,8 +164,9 @@ worked examples are `tests/fixtures/face-rig/test_head.py` (round eyes in
 `eye_hole` sockets, lids, an ear-hinged puppet jaw), `test_robot.py` (Bolt's tin
 can: recessed shutter eyes in `shutter_hole` tubes, brow plates, a skull and chin plate with
 thick edges, grille teeth, a rubber mouth edge) and `test_frog.py` (a wide frog:
-eyes in mounded `eye_hole` domes with brow ridges, saw teeth, two exposed fangs in
-their own `teeth_exposed` material, a cavity fitted to the curved face).
+eyes in mounded `eye_hole` domes with brow ridges lying on the skin, nostrils that
+ride `noseSneer` through `attach_to_skin`, saw teeth, two exposed fangs in their own
+`teeth_exposed` material, a cavity fitted to the curved face).
 
 ### Skeleton, binding and one face mesh
 
@@ -243,22 +245,30 @@ blend=None, max_edge=None, socket=25, lining_gap=.0001, lining_rings=5,
    direction from the eye center within `margin` degrees of the lids' opening
    envelope (between the lower lid's lowest edge and the upper lid's highest edge
    over every blink, squint and wide mix), with round ends. The lids cover every
-   other direction inside it, in every state, and reach past it.
+   other direction inside it, in every state, and reach past it. At the corners,
+   where the lids meet and barely move, the window reaches only `corner_margin`
+   (2) degrees past them, so no pointed pocket of wall and lining opens beside the
+   inner corner (round 4's "skin wedge").
 4. **Wall and lining.** From every rim vertex a skin wall runs toward the eye
    center, through the lids (which slide through it), to just under the nearest
    any lid vertex comes; there it becomes a lining that wraps the eyeball to a pole
    behind it. A ray that enters the window meets only lids, eyeball, wall or
    lining, never the head's inside; and a front view still sees the eyeball up to
    the lid edges, however wide they open. The wall and lining share the rim's
-   vertices, so the skin stays one closed surface and no morph can crack it.
+   vertices, so the skin stays one closed surface and no morph can crack it. A
+   `bevel` ring (0.5: half way down to the lids, at most 0.06 eyeball radii) leaves
+   each rim vertex half way between the skin's slope and the wall's, so the skin
+   turns into the hole over two gentle folds; `join_face_parts` marks edges that turn
+   by more than 60 degrees sharp, and round 4's right-angled rim read as a hard seam
+   round every eye (`bevel=0` gives it back).
 
 Edges near the eye are split to `max_edge` (default 0.2 eyeball radii) first; each
 vertex costs a delta in every morph target, so keep an eye on file size (E8: 3 MB).
 Call `eye_hole` once per eye on the blank, before `slit_mouth` and any shape keys,
 and pass the result to `build_eye(..., hole=...)`. It returns `{'vertices',
 'faces', 'lids', 'window', 'rim', 'wall', 'pushed', 'rim_radius', 'lining',
-'mound', 'socket'}`: `mound` is the rim's radius where the skin was reshaped (a
-brow ridge's dome radius on a mounded eye).
+'mound', 'socket', 'bevel'}`: `mound` is the rim's radius where the skin was
+reshaped (where a brow ridge starts looking for the skin on a mounded eye).
 
 **Skin shapes near an eye hole** (brows, cheeks) must leave its rim, wall and
 lining still: a strong brow offset drags the rim over its wall and folds the skin
@@ -299,7 +309,7 @@ and fails any that reach the socket or the inside of the head.
 chord between rest and target, which dips toward the eye center by
 `R * (1 - cos(sweep / 2))`. A lid swept across a round eye as one chord cuts into
 the eyeball mid-blink. `lid_geometry(center, eye_radius, opening=(45, 38, 30),
-meet=-8, overlap=4, clearance=.0005, thickness=None, squint=.45,
+meet=-8, overlap=6, clearance=.0005, thickness=None, squint=.45,
 squint_upper_share=.35, wide=(10, 4), span_margin=15, columns=24, rows=8,
 gap=None, min_radius=None, corner=1.25, tuck=4)` makes upper and lower lids as thick
 spherical shells whose rows keep their yaw (a meridian) and slide in elevation
@@ -325,6 +335,11 @@ between a fixed anchor and the lid edge, like a rolling curtain:
 - Toward the corners the lower lid's edge rises up to `tuck` degrees past the meet
   line, behind the upper lid, so where the lids meet they overlap instead of
   abutting on different radii (an oblique view would find a slit between them).
+- Each lid ends in a rounded rim: the outer layer turns down over a quarter round
+  (three rows) onto the inner one, which runs on to the edge, so the lids read as
+  skin folds wrapping the eyeball rather than square-ended slabs (round 4). The
+  rounded rim projects a little higher than a square one, which is why `overlap`
+  is 6 degrees: blink 1 + wide 1 stays closed even on a 321-ray grid.
 
 `shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=0,
 overlap=None, clearance=.0005, thickness=None, blade_height=None, squint=.45,
@@ -508,23 +523,79 @@ which seal the hole (above).
   `browOuterUp<Side>` lift the ends (meters). Give it a hair material. Keep the
   skin's own brow offsets (masked with `eye_hole_mask`) or leave them out; the
   brow carries the expression. A hair cap must clear the brows.
-- Eyes in domes (a frog, a creature): `brow_ridge_geometry` below, on the mound
-  (`radius=hole['mound']`).
+- Eyes in domes (a frog, a creature): `brow_ridge_geometry` below, lying on the
+  skin over the mound.
 - A robot: `brow_plate_geometry` (robot plates, below).
 
 `brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50,
-height=12, thickness=None, arch=4, down=12, inner_up=10, outer_up=10)` builds a
-brow ridge for eyes that sit in domes (a frog, a creature): a tapered ridge on
-the sphere of `radius` around the eye center (pass the eye hole's `mound`, where
-the skin lies over the lids; without an eye hole, the lid's outer radius,
-`upper_radius + thickness` from `build_eye(...)['geometry']`), from `inner`
-degrees toward the nose to `outer` degrees away, at `elevation` degrees above
-the gaze axis. Its morphs turn it over the dome about the eye center:
-`browDown<Side>` lowers the inner end most (angry), `browInnerUp` lifts the inner
-end (sad, surprised), `browOuterUp<Side>` the outer end. Its base sits far
-enough out that no weight combination dips into the dome (`min_clearance`
-reports the margin), so it never cuts the lids. Make it a mesh, add its morphs
-with `shape_key`, and join it into the face.
+height=12, thickness=None, arch=4, down=12, inner_up=10, outer_up=10, skin=...,
+hole=..., sink=None, clearance=.0002)` builds a heavy brow ridge for eyes that sit
+in domes (Mossjaw's ridge is his brow). It runs round the eye from `inner` degrees
+toward the nose to `outer` degrees away, centered `elevation` degrees above the
+gaze axis, `height` degrees tall and `thickness` meters proud (18% of `radius`),
+and it **lies on the actual skin**: `skin` is the head skin with its eye holes cut
+(`{'vertices': vertices, 'faces': faces}`, as for `front_surface`), and every point
+of the ridge's base is found on it along its direction from the eye center
+(`radius`, the hole's `mound`, is where that search starts). Its cross-section is
+a bump whose edges and underside sink `sink` into the skin (12% of the thickness),
+so it reads as a fold of the skin and no view sees background under it. Pass the
+eye's `hole` so the base never enters the lids: where a lowered brow crosses the
+window it rests on the upper lid. The morphs slide the ridge over the skin and lay
+it back on at its new place: `browDown<Side>` lowers the inner end most (angry),
+`browInnerUp` lifts the inner end (sad, surprised), `browOuterUp<Side>` the outer
+end. Every pose is checked with `skin_contact` (against the skin and the lids, as
+the verifier does) and a ridge that cannot lie on the skin is rejected. Round 4
+laid it on the mound's sphere instead: above the lid window the skin falls away
+inside that sphere, so the ridge hung 2.5-9 mm in the air.
+
+```python
+skin_surface = {'vertices': vertices, 'faces': faces}   # after every eye_hole
+ridge = brow_ridge_geometry(EYE_L, holes['L']['mound'], 'L', elevation=OPENING[1] + 20,
+                            skin=skin_surface, hole=holes['L'])
+brow = mesh_from_geometry('brow_L', ridge, [skin])
+for name, targets in ridge['morphs'].items(): shape_key(brow, name, targets)
+```
+
+### Small parts on the skin: `attach_to_skin` and `skin_contact`
+
+Every small part joined to the face (brows, ridges, nostrils, freckles, warts,
+horns, fins) must sit on the skin, not hover over it, and must **follow the skin's
+morphs**: a nostril that ignores `noseSneer` is swallowed as the snout swells, and
+one the skin pulls away from floats. The verifier's `attached-parts` check fails
+both (see the main README).
+
+`attach_to_skin(part, skin, depth=None)` does it for any part. `part` is a
+geometry dict (vertices, faces, optional morphs); `skin` is the head skin, either a
+geometry dict with its `morphs` or **the Blender mesh object after its shape keys
+are added** (it reads them). With `depth`, the part first moves along the skin's
+normal so its center sits `depth` meters inside the skin (0 half-sinks a ball).
+Then each vertex takes the skin point nearest it as its footprint, and for every
+skin morph that moves the skin there the part gets a target that moves each vertex
+by the skin's own delta at its footprint (interpolated across the skin triangle, as
+the renderer does), added to the part's own morph of that name. The result has
+`morphs` and `contact`:
+
+```python
+add_jaw_open(head, jaw, min_chin_drop=.1)      # the head's shape keys first
+beads = [attach_to_skin(ellipsoid_geometry((x, front(x, .135), .135), (.003, .0018, .002)), head, depth=.0006)
+         for x in (.012, -.012)]
+nose = mesh_from_geometry('nostrils', join_geometry(beads), [nostril_material])
+for name, targets in join_geometry(beads)['morphs'].items(): shape_key(nose, name, targets)
+parts.append(nose)                             # then join_face_parts as usual
+```
+
+A chin wart rides `jawOpen` the same way. Parts that lie along the skin and have
+their own morphs (brows) are laid on it by their helpers (`brow_ridge_geometry`,
+`skin_brow_geometry`, `rubber_mouth_geometry` all slide over the skin and lay each
+pose back on it); pass them through `attach_to_skin(part, head)` too when the skin
+under them has its own shapes, so they ride those as well.
+
+`skin_contact(part, skin, tolerance=.0005)` measures a part the way the verifier
+does: its vertices and face centers are cut into slices across its longest axis
+(one per 1.5 mm, at most 32); a slice touches when its nearest point comes within
+`tolerance` of the skin or dips into it, and `gap` is the worst slice's. `visible`
+is the share of its points outside the skin. It reports rest and every pose (the
+part's own morphs and each skin morph that moves the skin near it) under `poses`.
 
 ### Robot plates: brows, skull and chin plate, rubber mouth edge
 

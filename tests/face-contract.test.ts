@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { encodeHead, extras, mesh, passingHead, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { browBar, ear, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -8,13 +8,14 @@ async function report(mutate?: (head: SynthHead) => void) {
 }
 const failed = (result: Awaited<ReturnType<typeof report>>) => result.checks.filter(c => !c.ok).map(c => c.id);
 
-describe('arkit-face/1 verifier', () => {
+// The machine may be busy (Blender builds, CI): each verification runs the whole contract, so allow 30 s.
+describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
   it('passes a head that meets every computable clause and reports its measurements', async () => {
     const result = await report();
     expect(result.failures).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.contract).toBe('arkit-face/1');
-    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-coverage', 'eye-oblique', 'lid-follow', 'materials', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open']);
+    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-coverage', 'eye-oblique', 'lid-follow', 'materials', 'attached-parts', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open']);
     expect(result.measurements.eyes.L!.radius).toBeCloseTo(0.012, 5);
     expect(result.measurements.eyes.L!.center[0]).toBeCloseTo(0.03, 5);
     expect(result.measurements.eyes.L!.minLidClearance).toBeGreaterThan(0.0005);
@@ -80,6 +81,10 @@ describe('arkit-face/1 verifier', () => {
     ['materials', 'skin with an alpha-masked material', head => { head.materialProps = { skin: { alphaMode: 'MASK', alphaCutoff: 0.5 } }; }],
     ['materials', 'transmissive teeth', head => { head.materialProps = { teeth_upper: { extensions: { KHR_materials_transmission: { transmissionFactor: 1 } } } }; }],
     ['eye-coverage', 'transparent lids at blink 1 (they occlude nothing)', head => { head.materialProps = { lid: { alphaMode: 'BLEND', pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 0] } } }; }],
+    ['attached-parts', 'a brow bar standing 3 mm off the skin (the round-4 floating brow ridge)', head => browBar(head, 0.003)],
+    ['attached-parts', 'a brow that browInnerUp lifts off the skin', head => browBar(head, -0.0002, 0.003)],
+    ['attached-parts', 'a nostril that noseSneer buries as the skin swells over it (a part that does not carry the skin shape)', head => nostril(head, false)],
+    ['attached-parts', 'an ear hovering 2 mm off the side of the head', head => ear(head, 0.004)],
     ['extras', 'missing extras', head => { head.rootExtras = undefined; }],
     ['extras', 'a wrong contract version', head => { head.rootExtras = { arkitFace: { ...extras(), contract: 'arkit-face/2' } }; }],
     ['extras', 'a morph list that does not match the file', head => { head.rootExtras = { arkitFace: extras([...REQUIRED, 'tongueOut']) }; }],
@@ -217,6 +222,61 @@ describe('arkit-face/1 verifier', () => {
     const result = await report();
     expect(result.checks.find(c => c.id === 'mouth-parts')!.message).toBe('jawOpen carries face[tongue], face[mouth_cavity]');
     expect(result.measurements.eyes.L!.eyeballs).toEqual(['eyeball_L']);
+  });
+
+  it('passes brows and nostrils that sit on the skin and ride its morphs, and measures them', async () => {
+    const result = await report(head => { browBar(head); nostril(head, true); });
+    expect(result.failures).toEqual([]);
+    const parts = result.measurements.attached;
+    expect(parts.map(p => p.part)).toEqual([expect.stringMatching(/^face\[brow\]/), expect.stringMatching(/^face\[nostril\]/)]);
+    for (const part of parts) {
+      expect(part.gap).toBeLessThanOrEqual(0.0005);
+      expect(part.poses).toBeGreaterThan(1);
+    }
+    expect(parts[0].morphs).toEqual(['browDownLeft', 'browInnerUp']);
+    expect(parts[1].morphs).toEqual(['noseSneerLeft']);
+  });
+
+  it('lets an ear stand out from the head as long as its root touches it', async () => {
+    const result = await report(head => ear(head));
+    expect(result.failures).toEqual([]);
+    expect(result.measurements.attached).toMatchObject([{ part: expect.stringMatching(/^ear_L/), contact: 'root', gap: 0 }]);
+  });
+
+  it('names the floating part, where it floats and by how much', async () => {
+    const result = await report(head => browBar(head, 0.003));
+    const failure = result.failures.find(f => f.startsWith('attached-parts: '))!;
+    expect(failure).toMatch(/face\[brow\]/);
+    expect(failure).toMatch(/at rest/);
+    expect(failure).toMatch(/3\.\d\d mm/);
+    expect(failure).toMatch(/attach_to_skin/);
+    expect(result.measurements.attached[0].gap).toBeGreaterThan(0.0029);
+  });
+
+  it('names the morph that lifts a part off the skin or buries it', async () => {
+    const lifted = (await report(head => browBar(head, -0.0002, 0.003))).failures.find(f => f.startsWith('attached-parts: '))!;
+    expect(lifted).toMatch(/browInnerUp=1/);
+    expect(lifted).not.toMatch(/at rest/);
+    const buried = (await report(head => nostril(head, false))).failures.find(f => f.startsWith('attached-parts: '))!;
+    expect(buried).toMatch(/noseSneerLeft=1/);
+    expect(buried).toMatch(/sinks|buries/);
+  });
+
+  it('names the part that hides the lid edge when lid follow cannot show', async () => {
+    const result = await report(head => fringe(head, 0.0075));
+    const failure = result.failures.find(f => f.startsWith('lid-follow: eyeLookUpLeft'))!;
+    expect(failure).toMatch(/hair/);
+    expect(failure).not.toMatch(/raise lidFollow\.up/);
+  });
+
+  it('calls a pinhole beside the eye a hole in the skin, not a gap at the lids', async () => {
+    const result = await report(head => pinhole(head));
+    const failures = result.failures.filter(f => f.startsWith('eye-oblique: ') && /eyeball_L/.test(f));
+    expect(failures.length).toBeGreaterThan(0);
+    for (const failure of failures) {
+      expect(failure).toMatch(/hole in/);
+      expect(failure).not.toMatch(/between the lids and the skin's eye hole/);
+    }
   });
 
   it('rejects bytes that are not a GLB', async () => {

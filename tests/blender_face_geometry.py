@@ -13,9 +13,9 @@ import unittest
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
 import agent_meshes_author
-from agent_meshes_face import _clip, _quality, _refine
+from agent_meshes_face import _clip, _quality, _refine, _sharp_edges
 from agent_meshes_face import (
-    DEFAULT_LID_FOLLOW, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry,
+    DEFAULT_LID_FOLLOW, attach_to_skin, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
     ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
     eye_coverage, eye_coverage_problems, brow_plate_geometry, split_plates, rubber_mouth_geometry,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
@@ -184,6 +184,26 @@ class LidTests(unittest.TestCase):
     def test_settings_that_fold_the_lid_rim_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'fold'):
             self.lids(opening=(45, 38, 30), corner=.5)
+
+    def test_lid_rims_are_rounded_not_square(self):
+        # The round-4 critic saw slab-thick, square lid ends: the edge row now turns over a rounded bead.
+        lids = self.lids()
+        vertices, faces = lids['vertices'], lids['faces']
+        sharp = _sharp_edges(vertices, faces, 50)
+        middle = len(lids['edges']['yaw']) // 2
+        edges = (lids['edges']['upper'][middle]['rest'], lids['edges']['lower'][middle]['rest'])
+        elevation = lambda i: math.degrees(math.asin(max(-1, min(1, (vertices[i][2] - CENTER[2]) / distance(vertices[i], CENTER)))))
+        # The outer face is what shows: its rim rounds over onto the inner layer (a crease stays inside, on the eyeball).
+        outside = lambda i: distance(vertices[i], CENTER) > lids['lower_radius'] + .5 * lids['thickness'] and             not lids['lower_radius'] + lids['thickness'] < distance(vertices[i], CENTER) < lids['upper_radius'] + .5 * lids['thickness']
+        near_edge = lambda i: abs(vertices[i][0] - CENTER[0]) < .3 * RADIUS and any(abs(elevation(i) - e) < 6 for e in edges) and outside(i)
+        self.assertEqual([e for e in sharp if all(near_edge(i) for i in e)], [], 'no hard crease along the lid edges')
+        closed_and_consistent(self, vertices, faces)
+
+    def test_rounded_rims_still_close_without_a_slit_at_fine_sampling(self):
+        # The rounded upper rim projects a little higher than a square one: the default overlap (6 degrees) keeps
+        # blink 1 + wide 1 closed on the round-4 critic's 24 mm eyes, even on a 321-ray grid that finds a 0.1 mm slit.
+        center, radius = (.052, -.04, .178), .024
+        self.assertEqual(eye_coverage_problems(center, radius, lid_geometry(center, radius, opening=(50, 40, 30)), samples=321), [])
 
     def test_wide_raises_the_upper_lid(self):
         lids = self.lids()
@@ -555,24 +575,101 @@ class SurfaceFitTests(unittest.TestCase):
 
 
 class BrowTests(unittest.TestCase):
-    def test_brow_ridge_sits_on_the_lid_dome_and_slides_on_it(self):
-        lids = lid_geometry(CENTER, RADIUS, opening=(48, 36, 28))
-        dome = lids['upper_radius'] + lids['thickness']
-        left = brow_ridge_geometry(CENTER, dome, 'L', elevation=50)
+    """brow_ridge_geometry lays a heavy ridge on the skin over an eye in a dome (Mossjaw's brow is his ridge)."""
+    # The round-4 critic's swamp creature: a squat head, big eyes high on domes, a heavy ridge over each.
+    HEAD, EYE, R, OPENING = ((0, 0, .115), (.125, .09, .095)), (.052, -.04, .178), .024, (50, 40, 30)
+
+    def skin(self):
+        blank = ellipsoid_geometry(*self.HEAD, rings=60, segments=80)
+        vertices, faces = blank['vertices'], blank['faces']
+        holes = {}
+        for side, eye in (('L', self.EYE), ('R', mirror_x(self.EYE))):
+            holes[side] = eye_hole(vertices, faces, eye, self.R, opening=self.OPENING)
+            vertices, faces = holes[side]['vertices'], holes[side]['faces']
+        return {'vertices': vertices, 'faces': faces}, holes
+
+    def test_brow_ridge_lies_on_the_skin_at_rest_and_in_every_brow_morph(self):
+        skin, holes = self.skin()
+        # The critic's own settings, which floated the round-4 ridge 3-9 mm over the dome.
+        left = brow_ridge_geometry(self.EYE, holes['L']['mound'], 'L', inner=15, outer=65, elevation=self.OPENING[1] + 20, height=16, arch=6,
+                                   skin=skin, hole=holes['L'])
         self.assertEqual(sorted(left['morphs']), ['browDownLeft', 'browInnerUp', 'browOuterUpLeft'])
         closed_and_consistent(self, left['vertices'], left['faces'])
         self.assertGreater(signed_volume(left['vertices'], left['faces']), 0)
-        self.assertGreaterEqual(lid_clearance(CENTER, dome, left['vertices'], list(left['morphs'].values())), 0,
-                                'no brow weight combination sinks into the lid dome')
+        self.assertLessEqual(skin_contact(left, skin)['gap'], .0005, 'at rest it lies on the skin itself')
+        # Judged as the verifier does, against the skin and the lids: browDown lays the inner end on the upper lid.
+        contact = left['contact']
+        self.assertLessEqual(contact['gap'], .0005, contact)
+        for name in left['morphs']:
+            self.assertLessEqual(contact['poses'][name]['gap'], .0005, name)
+            self.assertGreater(contact['poses'][name]['visible'], .5 * contact['visible'], f'{name} keeps the ridge above the skin')
+        self.assertGreater(contact['visible'], .25, 'the ridge stands proud of the skin')
         inner = min(range(len(left['vertices'])), key=lambda i: left['vertices'][i][0])
         outer = max(range(len(left['vertices'])), key=lambda i: left['vertices'][i][0])
         down = left['morphs']['browDownLeft']
         self.assertLess(down[inner][2] - left['vertices'][inner][2], down[outer][2] - left['vertices'][outer][2] - .001, 'browDown drops the inner end most')
         self.assertGreater(left['morphs']['browInnerUp'][inner][2], left['vertices'][inner][2] + .001)
         self.assertGreater(left['morphs']['browOuterUpLeft'][outer][2], left['vertices'][outer][2] + .001)
-        right = brow_ridge_geometry(mirror_x(CENTER), dome, 'R', elevation=50)
+        right = brow_ridge_geometry(mirror_x(self.EYE), holes['R']['mound'], 'R', inner=15, outer=65, elevation=60, height=16, arch=6,
+                                    skin=skin, hole=holes['R'])
         self.assertEqual(sorted(right['morphs']), ['browDownRight', 'browInnerUp', 'browOuterUpRight'])
-        for a, b in zip(left['vertices'], right['vertices']): self.assertAlmostEqual(a[0], -b[0])
+        for a, b in zip(left['vertices'], right['vertices']):
+            for k in range(3): self.assertAlmostEqual(a[k], mirror_x(b)[k], delta=2e-4)
+
+    def test_a_ridge_needs_the_skin_it_lies_on(self):
+        with self.assertRaisesRegex(ValueError, 'skin'):
+            brow_ridge_geometry(self.EYE, .03, 'L')
+
+
+class AttachTests(unittest.TestCase):
+    """attach_to_skin seats a small part on the skin and makes it ride the skin's morphs; skin_contact measures it."""
+    HEAD = ((0, 0, .12), (.085, .09, .115))
+    NOSE = (.012, .14)
+
+    def skin(self):
+        blank = ellipsoid_geometry(*self.HEAD, rings=48, segments=64)
+        front = front_surface(blank['vertices'], blank['faces'])
+        x, z = self.NOSE
+        center = (x, front(x, z), z)
+        # noseSneerLeft swells the skin 3 mm forward under the nostril.
+        sneer = soft_offset(blank['vertices'], center, .02, (0, -.003, .001))
+        return dict(blank, morphs={'noseSneerLeft': sneer}), center
+
+    def nostril(self, center):
+        return ellipsoid_geometry(center, (.0035, .002, .0022), rings=8, segments=12)
+
+    def test_a_part_that_ignores_the_skin_shape_is_buried_by_it(self):
+        skin, center = self.skin()
+        loose = self.nostril(center)
+        contact = skin_contact(loose, skin)
+        self.assertLessEqual(contact['gap'], .0005)
+        self.assertLess(contact['poses']['noseSneerLeft']['visible'], .5 * contact['visible'], 'the swelling skin swallows it')
+
+    def test_attach_seats_the_part_and_carries_the_skin_deltas_at_its_footprint(self):
+        skin, center = self.skin()
+        attached = attach_to_skin(self.nostril(center), skin, depth=.001)
+        self.assertEqual(sorted(attached['morphs']), ['noseSneerLeft'])
+        closed_and_consistent(self, attached['vertices'], attached['faces'])
+        # Seated: the part's center sits 1 mm inside the skin.
+        c = tuple(sum(v[k] for v in attached['vertices']) / len(attached['vertices']) for k in range(3))
+        self.assertAlmostEqual(c[1] - front_surface(skin['vertices'], skin['faces'])(c[0], c[2]), .001, delta=.0003)
+        # Each vertex moves as the skin surface under it (the swell, interpolated across the skin's 8 mm triangles).
+        for rest, target in zip(attached['vertices'], attached['morphs']['noseSneerLeft']):
+            self.assertTrue(-.0031 < target[1] - rest[1] < -.0018, target[1] - rest[1])
+        contact = attached['contact']
+        self.assertLessEqual(contact['gap'], .0005)
+        self.assertLessEqual(contact['poses']['noseSneerLeft']['gap'], .0005)
+        self.assertGreater(contact['poses']['noseSneerLeft']['visible'], .8 * contact['visible'])
+        # Morphs that do not reach the part add nothing to it.
+        far = attach_to_skin(self.nostril(center), dict(skin, morphs={'browInnerUp': soft_offset(skin['vertices'], (0, -.08, .2), .02, (0, 0, .004))}))
+        self.assertEqual(far['morphs'], {})
+
+    def test_skin_contact_measures_a_floating_part(self):
+        skin, center = self.skin()
+        lifted = self.nostril((center[0], center[1] - .0052, center[2]))  # its back 3 mm in front of the skin
+        contact = skin_contact(lifted, skin)
+        self.assertGreater(contact['gap'], .003)
+        self.assertEqual(contact['floating'], contact['slices'], 'no slice touches')
 
 
 def moved(rest, morphs, weights):
@@ -677,7 +774,17 @@ class RobotPartsTests(unittest.TestCase):
         self.assertTrue(all(morphs['mouthSmileLeft'][i][2] > rest[i][2] + .001 for i in left), 'smile lifts the left corner')
         self.assertTrue(all(distance(morphs['mouthSmileLeft'][i], rest[i]) < 1e-9 for i in right), 'the right corner stays')
         self.assertTrue(all(morphs['mouthFrownRight'][i][2] < rest[i][2] - .001 for i in right))
-        self.assertTrue(all(morphs['mouthFunnel'][i][1] < rest[i][1] for i in range(len(rest)) if abs(rest[i][0]) < .02), 'funnel pushes forward')
+        middle = [i for i in mouth['upper'] if abs(rest[i][0]) < .005]
+        self.assertTrue(all(morphs['mouthFunnel'][i][2] > rest[i][2] + .001 for i in middle), 'funnel rounds the lips apart')
+        self.assertTrue(all(morphs['mouthFunnel'][i][0] < rest[i][0] - .001 for i in left), 'funnel pinches the corners in')
+        # Every mouth shape slides the edge over the plates and lays it back on them: it never lifts off or sinks in.
+        for name, target in morphs.items():
+            if name == 'jawOpen': continue
+            for x, y, z in target:
+                skin = front(x, z)
+                if skin is not None: self.assertLess(y, skin, name)
+            gap = skin_contact({'vertices': rest, 'faces': mouth['faces'], 'morphs': {name: target}}, blank)['poses'][name]['gap']
+            self.assertLessEqual(gap, .0005, name)
         upper, lower = mouth['upper'], mouth['lower']
         self.assertTrue(all(distance(morphs['jawOpen'][i], rest[i]) < 1e-12 for i in upper), 'the upper edge stays on the skull')
         self.assertTrue(all(morphs['jawOpen'][i][2] < rest[i][2] - .005 for i in lower), 'the lower edge rides the chin plate')
@@ -834,17 +941,26 @@ class EyeHoleTests(unittest.TestCase):
             return (self.EYE[0] + r * math.cos(e) * math.sin(y), self.EYE[1] - r * math.cos(e) * math.cos(y), self.EYE[2] + r * math.sin(e))
         for yaw, upper, lower in zip(lids['edges']['yaw'], lids['edges']['upper'], lids['edges']['lower']):
             if max(upper.values()) <= min(lower.values()): continue  # closed there in every state
+            # Every edge position the eye can open to lies inside (near the corners a closing upper lid may pass under
+            # the rim, in front of the lower lid, where the eye is shut anyway).
             for elevation in list(upper.values()) + list(lower.values()):
-                self.assertLess(window['level'](point(yaw, elevation)), 0, (yaw, elevation))
-            # Where the eye can open, the whole travel lies at least the margin inside.
+                if min(lower.values()) <= elevation <= max(upper.values()):
+                    self.assertLess(window['level'](point(yaw, elevation)), 0, (yaw, elevation))
+            # Where the eye can open, the whole travel lies at least the margin inside (the corner margin at the tips).
+            tips = min(abs(yaw - y) for y, _ in (window['envelope'][0], max(window['envelope'])))
             for elevation in (max(upper.values()), min(lower.values())):
-                self.assertLess(window['level'](point(yaw, elevation)), -5.9, (yaw, elevation))
+                self.assertLess(window['level'](point(yaw, elevation)), -5.9 if tips >= 15 else -1.9, (yaw, elevation))
         # The ends are round: past the widest opening point by the margin, the window closes.
         widest = max(abs(y) for y, _ in window['envelope'])
         self.assertGreater(window['level'](point(widest + 12, lids['meet'])), 5)
-        self.assertLess(window['level'](point(widest + 3, lids['meet'] + 2)), 0)
+        # At the corners, where the lids meet and barely move, the window reaches only corner_margin (2 degrees) past
+        # them, so no pointed pocket of wall and lining shows there (the round-4 inner-corner wedge).
+        self.assertLess(window['level'](point(widest + 1, lids['meet'] + 1)), 0)
+        self.assertGreater(window['level'](point(widest + 3.5, lids['meet'])), 0)
         # Everything the window opens onto is covered by the lids: their span reaches past it.
         self.assertLess(widest + 6, lids['edges']['yaw'][-1])
+        round_ends = eye_window(lids, margin=6, corner_margin=6)
+        self.assertLess(round_ends['level'](point(widest + 3, lids['meet'] + 2)), 0, 'corner_margin=margin gives the old round ends')
         self.assertLess(window['polar_max'], 75)
         with self.assertRaisesRegex(ValueError, 'shutter|cut_hole'):
             eye_window(shutter_geometry(self.EYE, self.R))
@@ -860,7 +976,9 @@ class EyeHoleTests(unittest.TestCase):
             self.assertGreaterEqual(math.dist(vertices[i], self.EYE), outer + .00025 - 1e-9, 'the rim sits outside the lids')
             self.assertAlmostEqual(hole['window']['level'](vertices[i]), 0, delta=3)
         self.assertLessEqual(hole['rim_radius'][1], 1.3 * hole['mound'], 'the socket dip keeps the rim close to the lids')
-        wall = {v for f in hole['wall'] for v in faces[f]} - set(hole['rim'])
+        wall = {v for f in hole['wall'] for v in faces[f]} - set(hole['rim']) - set(hole['bevel'])
+        for i in hole['bevel']:
+            self.assertGreaterEqual(math.dist(vertices[i], self.EYE), outer - 1e-9, 'the bevel stays outside the lids')
         low, high = hole['lining']
         for i, v in enumerate(vertices):
             r = math.dist(v, self.EYE)
@@ -876,6 +994,17 @@ class EyeHoleTests(unittest.TestCase):
         walls = set(hole['wall'])
         self.assertGreater(min(_quality(vertices, t) for t in triangles_of([f for i, f in enumerate(faces) if i not in walls])), 1e-3)
         self.assertGreater(min(_quality(vertices, t) for t in triangles_of([faces[i] for i in walls])), 1e-5)
+
+    def test_the_rim_turns_into_the_wall_over_a_bevel_without_a_hard_crease(self):
+        # join_face_parts marks edges turning by more than 60 degrees sharp: round 4's right-angled rim showed as a hard
+        # seam round every eye. The bevel leaves the rim half way between the skin's slope and the wall.
+        def creases(hole):
+            rim = set(hole['rim'])
+            edges = [e for e in edge_uses(hole['faces']) if rim.intersection(e)]
+            sharp = [e for e in _sharp_edges(hole['vertices'], hole['faces'], 60) if rim.intersection(e)]
+            return len(sharp) / len(edges)
+        self.assertGreater(creases(self.hole(bevel=0)), .15)
+        self.assertLess(creases(self.hole()), .02)
 
     def test_a_skin_that_runs_through_the_eye_is_mounded_over_it(self):
         # The frog's skin passes 5.7 mm above its eye's center: the mound pushes it out over the lids.

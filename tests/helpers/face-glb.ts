@@ -137,8 +137,9 @@ function lids(side: 'L' | 'R', radius: number, sweeps = LID_SWEEPS, span = 84): 
  * at the far corners of the eye, so the skin hides the corners and the lids close the hole.
  */
 function eyeMask(side: 'L' | 'R', hole = { x: 0.0065, low: -0.006, high: 0.011 }): SynthMesh {
-  // The hole's top clears the upper lid's edge (8.6 mm above the eye center) so a strip of lid shows at rest.
-  const [cx, cy] = EYES[side], z = EYES[side][2] + 0.016, reach = 0.02;
+  // The hole's top clears the upper lid's edge (8.6 mm above the eye center) so a strip of lid shows at rest. The mask
+  // reaches 35 mm round the eye, so the verifier counts it as skin (a third of the largest part), not a small attached part.
+  const [cx, cy] = EYES[side], z = EYES[side][2] + 0.016, reach = 0.035;
   const positions: Vec3[] = [], indices: number[] = [];
   const quad = (x0: number, x1: number, y0: number, y1: number) => {
     const base = positions.length;
@@ -395,4 +396,77 @@ export function encodeHead(head: SynthHead): Uint8Array {
   const header = Buffer.alloc(12); header.write('glTF', 0); header.writeUInt32LE(2, 4); header.writeUInt32LE(12 + 8 + json.length + 8 + bin.length, 8);
   const chunk = (data: Buffer, type: string) => { const h = Buffer.alloc(8); h.writeUInt32LE(data.length, 0); h.write(type, 4); return Buffer.concat([h, data]); };
   return new Uint8Array(Buffer.concat([header, chunk(json, 'JSON'), chunk(bin, 'BIN\0')]));
+}
+
+/** The eye masks' plane (glTF z): the skin around the eyes that brows and fringes lie on. */
+export const MASK_Z = EYES.L[2] + 0.016;
+
+/**
+ * A brow bar on the left eye mask, above the eye hole: `back` is how far its back face stands in front of the mask
+ * (negative sinks it in), and `lift` pushes it off the skin in browInnerUp. browDownLeft slides it down the mask.
+ */
+export function browBar(head: SynthHead, back = -0.0002, lift = 0): void {
+  const [cx, cy] = EYES.L;
+  const bar = slab(12, 2, (u, v, layer) => [cx - 0.012 + 0.024 * u, cy + 0.013 + 0.006 * v, MASK_Z + back + 0.003 * layer]);
+  const shift = (d: Vec3) => bar.positions.map(p => add(p, d));
+  head.meshes.push({
+    name: 'brow_L', material: 'brow', ...bar, bones: bar.positions.map(() => 'head'),
+    targets: [{ name: 'browDownLeft', positions: shift([0, -0.003, 0]) }, { name: 'browInnerUp', positions: shift([0, 0.002, lift]) }],
+  });
+  head.groups!.face.push('brow_L');
+}
+
+/**
+ * A nostril (a 3 mm ball half sunk in the face plane) and a noseSneerLeft skin shape that swells the face under it
+ * by `swell`. `carried` gives the nostril the skin's own noseSneerLeft deltas, as attach_to_skin does.
+ */
+export function nostril(head: SynthHead, carried: boolean, swell = 0.003): void {
+  const center: Vec3 = [0.012, 0, 0.06], face = mesh(head, 'face');
+  const lift = (p: Vec3) => { const d = Math.hypot(p[0] - center[0], p[1] - center[1]) / 0.02; return d >= 1 ? 0 : swell * (1 - d * d * (3 - 2 * d)); };
+  face.targets.push({ name: 'noseSneerLeft', positions: face.positions.map(p => [p[0], p[1], p[2] + lift(p)] as Vec3) });
+  const ball = sphere(center, 0.003, 8, 12);
+  head.meshes.push({
+    name: 'nostril_L', material: 'nostril', ...ball, bones: ball.positions.map(() => 'head'),
+    targets: carried ? [{ name: 'noseSneerLeft', positions: ball.positions.map(p => [p[0], p[1], p[2] + lift(p)] as Vec3) }] : [],
+  });
+  head.groups!.face.push('nostril_L');
+  head.rootExtras = { arkitFace: { ...(head.rootExtras!.arkitFace as Record<string, unknown>), morphs: [...REQUIRED, 'noseSneerLeft'] } };
+}
+
+/** A static hair fringe lying on both eye masks whose lower edge sits `edge` above the eye centers. */
+export function fringe(head: SynthHead, edge: number): void {
+  const [, cy] = EYES.L;
+  const hair = slab(16, 2, (u, v, layer) => [-0.06 + 0.12 * u, cy + edge + (0.025 - edge) * v, MASK_Z - 0.0002 + 0.002 * layer]);
+  head.meshes.push({ name: 'hair', material: 'hair', ...hair, targets: [], bones: hair.positions.map(() => 'head') });
+}
+
+/**
+ * The round-4 critic's pinhole: a 3 mm hole in the left eye mask 20 mm below the eye (1.7 eyeball radii), with the inside of the head
+ * (a back face) behind it, beside an eye whose lids meet the skin all round.
+ */
+export function pinhole(head: SynthHead): void {
+  const [cx, cy] = EYES.L, reach = 0.035, hole = { x: 0.0065, low: -0.006, high: 0.011 };
+  const pin = { x0: cx - 0.0015, x1: cx + 0.0015, y0: cy - 0.022, y1: cy - 0.019 };
+  const positions: Vec3[] = [], indices: number[] = [];
+  const quad = (x0: number, x1: number, y0: number, y1: number) => {
+    const base = positions.length;
+    positions.push([x0, y0, MASK_Z], [x1, y0, MASK_Z], [x1, y1, MASK_Z], [x0, y1, MASK_Z]);
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+  // The eye mask as eyeMask builds it, with its bottom quad split round the pinhole.
+  quad(cx - reach, cx + reach, cy + hole.high, cy + reach);
+  quad(cx - reach, cx - hole.x, cy + hole.low, cy + hole.high); quad(cx + hole.x, cx + reach, cy + hole.low, cy + hole.high);
+  quad(cx - reach, cx + reach, cy - reach, pin.y0); quad(cx - reach, cx + reach, pin.y1, cy + hole.low);
+  quad(cx - reach, pin.x0, pin.y0, pin.y1); quad(pin.x1, cx + reach, pin.y0, pin.y1);
+  const index = head.meshes.findIndex(m => m.name === 'eye_mask_L');
+  head.meshes[index] = { ...head.meshes[index], positions, indices, bones: positions.map(() => 'head') };
+  // The inside of the head behind it: a patch facing into the head, behind the eye's center.
+  const inside = grid(1, 1, (u, v) => [cx - 0.004 + 0.008 * u, cy - 0.0245 + 0.008 * v, EYES.L[2] - 0.004], true);
+  head.meshes.push({ name: 'head_inside', material: 'skin', ...inside, targets: [], bones: inside.positions.map(() => 'head') });
+}
+
+/** An ear sticking out of the skull's side, behind the eyes: its root sinks 2 mm in, or stands `gap` off the skull. */
+export function ear(head: SynthHead, gap = 0): void {
+  const e = slab(4, 4, (u, v, layer) => [0.078 + gap + 0.03 * u, -0.015 + 0.03 * v, -0.045 + 0.01 * layer]);
+  head.meshes.push({ name: 'ear_L', material: 'ear', ...e, targets: [], bones: e.positions.map(() => 'head') });
 }

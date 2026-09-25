@@ -19,7 +19,7 @@ __all__ = [
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
     'eye_window', 'eye_hole', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
-    'symmetric_offsets', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
+    'symmetric_offsets', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
@@ -187,18 +187,42 @@ def _thick_grid(inner, outer):
     return faces
 
 
-def _lid_layers(center, inner, thickness, yaws, anchor, edges, rows):
-    """Vertices of one lid for one set of edge elevations (one per yaw column)."""
+BEAD_ROWS = 3
+
+
+def _lid_layers(center, inner, thickness, yaws, anchor, edges, rows, shape=None):
+    """Vertices of one lid for one set of edge elevations (one per yaw column).
+
+    Rows run from the anchor to a thickness short of the edge; then BEAD_ROWS rows turn
+    the outer layer down over a quarter round onto the inner one, so the lid ends in a
+    rounded rim instead of a square slab end. The inner layer runs on to the edge at the
+    lid's inner radius, so the lids cover the eyeball exactly as far as before.
+    """
+    # `shape` gives the rest edges every state's bead is sized from, so the bead keeps its width as the lid moves.
+    arc = math.degrees(thickness / (inner + thickness / 2))
+    shape = edges if shape is None else shape
+    steep = [max(abs(shape[j] - shape[k]) for k in (j - 1, j + 1) if 0 <= k < len(shape)) for j in range(len(shape))]
+    # Wider where the edge runs steeply across the columns (an almond corner), so no bead row makes a sliver that folds
+    # when blink and squint add up.
+    arcs = [min(max(arc, 2 * steep[j]), abs(shape[j] - anchor) / 3) for j in range(len(shape))]
     layers = []
-    for radius in (inner, inner + thickness):
+    for layer in (0, 1):
         for i in range(rows + 1):
             s = i / rows
-            for yaw, edge in zip(yaws, edges):
-                layers.append(_sphere_point(center, radius, yaw, anchor + s * (edge - anchor)))
+            for yaw, edge, width in zip(yaws, edges, arcs):
+                toward = 1 if edge >= anchor else -1
+                stop = edge - toward * width
+                layers.append(_sphere_point(center, inner + thickness * layer, yaw, anchor + s * (stop - anchor)))
+        for k in range(1, BEAD_ROWS + 1):
+            theta = math.radians(70 * k / BEAD_ROWS)
+            for yaw, edge, width in zip(yaws, edges, arcs):
+                toward = 1 if edge >= anchor else -1
+                elevation = edge - toward * width * (1 - math.sin(theta))
+                layers.append(_sphere_point(center, inner + thickness * math.cos(theta) * layer, yaw, elevation))
     return layers
 
 
-def lid_geometry(center, eye_radius, opening=(45, 38, 30), meet=-8, overlap=4, clearance=.0005, thickness=None,
+def lid_geometry(center, eye_radius, opening=(45, 38, 30), meet=-8, overlap=6, clearance=.0005, thickness=None,
                  squint=.45, squint_upper_share=.35, wide=(10, 4), span_margin=15, columns=24, rows=8, gap=None,
                  min_radius=None, corner=1.25, tuck=4):
     """Upper and lower eyelid shells with blink, squint and wide morphs that never cut the eyeball.
@@ -255,7 +279,7 @@ def lid_geometry(center, eye_radius, opening=(45, 38, 30), meet=-8, overlap=4, c
     travel = (1 - squint) * (upper + lower)
     aperture = eye_radius * math.sin(math.radians(width))
     required = eye_radius + clearance
-    grid = [[0] * (columns + 1) for _ in range(rows + 1)]
+    grid = [[0] * (columns + 1) for _ in range(rows + 1 + BEAD_ROWS)]
     faces_one = _thick_grid(grid, grid)
 
     def attempt(rise):
@@ -288,7 +312,7 @@ def lid_geometry(center, eye_radius, opening=(45, 38, 30), meet=-8, overlap=4, c
 
         def solve(key, radius):
             for _ in range(60):
-                layers = {state: _lid_layers(center, radius, thickness, yaws, anchors[key], edges, rows) for state, edges in states[key].items()}
+                layers = {state: _lid_layers(center, radius, thickness, yaws, anchors[key], edges, rows, states[key]['rest']) for state, edges in states[key].items()}
                 reach = lid_clearance(center, eye_radius, layers['rest'], [layers[s] for s in ('blink', 'squint', 'wide')]) + eye_radius
                 if reach >= required - 1e-12: return radius, layers
                 radius *= required / reach * (1 + 1e-9)
@@ -676,7 +700,7 @@ def recommended_gaze(opening=(45, 38, 30), iris=26, margin=4):
     return {'yawMax': round(max(1.0, width - margin), 3), 'pitchMax': round(max(1.0, min(upper, lower) - margin), 3)}
 
 
-def eye_window(lids, margin=6):
+def eye_window(lids, margin=6, corner_margin=2):
     """The directions from a lid eye's center that its skin hole must leave open: the lid opening plus every edge's travel.
 
     `lids` is a `lid_geometry(...)` result. In (yaw, elevation) degrees seen from the
@@ -686,6 +710,10 @@ def eye_window(lids, margin=6):
     has round ends instead of the almond's sharp tips. The lids cover every direction
     inside it that the opening does not, in every state, and reach past it (their
     anchors and span), so a skin hole cut along it meets lids all the way round.
+    At the corners, where the lids meet and barely move, the window reaches only
+    `corner_margin` degrees past the envelope's tips (it widens to `margin` over the
+    last 15 degrees of yaw), so its ends hug the lids instead of opening a pointed
+    pocket onto the wall and lining beside the inner corner.
     Returns {'center', 'margin', 'envelope' (the outline's (yaw, elevation) points),
     'polar_max' (the window's widest angle from the gaze axis), 'level'}:
     `level(point)` is the direction's angular distance outside the window (negative
@@ -694,6 +722,7 @@ def eye_window(lids, margin=6):
     if not isinstance(lids, dict) or lids.get('style') != 'lid':
         raise ValueError('eye_window needs a lid_geometry(...) result: shutters slide behind a flat face, so cut their hole with cut_hole')
     margin = _number(margin, 'Window margin', 0, 30)
+    corner_margin = _number(corner_margin, 'Corner margin', 0, margin)
     center = _vector(lids['center'], 3, 'Eye center')
     edges, yaws = lids['edges'], list(lids['edges']['yaw'])
     high = [max(edge.values()) for edge in edges['upper']]
@@ -735,19 +764,23 @@ def eye_window(lids, margin=6):
         inside = y_min <= yaw <= y_max and table(low, yaw) <= elevation <= table(high, yaw)
         return -best if inside else best
 
+    def reach(yaw):
+        """The window's margin at this yaw: `corner_margin` at and past the tips, `margin` 15 degrees inside them."""
+        return corner_margin + (margin - corner_margin) * _smoothstep(0, 15, min(yaw - y_min, y_max - yaw))
+
     def level(point):
         d = _sub(point, center)
         r = math.hypot(*d)
         if r < 1e-12: return -1.0
         yaw = math.degrees(math.atan2(d[0], -d[1]))
         elevation = math.degrees(math.asin(max(-1.0, min(1.0, d[2] / r))))
-        return distance(yaw, elevation) - margin
+        return distance(yaw, elevation) - reach(yaw)
 
     polar = 0.0
     for i in range(-120, 121):
         for j in range(-90, 91):
             yaw, elevation = float(i), float(j)
-            if distance(yaw, elevation) <= margin:
+            if distance(yaw, elevation) <= reach(yaw):
                 polar = max(polar, math.degrees(math.acos(math.cos(math.radians(elevation)) * math.cos(math.radians(yaw)))))
     return {'center': center, 'margin': margin, 'envelope': outline, 'polar_max': polar, 'level': level}
 
@@ -859,7 +892,7 @@ def _tidy(vertices, faces, touched, rounds=4):
 
 
 def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25, lining_gap=.0001,
-             lining_rings=5, **lid_options):
+             lining_rings=5, corner_margin=2, bevel=.5, **lid_options):
     """Open a skin's eye hole that meets the lids all the way round, so no view looks past the lids into the head.
 
     Pass the same `lid_options` (opening, meet, wide, ...) as to `build_eye`: this
@@ -877,8 +910,9 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
        eyeball radii) so the surface stays smooth; smaller values smooth it more
        but every vertex costs a delta in every morph target (file size, E8).
     2. Window: the skin is clipped (exactly, like `cut_hole`) along the cone of
-       directions `eye_window(lids, margin)`: the lid opening plus every edge's travel,
-       `margin` degrees wider. The lids cover every other direction inside it.
+       directions `eye_window(lids, margin, corner_margin)`: the lid opening plus every
+       edge's travel, `margin` degrees wider (`corner_margin` at the corners, so no
+       pocket opens beside the inner corner). The lids cover every other direction inside it.
     3. Wall and lining: from every rim vertex, a skin wall runs straight toward the
        eye center, through the lids (which slide through it), to just inside the
        nearest any lid vertex ever comes (`lining_gap` under the upper lid above the
@@ -890,6 +924,10 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
        lids' edges, however wide they open. The wall and lining share the rim's
        vertices, so skin morphs (brows, cheeks) move them with the skin and no crack
        can open. No dark socket cup is needed: `build_eye(..., hole=...)` leaves it out.
+       A `bevel` ring (a fraction of the way down to the lids, at most 0.06 eyeball
+       radii at the default 0.5) leaves each rim vertex half way between the skin's
+       slope and the wall's, so the rim turns into the wall over two gentle folds and
+       `join_face_parts` marks no hard seam round the eye (0 gives the right angle).
 
     Call it once per eye on the head blank, before `slit_mouth` and any shape keys,
     and pass the result to `build_eye` as `hole`. Skin shapes near the eyes (brows,
@@ -901,12 +939,13 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     'wall' (wall and lining face indices), 'pushed' (vertices moved out),
     'rim_radius' (nearest and farthest rim vertex from the eye center), 'lining'
     (the lining's radii under the lower and upper lid), 'mound' (the rim's radius
-    where the skin was reshaped)}.
+    where the skin was reshaped), 'bevel' (the bevel ring's vertex indices)}.
     """
     center = _vector(center, 3, 'Eye center')
     eye_radius = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
     lids = lid_geometry(center, eye_radius, **lid_options)
-    window = eye_window(lids, margin)
+    window = eye_window(lids, margin, corner_margin)
+    bevel = _number(bevel, 'Bevel', 0, 1)
     clearance = _number(clearance, 'Clearance', 0)
     blend = .2 * eye_radius if blend is None else _number(blend, 'Mound blend', 0, low_open=True)
     max_edge = .2 * eye_radius if max_edge is None else _number(max_edge, 'Maximum edge', 0, low_open=True)
@@ -986,13 +1025,43 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
 
     back = (0.0, 1.0, 0.0)
     ladders = {}
+    # Each rim vertex's skin neighbours (off the rim): the bevel continues the skin's slope half way into the wall.
+    neighbours = {}
+    for face in kept:
+        for a, b in zip(face, face[1:] + face[:1]):
+            if a in rim and b not in rim: neighbours.setdefault(a, set()).add(b)
+            if b in rim and a not in rim: neighbours.setdefault(b, set()).add(a)
+    along = {}
+    for a, b in edges:
+        along[a] = along.get(a, ()) + (b,)
+        along[b] = along.get(b, ()) + (a,)
+    bevels = []
 
     def ladder(i):
-        """Rim vertex i's wall end, then its lining rings toward the pole behind the eye."""
+        """Rim vertex i's bevel, its wall end, then its lining rings toward the pole behind the eye."""
         if i not in ladders:
             d = _sub(result[i], center)
-            d = _mul(d, 1 / math.hypot(*d))
+            r = math.hypot(*d)
+            d = _mul(d, 1 / r)
+            # The bevel rounds the rim into the wall: it leaves the rim half way between the skin's slope and the wall's
+            # (straight at the eye center), so the skin turns into the wall over two gentle folds, not one right angle.
+            size = bevel * min(max(0.0, r - outer), .12 * eye_radius)
+            slope = (0.0, 0.0, 0.0)
+            for j in (i,) + along.get(i, ()):
+                around = [result[k] for k in neighbours.get(j, ())]
+                if around:
+                    step = _sub(result[j], _mul(tuple(map(sum, zip(*around))), 1 / len(around)))
+                    slope = _add(slope, _mul(step, 1 / (math.hypot(*step) or 1)))
+            slope = _mul(slope, 1 / math.hypot(*slope)) if math.hypot(*slope) > 1e-12 else _mul(d, -1)
+            way = _sub(slope, d)
+            way = _mul(way, 1 / (math.hypot(*way) or 1))
             steps = []
+            if size > 1e-9:
+                point = _add(result[i], _mul(way, size))
+                if math.dist(point, center) < outer: point = _add(center, _mul(_sub(point, center), outer / math.dist(point, center)))
+                bevels.append(len(result))
+                steps.append(len(result))
+                result.append(point)
             for k in range(rings):
                 t = k / rings
                 direction = _add(_mul(d, 1 - t), _mul(back, t))
@@ -1008,12 +1077,12 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     for a, b in edges:
         steps_a, steps_b = ladder(a), ladder(b)
         wall.append(len(kept)); kept.append((b, a, steps_a[0], steps_b[0]))
-        for k in range(rings - 1):
+        for k in range(min(len(steps_a), len(steps_b)) - 1):
             wall.append(len(kept)); kept.append((steps_b[k], steps_a[k], steps_a[k + 1], steps_b[k + 1]))
         wall.append(len(kept)); kept.append((steps_b[-1], steps_a[-1], pole))
     return {'vertices': result, 'faces': kept, 'lids': lids, 'window': window, 'rim': sorted(rim), 'wall': wall,
             'pushed': pushed, 'rim_radius': (min(radii), max(radii)), 'lining': (lining['lower'], lining['upper']),
-            'mound': push + blend / 4, 'socket': socket}
+            'mound': push + blend / 4, 'socket': socket, 'bevel': bevels}
 
 
 def shutter_hole(vertices, faces, center, eye_radius, hole_radius=None, max_edge=None, cap_rings=5, **shutter_options):
@@ -1416,6 +1485,217 @@ def tongue_geometry(center, length, width, thickness, rings=6, segments=16):
     return {'vertices': vertices, 'faces': _outward(vertices, faces)}
 
 
+# ---------------------------------------------------------------- parts attached to the skin
+
+# A part joined to the face touches the skin when every slice across its length comes this close (the verifier's
+# `attached-parts` check uses the same tolerance).
+ATTACH_TOLERANCE = .0005
+
+
+def _closest_on_triangle(p, a, b, c):
+    """The point of triangle abc nearest to p and its barycentric weights (wa, wb, wc)."""
+    ab, ac, ap = _sub(b, a), _sub(c, a), _sub(p, a)
+    d1, d2 = _dot(ab, ap), _dot(ac, ap)
+    if d1 <= 0 and d2 <= 0: return a, (1.0, 0.0, 0.0)
+    bp = _sub(p, b)
+    d3, d4 = _dot(ab, bp), _dot(ac, bp)
+    if d3 >= 0 and d4 <= d3: return b, (0.0, 1.0, 0.0)
+    vc = d1 * d4 - d3 * d2
+    if vc <= 0 and d1 >= 0 and d3 <= 0:
+        v = d1 / (d1 - d3)
+        return _add(a, _mul(ab, v)), (1 - v, v, 0.0)
+    cp = _sub(p, c)
+    d5, d6 = _dot(ab, cp), _dot(ac, cp)
+    if d6 >= 0 and d5 <= d6: return c, (0.0, 0.0, 1.0)
+    vb = d5 * d2 - d1 * d6
+    if vb <= 0 and d2 >= 0 and d6 <= 0:
+        w = d2 / (d2 - d6)
+        return _add(a, _mul(ac, w)), (1 - w, 0.0, w)
+    va = d3 * d6 - d5 * d4
+    if va <= 0 and d4 - d3 >= 0 and d5 - d6 >= 0:
+        w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
+        return _add(b, _mul(_sub(c, b), w)), (0.0, 1 - w, w)
+    denominator = 1 / (va + vb + vc)
+    v, w = vb * denominator, vc * denominator
+    return _add(a, _add(_mul(ab, v), _mul(ac, w))), (1 - v - w, v, w)
+
+
+class _SkinIndex:
+    """Nearest-point queries on a skin's triangles through a uniform grid (outward normals give the sign)."""
+
+    def __init__(self, vertices, faces, near=None, cell=.003):
+        self.vertices = [tuple(v) for v in vertices]
+        self.cell = cell
+        self.triangles, self.normals, self.grid = [], [], {}
+        for face in faces:
+            for k in range(1, len(face) - 1):
+                tri = (face[0], face[k], face[k + 1])
+                points = [self.vertices[i] for i in tri]
+                if near is not None and not any(near(p) for p in points): continue
+                normal = _cross(_sub(points[1], points[0]), _sub(points[2], points[0]))
+                length = math.hypot(*normal)
+                if length < 1e-18: continue
+                index = len(self.triangles)
+                self.triangles.append(tri)
+                self.normals.append(_mul(normal, 1 / length))
+                lo = [math.floor(min(p[k] for p in points) / cell) for k in range(3)]
+                hi = [math.floor(max(p[k] for p in points) / cell) for k in range(3)]
+                for i in range(lo[0], hi[0] + 1):
+                    for j in range(lo[1], hi[1] + 1):
+                        for k in range(lo[2], hi[2] + 1): self.grid.setdefault((i, j, k), []).append(index)
+
+    def nearest(self, point, limit=.012):
+        """(signed distance, nearest point, triangle, barycentric weights), or None beyond `limit`."""
+        vertices = self.vertices
+        c = [math.floor(point[k] / self.cell) for k in range(3)]
+        best, seen = None, set()
+        for ring in range(int(limit / self.cell) + 2):
+            if best is not None and best[0] <= (ring - 1) * self.cell: break
+            for i in range(c[0] - ring, c[0] + ring + 1):
+                for j in range(c[1] - ring, c[1] + ring + 1):
+                    edge = abs(i - c[0]) == ring or abs(j - c[1]) == ring
+                    for k in (range(c[2] - ring, c[2] + ring + 1) if edge else (c[2] - ring, c[2] + ring)):
+                        for index in self.grid.get((i, j, k), ()):
+                            if index in seen: continue
+                            seen.add(index)
+                            a, b, cc = (vertices[v] for v in self.triangles[index])
+                            q, weights = _closest_on_triangle(point, a, b, cc)
+                            d = math.dist(point, q)
+                            if best is None or d < best[0]: best = (d, q, index, weights)
+        if best is None or best[0] > limit: return None
+        d, q, index, weights = best
+        return (-d if _dot(_sub(point, q), self.normals[index]) < 0 else d), q, index, weights
+
+    def normal(self, index): return self.normals[index]
+
+
+def _skin_data(skin):
+    """(vertices, faces, morphs) from a geometry dict or a Blender mesh object (world space, shape keys as targets)."""
+    if isinstance(skin, dict):
+        return [_vector(v, 3, 'Skin vertex') for v in skin['vertices']], [tuple(f) for f in skin['faces']], dict(skin.get('morphs') or {})
+    data = getattr(skin, 'data', None)
+    if data is None or not hasattr(data, 'vertices'): raise ValueError('skin must be a geometry dict (vertices, faces, morphs) or a Blender mesh object')
+    world = skin.matrix_world
+    vertices = [tuple(world @ v.co) for v in data.vertices]
+    faces = [tuple(p.vertices) for p in data.polygons]
+    keys = data.shape_keys
+    morphs = {block.name: [tuple(world @ point.co) for point in block.data] for block in keys.key_blocks[1:]} if keys else {}
+    return vertices, faces, morphs
+
+
+def _near_box(points, margin):
+    lo = [min(p[k] for p in points) - margin for k in range(3)]
+    hi = [max(p[k] for p in points) + margin for k in range(3)]
+    return lambda p: all(lo[k] <= p[k] <= hi[k] for k in range(3))
+
+
+def skin_contact(part, skin, tolerance=ATTACH_TOLERANCE, slices=None):
+    """How a part sits on a skin, at rest and at each morph at weight 1, as the arkit-face/1 verifier judges it.
+
+    `part` is a geometry dict (vertices, faces, optional morphs); `skin` a geometry
+    dict (vertices, faces, optional morphs) or a Blender mesh object with its shape
+    keys. The part's vertices and face centers are cut into `slices` (default one per
+    1.5 mm, at most 32) across its longest axis; each slice's gap is the smallest
+    signed distance from its points to the skin (negative inside). The part touches
+    when every slice comes within `tolerance`. `visible` is the share of its points
+    outside the skin; a morph that leaves much less than at rest buries the part.
+    Poses: rest, the part's own morphs and every skin morph that moves the skin near
+    it. Returns {'gap', 'floating', 'slices', 'visible', 'poses': {name: {'gap',
+    'floating', 'visible'}}}, gaps in meters.
+    """
+    vertices = [_vector(v, 3, 'Part vertex') for v in part['vertices']]
+    faces = [tuple(f) for f in part['faces']]
+    own = dict(part.get('morphs') or {})
+    skin_vertices, skin_faces, skin_morphs = _skin_data(skin)
+    near = _near_box(vertices, .03)
+    index = _SkinIndex(skin_vertices, skin_faces, near=near)
+    # Sample points: every vertex and the center of every fan triangle, as barycentric (a, b, c, wa, wb, wc).
+    samples = [(i, i, i, 1.0, 0.0, 0.0) for i in range(len(vertices))]
+    for face in faces:
+        for k in range(1, len(face) - 1): samples.append((face[0], face[k], face[k + 1], 1 / 3, 1 / 3, 1 / 3))
+    at = lambda points, s: tuple(s[3] * points[s[0]][k] + s[4] * points[s[1]][k] + s[5] * points[s[2]][k] for k in range(3))
+    rest = [at(vertices, s) for s in samples]
+    mean = tuple(sum(p[k] for p in rest) / len(rest) for k in range(3))
+    cov = [[sum((p[r] - mean[r]) * (p[c] - mean[c]) for p in rest) for c in range(3)] for r in range(3)]
+    axis = (1.0, 1.0, 1.0)
+    for _ in range(50):
+        nxt = tuple(sum(cov[r][c] * axis[c] for c in range(3)) for r in range(3))
+        length = math.hypot(*nxt) or 1.0
+        axis = _mul(nxt, 1 / length)
+    along = [_dot(_sub(p, mean), axis) for p in rest]
+    start, span = min(along), max(along) - min(along)
+    count = _count(slices, 'Slices', 1) if slices is not None else min(32, max(1, math.ceil(span / .0015)))
+    slice_of = [min(count - 1, int((t - start) / (span or 1) * count)) for t in along]
+
+    def measure(points, index):
+        low = [math.inf] * count
+        outside = 0
+        for n, s in enumerate(samples):
+            hit = index.nearest(at(points, s))
+            d = .012 if hit is None else hit[0]
+            low[slice_of[n]] = min(low[slice_of[n]], d)
+            outside += d > 0
+        filled = [d for d in low if d < math.inf]
+        return {'gap': max(0.0, max(filled)), 'floating': sum(d > tolerance for d in filled), 'visible': outside / len(samples)}
+
+    result = measure(vertices, index)
+    result.update(slices=count, poses={})
+    moved_skin = lambda name: any(near(p) and math.dist(p, q) > 1e-7 for p, q in zip(skin_vertices, skin_morphs[name]))
+    for name in list(own) + [n for n in skin_morphs if n not in own]:
+        if name not in own and not moved_skin(name): continue
+        points = [_vector(v, 3, 'Morph vertex') for v in own[name]] if name in own else vertices
+        posed = _SkinIndex(skin_morphs[name], skin_faces, near=near) if name in skin_morphs else index
+        result['poses'][name] = measure(points, posed)
+    return result
+
+
+def attach_to_skin(part, skin, depth=None, tolerance=ATTACH_TOLERANCE):
+    """Seat a small part on the skin and make it follow the skin's morphs: nostrils, freckles, warts, horns, fins.
+
+    `part` is a geometry dict (vertices, faces, optional morphs and materials) and
+    `skin` the head skin: a geometry dict with its morphs, or the Blender mesh object
+    after its shape keys are added (`slit_mouth`, `symmetric_offsets`, `add_jaw_open`).
+    With `depth`, the part first moves along the skin's normal under its center so the
+    center sits `depth` meters inside the skin (0 sinks half of a ball, a positive
+    depth more; None keeps it where it is). Then every vertex takes the skin point
+    nearest it at rest as its footprint, and for every skin morph that moves the skin
+    there the part gets a target that moves each vertex by the skin's own delta at its
+    footprint (interpolated across the skin triangle), on top of the part's own morph
+    of the same name: a nostril rides noseSneer, a chin wart rides jawOpen. Returns a
+    new geometry dict with `morphs` and `contact` (`skin_contact` of the result).
+    Build the part, attach it, then `mesh_from_geometry` it and add its morphs with
+    `shape_key` before `join_face_parts`.
+    """
+    vertices = [_vector(v, 3, 'Part vertex') for v in part['vertices']]
+    if not vertices: raise ValueError('The part has no vertices')
+    own = {name: [_vector(v, 3, 'Morph vertex') for v in targets] for name, targets in (part.get('morphs') or {}).items()}
+    skin_vertices, skin_faces, skin_morphs = _skin_data(skin)
+    index = _SkinIndex(skin_vertices, skin_faces, near=_near_box(vertices, .03))
+    if depth is not None:
+        depth = _number(depth, 'Depth')
+        center = tuple(sum(v[k] for v in vertices) / len(vertices) for k in range(3))
+        hit = index.nearest(center, limit=.03)
+        if hit is None: raise ValueError('No skin within 30 mm of the part: place it on the head first')
+        signed, _, triangle, _ = hit
+        shift = _mul(index.normal(triangle), -depth - signed)
+        vertices = [_add(v, shift) for v in vertices]
+        own = {name: [_add(v, shift) for v in targets] for name, targets in own.items()}
+    feet = []
+    for v in vertices:
+        hit = index.nearest(v, limit=.03)
+        if hit is None: raise ValueError('A part vertex lies more than 30 mm from the skin: attach parts that sit on it')
+        feet.append((index.triangles[hit[2]], hit[3]))
+    morphs = dict(own)
+    for name, targets in skin_morphs.items():
+        deltas = [tuple(sum(w * (targets[i][k] - skin_vertices[i][k]) for i, w in zip(tri, weights)) for k in range(3)) for tri, weights in feet]
+        if max(math.hypot(*d) for d in deltas) < 1e-6: continue
+        base = own.get(name, vertices)
+        morphs[name] = [_add(p, d) for p, d in zip(base, deltas)]
+    result = dict(part, vertices=vertices, morphs=morphs)
+    result['contact'] = skin_contact(result, skin, tolerance)
+    return result
+
+
 # ---------------------------------------------------------------- skin regions
 
 def soft_offset(vertices, center, radius, offset, mask=None):
@@ -1678,37 +1958,79 @@ def exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw', roo
 
 
 def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, height=12, thickness=None, arch=4,
-                        down=12, inner_up=10, outer_up=10, clearance=.0002, columns=16, sides=12):
-    """A brow ridge lying on an eye dome (the lid shell), with browDown, browInnerUp and browOuterUp morphs.
+                        down=12, inner_up=10, outer_up=10, skin=None, hole=None, sink=None, clearance=.0002, columns=16, sides=16):
+    """A heavy brow ridge lying on the skin over an eye in a dome, with browDown, browInnerUp and browOuterUp morphs.
 
-    For heads whose eyes sit in domes (a frog, a creature): the ridge runs along the
-    sphere of `radius` around the eye center (pass the lid's outer radius, upper_radius
-    + thickness) from `inner` degrees toward the nose to `outer` degrees away, at
-    `elevation` degrees above the gaze axis (arched up by `arch` in the middle), `height`
-    degrees tall and `thickness` meters proud (default 18% of `radius`). Its morphs slide
-    it over the dome by turning it about the eye center: `browDown<Side>` lowers the
-    inner end by `down` degrees (the outer end a third as much), `browInnerUp` lifts
-    the inner end by `inner_up`, `browOuterUp<Side>` the outer end by `outer_up`. The
-    base sits far enough out that no weight combination dips into the dome (linear
-    morphs cut chords), so it never cuts the lids. Returns vertices, faces, morphs and
-    the base radius; bind it to `head` and join it into the face mesh.
+    For heads whose eyes sit in domes (a frog, a creature; Mossjaw's ridge is his
+    brow). The ridge runs round the eye from `inner` degrees toward the nose to
+    `outer` degrees away, centered `elevation` degrees above the gaze axis (arched up
+    by `arch` in the middle) and `height` degrees tall, and it lies on the actual skin:
+    `skin` is the head skin with its eye holes cut ({'vertices', 'faces'}, as for
+    `front_surface`), and each point of the ridge's base is found on it along its
+    direction from the eye center. Its cross-section is a bump `thickness` meters
+    proud (default 18% of `radius`) whose edges and underside sink `sink` meters into
+    the skin (default 12% of the thickness), so it reads as a fold of the skin, not a
+    part laid on top, and no view sees background under it. Pass the eye's `hole`
+    (`eye_hole(...)`) so the base never enters the lids: where the ridge crosses the
+    eye's window (a lowered brow) it rests on the upper lid, `clearance` outside it.
+    `radius` (the hole's `mound`) is where the search for the skin starts.
+
+    The morphs slide the ridge over the skin and lay it back on at its new place:
+    `browDown<Side>` lowers the inner end by `down` degrees (the outer end a third as
+    much), `browInnerUp` lifts the inner end by `inner_up`, `browOuterUp<Side>` the
+    outer end by `outer_up`. Every pose is checked with `skin_contact`, and a ridge
+    that cannot lie on the skin is rejected. Returns vertices, faces, morphs, the mean
+    `base_radius` and `contact`; bind it to `head` and join it into the face mesh. If
+    the skin under it has its own shapes (brows, cheeks), pass the ridge through
+    `attach_to_skin(ridge, head)` after they are added so it rides them too.
     """
     center = _vector(center, 3, 'Eye center')
     radius = _number(radius, 'Dome radius', 0, low_open=True)
     if side not in _SIDES: raise ValueError("Brow side must be 'L' or 'R'")
+    if skin is None:
+        raise ValueError("brow_ridge_geometry lays the ridge on the skin: pass skin={'vertices': ..., 'faces': ...} (the head with its "
+                         "eye holes cut, as for front_surface) and hole=eye_hole(...); a ridge on a sphere floats over the dome")
     suffix, sign = _SIDES[side], 1 if side == 'L' else -1
     inner, outer = _number(inner, 'Inner reach', 0, 80), _number(outer, 'Outer reach', 0, 80)
     elevation, height, arch = _number(elevation, 'Brow elevation', -80, 80), _number(height, 'Brow height', 0, 60, low_open=True), _number(arch, 'Brow arch')
     thickness = .18 * radius if thickness is None else _number(thickness, 'Brow thickness', 0, low_open=True)
+    sink = .12 * thickness if sink is None else _number(sink, 'Sink', 0)
+    clearance = _number(clearance, 'Clearance', 0)
     down, inner_up, outer_up = (_number(v, label, 0, 45) for v, label in ((down, 'Brow down'), (inner_up, 'Brow inner up'), (outer_up, 'Brow outer up')))
-    columns, sides = _count(columns, 'Brow columns', 2), _count(sides, 'Brow sides', 4)
-    shift = math.radians(down + inner_up + outer_up)
-    base = radius + _number(clearance, 'Clearance', 0) + (radius + thickness) * (1 - math.cos(shift / 2))
+    columns, sides = _count(columns, 'Brow columns', 2), _count(sides, 'Brow sides', 6)
+    skin_vertices, skin_faces, _ = _skin_data(skin)
+    reach = 2.5 * radius + thickness
+    index = _SkinIndex(skin_vertices, skin_faces, near=lambda p: math.dist(p, center) < reach)
+    if hole is not None:
+        lids = hole['lids']
+        if math.dist(tuple(lids['center']), center) > 1e-9: raise ValueError('This hole belongs to another eye')
+        floor, level = lids['upper_radius'] + lids['thickness'] + clearance, hole['window']['level']
+    else:
+        floor, level = None, None
     shifts = {
         f'browDown{suffix}': lambda s: -down * (1 - 2 / 3 * s),
         'browInnerUp': lambda s: inner_up * (1 - s),
         f'browOuterUp{suffix}': lambda s: outer_up * s,
     }
+
+    def base(yaw, elevation_):
+        """The skin's distance from the eye center along (yaw, elevation), sunk by `sink`; on the lids inside the window."""
+        direction = _sub(_sphere_point(center, 1.0, yaw, elevation_), center)
+        t, found = radius, False
+        for _ in range(12):
+            hit = index.nearest(_add(center, _mul(direction, t)), limit=.012)
+            if hit is None: break
+            facing = _dot(direction, index.normal(hit[2]))
+            if facing < .2: break
+            step = hit[0] / facing
+            t -= step
+            if abs(step) < 1e-8: found = True; break
+        inside = level is not None and level(_add(center, _mul(direction, t))) < 1
+        if not found or inside:
+            if floor is None: raise ValueError(f'No skin under the brow ridge at yaw {yaw:.0f}, elevation {elevation_:.0f} degrees: pass hole=eye_hole(...) or move the ridge onto the skin')
+            return floor
+        t -= sink
+        return t if floor is None else max(t, floor)
 
     def layout(delta):
         points = []
@@ -1719,9 +2041,14 @@ def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, 
             middle = elevation + arch * math.sin(math.pi * s) + delta(s)
             for k in range(sides):
                 phi = math.tau * k / sides
-                points.append(_sphere_point(center, base + thickness * taper * (1 + math.cos(phi)) / 2, yaw, middle + height / 2 * taper * math.sin(phi)))
+                e = middle + height / 2 * taper * math.cos(phi)
+                # The upper arc is the ridge you see; the lower arc lies inside the skin.
+                lift = thickness * taper * (math.sin(phi) if math.sin(phi) >= 0 else .35 * math.sin(phi))
+                points.append(_sphere_point(center, base(yaw, e) + lift, yaw, e))
         for s in (0.0, 1.0):
-            points.append(_sphere_point(center, base + thickness * .2, sign * (-inner + (inner + outer) * s), elevation + delta(s)))
+            yaw = sign * (-inner + (inner + outer) * s)
+            e = elevation + delta(s)
+            points.append(_sphere_point(center, base(yaw, e), yaw, e))
         return points
 
     vertices = layout(lambda s: 0.0)
@@ -1732,8 +2059,20 @@ def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, 
     faces += [(end, ring(columns, k), ring(columns, k + 1)) for k in range(sides)]
     faces = _outward(vertices, faces)
     morphs = {name: layout(delta) for name, delta in shifts.items()}
-    return {'vertices': vertices, 'faces': faces, 'morphs': morphs, 'base_radius': base,
-            'min_clearance': lid_clearance(center, radius, vertices, list(morphs.values()))}
+    result = {'vertices': vertices, 'faces': faces, 'morphs': morphs,
+              'base_radius': sum(math.dist(v, center) for v in vertices[:-2]) / (len(vertices) - 2)}
+    # Judge it as the verifier does: against the skin and the lids (a lowered brow may rest on the upper lid).
+    surface = {'vertices': skin_vertices, 'faces': skin_faces}
+    if hole is not None:
+        offset = len(skin_vertices)
+        surface = {'vertices': skin_vertices + list(hole['lids']['vertices']), 'faces': skin_faces + [tuple(i + offset for i in f) for f in hole['lids']['faces']]}
+    contact = skin_contact(result, surface)
+    worst = max([('rest', contact['gap'])] + [(name, pose['gap']) for name, pose in contact['poses'].items()], key=lambda item: item[1])
+    if worst[1] > ATTACH_TOLERANCE:
+        raise ValueError(f'The brow ridge floats {worst[1] * 1000:.2f} mm off the skin at {worst[0]}: lower `elevation` onto the skin '
+                         f'or raise `sink` (now {sink * 1000:.2f} mm)')
+    result['contact'] = contact
+    return result
 
 
 def skin_brow_geometry(surface, side, inner, outer, height=.004, thickness=.0016, arch=.002, down=.004, inner_up=.004,
@@ -1968,8 +2307,10 @@ def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, 
     `standoff` in front of the head's front `surface` (`front_surface(...)`). Morphs:
     `mouthSmile<Side>` lifts that corner by smile[1] and pulls it out by smile[0],
     `mouthFrown<Side>` lowers it by `frown`, `mouthStretch<Side>` pulls it out by
-    `stretch`, and `mouthFunnel` pushes the middle forward by `funnel`, pinches the
-    corners in by `pinch` of the half-width and rounds the lips apart. With `jaw` (a
+    `stretch`, and `mouthFunnel` pinches the corners in by `pinch` of the half-width
+    and rounds the lips apart by 0.3 `funnel` (it does not push them off the plates:
+    every ring is laid back on the face, `standoff` in front of it, so the edge never
+    floats or sinks while a mouth shape plays). With `jaw` (a
     `JawHinge`), `jawOpen` carries the lower tube rigidly with the chin plate; the
     upper tube stays on the skull. Every ring moves as a whole, so the tubes never
     twist. Returns vertices, faces, morphs, and the `upper` and `lower` vertex indices.
@@ -1983,15 +2324,18 @@ def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, 
     smile_out, smile_up = _vector(smile, 2, 'Smile')
     frown, stretch, funnel = (_number(v, label, 0) for v, label in ((frown, 'Frown'), (stretch, 'Stretch'), (funnel, 'Funnel')))
     pinch = _number(pinch, 'Pinch', 0, .9)
-    vertices, faces, rings, upper, lower = [], [], {'upper': [], 'lower': []}, [], []
+    vertices, faces, rings, upper, lower, caps = [], [], {'upper': [], 'lower': []}, [], [], []
     for key, zc in (('upper', mouth_z + radius), ('lower', mouth_z - radius)):
         start = len(vertices)
         for s in range(segments + 1):
             x = center_x - half + 2 * half * s / segments
-            skins = [surface(x, zc + radius * math.sin(math.tau * k / sides)) for k in range(sides)] + [surface(x, zc)]
-            skins = [y for y in skins if y is not None]
-            if not skins: raise ValueError(f'No head surface behind the mouth edge at x = {x:.4f}')
-            yc = min(skins) - radius - standoff
+            # As close as `standoff` in front of the face, vertex by vertex round the ring (so it lies on it, not over it).
+            fits = []
+            for k in range(sides):
+                skin = surface(x, zc + radius * math.sin(math.tau * k / sides))
+                if skin is not None: fits.append(skin - radius * math.cos(math.tau * k / sides))
+            if not fits: raise ValueError(f'No head surface behind the mouth edge at x = {x:.4f}')
+            yc = min(fits) - standoff
             ring = []
             for k in range(sides):
                 a = math.tau * k / sides
@@ -2004,6 +2348,7 @@ def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, 
                 faces.append((grid[s][k], grid[s + 1][k], grid[s + 1][(k + 1) % sides], grid[s][(k + 1) % sides]))
         for end, ring in ((0, grid[0]), (1, grid[-1])):
             cap = len(vertices)
+            caps.append((cap, ring))
             vertices.append(tuple(sum(vertices[i][k] for i in ring) / sides for k in range(3)))
             for k in range(sides):
                 faces.append((cap, ring[k], ring[(k + 1) % sides]) if end == 0 else (cap, ring[(k + 1) % sides], ring[k]))
@@ -2017,7 +2362,20 @@ def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, 
     lower_set = set(lower)
 
     def offsets(offset_of):
-        return [_add(v, offset_of(v, i)) for i, v in enumerate(vertices)]
+        # Each ring moves over the plates and is laid back on them (standoff in front of `surface`), so the edge
+        # slides over the face instead of lifting off it or sinking in (the attached-parts check).
+        moved = [_add(v, offset_of(v, i)) for i, v in enumerate(vertices)]
+        for ring in rings['upper'] + rings['lower']:
+            before = [sum(vertices[i][k] for i in ring) / sides for k in range(3)]
+            after = [sum(moved[i][k] for i in ring) / sides for k in range(3)]
+            if math.dist(before, after) < 1e-9: continue
+            old_skin, new_skin = surface(before[0], before[2]), surface(after[0], after[2])
+            if old_skin is None or new_skin is None: continue
+            # Keep the ring as far in front of the face as it stood at rest.
+            shift = before[1] + new_skin - old_skin - after[1]
+            for i in ring: moved[i] = (moved[i][0], moved[i][1] + shift, moved[i][2])
+        for cap, ring in caps: moved[cap] = tuple(sum(moved[i][k] for i in ring) / sides for k in range(3))
+        return moved
 
     morphs = {}
     for suffix, sign in (('Left', 1), ('Right', -1)):
@@ -2029,7 +2387,7 @@ def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, 
         t = along(v)
         middle = 1 - t * t
         apart = (-1 if i in lower_set else 1) * .3 * funnel * middle
-        return (-pinch * half * t * (1 - middle * .5) * .5, -funnel * (.5 + .5 * middle), apart)
+        return (-pinch * half * t * (1 - middle * .5) * .5, 0.0, apart)
     morphs['mouthFunnel'] = offsets(funnel_offset)
     if jaw is not None:
         moved = jaw.targets([vertices[i] for i in lower], weight=1)
