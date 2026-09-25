@@ -108,6 +108,10 @@ exposed fangs). The rules that are easy to get wrong:
   tip, size)` fuses a smooth button nose with nostril dimples into the skin and returns the
   noseSneer wing lift; `sculpt_skin` grows cheeks or a chin. Never sculpt with `soft_offset` on a
   blank (a spike). The helpers write `lidFollow.up` .8 so looking up visibly lifts the lids (E2).
+- Skin paint (blush, lips, lash lines, socket shading, mottling): `paint_vertices(part,
+  skin_tints(rest, base, patches, mottle))` and `use_vertex_colors(material)` before
+  `join_face_parts`, which keeps color attributes; it exports as COLOR_0 and Unreal's glTF
+  material applies it.
 - Cut other holes with `cut_hole` (a smooth rim), not `cut_faces` (stair steps). Brows on eye domes
   (a frog) are `brow_ridge_geometry(..., skin=..., hole=...)` ridges that lie on the skin itself
   and slide over it; a ridge on the dome's sphere floats over the skin.

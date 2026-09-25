@@ -19,7 +19,7 @@ __all__ = [
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
     'eye_window', 'eye_hole', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
-    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
+    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'skin_tints', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
@@ -623,44 +623,65 @@ def eye_coverage_problems(center, radius, geometry, samples=81, aperture=None):
     return problems
 
 
-def eyeball_geometry(center, radius, iris=26, pupil=12, rings=16, segments=32):
+def eyeball_geometry(center, radius, iris=26, pupil=12, rings=16, segments=32, slit=None, split_borders=False):
     """A sphere whose poles lie on the gaze axis, with rings on the iris and pupil borders.
 
     Returns vertices, faces, `material_indices` (0 white, 1 iris, 2 pupil) and the
     matching `materials` slot names. `iris` and `pupil` are half-angles in degrees
-    from the gaze axis (-Y).
+    from the gaze axis (-Y). `slit` (0..1) makes a cat's or goat's slit pupil: the
+    pupil keeps its height (`pupil` degrees up and down) and is `slit` times as wide.
+    `split_borders` gives the iris its own vertices at both borders (the seams stay
+    closed in space), so per-vertex paint such as an iris gradient does not bleed
+    into the white or the pupil.
     """
     center = _vector(center, 3, 'Eye center')
     radius = _number(radius, 'Eyeball radius', 0, low_open=True)
     iris = _number(iris, 'Iris half-angle', 1, 80)
     pupil = _number(pupil, 'Pupil half-angle', .5, iris)
     if pupil >= iris: raise ValueError('The pupil must be smaller than the iris')
+    slit = None if slit is None else _number(slit, 'Slit width', 0, 1, low_open=True)
     rings, segments = _count(rings, 'Eyeball rings', 8), _count(segments, 'Eyeball segments', 8)
     white = rings - 4
-    angles = [pupil / 2, pupil, pupil + (iris - pupil) / 2, iris] + [iris + (180 - iris) * k / (white + 1) for k in range(1, white + 1)]
     forward, side, up = (0.0, -1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0)
+
+    def pupil_at(azimuth):
+        if slit is None: return pupil
+        a = math.radians(azimuth)
+        return pupil / math.sqrt((math.cos(a) / slit) ** 2 + math.sin(a) ** 2)
+
+    def angles(azimuth):
+        p = pupil_at(azimuth)
+        return [p / 2, p, p + (iris - p) / 2, iris] + [iris + (180 - iris) * k / (white + 1) for k in range(1, white + 1)]
 
     def point(polar, azimuth):
         p, a = math.radians(polar), math.radians(azimuth)
         direction = _add(_mul(forward, math.cos(p)), _add(_mul(side, math.sin(p) * math.cos(a)), _mul(up, math.sin(p) * math.sin(a))))
         return _add(center, _mul(direction, radius))
 
+    count = 4 + white
     vertices = [point(0, 0)]
-    for polar in angles:
-        vertices += [point(polar, 360 * j / segments) for j in range(segments)]
+    for k in range(count):
+        vertices += [point(angles(360 * j / segments)[k], 360 * j / segments) for j in range(segments)]
     vertices.append(point(180, 0))
     ring = lambda k, j: 1 + k * segments + j % segments
-    bands = [0.0] + angles + [180.0]
+    # Rings 0-1 bound the pupil (ring 1 its border), 2-3 the iris (ring 3 its border), the rest the white.
+    band_slot = lambda k: 2 if k < 1 else 1 if k < 3 else 0
+    twins = {}
+    if split_borders:
+        for k in (1, 3):
+            twins[k] = len(vertices)
+            vertices += [vertices[ring(k, j)] for j in range(segments)]
+    # A band between rings k and k + 1 uses ring k's twin when ring k is a border it lies outside of.
+    lower = lambda k, j: twins[k] + j % segments if k in twins else ring(k, j)
     faces, slots = [], []
-    slot = lambda far: 2 if far <= pupil + 1e-9 else 1 if far <= iris + 1e-9 else 0
     for j in range(segments):
-        faces.append((0, ring(0, j + 1), ring(0, j))); slots.append(slot(bands[1]))
-    for k in range(len(angles) - 1):
+        faces.append((0, ring(0, j + 1), ring(0, j))); slots.append(2)
+    for k in range(count - 1):
         for j in range(segments):
-            faces.append((ring(k, j), ring(k, j + 1), ring(k + 1, j + 1), ring(k + 1, j))); slots.append(slot(bands[k + 2]))
-    last = len(vertices) - 1
+            faces.append((lower(k, j), lower(k, j + 1), ring(k + 1, j + 1), ring(k + 1, j))); slots.append(band_slot(k))
+    pole = 1 + count * segments
     for j in range(segments):
-        faces.append((ring(len(angles) - 1, j), ring(len(angles) - 1, j + 1), last)); slots.append(0)
+        faces.append((ring(count - 1, j), ring(count - 1, j + 1), pole)); slots.append(0)
     faces = _outward(vertices, faces)
     return {'vertices': vertices, 'faces': faces, 'material_indices': slots, 'materials': ['eye_white', 'eye_iris', 'eye_pupil']}
 
@@ -1159,22 +1180,28 @@ def shutter_hole(vertices, faces, center, eye_radius, hole_radius=None, max_edge
     return {'vertices': result, 'faces': kept, 'lids': blades, 'rim': sorted(rim), 'wall': wall, 'radius': radius}
 
 
+# How many degrees outside an eye's window skin shapes fade in (eye_hole_mask). Round 5 used the hole's socket band,
+# so a hole cut with a small socket masked out every skin shape.
+MASK_BAND = 20
+
+
 def eye_hole_mask(*holes, band=None):
     """A `soft_offset` mask that keeps every `eye_hole` rim, wall and lining still and fades in away from them.
 
     For each hole the weight is 0 on the rim and inside the skin (the wall and
     lining lie inside the mound radius), and rises smoothly to 1 over `band` degrees
-    (default: the hole's socket band) outside its window and over half an eyeball
+    (default `MASK_BAND`, 20; at least 3) outside its window and over half an eyeball
     radius beyond the mound. The mask is the product over all holes. Pass it as
     `symmetric_offsets(..., mask=eye_hole_mask(*holes))` for brows, cheeks and any
     skin shape that reaches an eye.
     """
+    # The weight is zero within 2 degrees of the window (rim and wall), so the band must reach past that.
+    reach = MASK_BAND if band is None else _number(band, 'Mask band', 3)
     parts = []
     for hole in holes:
         level, center = hole['window']['level'], _vector(hole['lids']['center'], 3, 'Eye center')
-        mound, reach = hole['mound'], hole['socket'] if band is None else _number(band, 'Mask band', 0, low_open=True)
-        radius = hole['lids']['eye_radius']
-        parts.append((level, center, mound, max(reach, 1.0), .5 * radius))
+        mound, radius = hole['mound'], hole['lids']['eye_radius']
+        parts.append((level, center, mound, reach, .5 * radius))
 
     def mask(vertex):
         weight = 1.0
@@ -1736,6 +1763,79 @@ def symmetric_offsets(vertices, center, radius, offset, mask=None):
     return soft_offset(vertices, center, radius, offset, mask), soft_offset(vertices, mirror_x(center), radius, mirror_x(offset), mask)
 
 
+def _lattice(i, j, k, seed):
+    """A repeatable pseudo-random value in [0, 1) for an integer lattice point."""
+    h = (i * 73856093) ^ (j * 19349663) ^ (k * 83492791) ^ (seed * 2654435761)
+    h = (h ^ (h >> 13)) * 1274126177 & 0xFFFFFFFF
+    return ((h ^ (h >> 16)) & 0xFFFFFF) / 0x1000000
+
+
+def _value_noise(point, scale, seed):
+    """Smooth 3D value noise in [0, 1] with features about `scale` meters apart."""
+    q = [c / scale for c in point]
+    cell = [math.floor(c) for c in q]
+    f = [c - n for c, n in zip(q, cell)]
+    w = [t * t * (3 - 2 * t) for t in f]
+    total = 0.0
+    for dx in (0, 1):
+        for dy in (0, 1):
+            for dz in (0, 1):
+                weight = (w[0] if dx else 1 - w[0]) * (w[1] if dy else 1 - w[1]) * (w[2] if dz else 1 - w[2])
+                total += weight * _lattice(cell[0] + dx, cell[1] + dy, cell[2] + dz, seed)
+    return total
+
+
+def skin_tints(vertices, base=(1.0, 1.0, 1.0), patches=(), mottle=None):
+    """Per-vertex skin paint: soft color patches and mottling, as tints that multiply the skin material's color.
+
+    `base` is the skin material's own color (an sRGB hex string such as '#f0c0a0',
+    or linear RGB). Each patch is a dict with `center` (x, y, z), `radius` (meters,
+    one number or an (x, y, z) triple), `color` (hex or linear: what the skin looks
+    like at the patch's middle) and optional `strength` (0..1, default 1); it fades
+    smoothly to nothing at its radius and patches are laid in order: blush on the
+    cheeks, lips, a lash line along the lid edge, shading in the sockets. `mottle`
+    ({'scale': meters between blotches, 'amount': darkest share, 'seed'}) darkens the
+    skin by up to `amount` in smooth, repeatable blotches. Returns one linear RGB tint
+    per vertex, each channel in 0..1 (a patch color brighter than `base` is rejected:
+    make the material the lightest skin tone). Put them on the mesh with
+    `paint_vertices(obj, tints)` and wire the material with `use_vertex_colors(mat)`;
+    glTF exports them as COLOR_0, which multiplies the base color in three.js and
+    Unreal (see the README for Unreal's material).
+    """
+    from agent_meshes_author import linear_color
+    base = linear_color(base)
+    vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    layers = []
+    for patch in patches:
+        center = _vector(patch.get('center'), 3, 'Patch center')
+        radius = patch.get('radius')
+        radii = _vector((radius,) * 3 if isinstance(radius, Real) and not isinstance(radius, bool) else radius, 3, 'Patch radius')
+        if min(radii) <= 0: raise ValueError('Patch radius must be positive')
+        color = linear_color(patch.get('color'))
+        tint = []
+        for c, b in zip(color, base):
+            if c > b + 1e-9: raise ValueError(f'Patch color {patch.get("color")!r} is brighter than the base in a channel: make the skin material the lightest tone')
+            tint.append(c / b if b > 0 else 1.0)
+        layers.append((center, radii, tuple(tint), _number(patch.get('strength', 1), 'Patch strength', 0, 1)))
+    if mottle is not None:
+        scale = _number(mottle.get('scale'), 'Mottle scale', 0, low_open=True)
+        amount = _number(mottle.get('amount', .05), 'Mottle amount', 0, 1)
+        seed = int(mottle.get('seed', 0))
+    result = []
+    for v in vertices:
+        tint = [1.0, 1.0, 1.0]
+        if mottle is not None:
+            shade = 1 - amount * _value_noise(v, scale, seed)
+            tint = [shade] * 3
+        for center, radii, color, strength in layers:
+            q = math.sqrt(sum(((v[k] - center[k]) / radii[k]) ** 2 for k in range(3)))
+            if q >= 1: continue
+            weight = strength * (1 - _smoothstep(0, 1, q))
+            tint = [t + weight * (c * t - t) for t, c in zip(tint, color)]
+        result.append(tuple(min(1.0, max(0.0, t)) for t in tint))
+    return result
+
+
 def _ellipsoid_distance(point, center, radii):
     """Approximate signed distance from a point to an axis-aligned ellipsoid (exact for a sphere; positive outside)."""
     d = _sub(point, center)
@@ -2042,23 +2142,32 @@ def front_surface(vertices, faces):
     return surface
 
 
-def cut_hole(vertices, faces, center, radius):
-    """Cut a smooth round (or elliptical) hole, for an eye or a mouth, into a skin mesh.
+def cut_hole(vertices, faces, center=None, radius=None, exponent=2, level=None):
+    """Cut a smooth hole, for an eye, a mouth or a robot's slot, into a skin mesh.
 
     Every face the sphere around `center` (or the ellipsoid, when `radius` is
     (rx, ry, rz)) crosses is clipped exactly at it: the outside part is kept, with
     new vertices where its edges cross the sphere, so the rim lies on the circle
     instead of in the stair steps `cut_faces` leaves, stays on the original surface,
-    and no vertex moves (nothing can fold). Faces wholly inside are removed. Returns
-    {'vertices', 'faces', 'mapping' (old index -> new or None), 'source' (new index
-    -> old, or None for a rim vertex), 'origin' (the source face of each face) and
-    'boundary' (the rim vertices)}.
+    and no vertex moves (nothing can fold). Faces wholly inside are removed.
+    `exponent` above 2 squares the hole off (a superellipsoid, |x/rx|^p + |y/ry|^p +
+    |z/rz|^p = 1: 8 gives a rounded rectangle, a letterbox mouth or a vent). Or pass
+    `level`, any function of a point that is negative inside the hole and positive
+    outside, for any other shape (the rim is found on its zero by bisection).
+    Returns {'vertices', 'faces', 'mapping' (old index -> new or None), 'source'
+    (new index -> old, or None for a rim vertex), 'origin' (the source face of each
+    face) and 'boundary' (the rim vertices)}.
     """
+    if level is not None:
+        if not callable(level): raise ValueError('level must be a function of a point (negative inside the hole)')
+        return _clip(vertices, faces, lambda p: float(level(p)))
+    if center is None or radius is None: raise ValueError('cut_hole needs a center and a radius, or a level function')
     center = _vector(center, 3, 'Hole center')
     radii = (radius,) * 3 if isinstance(radius, Real) and not isinstance(radius, bool) else radius
     radii = _vector(radii, 3, 'Hole radius')
     if min(radii) <= 0: raise ValueError('Hole radius must be positive')
-    return _clip(vertices, faces, lambda p: math.sqrt(sum(((p[k] - center[k]) / radii[k]) ** 2 for k in range(3))) - 1)
+    power = _number(exponent, 'Hole exponent', 2, 40)
+    return _clip(vertices, faces, lambda p: sum(abs((p[k] - center[k]) / radii[k]) ** power for k in range(3)) ** (1 / power) - 1)
 
 
 def _clip(vertices, faces, level, snap=0.0):
@@ -2129,7 +2238,8 @@ def exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw', roo
     skin below the mouth line, so the closed lips never cut it and the lower lip can
     drop away behind it. Styles as `teeth_row_geometry` ('saw' fangs, 'rounded' buck
     teeth, 'grille'); `sizes` gives (width, length) scales per tooth. Name the object
-    and material `teeth_upper`, bind it to `head`, and declare it in `exposedTeeth`.
+    and material `teeth_exposed` (`EXPOSED_TEETH_MATERIAL`), bind it to `head`, and
+    declare it: `face_contract(..., exposed_teeth=['teeth_exposed'])`.
     Returns vertices, faces, count and the measured `clearance`.
     """
     if not callable(surface): raise ValueError('surface must be a function (x, z) -> y, such as front_surface(...)')
@@ -3035,7 +3145,7 @@ def mesh_from_geometry(name, geometry, materials, smooth=True):
 
 
 def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_material=None, eye_materials=None,
-              iris=26, pupil=12, socket=True, margin=6, hole=None, **options):
+              iris=26, pupil=12, socket=True, margin=6, hole=None, slit=None, split_borders=False, **options):
     """Build one eye: an eyeball bound to `eye_L`/`eye_R`, lids (or shutters) with morphs, and a socket cup.
 
     `style='lid'` uses `lid_geometry`, `style='shutter'` uses `shutter_geometry`;
@@ -3049,7 +3159,9 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     `eyeBlink<Side>`, `eyeSquint<Side>` and `eyeWide<Side>` and is bound to `head`
     with the socket. The eyeball has three material slots named eye_white,
     eye_iris and eye_pupil; `eye_materials` overrides them, and the overrides must
-    keep those names (the ID render and the verifier find eyeballs by them).
+    keep those names exactly (the ID render and the verifier find eyeballs by them;
+    a Blender-renamed `eye_white.001` is rejected). `slit` and `split_borders` go to
+    `eyeball_geometry` (a slit pupil; iris vertices of its own for painted irises).
     Returns a dict with the objects and the lid geometry report (radii, clearance,
     squint ratio).
     """
@@ -3075,14 +3187,17 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     else: raise ValueError("Eye style must be 'lid' or 'shutter'")
     if eye_materials is not None:
         names = [getattr(m, 'name', m) for m in eye_materials]
-        if len(names) != 3 or any(not str(n).startswith(want) for n, want in zip(names, EYE_MATERIALS)):
-            raise ValueError(f'eye_materials must be three materials named {", ".join(EYE_MATERIALS)} (in that order), got {names}')
+        if len(names) != 3 or any(str(n) != want for n, want in zip(names, EYE_MATERIALS)):
+            renamed = [n for n, want in zip(names, EYE_MATERIALS) if str(n).startswith(want + '.')]
+            hint = (f'; Blender renamed {", ".join(map(str, renamed))} because a material of that name already existed: make the three '
+                    'materials once and pass the same list to both eyes') if renamed else ''
+            raise ValueError(f'eye_materials must be three materials named exactly {", ".join(EYE_MATERIALS)} (in that order), got {names}{hint}')
     materials = eye_materials or [
         _material(None, 'eye_white', (.9, .88, .84), roughness=.25),
         _material(None, 'eye_iris', (.05, .35, .45), roughness=.3),
         _material(None, 'eye_pupil', (.01, .01, .012), roughness=.2),
     ]
-    eyeball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris, pupil), materials)
+    eyeball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris, pupil, slit=slit, split_borders=split_borders), materials)
     bind_rigid(eyeball, rig, f'eye_{side}')
     lid_mat = _material(lid_material, 'lid', (.6, .36, .25), roughness=.55)
     lid_obj = mesh_from_geometry(f'lids_{side}', lids, [lid_mat], smooth=style == 'lid')
@@ -3096,7 +3211,9 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
             radius_s = (radius + lids['lower_radius']) / 2
             hole = eye_window(lids, margin)['polar_max'] + 4
         else:
-            radius_s = radius * 1.02
+            # Inside a shutter_hole's tube the housing lines the tube's back: a cup much narrower than a wide well
+            # would show its outside to oblique views past its rim (round 5: wells wider than ~1.25 eyeball radii).
+            radius_s = max(radius * 1.02, .97 * hole['radius']) if hole is not None else radius * 1.02
             hole = 80
         if style == 'shutter':
             cup = mesh_from_geometry(f'eye_housing_{side}', socket_geometry(center, radius, radius_s, hole),
@@ -3235,6 +3352,44 @@ def _sharp_edges(vertices, faces, angle):
     return [edge for edge, pair in owners.items() if len(pair) == 2 and _dot(normals[pair[0]], normals[pair[1]]) < limit]
 
 
+# The color attribute skin paint lives in; glTF exports it as COLOR_0 when a material uses it.
+PAINT_LAYER = 'tint'
+
+
+def paint_vertices(obj, tints, layer=PAINT_LAYER):
+    """Store per-vertex linear RGB tints (`skin_tints`) on a mesh object as a point color attribute; returns it.
+
+    Paint parts before `join_face_parts`, which carries every part's color
+    attributes into the joined face (unpainted parts get white, no tint).
+    """
+    tints = [_vector(t, 3, 'Tint') for t in tints]
+    if len(tints) != len(obj.data.vertices): raise ValueError('Paint needs one tint per vertex')
+    if any(c < 0 or c > 1 for t in tints for c in t): raise ValueError('Tints must be in 0..1')
+    attribute = obj.data.color_attributes.get(layer) or obj.data.color_attributes.new(layer, 'FLOAT_COLOR', 'POINT')
+    for item, tint in zip(attribute.data, tints): item.color = (*tint, 1.0)
+    obj.data.color_attributes.active_color = attribute
+    obj.data.color_attributes.render_color_index = obj.data.color_attributes.find(layer)
+    return attribute
+
+
+def use_vertex_colors(mat, layer=PAINT_LAYER):
+    """Wire a material so its base color is multiplied by the vertex tint (glTF COLOR_0 times baseColorFactor)."""
+    tree = mat.node_tree
+    shader = tree.nodes.get('Principled BSDF')
+    if shader is None: raise ValueError(f'Material {mat.name} has no Principled BSDF')
+    if any(link.to_socket == shader.inputs['Base Color'] for link in tree.links): return mat
+    color = tuple(shader.inputs['Base Color'].default_value)
+    attribute = tree.nodes.new('ShaderNodeVertexColor')
+    attribute.layer_name = layer
+    multiply = tree.nodes.new('ShaderNodeMix')
+    multiply.data_type, multiply.blend_type = 'RGBA', 'MULTIPLY'
+    multiply.inputs['Factor'].default_value = 1.0
+    tree.links.new(attribute.outputs['Color'], multiply.inputs[6])
+    multiply.inputs[7].default_value = color
+    tree.links.new(multiply.outputs[2], shader.inputs['Base Color'])
+    return mat
+
+
 def join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60):
     """Join every morph-bearing face part (skin, lids, teeth, tongue, cavity) into ONE mesh object.
 
@@ -3246,12 +3401,13 @@ def join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60):
     a key keep their rest shape in it. The parts are removed (keep the source
     recipe, not the objects); UV maps are not carried. With `rig`, the result is
     bound 100% to `bone`. Eyeballs stay separate: they move with their eye bones.
-    Edges where the surface turns by more than `sharp_angle` degrees (the fold from
+    Color attributes (skin paint from `paint_vertices`) are carried over, white where
+    a part has none. Edges where the surface turns by more than `sharp_angle` degrees (the fold from
     skin into an `eye_hole` wall, a lid's rim) are marked sharp, so smooth shading
     does not smear across them (None keeps every edge smooth).
     """
     import bpy
-    geometry, smooth = [], []
+    geometry, smooth, colors = [], [], []
     parts = [part for part in parts if part is not None]  # build_eye(hole=...) makes no socket
     for part in parts:
         if not isinstance(part, bpy.types.Object) or part.type != 'MESH': raise ValueError('Face parts must be Blender mesh objects')
@@ -3266,6 +3422,7 @@ def join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60):
             'morphs': morphs,
         })
         smooth += [p.use_smooth for p in part.data.polygons]
+        colors.append(_point_colors(part))
     joined = join_geometry(geometry)
     for part in parts: bpy.data.objects.remove(part, do_unlink=True)
     from agent_meshes_author import shape_key
@@ -3276,9 +3433,33 @@ def join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60):
         for edge in obj.data.edges:
             a, b = edge.vertices
             if (min(a, b), max(a, b)) in sharp: edge.use_edge_sharp = True
+    # Color attributes (skin paint): every part's, point domain, white where a part has none.
+    for layer in dict.fromkeys(name for part in colors for name in part):
+        attribute = obj.data.color_attributes.new(layer, 'FLOAT_COLOR', 'POINT')
+        values = [c for part, geo in zip(colors, geometry) for c in (part.get(layer) or [(1.0, 1.0, 1.0, 1.0)] * len(geo['vertices']))]
+        for item, value in zip(attribute.data, values): item.color = value
+        if layer == PAINT_LAYER or obj.data.color_attributes.active_color is None:
+            obj.data.color_attributes.active_color = attribute
+            obj.data.color_attributes.render_color_index = obj.data.color_attributes.find(layer)
     for morph, targets in joined['morphs'].items(): shape_key(obj, morph, targets)
     if rig is not None: bind_rigid(obj, rig, bone)
     return obj
+
+
+def _point_colors(obj):
+    """{name: one RGBA per vertex} for a mesh's color attributes (corner colors averaged onto their vertices)."""
+    result = {}
+    for attribute in obj.data.color_attributes:
+        if attribute.domain == 'POINT':
+            result[attribute.name] = [tuple(item.color) for item in attribute.data]
+        elif attribute.domain == 'CORNER':
+            sums = [[0.0, 0.0, 0.0, 0.0, 0] for _ in obj.data.vertices]
+            for loop, item in zip(obj.data.loops, attribute.data):
+                total = sums[loop.vertex_index]
+                for k in range(4): total[k] += item.color[k]
+                total[4] += 1
+            result[attribute.name] = [tuple(t[k] / t[4] for k in range(4)) if t[4] else (1.0, 1.0, 1.0, 1.0) for t in sums]
+    return result
 
 
 def collect_morph_names(objects):

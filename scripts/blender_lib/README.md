@@ -20,7 +20,10 @@ def build():
 ```
 
 `sweep_mesh(centers, radii, radial_segments=48, twist=None,
-initial_normal=None)` returns vertices and outward-wound faces with closed caps.
+initial_normal=None, closed=False)` returns vertices and outward-wound faces with
+closed caps; with `closed=True` the path is a loop (a collar, a ring, a rim): the
+last center joins the first (do not repeat it), there are no caps, and the frame's
+twist mismatch round the loop is spread over the rings so there is no seam.
 Centers are XYZ triples, radii are positive pairs, and twist is one angle in
 radians per ring. Parallel transport minimizes frame rotation along the path.
 Use the same explicit initial normal for every member of a morph family, so a
@@ -28,8 +31,13 @@ changing first tangent cannot select a different starting axis. The normal must
 not be parallel to the first tangent. Avoid cusps and self-intersecting paths;
 input validation cannot prove that an arbitrary sweep does not intersect itself.
 
-`material(name, color, metalness=0, roughness=.4)` takes **linear** RGB components,
-metalness and roughness in 0..1. `make_mesh(name, vertices, faces, material=None)`
+`material(name, color, metalness=0, roughness=.4, emission=None,
+emission_strength=1)` takes the color as an **sRGB hex string** (`'#e8a27c'`,
+straight from a concept sheet; `'#rgb'` works too) or as **linear** RGB components
+in 0..1, and metalness and roughness in 0..1. `emission` (hex or linear) makes it
+glow, such as a robot's lens glass or antenna bulb; glTF exports it as
+`emissiveFactor`, plus `KHR_materials_emissive_strength` when the strength is
+above 1. `linear_color(value)` does the hex conversion on its own. `make_mesh(name, vertices, faces, material=None)`
 creates a named mesh with smooth side faces and flat caps.
 
 `shape_key(obj, name, vertices)` creates a named 0..1 morph at an explicit zero
@@ -215,8 +223,13 @@ margin=6, hole=None, **options)` builds one eye (`side` is `'L'` or `'R'`, and
 - `eyeball_<side>`: a sphere whose poles lie on the gaze axis, with rings on the
   iris and pupil borders and three material slots `eye_white`, `eye_iris`,
   `eye_pupil`, bound 100% to `eye_<side>` (`eyeball_geometry`). `eye_materials`
-  overrides them and **must keep those three names in that order** (the ID render
-  and the verifier find eyeballs by them); other names are rejected.
+  overrides them and **must keep those three names exactly, in that order** (the ID
+  render and the verifier find eyeballs by them); other names are rejected,
+  including a Blender-renamed `eye_white.001` (make the materials once, outside the
+  per-eye loop, and pass the same list to both eyes). `slit=.3` makes a slit pupil
+  (as tall as `pupil`, 30% as wide) and `split_borders=True` gives the iris its own
+  vertices at both borders, so a painted iris gradient does not bleed into the
+  white.
 - `lids_<side>`: the lids with `eyeBlink<Side>`, `eyeSquint<Side>` and
   `eyeWide<Side>` shape keys, bound to `head`. `options` go to `lid_geometry`
   (`style='lid'`) or `shutter_geometry` (`style='shutter'`). With `hole` (an
@@ -224,7 +237,9 @@ margin=6, hole=None, **options)` builds one eye (`side` is `'L'` or `'R'`, and
   lid options to `eye_hole`, not here.
 - The part behind the eye: a lid eye with `hole` gets none (`socket` is None): the
   hole's lining seals the eye. A shutter eye gets `eye_housing_<side>`, a cup in the
-  blades' material, a bezel you may see around the lens when the blades open. A lid
+  blades' material, a bezel you may see around the lens when the blades open; inside
+  a `shutter_hole` tube it is as wide as the tube (a cup 1.02 lens radii wide in a
+  wider well showed its outside past its rim, the round-5 `socket=False` workaround). A lid
   eye without `hole` gets `eye_socket_<side>`, a dark cup opening past
   `eye_window(lids, margin)` (the legacy `cut_hole` path: the verifier's
   `eye-oblique` check fails it wherever it shows).
@@ -288,7 +303,9 @@ reshaped (where a brow ridge starts looking for the skin on a mounded eye).
 lining still: a strong brow offset drags the rim over its wall and folds the skin
 there. Pass `mask=eye_hole_mask(*holes)` to their `soft_offset` or
 `symmetric_offsets`: 0 on the rim and everything inside the mound, rising smoothly
-over the socket band and half an eyeball radius. The worked examples do this.
+over `band` degrees outside the window (`MASK_BAND`, 20, whatever the hole's
+`socket`; round 5 used the socket band, so a hole cut with `socket=0` masked out
+every skin shape) and half an eyeball radius. The worked examples do this.
 
 ```python
 holes = {}
@@ -529,8 +546,11 @@ rest. **It returns a 3-tuple** `(vertices, faces, mapping)`, where `mapping[old]
 is the new index or None. Its rim follows the mesh's faces, so a round hole comes
 out stair-stepped.
 
-`cut_hole(vertices, faces, center, radius)` cuts a smooth round (or elliptical,
-when `radius` is (rx, ry, rz)) hole: every face the sphere crosses is clipped
+`cut_hole(vertices, faces, center, radius, exponent=2, level=None)` cuts a smooth
+round (or elliptical, when `radius` is (rx, ry, rz)) hole; `exponent` above 2
+squares it off into a rounded rectangle (8: a letterbox mouth or a vent), and
+`level` takes any function of a point, negative inside the hole, for any other
+shape. The hole: every face the sphere crosses is clipped
 exactly at it, so the rim lies on the circle, stays on the original surface and no
 vertex moves. **It returns a dict** `{'vertices', 'faces', 'mapping'` (old index ->
 new or None)`, 'source'` (new index -> old, None for a rim vertex)`, 'origin'` (the
@@ -642,6 +662,36 @@ vertex near a shape moves out along the skin's normal onto the union's surface,
 after the skin there is refined to edges of at most `max_edge` (a sixth of the
 smallest radius). Run it on the blank before `eye_hole`, `slit_mouth` and the
 shape keys.
+
+### Skin paint: `skin_tints`, `paint_vertices`, `use_vertex_colors`
+
+Blush, lips, lash lines, socket shading and mottling are vertex tints that
+multiply the skin material's color. `skin_tints(vertices, base, patches=[...],
+mottle={'scale', 'amount', 'seed'})` computes one linear RGB tint per vertex:
+`base` is the skin material's color (hex or linear); each patch is a dict with
+`center`, `radius` (one number or an (x, y, z) triple), `color` (what the skin
+looks like at its middle; never brighter than `base`, so make the material the
+lightest tone) and `strength`, fading smoothly to nothing at its radius; `mottle`
+darkens the skin by up to `amount` in smooth, repeatable blotches `scale` meters
+apart. `paint_vertices(obj, tints, layer='tint')` stores them as a point color
+attribute and `use_vertex_colors(mat, layer='tint')` multiplies the material's
+base color by it. `join_face_parts` carries every part's color attributes into
+the joined face (white, no tint, where a part has none), so paint each part
+before joining; nothing has to be re-applied by vertex order.
+
+```python
+paint_vertices(head, skin_tints(rest, base=SKIN, mottle={'scale': .006, 'amount': .05},
+               patches=[{'center': cheek, 'radius': (.016, .01, .011), 'color': (.68, .17, .12), 'strength': .7}]))
+use_vertex_colors(skin)
+```
+
+glTF exports the tints as `COLOR_0`, which multiplies `baseColorFactor`. three.js
+does this for any primitive with `COLOR_0`. Unreal's Interchange import keeps them
+as the skeletal mesh's vertex colors (`verify-unreal` reports `hasVertexColors`),
+and the glTF material it makes instances `/InterchangeAssets/gltf/M_Default`, whose
+`MF_BaseColor` function multiplies the base color by the vertex color, so the
+paint shows with no material work. A hand-made Unreal material has to multiply
+its base color by a `VertexColor` node itself.
 
 ### Small parts on the skin: `attach_to_skin` and `skin_contact`
 

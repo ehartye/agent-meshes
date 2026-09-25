@@ -5,7 +5,7 @@ build() asserts wrapper behavior inside Blender, then returns a small joined fac
 import json
 from agent_meshes_author import (
     EXTRAS_PROPERTY, SEAM_ATTRIBUTE, JawHinge, add_jaw_open, chin_drop, build_eye, ellipsoid_geometry, eye_hole, face_contract_extras, face_skeleton,
-    join_face_parts, material, mesh_from_geometry, set_face_contract, shape_key, slit_mouth, ARKIT_REQUIRED,
+    join_face_parts, material, mesh_from_geometry, paint_vertices, use_vertex_colors, set_face_contract, shape_key, slit_mouth, ARKIT_REQUIRED,
 )
 
 
@@ -18,6 +18,11 @@ def rejects(call, text):
         raise AssertionError(f'Expected a rejection mentioning {text!r}')
 
 
+def bpy_data_materials_remove(mat):
+    import bpy
+    bpy.data.materials.remove(mat)
+
+
 def build():
     rig = face_skeleton((0, 0, .09), (.03, -.07, .14), (-.03, -.07, .14), name='Face rig')
     assert [b.name for b in rig.data.bones] == ['head', 'eye_L', 'eye_R']
@@ -27,6 +32,8 @@ def build():
     rejects(lambda: build_eye(rig, 'X', (.03, -.07, .14), .012), 'side')
     # Eye material overrides must keep the names the ID render and the verifier look for.
     rejects(lambda: build_eye(rig, 'L', (.03, -.07, .14), .012, eye_materials=[material('white', (1, 1, 1)), material('eye_iris', (0, 0, 1)), material('eye_pupil', (0, 0, 0))]), 'eye_white')
+    # A second material('eye_white') becomes 'eye_white.001' in Blender, which the ID render does not know: rejected.
+    rejects(lambda: build_eye(rig, 'L', (.03, -.07, .14), .012, eye_materials=[material('eye_white', (1, 1, 1)), material('eye_iris', (0, 0, 1)), material('eye_pupil', (0, 0, 0))]), 'renamed')
     # build_eye reuses an eye_hole's lids: lid options belong to eye_hole, and the hole must be this eye's.
     blank_hole = eye_hole(ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=32, segments=48)['vertices'],
                           ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=32, segments=48)['faces'], (.03, -.07, .14), .012)
@@ -35,6 +42,14 @@ def build():
     rejects(lambda: build_eye(rig, 'L', (.03, -.07, .14), .012, style='shutter', hole=blank_hole), 'shutters')
 
     skin_material = material('skin', (.6, .4, .3))
+    # sRGB hex colors and emission (Bolt's lens glass, antenna bulb).
+    glow = material('lens_glass', '#88ccff', emission='#ffaa00', emission_strength=2)
+    shader = glow.node_tree.nodes['Principled BSDF']
+    assert abs(shader.inputs['Base Color'].default_value[0] - .2462) < 1e-3, tuple(shader.inputs['Base Color'].default_value)
+    emission = shader.inputs.get('Emission Color') or shader.inputs.get('Emission')
+    assert abs(emission.default_value[0] - 1) < 1e-6 and abs(emission.default_value[1] - .402) < 1e-3, tuple(emission.default_value)
+    assert shader.inputs['Emission Strength'].default_value == 2
+    bpy_data_materials_remove(glow)
     blank = ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=32, segments=48)
     skin = mesh_from_geometry('skin', blank, [skin_material])
     before = len(skin.data.vertices)
@@ -78,8 +93,16 @@ def build():
     eyes = [build_eye(rig, side, center, .012) for side, center in (('L', (.03, -.07, .14)), ('R', (-.03, -.07, .14)))]
     parts = [skin, teeth] + [e['lids'] for e in eyes] + [e['socket'] for e in eyes]
     counts = sum(len(p.data.vertices) for p in parts)
+    # Skin paint rides through the join: painted parts keep their tints, the others come out white.
+    paint_vertices(skin, [(.5, .6, .7)] * len(skin.data.vertices))
+    use_vertex_colors(skin_material)
+    assert parts[0] is skin
+    painted = len(skin.data.vertices)  # the skin comes first in the joined face
     face = join_face_parts(parts, 'face', rig=rig)
     assert len(face.data.vertices) == counts
+    tint = face.data.color_attributes['tint'].data
+    assert all(abs(tint[i].color[1] - .6) < 1e-6 for i in range(painted)), 'the skin keeps its paint'
+    assert tuple(tint[len(tint) - 1].color) == (1.0, 1.0, 1.0, 1.0), 'unpainted parts are white'
     names = [k.name for k in face.data.shape_keys.key_blocks[1:]]
     assert set(ARKIT_REQUIRED) <= set(names) and len(names) == len(set(names)), names
     assert [m.name for m in face.data.materials] == ['skin', 'teeth_lower', 'lid', 'eye_socket'], [m.name for m in face.data.materials]

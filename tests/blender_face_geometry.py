@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blende
 import agent_meshes_author
 from agent_meshes_face import _clip, _quality, _refine, _sharp_edges
 from agent_meshes_face import (
-    DEFAULT_LID_FOLLOW, attach_to_skin, nose_geometry, prune_glb_morphs, sculpt_lips, sculpt_skin, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
+    DEFAULT_LID_FOLLOW, attach_to_skin, nose_geometry, prune_glb_morphs, sculpt_lips, sculpt_skin, skin_tints, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
     ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
     eye_coverage, eye_coverage_problems, brow_plate_geometry, split_plates, rubber_mouth_geometry,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
@@ -353,6 +353,28 @@ class EyeballTests(unittest.TestCase):
             if slot == 2: self.assertGreater(front, math.cos(math.radians(12)) - 1e-9)
             if slot == 0: self.assertLess(front, math.cos(math.radians(26)) + 1e-9)
 
+    def test_a_slit_pupil_is_tall_and_narrow(self):
+        eye = eyeball_geometry(CENTER, RADIUS, iris=30, pupil=14, slit=.3)
+        pupil = {i for f, m in zip(eye['faces'], eye['material_indices']) if m == 2 for i in f}
+        width = max(eye['vertices'][i][0] for i in pupil) - min(eye['vertices'][i][0] for i in pupil)
+        height = max(eye['vertices'][i][2] for i in pupil) - min(eye['vertices'][i][2] for i in pupil)
+        self.assertAlmostEqual(height, 2 * RADIUS * math.sin(math.radians(14)), delta=1e-4)
+        self.assertLess(width, .4 * height)
+        closed_and_consistent(self, eye['vertices'], eye['faces'])
+        with self.assertRaises(ValueError): eyeball_geometry(CENTER, RADIUS, slit=0)
+
+    def test_split_borders_keep_iris_paint_out_of_the_white(self):
+        eye = eyeball_geometry(CENTER, RADIUS, split_borders=True)
+        by_slot = [{i for f, m in zip(eye['faces'], eye['material_indices']) if m == slot for i in f} for slot in range(3)]
+        self.assertFalse(by_slot[0] & by_slot[1], 'white and iris share no vertex')
+        self.assertFalse(by_slot[1] & by_slot[2], 'iris and pupil share no vertex')
+        # The seams are closed in space: every border vertex has a twin at the same place on the other side.
+        white = [eye['vertices'][i] for i in by_slot[0]]
+        for i in by_slot[1]:
+            v = eye['vertices'][i]
+            if abs(distance(v, CENTER) - RADIUS) < 1e-9 and math.degrees(math.acos(-(v[1] - CENTER[1]) / RADIUS)) > 25.9:
+                self.assertTrue(any(distance(v, w) < 1e-12 for w in white))
+
     def test_socket_cup_sits_between_eyeball_and_lids(self):
         socket = socket_geometry(CENTER, RADIUS, radius=.0135, hole=55)
         for vertex in socket['vertices']:
@@ -573,6 +595,24 @@ class SurfaceFitTests(unittest.TestCase):
             v = ellipse['vertices'][i]
             self.assertAlmostEqual(sum(((v[k] - eye[k]) / r) ** 2 for k, r in enumerate((.02, .03, .015))), 1, delta=1e-6)
 
+
+    def test_cut_hole_cuts_rounded_boxes_and_any_level_function(self):
+        head = ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=48, segments=64)
+        center, radii = (0, -.09, .07), (.025, .03, .006)
+        # A robot's letterbox mouth: a superellipse, as square as the exponent makes it.
+        box = cut_hole(head['vertices'], head['faces'], center, radii, exponent=8)
+        level = lambda v: sum(abs((v[k] - center[k]) / radii[k]) ** 8 for k in range(3)) ** (1 / 8)
+        self.assertGreater(len(box['boundary']), 12)
+        for i in box['boundary']: self.assertAlmostEqual(level(box['vertices'][i]), 1, delta=1e-6)
+        corners = [box['vertices'][i] for i in box['boundary'] if abs(box['vertices'][i][0] - center[0]) > .02]
+        self.assertTrue(any(abs(v[2] - center[2]) > .0045 for v in corners), 'square corners, not an ellipse')
+        # Any shape: a level function that is negative inside the hole.
+        slot = cut_hole(head['vertices'], head['faces'], level=lambda v: max(abs(v[0]) / .02, abs(v[2] - .07) / .004) - 1 if v[1] < 0 else 1)
+        for i in slot['boundary']:
+            v = slot['vertices'][i]
+            self.assertAlmostEqual(max(abs(v[0]) / .02, abs(v[2] - .07) / .004), 1, delta=1e-6)
+        with self.assertRaises(ValueError): cut_hole(head['vertices'], head['faces'], center)
+        with self.assertRaises(ValueError): cut_hole(head['vertices'], head['faces'], center, radii, exponent=1)
 
 class BrowTests(unittest.TestCase):
     """brow_ridge_geometry lays a heavy ridge on the skin over an eye in a dome (Mossjaw's brow is his ridge)."""
@@ -1024,6 +1064,17 @@ class EyeHoleTests(unittest.TestCase):
         self.assertEqual(mask((.03, -.07, .06)), 1.0, 'the face far from the eye (the cheek by the mouth) moves freely')
         self.assertTrue([v for v in vertices if 0 < mask(v) < 1], 'the mask fades in smoothly')
 
+    def test_the_mask_band_does_not_depend_on_the_socket(self):
+        # Round 5: the band followed `socket`, so a hole cut with socket=0 masked out every skin shape completely.
+        hole = self.hole(socket=0)
+        mask = eye_hole_mask(hole)
+        self.assertEqual(mask((.03, -.07, .06)), 1.0, 'the cheek by the mouth moves freely')
+        self.assertTrue([v for v in hole['vertices'] if 0 < mask(v) < 1], 'the mask still fades in')
+        normal = self.hole()
+        default, twenty = eye_hole_mask(normal), eye_hole_mask(normal, band=20)
+        self.assertTrue(all(default(v) == twenty(v) for v in normal['vertices'][::7]))
+        with self.assertRaises(ValueError): eye_hole_mask(hole, band=1)
+
     def test_refinement_splits_long_edges_near_the_eye_without_cracks_or_slivers(self):
         blank = ellipsoid_geometry(*self.HEAD, rings=24, segments=32)
         near = lambda p: math.dist(p, self.EYE) < .03
@@ -1457,6 +1508,41 @@ class GlbMorphPruneTests(unittest.TestCase):
             once = path.read_bytes()
             prune_glb_morphs(path)
             self.assertEqual(path.read_bytes(), once)
+
+
+class SkinPaintTests(unittest.TestCase):
+    """skin_tints paints soft patches and mottling as per-vertex tints that multiply the skin material's color."""
+
+    def test_patches_blend_softly_to_their_color_over_the_base(self):
+        base = '#f0c0a0'
+        blush = {'center': (.04, -.07, .12), 'radius': .015, 'color': '#e89080', 'strength': 1}
+        points = [(.04, -.07, .12), (.04 + .0075, -.07, .12), (.04 + .015, -.07, .12), (.2, 0, 0)]
+        tints = skin_tints(points, base=base, patches=[blush])
+        from agent_meshes_author import linear_color
+        b, c = linear_color(base), linear_color('#e89080')
+        for k in range(3): self.assertAlmostEqual(tints[0][k] * b[k], c[k], places=6, msg='the full color at the center')
+        self.assertEqual(tints[2], (1.0, 1.0, 1.0), 'nothing at the radius')
+        self.assertEqual(tints[3], (1.0, 1.0, 1.0))
+        self.assertTrue(all(tints[0][k] < tints[1][k] < 1 for k in range(3)), 'half way is half blended')
+        # Ellipsoidal radii and partial strength.
+        soft = skin_tints(points[:1], base=base, patches=[dict(blush, radius=(.02, .01, .01), strength=.5)])[0]
+        for k in range(3): self.assertAlmostEqual(soft[k], 1 + .5 * (c[k] / b[k] - 1), places=6)
+
+    def test_mottling_varies_brightness_smoothly_and_repeatably(self):
+        points = [(x * .001, -.08, .1) for x in range(60)]
+        tints = skin_tints(points, mottle={'scale': .01, 'amount': .08, 'seed': 3})
+        self.assertEqual(tints, skin_tints(points, mottle={'scale': .01, 'amount': .08, 'seed': 3}))
+        self.assertNotEqual(tints, skin_tints(points, mottle={'scale': .01, 'amount': .08, 'seed': 4}))
+        values = [t[0] for t in tints]
+        self.assertTrue(all(.92 - 1e-9 <= v <= 1 for v in values))
+        self.assertGreater(max(values) - min(values), .02, 'it varies')
+        self.assertLess(max(abs(a - b) for a, b in zip(values, values[1:])), .02, 'smoothly: 1 mm apart differ little')
+
+    def test_rejects_a_color_brighter_than_the_base_and_bad_patches(self):
+        with self.assertRaisesRegex(ValueError, 'brighter'):
+            skin_tints([(0, 0, 0)], base='#808080', patches=[{'center': (0, 0, 0), 'radius': .01, 'color': '#ffffff'}])
+        with self.assertRaises(ValueError): skin_tints([(0, 0, 0)], patches=[{'center': (0, 0, 0), 'radius': 0, 'color': '#000'}])
+        with self.assertRaises(ValueError): skin_tints([(0, 0, 0)], mottle={'scale': 0, 'amount': .1})
 
 if __name__ == '__main__':
     unittest.main()

@@ -192,6 +192,8 @@ export function parseUnrealLog(text: string): ParsedUnrealLog {
 
 export interface UnrealSkeletalMeshFacts {
   path: string; skeleton: string | null; morphTargets: string[]; bones: string[]; lods: number; vertices: number[]; materialSlots?: number;
+  /** Whether the import kept vertex colors (COLOR_0, skin paint), and each slot's material and base material. */
+  hasVertexColors?: boolean | null; materials?: ({ name: string; base?: string } | null)[];
   /** The mesh's reference skeleton: each bone mapped to its parent bone, null for the root. */
   boneParents?: Record<string, string | null>;
   /** Why `boneParents` could not be read. */

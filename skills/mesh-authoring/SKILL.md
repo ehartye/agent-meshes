@@ -78,6 +78,8 @@ A **talking head or any face with blendshapes** (blink, squint, gaze, emotions, 
 teeth) is not a recipe or a JSON-operations model: author it in Blender with the face-rig
 helpers and check it against the `arkit-face/1` contract. Read the face-rig section of
 [mesh-rigging](../mesh-rigging/SKILL.md) first.
+In Blender sources, `material(name, '#e8a27c', emission='#ffaa00')` takes sRGB hex colors straight
+from a concept sheet (or linear tuples) and can glow (lens glass, a bulb).
 
 `recipe`, `state`, `save` and `open` print the whole project (a recipe is a few hundred kilobytes
 of JSON on one line). Redirect that output to a file or trim it. `inspect` without a selector is

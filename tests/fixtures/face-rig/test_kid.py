@@ -4,14 +4,14 @@ It is the P1a round-5 critic's "Pim", written from the docs, with the two gaps i
 `skin_brow_geometry(head, side, ..., hole=...)`, which lays each brow on the skin along its normal in every pose (the
 round-5 brow stood 0.76 mm off the skin), and the nose is `nose_geometry`, a smooth-union ball with nostril dimples
 fused into the skin that rides noseSneer (a soft_offset sculpt at this resolution came out as a spike). Its mouth has
-soft lips and a lip line (`sculpt_lips`), and `slit_mouth` leaves no sliver row to shade as a seam across the face.
+soft lips and a lip line (`sculpt_lips`), skin paint (`skin_tints`: blush, lips, socket shading, mottling), and `slit_mouth` leaves no sliver row to shade as a seam across the face.
 Build: node scripts/agent-meshes.mjs build <a build.json whose blender.script is this file>
 Blender coordinates: Z up, meters, the face looks down -Y, character left is +X.
 """
 from agent_meshes_author import (
     JawHinge, add_jaw_open, attach_to_skin, build_eye, cut_faces, ellipsoid_geometry, exposed_teeth_geometry, eye_hole,
     eye_hole_mask, face_contract, face_skeleton, front_surface, join_face_parts, join_geometry, material, mesh_from_geometry,
-    mouth_cavity_geometry, nose_geometry, sculpt_lips, recommended_gaze, shape_key, skin_brow_geometry, slit_mouth, soft_offset,
+    mouth_cavity_geometry, nose_geometry, sculpt_lips, paint_vertices, recommended_gaze, shape_key, skin_brow_geometry, skin_tints, use_vertex_colors, slit_mouth, soft_offset,
     symmetric_offsets, teeth_row_geometry, tongue_geometry,
 )
 
@@ -22,10 +22,11 @@ EYE_R = (-EYE_L[0], EYE_L[1], EYE_L[2])
 MOUTH_Z, MOUTH_HW = .088, .021
 OPENING = (46, 40, 30)
 NOSE_TIP, NOSE_SIZE = (0, .118), (.0105, .0095, .009)
+SKIN = (.7, .3, .16)
 
 
 def build():
-    skin = material('skin', (.7, .3, .16), roughness=.55)
+    skin = material('skin', SKIN, roughness=.55)
     rig = face_skeleton(head=(0, 0, .1), eye_left=EYE_L, eye_right=EYE_R, name='Face rig')
 
     blank = ellipsoid_geometry(HEAD_CENTER, HEAD_RADII, rings=56, segments=72)
@@ -46,6 +47,14 @@ def build():
     head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces, 'material_indices': indices}, [skin, nostril])
     slit_mouth(head, MOUTH_Z, MOUTH_HW)
     rest = [tuple(v.co) for v in head.data.vertices]
+    # Skin paint (vertex tints that multiply the skin color, glTF COLOR_0): blush, warm lips, shaded sockets, mottling.
+    lips_front = front_surface(vertices, faces)(0, MOUTH_Z)
+    paint_vertices(head, skin_tints(rest, base=SKIN, mottle={'scale': .006, 'amount': .05, 'seed': 7}, patches=[
+        *({'center': (x, front_surface(vertices, faces)(x, .118), .118), 'radius': (.016, .01, .011), 'color': (.68, .17, .12), 'strength': .7} for x in (.042, -.042)),
+        {'center': (0, lips_front, MOUTH_Z - .001), 'radius': (.022, .008, .0065), 'color': (.56, .14, .1), 'strength': 1},
+        *({'center': eye, 'radius': .026, 'color': (.56, .22, .12), 'strength': .5} for eye in (EYE_L, EYE_R)),
+    ]))
+    use_vertex_colors(skin)
 
     still = eye_hole_mask(*holes.values())
     my = front(0, MOUTH_Z)
