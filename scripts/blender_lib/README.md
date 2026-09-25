@@ -98,8 +98,8 @@ or `MORPH_NORMAL_EPSILON` (1e-4) become zero, and a target with few moving
 vertices becomes a sparse accessor (an all-zero one keeps a single explicit zero:
 Unreal's importer drops a primitive whose target accessor has no data at all),
 with POSITION min/max recomputed. `verify-unreal` imports the result intact. Base attributes, indices, images and
-animation are copied untouched. The face fixtures shrink by 40-45% (the
-talking-head test head from 1.64 to 0.98 MB).
+animation are copied untouched. The face fixtures shrink by about 40% (the
+talking-head test head from 1.64 to 1.04 MB).
 
 `bind_skin(mesh, armature, weights)` binds an authored mesh to existing deform
 bones and returns its new Armature modifier. Supply a dense list/tuple with one
