@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blende
 import agent_meshes_author
 from agent_meshes_face import _clip, _quality, _refine, _sharp_edges
 from agent_meshes_face import (
-    DEFAULT_LID_FOLLOW, attach_to_skin, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
+    DEFAULT_LID_FOLLOW, attach_to_skin, nose_geometry, sculpt_lips, sculpt_skin, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
     ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
     eye_coverage, eye_coverage_problems, brow_plate_geometry, split_plates, rubber_mouth_geometry,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
@@ -1080,26 +1080,281 @@ class ShutterHoleTests(unittest.TestCase):
 
 
 class SkinBrowTests(unittest.TestCase):
-    def test_a_brow_lies_on_the_skin_and_slides_over_it(self):
-        head = ellipsoid_geometry((0, 0, .12), (.092, .086, .104), rings=40, segments=56)
-        front = front_surface(head['vertices'], head['faces'])
-        left = skin_brow_geometry(front, 'L', inner=(.02, .167), outer=(.054, .164))
-        right = skin_brow_geometry(front, 'R', inner=(.02, .167), outer=(.054, .164))
-        self.assertEqual(sorted(left['morphs']), ['browDownLeft', 'browInnerUp', 'browOuterUpLeft'])
-        self.assertEqual(sorted(right['morphs']), ['browDownRight', 'browInnerUp', 'browOuterUpRight'])
-        closed_and_consistent(self, left['vertices'], left['faces'])
-        self.assertGreater(signed_volume(left['vertices'], left['faces']), 0)
-        for a, b in zip(left['vertices'], right['vertices']): self.assertAlmostEqual(a[0], -b[0])
-        for name, target in [('rest', left['vertices'])] + list(left['morphs'].items()):
-            with self.subTest(pose=name):
-                for x, y, z in target:
-                    skin = front(x, z)
-                    self.assertIsNotNone(skin)
-                    self.assertLess(y, skin, 'the brow stays in front of the forehead')
-        down = left['morphs']['browDownLeft']
-        self.assertLess(down[0][2], left['vertices'][0][2] - .003, 'browDown lowers the inner end')
-        with self.assertRaises(ValueError): skin_brow_geometry(front, 'X', (.02, .167), (.054, .164))
+    """skin_brow_geometry lays a kid's brow on the skin along its normal, sunk at the edges, in every pose."""
+    # The round-5 critic's Pip-like head: a round face, big lidded eyes in eye holes, brows over the socket dip.
+    HEAD, EYE, R, OPENING = ((0, 0, .13), (.088, .085, .11)), (.034, -.066, .152), .017, (46, 40, 30)
 
+    def skin(self, morphs=True, masked=True):
+        blank = ellipsoid_geometry(*self.HEAD, rings=56, segments=72)
+        vertices, faces = blank['vertices'], blank['faces']
+        holes = {}
+        for side, eye in (('L', self.EYE), ('R', mirror_x(self.EYE))):
+            holes[side] = eye_hole(vertices, faces, eye, self.R, opening=self.OPENING)
+            vertices, faces = holes[side]['vertices'], holes[side]['faces']
+        skin = {'vertices': vertices, 'faces': faces}
+        if morphs:
+            front = front_surface(vertices, faces)
+            still = eye_hole_mask(*holes.values()) if masked else None
+            down = symmetric_offsets(vertices, (.03, front(.03, .182), .182), .018, (0, -.001, -.004), mask=still)
+            outer = symmetric_offsets(vertices, (.048, front(.048, .182), .182), .016, (0, 0, .004), mask=still)
+            skin['morphs'] = {'browDownLeft': down[0], 'browDownRight': down[1], 'browOuterUpLeft': outer[0], 'browOuterUpRight': outer[1],
+                              'browInnerUp': soft_offset(vertices, (0, front(0, .18), .18), (.03, .02, .016), (0, 0, .004), mask=still)}
+        return skin, holes
+
+    def assert_on_skin(self, brow, skin, hole):
+        # Judged as the verifier does: against the skin and the lids.
+        offset = len(skin['vertices'])
+        lids = list(hole['lids']['vertices'])
+        surface = {'vertices': skin['vertices'] + lids, 'faces': skin['faces'] + [tuple(i + offset for i in f) for f in hole['lids']['faces']],
+                   'morphs': {name: list(targets) + lids for name, targets in (skin.get('morphs') or {}).items()}}
+        contact = skin_contact(brow, surface)
+        self.assertLessEqual(contact['gap'], .0005, 'at rest every slice touches the skin')
+        self.assertEqual(contact['floating'], 0)
+        self.assertGreater(contact['visible'], .3, 'the brow stands proud of the skin')
+        for name, pose in contact['poses'].items():
+            with self.subTest(pose=name):
+                self.assertLessEqual(pose['gap'], .0005, name)
+                self.assertGreater(pose['visible'], .5 * contact['visible'], f'{name} keeps the brow above the skin')
+        return contact
+
+    def test_a_brow_lies_on_the_skin_at_rest_and_in_every_pose(self):
+        skin, holes = self.skin()
+        # The critic's placements: every one floated 0.53-0.92 mm with the round-5 brow.
+        placements = (((.013, .178), (.05, .181), {}), ((.013, .178), (.05, .181), {'height': .0045, 'thickness': .002}),
+                      ((.013, .170), (.05, .172), {}), ((.013, .19), (.05, .192), {}), ((.012, .178), (.04, .18), {}))
+        for inner, outer, options in placements:
+            with self.subTest(inner=inner, outer=outer, **options):
+                left = skin_brow_geometry(skin, 'L', inner=inner, outer=outer, hole=holes['L'], **options)
+                self.assertEqual(sorted(left['morphs']), ['browDownLeft', 'browInnerUp', 'browOuterUpLeft'])
+                closed_and_consistent(self, left['vertices'], left['faces'])
+                self.assertGreater(signed_volume(left['vertices'], left['faces']), 0)
+                self.assert_on_skin(left, skin, holes['L'])
+                self.assertLessEqual(left['contact']['gap'], .0005)
+
+    def test_the_cross_section_follows_the_skin_normal_and_stands_proud(self):
+        skin, holes = self.skin(morphs=False)
+        left = skin_brow_geometry(skin, 'L', inner=(.013, .178), outer=(.05, .181), thickness=.002, hole=holes['L'])
+        self.assertLessEqual(skin_contact({'vertices': left['vertices'], 'faces': left['faces']}, skin)['gap'], .0005)
+        # The outer end, where the forehead turns sideways, does not stand off as a tab: no vertex lies further off the
+        # skin than the brow's own thickness, and the edges sink into it.
+        from agent_meshes_face import _SkinIndex
+        index = _SkinIndex(skin['vertices'], skin['faces'])
+        heights = [index.nearest(v, limit=.02)[0] for v in left['vertices']]
+        self.assertLessEqual(max(heights), .002 + 1e-4, 'no part of the brow stands further off the skin than its thickness')
+        self.assertGreater(max(heights), .0014, 'the brow is a visible bump')
+        self.assertLess(min(heights), 0, 'its edges sink into the skin')
+
+    def test_brow_morphs_slide_the_brow_and_carry_the_skin_shapes(self):
+        skin, holes = self.skin()
+        left = skin_brow_geometry(skin, 'L', inner=(.013, .178), outer=(.05, .181), hole=holes['L'])
+        right = skin_brow_geometry(skin, 'R', inner=(.013, .178), outer=(.05, .181), hole=holes['R'])
+        self.assertEqual(sorted(right['morphs']), ['browDownRight', 'browInnerUp', 'browOuterUpRight'])
+        for a, b in zip(left['vertices'], right['vertices']):
+            for k in range(3): self.assertAlmostEqual(a[k], mirror_x(b)[k], delta=3e-4)
+        rest = left['vertices']
+        inner = min(range(len(rest)), key=lambda i: rest[i][0])
+        outer = max(range(len(rest)), key=lambda i: rest[i][0])
+        down = left['morphs']['browDownLeft']
+        self.assertLess(down[inner][2], rest[inner][2] - .0035, 'browDown lowers the inner end')
+        self.assertLess(down[inner][0], rest[inner][0] - .0015, 'browDown knits the inner end toward the nose')
+        # Over the skin's own browDown shape (4 mm down at x = 30 mm, unmasked here) the brow rides it on top of its own slide.
+        bare_skin, bare_holes = self.skin(morphs=False)
+        bare = skin_brow_geometry(bare_skin, 'L', inner=(.013, .178), outer=(.05, .181), hole=bare_holes['L'])
+        shaped_skin, shaped_holes = self.skin(masked=False)
+        shaped = skin_brow_geometry(shaped_skin, 'L', inner=(.013, .178), outer=(.05, .181), hole=shaped_holes['L'])
+        self.assert_on_skin(shaped, shaped_skin, shaped_holes['L'])
+        middle = min(range(len(rest)), key=lambda i: abs(rest[i][0] - .03))
+        drop = lambda brow: brow['morphs']['browDownLeft'][middle][2] - brow['vertices'][middle][2]
+        self.assertLess(drop(shaped), drop(bare) - .0025)
+        self.assertLess(down[inner][2] - rest[inner][2], down[outer][2] - rest[outer][2] - .001, 'browDown drops the inner end most')
+        self.assertGreater(left['morphs']['browInnerUp'][inner][2], rest[inner][2] + .003)
+        self.assertGreater(left['morphs']['browOuterUpLeft'][outer][2], rest[outer][2] + .003)
+        self.assertEqual(set(left['laid']), {'browDownLeft', 'browOuterUpLeft', 'browInnerUp'}, 'poses already laid on the posed skin')
+        # attach_to_skin afterwards does not add the skin's deltas a second time.
+        again = attach_to_skin(left, skin)
+        for name in left['morphs']:
+            for a, b in zip(again['morphs'][name], left['morphs'][name]): self.assertAlmostEqual(math.dist(a, b), 0, delta=1e-9)
+
+    def test_a_brow_needs_the_skin_itself(self):
+        skin, holes = self.skin(morphs=False)
+        front = front_surface(skin['vertices'], skin['faces'])
+        with self.assertRaisesRegex(ValueError, 'skin'): skin_brow_geometry(front, 'L', (.013, .178), (.05, .181))
+        with self.assertRaises(ValueError): skin_brow_geometry(skin, 'X', (.013, .178), (.05, .181))
+        with self.assertRaisesRegex(ValueError, 'skin'): skin_brow_geometry(skin, 'L', (.013, .4), (.05, .4))
+
+
+def max_dihedral(vertices, faces, near):
+    """The largest angle (degrees) between neighbouring faces whose shared edge passes `near`."""
+    normal = {}
+    for index, face in enumerate(faces):
+        a, b, c = (vertices[i] for i in face[:3])
+        n = [(b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1]), (b[2] - a[2]) * (c[0] - a[0]) - (b[0] - a[0]) * (c[2] - a[2]),
+             (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])]
+        length = math.hypot(*n) or 1
+        normal[index] = [x / length for x in n]
+    owners = {}
+    for index, face in enumerate(faces):
+        for a, b in zip(face, face[1:] + face[:1]): owners.setdefault((min(a, b), max(a, b)), []).append(index)
+    worst = 0
+    for (a, b), users in owners.items():
+        if len(users) != 2 or not (near(vertices[a]) or near(vertices[b])): continue
+        dot = sum(x * y for x, y in zip(normal[users[0]], normal[users[1]]))
+        worst = max(worst, math.degrees(math.acos(max(-1, min(1, dot)))))
+    return worst
+
+
+class NoseTests(unittest.TestCase):
+    """nose_geometry sculpts a round button nose with nostril dimples into the skin, dense enough to stay smooth."""
+    # The round-5 critic's Pip-like blank at its documented resolution.
+    HEAD = ((0, 0, .13), (.088, .085, .11))
+    TIP, SIZE = (0, .118), (.011, .01, .009)
+
+    def blank(self):
+        blank = ellipsoid_geometry(*self.HEAD, rings=56, segments=72)
+        return blank['vertices'], blank['faces']
+
+    def near_nose(self, point): return abs(point[0]) < .02 and abs(point[2] - self.TIP[1]) < .02 and point[1] < -.05
+
+    def test_a_soft_offset_sculpt_at_blank_resolution_makes_the_spike_the_owner_saw(self):
+        vertices, faces = self.blank()
+        front = front_surface(vertices, faces)(*self.TIP)
+        spiked = soft_offset(vertices, (0, front, self.TIP[1]), (.011, .012, .010), (0, -.010, -.001))
+        self.assertGreater(max_dihedral(spiked, faces, self.near_nose), 50, 'the old route: one vertex pulled out into a point')
+
+    def test_the_nose_is_a_smooth_round_bulb_standing_out_of_the_face(self):
+        vertices, faces = self.blank()
+        before = front_surface(vertices, faces)(*self.TIP)
+        nose = nose_geometry(vertices, faces, self.TIP, self.SIZE, nostrils=False)
+        closed_and_consistent(self, nose['vertices'], nose['faces'])
+        self.assertLess(max_dihedral(nose['vertices'], nose['faces'], self.near_nose), 25, 'no spike, no crease')
+        after = front_surface(nose['vertices'], nose['faces'])
+        self.assertAlmostEqual(before - after(*self.TIP), self.SIZE[2], delta=.0015, msg='it stands out by its projection')
+        # Round, not pointed: half-way to its side edge it still stands out more than half its projection.
+        half = self.SIZE[0] / 2, self.TIP[1]
+        self.assertGreater(front_surface(vertices, faces)(*half) - after(*half), .5 * self.SIZE[2])
+        # Blended: no step where it meets the face.
+        edge_x = 1.4 * self.SIZE[0]
+        self.assertAlmostEqual(after(edge_x, self.TIP[1]), front_surface(vertices, faces)(edge_x, self.TIP[1]), delta=2e-4)
+        self.assertEqual(len(nose['material_indices']), len(nose['faces']))
+
+    def test_nostril_dimples_under_the_tip_take_the_nostril_material(self):
+        vertices, faces = self.blank()
+        plain = nose_geometry(vertices, faces, self.TIP, self.SIZE, nostrils=False)
+        nose = nose_geometry(vertices, faces, self.TIP, self.SIZE)
+        self.assertEqual(set(plain['material_indices']), {0})
+        dark = [f for f, m in zip(nose['faces'], nose['material_indices']) if m == 1]
+        self.assertTrue(dark)
+        centers = [tuple(sum(nose['vertices'][i][k] for i in f) / len(f) for k in range(3)) for f in dark]
+        self.assertTrue(any(c[0] > .002 for c in centers) and any(c[0] < -.002 for c in centers), 'one dimple each side')
+        self.assertTrue(all(c[2] < self.TIP[1] for c in centers), 'under the tip')
+        from agent_meshes_face import _SkinIndex
+        index = _SkinIndex(plain['vertices'], plain['faces'])
+        self.assertEqual(len(nose['nostrils']), 2)
+        for side, point in zip('LR', nose['nostrils']):
+            with self.subTest(side=side):
+                # The dimple is pressed into the bulb: its deepest point lies inside the plain nose.
+                self.assertLess(index.nearest(point, limit=.02)[0], -.001)
+        self.assertLess(max_dihedral(nose['vertices'], nose['faces'], self.near_nose), 40, 'soft dimples, no folds')
+
+    def test_the_nose_sneer_lifts_each_wing_and_mirrors(self):
+        vertices, faces = self.blank()
+        nose = nose_geometry(vertices, faces, self.TIP, self.SIZE)
+        left, right = symmetric_offsets(nose['vertices'], *nose['sneer'])
+        wing = nose['nostrils'][0]
+        i = min(range(len(nose['vertices'])), key=lambda i: math.dist(nose['vertices'][i], wing))
+        self.assertGreater(left[i][2] - nose['vertices'][i][2], .002, 'noseSneerLeft lifts the left wing')
+        self.assertLess(abs(right[i][2] - nose['vertices'][i][2]), abs(left[i][2] - nose['vertices'][i][2]) / 3)
+
+    def test_rejects_a_nose_off_the_face(self):
+        vertices, faces = self.blank()
+        with self.assertRaisesRegex(ValueError, 'skin'): nose_geometry(vertices, faces, (0, .5), self.SIZE)
+        with self.assertRaises(ValueError): nose_geometry(vertices, faces, self.TIP, (0, .01, .01))
+
+class SculptSkinTests(unittest.TestCase):
+    """sculpt_skin grows smooth-union forms (cheeks, a chin) out of a blank, refined where they are."""
+
+    def test_cheeks_swell_smoothly_out_of_the_blank(self):
+        blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=56, segments=72)
+        cheeks = [((x, -.06, .11), (.024, .02, .02)) for x in (.045, -.045)]
+        sculpted = sculpt_skin(blank['vertices'], blank['faces'], cheeks)
+        closed_and_consistent(self, sculpted['vertices'], sculpted['faces'])
+        for i, v in enumerate(blank['vertices']):
+            if v[2] > .2 or v[1] > .03: self.assertEqual(sculpted['vertices'][i], v, 'far skin keeps its place and index')
+        near = lambda p: abs(abs(p[0]) - .045) < .04 and abs(p[2] - .11) < .04 and p[1] < -.03
+        self.assertLess(max_dihedral(sculpted['vertices'], sculpted['faces'], near), 25, 'no spike or crease')
+        before, after = front_surface(blank['vertices'], blank['faces']), front_surface(sculpted['vertices'], sculpted['faces'])
+        # The cheek's front stands on the ellipsoid (its front at y = -.08), in front of the blank there.
+        self.assertAlmostEqual(after(.045, .11), -.08, delta=.0015)
+        self.assertLess(after(.045, .11), before(.045, .11) - .004)
+        self.assertEqual(after(0, .2), before(0, .2))
+        # Symmetric shapes give a symmetric result.
+        self.assertAlmostEqual(after(.05, .105), after(-.05, .105), delta=2e-4)
+
+    def test_rejects_bad_shapes(self):
+        blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=24, segments=32)
+        with self.assertRaises(ValueError): sculpt_skin(blank['vertices'], blank['faces'], [])
+        with self.assertRaises(ValueError): sculpt_skin(blank['vertices'], blank['faces'], [((0, -.08, .1), (0, .01, .01))])
+
+class MouthLineSnapTests(unittest.TestCase):
+    """slit_mouth first slides vertices a hair off the mouth line onto it, so its cut leaves no slivers to shade or fold."""
+
+    def test_near_vertices_slide_along_their_crossing_edge_onto_the_line(self):
+        from agent_meshes_face import _snap_to_plane
+        blank = ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=48, segments=64)
+        rows = sorted({round(v[2], 9) for v in blank['vertices']})
+        mouth_z = min(rows, key=lambda z: abs(z - .075)) + .0001   # 0.1 mm above a ring: a sliver row
+        snapped = _snap_to_plane(blank['vertices'], blank['faces'], mouth_z)
+        moved = [i for i, (a, b) in enumerate(zip(blank['vertices'], snapped)) if a != b]
+        self.assertTrue(moved)
+        for i in moved:
+            self.assertAlmostEqual(snapped[i][2], mouth_z, delta=1e-12)
+            self.assertLess(math.dist(blank['vertices'][i], snapped[i]), .0006, 'only a hair')
+        # Every vertex now either lies on the line or stays at least a quarter of an edge from it.
+        for v in snapped:
+            self.assertTrue(v[2] == mouth_z or abs(v[2] - mouth_z) > .0004, v)
+        # It stays on the old surface (it slid along one of its edges).
+        front = front_surface(blank['vertices'], blank['faces'])
+        for i in moved:
+            x, y, z = snapped[i]
+            if y < -.03: self.assertAlmostEqual(front(x, z), y, delta=2e-4)
+
+    def test_far_vertices_stay(self):
+        from agent_meshes_face import _snap_to_plane
+        blank = ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=48, segments=64)
+        rows = sorted({round(v[2], 9) for v in blank['vertices']})
+        mid = min(range(len(rows) - 1), key=lambda k: abs((rows[k] + rows[k + 1]) / 2 - .075))
+        mouth_z = (rows[mid] + rows[mid + 1]) / 2
+        self.assertEqual(_snap_to_plane(blank['vertices'], blank['faces'], mouth_z), [tuple(v) for v in blank['vertices']])
+
+class LipTests(unittest.TestCase):
+    """sculpt_lips shapes soft lips and a lip line into a skin face at rest, before slit_mouth cuts along the line."""
+    HEAD = ((0, 0, .13), (.088, .085, .11))
+    MOUTH_Z, HW = .088, .021
+
+    def test_soft_lips_bulge_either_side_of_a_crease_on_the_mouth_line(self):
+        blank = ellipsoid_geometry(*self.HEAD, rings=56, segments=72)
+        lips = sculpt_lips(blank['vertices'], blank['faces'], self.MOUTH_Z, self.HW)
+        closed_and_consistent(self, lips['vertices'], lips['faces'])
+        before, after = front_surface(blank['vertices'], blank['faces']), front_surface(lips['vertices'], lips['faces'])
+        proud = lambda x, z: before(x, z) - after(x, z)
+        upper, lower = max(proud(0, self.MOUTH_Z + k * .0005) for k in range(1, 12)), max(proud(0, self.MOUTH_Z - k * .0005) for k in range(1, 14))
+        self.assertGreater(upper, .0008, 'the upper lip stands out')
+        self.assertGreater(lower, upper, 'the lower lip is fuller')
+        self.assertLess(proud(0, self.MOUTH_Z), .5 * upper, 'a crease runs along the line between them')
+        self.assertLess(abs(proud(1.35 * self.HW, self.MOUTH_Z + .002)), 1e-4, 'the lips end at the corners')
+        self.assertAlmostEqual(proud(.01, self.MOUTH_Z - .003), proud(-.01, self.MOUTH_Z - .003), delta=1e-4)
+        # Soft lips: away from the lip line itself (a deliberate crease, where the slit is cut) no faces fold.
+        near = lambda p: abs(p[0]) < .035 and .003 < abs(p[2] - self.MOUTH_Z) < .015 and p[1] < -.05
+        self.assertLess(max_dihedral(lips['vertices'], lips['faces'], near), 20, 'soft, no creases between faces')
+        # The mouth line is a row of vertices after sculpt_lips refines there, so slit_mouth cuts along it.
+        from agent_meshes_face import _snap_to_plane
+        snapped = _snap_to_plane(lips['vertices'], lips['faces'], self.MOUTH_Z)
+        self.assertTrue(any(v[2] == self.MOUTH_Z and abs(v[0]) < self.HW for v in snapped))
+
+    def test_rejects_bad_lips(self):
+        blank = ellipsoid_geometry(*self.HEAD, rings=24, segments=32)
+        with self.assertRaises(ValueError): sculpt_lips(blank['vertices'], blank['faces'], self.MOUTH_Z, 0)
+        with self.assertRaisesRegex(ValueError, 'skin'): sculpt_lips(blank['vertices'], blank['faces'], .5, self.HW)
 
 if __name__ == '__main__':
     unittest.main()

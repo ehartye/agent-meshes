@@ -1,7 +1,7 @@
 // Optional real Blender -> arkit-face/1 test head -> contract verifier -> offline viewer renders.
 // Needs Blender and Chromium. Writes renders, a contact sheet and a jaw sheet (neutral, jawOpen .5 and 1 from the
 // front, three-quarter and close up, with the measured chin drop) under .agent-meshes/face-rig-proof/<fixture>/.
-// Usage: node scripts/check-face-rig-browser.mjs [test_head|test_robot|test_frog]
+// Usage: node scripts/check-face-rig-browser.mjs [test_head|test_robot|test_frog|test_kid]
 import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';

@@ -90,7 +90,8 @@ exposed fangs). The rules that are easy to get wrong:
   (rejects a chin that drops less than 10% of the head), and `rigid=True` for the lower teeth,
   tongue or a robot chin plate.
 - Cut the lip seam with `slit_mouth` (it tags the upper and lower lip, so float rounding of the
-  mouth line never hangs the upper lip on the jaw). Add a dark `mouth_cavity_geometry` bag fitted
+  mouth line never hangs the upper lip on the jaw, and it slides near vertices onto the line so no
+  sliver row shades as a seam). Skin faces get soft lips and a lip line from `sculpt_lips` first. Add a dark `mouth_cavity_geometry` bag fitted
   to the face with `surface=front_surface(skin_vertices, skin_faces)` so it never pokes through the
   cheeks, and make fangs or buck teeth with `exposed_teeth_geometry` (declared in `exposedTeeth`).
 - Open lid eyes with `eye_hole(vertices, faces, center, radius, **lid_options)` and pass it to
@@ -101,15 +102,20 @@ exposed fangs). The rules that are easy to get wrong:
   the face plate, with the blades checked against it) and `build_eye(style='shutter', hole=...)`.
   Mask brow and cheek offsets near the eyes with `mask=eye_hole_mask(*holes)`.
 - Teeth that show at rest get their own material, `teeth_exposed`, listed in `exposed_teeth`.
-- Brows on a round skin face: `skin_brow_geometry(front_surface(...), side, inner, outer)`. The
-  helpers write `lidFollow.up` .8 so looking up visibly lifts the lids (E2).
+- Brows on a round skin face: `skin_brow_geometry(head, side, inner, outer, hole=holes[side])`
+  with the head object after its shape keys: it lays the brow on the skin along its normal in
+  every pose (browDown also knits it toward the nose). Noses: `nose_geometry(vertices, faces,
+  tip, size)` fuses a smooth button nose with nostril dimples into the skin and returns the
+  noseSneer wing lift; `sculpt_skin` grows cheeks or a chin. Never sculpt with `soft_offset` on a
+  blank (a spike). The helpers write `lidFollow.up` .8 so looking up visibly lifts the lids (E2).
 - Cut other holes with `cut_hole` (a smooth rim), not `cut_faces` (stair steps). Brows on eye domes
   (a frog) are `brow_ridge_geometry(..., skin=..., hole=...)` ridges that lie on the skin itself
   and slide over it; a ridge on the dome's sphere floats over the skin.
 - Small parts joined to the face (nostrils, freckles, warts, horns) go through
   `attach_to_skin(part, head, depth=...)` after the head's shape keys are added: it seats the
   part and gives it the skin's own morph deltas at its footprint, so `noseSneer` lifts nostrils
-  with the snout instead of burying them. Nothing may float off the skin or sink under a morph
+  with the snout instead of burying them. A part may sit on another attached part (nostrils on
+  a nose ball: `attach_to_skin(bead, ball)`). Nothing may float off the skin or sink under a morph
   (the verifier's `attached-parts` check).
 - Put every morph-bearing part in one mesh with `join_face_parts`: Unreal discards all morph
   names when a name repeats across glTF meshes. Keep only the eyeballs separate.

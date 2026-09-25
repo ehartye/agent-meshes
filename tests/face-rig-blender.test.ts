@@ -6,16 +6,42 @@ import { buildAsset } from '../src/build.ts';
 import { authorGLB } from '../src/author.ts';
 import { findBlender } from '../src/refine.ts';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { readGLB } from '../src/gltf-read.ts';
+import { readAccessor, readGLB } from '../src/gltf-read.ts';
 import { ARKIT_FACE_REQUIRED_MORPHS } from '../src/arkit-face.ts';
 
 const directories: string[] = [];
+// Each fixture's mouth line (glTF y) and half width.
+const MOUTHS: Record<string, [number, number]> = { test_head: [0.075, 0.022], test_robot: [NaN, 0], test_frog: [0.088, 0.055], test_kid: [0.088, 0.021] };
+
+/**
+ * The steepest turn of the skin's shading normals (degrees per mm between vertices under 3 mm apart) in a band 15 mm
+ * either side of the mouth line, across the cheeks beyond the lips: one continuous skin turns about 0.7 degree per mm
+ * on these heads, while a sliver row cut beside a vertex a hair off the line turns 13-27.
+ */
+function mouthBandTurn(bytes: Uint8Array, mouthY: number, halfWidth: number): number {
+  const doc = readGLB(bytes);
+  const face = doc.json.meshes!.find(m => m.name === 'face')!;
+  let worst = 0;
+  for (const primitive of face.primitives) {
+    if (!/skin/.test(doc.json.materials![primitive.material!].name ?? '')) continue;
+    const P = readAccessor(doc, primitive.attributes.POSITION).data, N = readAccessor(doc, primitive.attributes.NORMAL).data;
+    const band: number[] = [];
+    for (let i = 0; i < P.length / 3; i++) if (P[i * 3 + 2] > 0.03 && Math.abs(P[i * 3 + 1] - mouthY) < 0.015 && Math.abs(P[i * 3]) > 1.5 * halfWidth) band.push(i);
+    for (const i of band) for (const j of band) {
+      const d = Math.hypot(P[i * 3] - P[j * 3], P[i * 3 + 1] - P[j * 3 + 1], P[i * 3 + 2] - P[j * 3 + 2]);
+      if (d > 0.003 || d < 1e-6) continue;
+      const cos = N[i * 3] * N[j * 3] + N[i * 3 + 1] * N[j * 3 + 1] + N[i * 3 + 2] * N[j * 3 + 2];
+      worst = Math.max(worst, Math.acos(Math.min(1, cos)) * 180 / Math.PI / (d * 1000));
+    }
+  }
+  return worst;
+}
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 // Real Blender only: CI skips this, like the refine stage. Run it locally with Blender installed.
 const maybe = findBlender() ? it : it.skip;
 
-for (const fixture of ['test_head', 'test_robot', 'test_frog']) maybe(`the helper-authored ${fixture} builds through agent-meshes build and passes arkit-face/1`, async () => {
+for (const fixture of ['test_head', 'test_robot', 'test_frog', 'test_kid']) maybe(`the helper-authored ${fixture} builds through agent-meshes build and passes arkit-face/1`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-face-rig-')); directories.push(directory);
   const config = join(directory, 'build.json');
   await writeFile(config, JSON.stringify({ version: 1, name: fixture, blender: { script: resolve(`tests/fixtures/face-rig/${fixture}.py`) }, output: 'generated' }));
@@ -37,6 +63,16 @@ for (const fixture of ['test_head', 'test_robot', 'test_frog']) maybe(`the helpe
     expect(report.measurements.eyes[side]!.lidFollow!.up).toBeGreaterThanOrEqual(0.0015);
     expect(report.measurements.eyes[side]!.lidFollow!.down).toBeGreaterThanOrEqual(0.0015);
   }
+  if (fixture === 'test_kid') {
+    // Skin brows lie on the skin in every pose; the fused nose's wings lift visibly with noseSneer.
+    const brows = report.measurements.attached.filter(part => /browDown/.test(part.part));
+    expect(brows).toHaveLength(2);
+    for (const brow of brows) expect(brow.gap).toBeLessThanOrEqual(0.0005);
+    expect(report.measurements.morphMotion.noseSneerLeft).toBeGreaterThanOrEqual(0.002);
+  }
+  // The skin shades as one surface across the mouth line: no sliver row beside the slit (a seam across the face).
+  const [mouthY, halfWidth] = MOUTHS[fixture];
+  if (Number.isFinite(mouthY)) expect(mouthBandTurn(bytes, mouthY, halfWidth)).toBeLessThan(5);
   // Every file stays within E8's 3 MB, the eye holes' extra skin included.
   expect(bytes.length).toBeLessThan(3_000_000);
 

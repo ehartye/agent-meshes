@@ -151,7 +151,7 @@ from agent_meshes_author import (face_skeleton, build_eye, eye_hole, eye_hole_ma
     skin_brow_geometry, chin_drop, brow_plate_geometry, split_plates,
     rubber_mouth_geometry, eye_coverage_problems, mesh_from_geometry, soft_offset,
     symmetric_offsets, shape_key, join_face_parts, face_contract, recommended_gaze,
-    attach_to_skin, skin_contact)
+    attach_to_skin, skin_contact, nose_geometry, sculpt_skin, sculpt_lips)
 ```
 
 They follow the face contract in `arkit-face/1` and Blender's axes: **Z up,
@@ -166,7 +166,10 @@ can: recessed shutter eyes in `shutter_hole` tubes, brow plates, a skull and chi
 thick edges, grille teeth, a rubber mouth edge) and `test_frog.py` (a wide frog:
 eyes in mounded `eye_hole` domes with brow ridges lying on the skin, nostrils that
 ride `noseSneer` through `attach_to_skin`, saw teeth, two exposed fangs in their own
-`teeth_exposed` material, a cavity fitted to the curved face).
+`teeth_exposed` material, a cavity fitted to the curved face) and `test_kid.py` (a
+round-faced kid: brows laid on the skin with `skin_brow_geometry`, a fused
+`nose_geometry` button nose with nostril dimples riding `noseSneer`, freckles, buck
+teeth and a hair cap).
 
 ### Skeleton, binding and one face mesh
 
@@ -441,7 +444,21 @@ mesh at the mouth line and splits the edges along it on the front (y <
 joined. It tags the seam in the `jaw_seam` point attribute (`SEAM_ATTRIBUTE`; 1
 lower lip, 2 upper lip). Round 1 compared coordinates with `mouth_z` instead,
 and a mouth line that float32 rounds down (.088, .087, .08) hung the upper lip
-on the jaw like a curtain. Call it before shape keys.
+on the jaw like a curtain. Call it before shape keys. A vertex a hair off the
+mouth line used to make the cut leave a sliver row beside it, which shaded as a
+seam across the whole lower face and folded at the lip corners when the jaw
+opened; now every vertex closer to the line than a quarter of its crossing edge
+first slides along that edge onto the line (it stays on the old surface), so the
+cut runs through vertices and no blank needs a row pre-snapped to the mouth.
+
+`sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0, fullness=None,
+crease=None, height=None)` gives a skin face soft lips and a lip line at rest: an
+upper and a fuller lower lip (each `fullness` proud, 9% of the half width;
+`height` 45% of it) either side of a crease along the mouth line (60% of the
+fullness deep), thinning to nothing just past the corners. It refines the skin
+round the mouth first, so run it on the blank before `mesh_from_geometry` and
+`slit_mouth`, then take `front_surface` of its result for the cavity and teeth.
+`slit_mouth` then cuts along the crease.
 
 `teeth_row_geometry(style, center, half_width, depth, count, height, row='upper',
 width=None, thickness=None, sizes=None, span=150)` lays teeth along an elliptical
@@ -512,17 +529,38 @@ which seal the hole (above).
 
 **Brows.** Pick by the head:
 
-- A skin-faced head (a kid): `skin_brow_geometry(surface, side, inner, outer,
+- A skin-faced head (a kid): `skin_brow_geometry(skin, side, inner, outer,
   height=.004, thickness=.0016, arch=.002, down=.004, inner_up=.004,
-  outer_up=.004, standoff=.0003)` lays a tapered brow on the forehead: `inner` and
-  `outer` are the (x, z) of the left brow's ends (side 'R' mirrors them), every
-  cross-section sits `standoff` in front of `surface` (`front_surface(...)` of the
-  skin with its eye holes cut), and each morph moves the brow over the face and
-  lays it back on the skin, so it slides instead of sinking: `browDown<Side>`
-  lowers the inner end by `down` (the outer a third as much), `browInnerUp` and
-  `browOuterUp<Side>` lift the ends (meters). Give it a hair material. Keep the
-  skin's own brow offsets (masked with `eye_hole_mask`) or leave them out; the
-  brow carries the expression. A hair cap must clear the brows.
+  outer_up=.004, pinch=.002, sink=None, hole=None)` lays a tapered brow **on the
+  skin itself**, the way `brow_ridge_geometry` lays a ridge. `skin` is the head
+  skin with its eye holes cut: a geometry dict (`vertices`, `faces`, optional
+  `morphs`) or, best, **the head mesh object after its shape keys are added**.
+  `inner` and `outer` are the (x, z) of the left brow's ends (side 'R' mirrors
+  them); pass the eye's `hole`. The centre line is found on the skin, and each
+  cross-section is a bump in the plane of the skin's normal, `height` wide and
+  `thickness` proud at the middle (tapering to the ends), every point settled on
+  the skin along its normal, so the brow follows the forehead's curve, the socket
+  dip over the eye and the turn of the temple, with its edges and underside sunk
+  `sink` into the skin (15% of the thickness). Each morph moves the brow over the
+  face and lays it back on the skin at its new place: `browDown<Side>` lowers the
+  inner end by `down` (the outer a third as much) and knits it `pinch` toward the
+  nose (angry), `browInnerUp` and `browOuterUp<Side>` lift the ends (meters). When
+  the skin has shape keys, every pose is laid on the skin in that pose, so the
+  brow rides the head's own brow shapes; those names are listed in the result's
+  `laid`, and `attach_to_skin` skips them, so there is nothing to add. Every pose
+  is checked with `skin_contact` against the skin and the lids (a deeper sink is
+  tried before a brow that cannot lie on the skin is rejected). Give it a hair
+  material; a hair cap must clear the brows. Round 5's brow sat `standoff` in
+  front of the frontmost of five `front_surface` samples with a vertical
+  cross-section, so it stood 0.53-0.92 mm off the skin and its ends stuck out as
+  tabs past the forehead; it now takes the skin, not `front_surface(...)`.
+
+  ```python
+  brows = [skin_brow_geometry(head, side, inner=(.013, .178), outer=(.05, .181), hole=holes[side]) for side in 'LR']
+  joined = join_geometry(brows)
+  brow = mesh_from_geometry('brows', joined, [hair])
+  for name, targets in joined['morphs'].items(): shape_key(brow, name, targets)
+  ```
 - Eyes in domes (a frog, a creature): `brow_ridge_geometry` below, lying on the
   skin over the mound.
 - A robot: `brow_plate_geometry` (robot plates, below).
@@ -556,6 +594,44 @@ brow = mesh_from_geometry('brow_L', ridge, [skin])
 for name, targets in ridge['morphs'].items(): shape_key(brow, name, targets)
 ```
 
+### Noses and soft forms: `nose_geometry` and `sculpt_skin`
+
+A `soft_offset` sculpt on a head blank's 6-8 mm faces pulls one vertex out into a
+spike (the "weird pointy thing" on round 1's Pip). Grow forms with these instead;
+both refine the skin where the form is first, so it comes out smooth, and keep
+every other vertex's position and index.
+
+`nose_geometry(vertices, faces, tip, size, nostrils=True, nostril_radius=None,
+nostril_depth=None, nostril_spacing=None, max_edge=None)` sculpts a round button
+nose into the skin: `tip` is the (x, z) of its middle, `size` its (half width,
+half height, projection) in meters. The bulb is a ball `projection` proud of the
+skin, joined to it by a smooth union with a rounded fillet, so there is no seam and
+no part to attach. Two soft nostril dimples are pressed up into its lower slope;
+their faces get material index 1 (give the mesh a dark nostril material second).
+It returns vertices, faces, `material_indices`, `tip`, `nostrils` and `sneer`, the
+left wing's (center, radius, offset) for `symmetric_offsets`: noseSneer lifts and
+flares each wing about 3.5 mm on a kid's 21 mm nose.
+
+```python
+nose = nose_geometry(vertices, faces, (0, .118), (.0105, .0095, .009))   # after the eye holes
+vertices, faces = nose['vertices'], nose['faces']
+head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces,
+                          'material_indices': nose['material_indices']}, [skin, nostril])
+slit_mouth(head, MOUTH_Z, MOUTH_HW)
+rest = [tuple(v.co) for v in head.data.vertices]
+left, right = symmetric_offsets(rest, *nose['sneer'])
+shape_key(head, 'noseSneerLeft', left); shape_key(head, 'noseSneerRight', right)
+```
+
+`sculpt_skin(vertices, faces, shapes, max_edge=None)` is the general tool: the
+smooth union of the skin and ellipsoids, `shapes` a list of `(center, radii)` or
+`(center, radii, blend)` (or dicts with those keys; `blend` is the fillet width,
+default half the smallest radius). Cheeks, a chin, a brow bump, a snout: every
+vertex near a shape moves out along the skin's normal onto the union's surface,
+after the skin there is refined to edges of at most `max_edge` (a sixth of the
+smallest radius). Run it on the blank before `eye_hole`, `slit_mouth` and the
+shape keys.
+
 ### Small parts on the skin: `attach_to_skin` and `skin_contact`
 
 Every small part joined to the face (brows, ridges, nostrils, freckles, warts,
@@ -584,11 +660,16 @@ for name, targets in join_geometry(beads)['morphs'].items(): shape_key(nose, nam
 parts.append(nose)                             # then join_face_parts as usual
 ```
 
-A chin wart rides `jawOpen` the same way. Parts that lie along the skin and have
-their own morphs (brows) are laid on it by their helpers (`brow_ridge_geometry`,
-`skin_brow_geometry`, `rubber_mouth_geometry` all slide over the skin and lay each
-pose back on it); pass them through `attach_to_skin(part, head)` too when the skin
-under them has its own shapes, so they ride those as well.
+A chin wart rides `jawOpen` the same way. A part can sit on another attached part:
+`attach_to_skin(bead, ball)` seats a nostril on a nose ball that was itself
+attached to the head (`ball` is the ball's geometry dict with its morphs), and the
+verifier judges the bead against the ball it touches. Parts that lie along the
+skin and have their own morphs are laid on it by their helpers
+(`brow_ridge_geometry`, `skin_brow_geometry`, `rubber_mouth_geometry` all slide
+over the skin and lay each pose back on it). `skin_brow_geometry` given the head
+object already lays every pose on the posed skin; pass the others through
+`attach_to_skin(part, head)` when the skin under them has its own shapes, so they
+ride those as well.
 
 `skin_contact(part, skin, tolerance=.0005)` measures a part the way the verifier
 does: its vertices and face centers are cut into slices across its longest axis

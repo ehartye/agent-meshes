@@ -19,7 +19,7 @@ __all__ = [
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
     'eye_window', 'eye_hole', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
-    'symmetric_offsets', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
+    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
@@ -1595,7 +1595,8 @@ def skin_contact(part, skin, tolerance=ATTACH_TOLERANCE, slices=None):
     `part` is a geometry dict (vertices, faces, optional morphs); `skin` a geometry
     dict (vertices, faces, optional morphs) or a Blender mesh object with its shape
     keys. The part's vertices and face centers are cut into `slices` (default one per
-    1.5 mm, at most 32) across its longest axis; each slice's gap is the smallest
+    1.5 mm, at most 32) across its longest axis, each placed by its footprint (its
+    nearest skin point), so a thick ridge's top shares a slice with its base; each slice's gap is the smallest
     signed distance from its points to the skin (negative inside). The part touches
     when every slice comes within `tolerance`. `visible` is the share of its points
     outside the skin; a morph that leaves much less than at rest buries the part.
@@ -1615,6 +1616,10 @@ def skin_contact(part, skin, tolerance=ATTACH_TOLERANCE, slices=None):
         for k in range(1, len(face) - 1): samples.append((face[0], face[k], face[k + 1], 1 / 3, 1 / 3, 1 / 3))
     at = lambda points, s: tuple(s[3] * points[s[0]][k] + s[4] * points[s[1]][k] + s[5] * points[s[2]][k] for k in range(3))
     rest = [at(vertices, s) for s in samples]
+    # Slice by footprint (each sample's nearest skin point), as the verifier does: the top of a thick ridge curved round
+    # a dome then shares its slice with the base under it.
+    hits = [index.nearest(p) for p in rest]
+    rest = [p if hit is None else hit[1] for p, hit in zip(rest, hits)]
     mean = tuple(sum(p[k] for p in rest) / len(rest) for k in range(3))
     cov = [[sum((p[r] - mean[r]) * (p[c] - mean[c]) for p in rest) for c in range(3)] for r in range(3)]
     axis = (1.0, 1.0, 1.0)
@@ -1686,7 +1691,10 @@ def attach_to_skin(part, skin, depth=None, tolerance=ATTACH_TOLERANCE):
         if hit is None: raise ValueError('A part vertex lies more than 30 mm from the skin: attach parts that sit on it')
         feet.append((index.triangles[hit[2]], hit[3]))
     morphs = dict(own)
+    # A part laid on the skin in each skin pose already (skin_brow_geometry) lists those names in `laid`.
+    laid = set(part.get('laid') or ())
     for name, targets in skin_morphs.items():
+        if name in laid: continue
         deltas = [tuple(sum(w * (targets[i][k] - skin_vertices[i][k]) for i, w in zip(tri, weights)) for k in range(3)) for tri, weights in feet]
         if max(math.hypot(*d) for d in deltas) < 1e-6: continue
         base = own.get(name, vertices)
@@ -1726,6 +1734,205 @@ def soft_offset(vertices, center, radius, offset, mask=None):
 def symmetric_offsets(vertices, center, radius, offset, mask=None):
     """(Left, Right) targets: the region as given for the character's left, mirrored across x = 0 for the right."""
     return soft_offset(vertices, center, radius, offset, mask), soft_offset(vertices, mirror_x(center), radius, mirror_x(offset), mask)
+
+
+def _ellipsoid_distance(point, center, radii):
+    """Approximate signed distance from a point to an axis-aligned ellipsoid (exact for a sphere; positive outside)."""
+    d = _sub(point, center)
+    k0 = math.hypot(*(d[k] / radii[k] for k in range(3)))
+    k1 = math.hypot(*(d[k] / radii[k] ** 2 for k in range(3)))
+    return -min(radii) if k1 < 1e-12 else k0 * (k0 - 1) / k1
+
+
+def _shapes(shapes):
+    result = []
+    for shape in shapes:
+        if isinstance(shape, dict): center, radii, blend = shape.get('center'), shape.get('radii'), shape.get('blend')
+        else: (center, radii), blend = shape[:2], (shape[2] if len(shape) > 2 else None)
+        center = _vector(center, 3, 'Shape center')
+        radii = _vector((radii,) * 3 if isinstance(radii, Real) else radii, 3, 'Shape radii')
+        if min(radii) <= 0: raise ValueError('Shape radii must be positive')
+        blend = .5 * min(radii) if blend is None else _number(blend, 'Shape blend', 0)
+        result.append((center, radii, blend))
+    if not result: raise ValueError('sculpt_skin needs at least one shape')
+    return result
+
+
+def _union_height(point, direction, shapes):
+    """How far along `direction` the smooth union of the skin (the plane through `point`) and the shapes lies."""
+    def field(t):
+        q = _add(point, _mul(direction, t))
+        value = t
+        for center, radii, blend in shapes:
+            e = _ellipsoid_distance(q, center, radii)
+            if blend <= 0: value = min(value, e); continue
+            h = max(blend - abs(value - e), 0.0) / blend
+            value = min(value, e) - h * h * blend / 4
+        return value
+    top = max(2 * max(radii) + blend for _, radii, blend in shapes) + max(math.dist(point, c) for c, _, _ in shapes)
+    step = min(min(radii) for _, radii, _ in shapes) / 8
+    # The outermost crossing: walk in from outside, then bisect.
+    hi, lo = top, top
+    while lo > 0:
+        lo = max(0.0, hi - step)
+        if field(lo) <= 0: break
+        hi = lo
+    else:
+        return 0.0
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        if field(mid) <= 0: lo = mid
+        else: hi = mid
+    return lo
+
+
+def sculpt_skin(vertices, faces, shapes, max_edge=None):
+    """Grow soft forms out of a head blank: the smooth union of the skin and ellipsoids, sampled densely where they are.
+
+    `shapes` is a list of (center, radii) or (center, radii, blend) tuples, or dicts
+    with those keys: ellipsoids (radii one number or an (x, y, z) triple, Blender
+    axes) that the skin swells over, joined to it with a rounded fillet about `blend`
+    meters wide (default half the smallest radius), the way an SDF smooth union joins
+    two shapes: cheeks, a chin, a brow bump, a snout, a nose ball (`nose_geometry`
+    builds on it). The skin is first refined where the shapes are (edges at most
+    `max_edge`, default a sixth of the smallest radius), so a form never comes out as
+    one vertex pulled into a spike; then every vertex near a shape moves out along the
+    skin's normal onto the union's surface. Vertices elsewhere keep their positions
+    and indices (new ones are appended), so run it on the blank before `eye_hole`,
+    `slit_mouth` and the shape keys. Returns vertices and faces (triangles near the
+    shapes).
+    """
+    shapes = _shapes(shapes)
+    vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    max_edge = min(min(r) for _, r, _ in shapes) / 6 if max_edge is None else _number(max_edge, 'Max edge', 0, low_open=True)
+    near = lambda v: any(math.hypot(*((v[k] - c[k]) / (r[k] + b) for k in range(3))) < 1.25 for c, r, b in shapes)
+    vertices, faces = _refine(vertices, faces, near, max_edge)
+    normals = _vertex_normals(vertices, faces)
+    moved = [_add(v, _mul(n, _union_height(v, n, shapes))) if near(v) else v for v, n in zip(vertices, normals)]
+    return {'vertices': moved, 'faces': faces}
+
+
+def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=None, crease=None, height=None, max_edge=None):
+    """Shape soft lips with a lip line into a skin face at rest: the upper and a fuller lower lip either side of a crease.
+
+    For skin faces (kids, creatures) whose closed mouth would otherwise be a flat
+    surface with a slit. The lips span |x - center_x| < `half_width` (the slit's),
+    thinning to nothing just past the corners; each is a soft bulge `fullness` proud
+    along the skin's normal (default 9% of the half width; the lower lip 1.3 times
+    that), `height` tall (default 45% of the half width), and a crease `crease` deep
+    (default 60% of the fullness) runs along the mouth line between them, deepest in
+    the middle. The skin is refined around the mouth first (edges at most `max_edge`,
+    default a sixth of the height), so the lips are smooth. Run it on the blank
+    (before `mesh_from_geometry`, `slit_mouth` and the shape keys, after `eye_hole`
+    or `nose_geometry`), then take `front_surface` of the result for the cavity and
+    teeth. Returns vertices and faces; far vertices keep their indices.
+    """
+    vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    mouth_z, half_width = _number(mouth_z, 'Mouth line'), _number(half_width, 'Mouth half-width', 0, low_open=True)
+    center_x = _number(center_x, 'Mouth center')
+    fullness = .09 * half_width if fullness is None else _number(fullness, 'Lip fullness', 0)
+    crease = .6 * fullness if crease is None else _number(crease, 'Lip crease', 0)
+    height = .45 * half_width if height is None else _number(height, 'Lip height', 0, low_open=True)
+    max_edge = height / 6 if max_edge is None else _number(max_edge, 'Max edge', 0, low_open=True)
+    front = front_surface(vertices, faces)
+    y = front(center_x, mouth_z)
+    if y is None: raise ValueError(f'No skin at the mouth ({center_x:.4f}, {mouth_z:.4f}): put the mouth line on the face skin')
+    depth = abs(y - sum(v[1] for v in vertices) / len(vertices))
+    near = lambda v: abs(v[0] - center_x) < 1.4 * half_width and abs(v[2] - mouth_z) < 2.2 * height and v[1] < y + .5 * depth
+    vertices, faces = _refine(vertices, faces, near, max_edge)
+    normals = _vertex_normals(vertices, faces)
+    bump = lambda d, r: (1 - (d / r) ** 2) ** 3 if abs(d) < r else 0.0
+
+    def lift(v):
+        u = (v[0] - center_x) / (1.2 * half_width)
+        if abs(u) >= 1: return 0.0
+        across = (1 - u * u) ** 1.5
+        dz = v[2] - mouth_z
+        lips = fullness * (bump(dz - .4 * height, .7 * height) + 1.3 * bump(dz + .45 * height, .8 * height))
+        return across * (lips - crease * bump(dz, .3 * height))
+    moved = [_add(v, _mul(n, lift(v))) if near(v) else v for v, n in zip(vertices, normals)]
+    return {'vertices': moved, 'faces': faces}
+
+
+def nose_geometry(vertices, faces, tip, size, nostrils=True, nostril_radius=None, nostril_depth=None, nostril_spacing=None,
+                  max_edge=None):
+    """Sculpt a round button nose with two nostril dimples into a skin, dense enough that it stays smooth.
+
+    For kids and other soft faces (Pip). `tip` is the (x, z) of the nose's middle on
+    the face, `size` its (half width, half height, projection) in meters: a ball that
+    stands `projection` proud of the skin along its normal, joined to it by a smooth
+    union with a rounded fillet (`sculpt_skin`), so it reads as part of the face with
+    no seam. The skin is refined around the nose first (edges at most `max_edge`,
+    default a fifth of the smaller radius, finer at the nostrils): a `soft_offset`
+    sculpt on a blank's 6-8 mm faces pulls one vertex into a spike. With `nostrils`,
+    two soft dimples are pressed up and into the bulb's lower slope, `nostril_spacing`
+    either side of the middle (default 42% of the half width), `nostril_radius`
+    across (default 34%) and `nostril_depth` deep (default 20% of the projection);
+    their faces get material index 1, so give the mesh a dark nostril material
+    second: `mesh_from_geometry('head_skin', nose, [skin, nostril])`. Every other face
+    gets index 0. Call it on the head blank before `mesh_from_geometry`, before or
+    after `eye_hole` (it only refines near the nose).
+
+    Returns vertices, faces, material_indices, `tip` (the bulb's front point),
+    `nostrils` (the two dimples' deepest points, left first) and `sneer`, the
+    (center, radius, offset) of the left wing's lift: after `slit_mouth`, add
+    `left, right = symmetric_offsets(rest, *nose['sneer'])` as noseSneerLeft and
+    noseSneerRight, and the fused nose, dimples and all, rides them with no part to
+    attach.
+    """
+    vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    faces = [tuple(f) for f in faces]
+    x, z = _vector(tip, 2, 'Nose tip')
+    rx, rz, projection = _vector(size, 3, 'Nose size')
+    if min(rx, rz, projection) <= 0: raise ValueError('Nose size (half width, half height, projection) must be positive')
+    spacing = .42 * rx if nostril_spacing is None else _number(nostril_spacing, 'Nostril spacing', 0)
+    radius = .34 * rx if nostril_radius is None else _number(nostril_radius, 'Nostril radius', 0, low_open=True)
+    depth = .2 * projection if nostril_depth is None else _number(nostril_depth, 'Nostril depth', 0)
+    max_edge = min(rx, rz) / 5 if max_edge is None else _number(max_edge, 'Max edge', 0, low_open=True)
+    front = front_surface(vertices, faces)
+    y = front(x, z)
+    if y is None: raise ValueError(f'No skin at the nose tip ({x:.4f}, {z:.4f}): place the nose on the face skin')
+    step = .25 * min(rx, rz)
+    slopes = []
+    for dx, dz in ((step, 0), (0, step)):
+        ahead, behind = front(x + dx, z + dz), front(x - dx, z - dz)
+        if ahead is None or behind is None: raise ValueError('The nose runs off the face skin: move it onto the face or make it smaller')
+        slopes.append((ahead - behind) / (2 * step))
+    base = (x, y, z)
+    normal = _mul((slopes[0], -1.0, slopes[1]), 1 / math.hypot(slopes[0], 1.0, slopes[1]))
+    ex = _sub((1.0, 0.0, 0.0), _mul(normal, normal[0]))
+    ex = _mul(ex, 1 / math.hypot(*ex))
+    ez = _cross(normal, ex)
+    if ez[2] < 0: ez = _mul(ez, -1)
+    frame = lambda v: (_dot(_sub(v, base), ex), _dot(_sub(v, base), ez), _dot(_sub(v, base), normal))
+    reach = max(rx, rz)
+    around = lambda v, scale: (lambda u, w, h: (u / rx) ** 2 + (w / rz) ** 2 < scale ** 2 and abs(h) < reach)(*frame(v))
+    holes = [(side * spacing, -.55 * rz) for side in (1, -1)] if nostrils else []
+    by_hole = lambda v: (lambda u, w, h: min((((u - hu) / radius) ** 2 + ((w - hw) / (.7 * radius)) ** 2 for hu, hw in holes), default=math.inf))(*frame(v))
+    vertices, faces_out = _refine(vertices, faces, lambda v: around(v, 1.6), max_edge)
+    if holes: vertices, faces_out = _refine(vertices, faces_out, lambda v: by_hole(v) < 2.2, min(max_edge, radius / 4))
+    # The bulb: a ball `projection` proud of the skin, joined to it by a smooth union (sculpt_skin's fillet).
+    depth_radius = max(rx, rz, projection)
+    ball = [(_add(base, _mul(normal, projection - depth_radius)), (rx, depth_radius, rz), .5 * min(rx, rz))]
+    dent = _mul(_add(_mul(normal, -1.0), _mul(ez, .6)), 1 / math.hypot(1.0, .6))
+    moved, weight = [], []
+    for v in vertices:
+        u, w, h = frame(v)
+        if abs(h) >= reach: moved.append(v); weight.append(0.0); continue
+        p = _add(v, _mul(normal, _union_height(v, normal, ball))) if around(v, 1.6) else v
+        d2 = by_hole(v)
+        wd = (1 - d2) ** 2 if d2 < 1 else 0.0
+        moved.append(_add(p, _mul(dent, depth * wd)))
+        weight.append(wd)
+    indices_out = [0] * len(faces_out)
+    if holes:
+        indices_out = [1 if sum(weight[i] for i in face) / len(face) > .3 else m for face, m in zip(faces_out, indices_out)]
+    deepest = [max(range(len(moved)), key=lambda i: (weight[i] if (frame(vertices[i])[0] > 0) == (hu > 0) else -1)) for hu, _ in holes]
+    wing = _add(_add(base, _mul(ex, spacing)), _mul(ez, -.55 * rz))
+    wing = _add(wing, _mul(normal, _union_height(wing, normal, ball)))
+    sneer = (wing, reach, _add(_add(_mul(ez, .35 * rz), _mul(ex, .1 * rx)), _mul(normal, .1 * projection)))
+    return {'vertices': moved, 'faces': faces_out, 'material_indices': indices_out, 'tip': _add(base, _mul(normal, projection)),
+            'nostrils': [moved[i] for i in deepest], 'sneer': sneer}
 
 
 def ellipsoid_geometry(center, radii, rings=24, segments=32, exponent=2):
@@ -2075,64 +2282,175 @@ def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, 
     return result
 
 
-def skin_brow_geometry(surface, side, inner, outer, height=.004, thickness=.0016, arch=.002, down=.004, inner_up=.004,
-                       outer_up=.004, standoff=.0003, columns=12, sides=8):
+def _smooth_normals(triangles, vertices):
+    """Area-weighted vertex normals of the vertices these triangles use, from `vertices` (any pose of the skin)."""
+    sums = {}
+    for tri in triangles:
+        a, b, c = (vertices[i] for i in tri)
+        n = _cross(_sub(b, a), _sub(c, a))
+        for i in tri:
+            total = sums.setdefault(i, [0.0, 0.0, 0.0])
+            for k in range(3): total[k] += n[k]
+    return {i: _mul(n, 1 / (math.hypot(*n) or 1.0)) for i, n in sums.items()}
+
+
+def _footprint(index, point, limit=.02):
+    """(triangle, barycentric weights) of the skin point nearest `point`, or None when no skin is within `limit`."""
+    hit = index.nearest(point, limit=limit)
+    return None if hit is None else (index.triangles[hit[2]], hit[3])
+
+
+def _on_footprint(footprint, vertices, normals):
+    """The skin point and smooth normal at a footprint, in the pose `vertices` (with its `_smooth_normals`)."""
+    tri, weights = footprint
+    foot = tuple(sum(w * vertices[i][k] for i, w in zip(tri, weights)) for k in range(3))
+    n = [sum(w * normals[i][k] for i, w in zip(tri, weights)) for k in range(3)]
+    return foot, _mul(n, 1 / (math.hypot(*n) or 1.0))
+
+
+def skin_brow_geometry(skin, side, inner, outer, height=.004, thickness=.0016, arch=.002, down=.004, inner_up=.004,
+                       outer_up=.004, pinch=.002, sink=None, hole=None, columns=16, sides=10):
     """A brow lying on a skin face (a kid's hair-coloured brow), with browDown, browInnerUp and browOuterUp morphs.
 
     For round skin-faced heads, where `brow_ridge_geometry` (a ridge on an eye dome)
-    and `brow_plate_geometry` (a robot's rigid bar) do not fit. `inner` and `outer`
-    are the (x, z) of the left brow's ends (the character's left, +X; the inner end
-    toward the nose); side 'R' mirrors them. The brow is a tapered bar `height` tall
-    and `thickness` deep, arched up by `arch` in the middle, and every cross-section
-    sits `standoff` in front of `surface` (`front_surface(...)` of the skin with its
-    eye holes cut). The morphs move the brow over the face and lay it back onto the
-    skin at its new place, so it slides instead of sinking into the forehead:
-    `browDown<Side>` lowers the inner end by `down` (the outer end a third as much),
-    `browInnerUp` lifts the inner end by `inner_up`, `browOuterUp<Side>` lifts the
-    outer end by `outer_up` (meters). Returns vertices, faces and morphs; give it a
-    hair material, bind it to `head` and join it into the face mesh. The skin's own
-    brow shapes (soft offsets) can stay: the brow carries the expression.
+    and `brow_plate_geometry` (a robot's rigid bar) do not fit. `skin` is the head
+    skin with its eye holes cut: a geometry dict (vertices, faces, optional morphs) or
+    the Blender mesh object after its shape keys are added. `inner` and `outer` are the
+    (x, z) of the left brow's ends (the character's left, +X; the inner end toward the
+    nose); side 'R' mirrors them. Pass the eye's `hole` (`eye_hole(...)`) so a brow
+    lowered over the eye rests on its upper lid rather than falling into the window.
+
+    The brow is laid on the skin itself, the way `brow_ridge_geometry` lays a ridge:
+    its centre line is found on the skin, and each cross-section is a bump in the
+    plane of the skin's normal, `height` wide across the skin and `thickness` proud
+    of it at the middle (tapering to the ends, arched up by `arch`), each point
+    settled on the skin along its normal, so it follows the forehead's curve, the
+    socket dip over the eye and the turn of the temple. Its edges and underside sink
+    `sink` meters into the skin (default 15% of `thickness`), so no view sees daylight
+    under it. The morphs move the brow over the face and lay it back on the skin at
+    its new place: `browDown<Side>` lowers the inner end by `down` (the outer end a
+    third as much) and pinches it `pinch` toward the nose, so an angry brow knits and
+    tilts, `browInnerUp` lifts the inner end by `inner_up`, `browOuterUp<Side>`
+    lifts the outer end by `outer_up` (meters). When the skin has morphs, every pose
+    is laid on the skin in that pose (the brow rides the skin's own brow and cheek
+    shapes), and those names are listed in `laid` so `attach_to_skin` does not add
+    them again. Every pose is checked with `skin_contact` (against the skin and the
+    lids), with a deeper sink retried before a brow that cannot lie on the skin is
+    rejected. Returns vertices, faces, morphs, `laid` and `contact`; give it a hair
+    material, bind it to `head` and join it into the face mesh.
     """
-    if not callable(surface): raise ValueError('surface must be a function (x, z) -> y, such as front_surface(...)')
+    if callable(skin) and not isinstance(skin, dict) and not hasattr(skin, 'data'):
+        raise ValueError("skin_brow_geometry lays the brow on the skin itself: pass the skin geometry {'vertices', 'faces', 'morphs'} "
+                         "(with its eye holes cut) or the head mesh object, not front_surface(...), and hole=eye_hole(...)")
     if side not in _SIDES: raise ValueError("Brow side must be 'L' or 'R'")
     suffix, sign = _SIDES[side], 1 if side == 'L' else -1
     (x0, z0), (x1, z1) = _vector(inner, 2, 'Inner end'), _vector(outer, 2, 'Outer end')
     height, thickness = _number(height, 'Brow height', 0, low_open=True), _number(thickness, 'Brow thickness', 0, low_open=True)
-    arch, standoff = _number(arch, 'Brow arch'), _number(standoff, 'Standoff', 0)
-    down, inner_up, outer_up = (_number(v, label, 0) for v, label in ((down, 'Brow down'), (inner_up, 'Brow inner up'), (outer_up, 'Brow outer up')))
-    columns, sides = _count(columns, 'Brow columns', 2), _count(sides, 'Brow sides', 4)
+    arch = _number(arch, 'Brow arch')
+    sink = .15 * thickness if sink is None else _number(sink, 'Sink', 0)
+    down, inner_up, outer_up, pinch = (_number(v, label, 0) for v, label in ((down, 'Brow down'), (inner_up, 'Brow inner up'), (outer_up, 'Brow outer up'), (pinch, 'Brow pinch')))
+    columns, sides = _count(columns, 'Brow columns', 2), _count(sides, 'Brow sides', 6)
+    skin_vertices, skin_faces, skin_morphs = _skin_data(skin)
+    # Each pose moves a point of the centre line (t = 0 inner, 1 outer) by (toward the temple, up) meters.
     shifts = {
-        f'browDown{suffix}': lambda t: -down * (1 - 2 / 3 * t),
-        'browInnerUp': lambda t: inner_up * (1 - t),
-        f'browOuterUp{suffix}': lambda t: outer_up * t,
+        f'browDown{suffix}': lambda t: (-pinch * (1 - t) ** 2, -down * (1 - 2 / 3 * t)),
+        'browInnerUp': lambda t: (0.0, inner_up * (1 - t)),
+        f'browOuterUp{suffix}': lambda t: (0.0, outer_up * t),
     }
+    if hole is not None:
+        lids, level = hole['lids'], hole['window']['level']
+        lid_vertices, lid_faces = [tuple(v) for v in lids['vertices']], [tuple(f) for f in lids['faces']]
+    xs = sorted((sign * x0, sign * x1))
+    reach = max(down, inner_up, outer_up, pinch) + height + abs(arch) + .01
+    region = lambda p: xs[0] - reach <= p[0] <= xs[1] + reach and min(z0, z1) - reach <= p[2] <= max(z0, z1) + reach
+    front_faces = [f for f in skin_faces if any(region(skin_vertices[i]) for i in f)]
+    if not front_faces: raise ValueError(f'No skin behind the brow between x = {xs[0]:.4f} and {xs[1]:.4f} m: place it on the forehead')
+    index = _SkinIndex(skin_vertices, front_faces, near=region)
+    rest_normals = _smooth_normals(index.triangles, skin_vertices)
+    front = front_surface(skin_vertices, front_faces)
+    if hole is not None:
+        lid_index = _SkinIndex(lid_vertices, lid_faces)
+        lid_normals = _smooth_normals(lid_index.triangles, lid_vertices)
 
-    def layout(shift):
-        points, caps = [], []
+    def footprint(point):
+        """Where on the rest skin a point settles: the skin, or the upper lid inside the eye's window."""
+        found = _footprint(index, point)
+        if found is None: raise ValueError(f'No skin under the brow near ({point[0]:.4f}, {point[1]:.4f}, {point[2]:.4f}): move it onto the forehead')
+        if hole is not None and level(_on_footprint(found, skin_vertices, rest_normals)[0]) < 1:
+            on_lid = _footprint(lid_index, point)
+            if on_lid is not None: return 'lid', on_lid
+        return 'skin', found
+
+    def place(where, posed, normals):
+        kind, found = where
+        return _on_footprint(found, lid_vertices, lid_normals) if kind == 'lid' else _on_footprint(found, posed, normals)
+
+    def skeleton(shift):
+        """The brow's footprints on the rest skin, with each point's lift off it: the pose's shape before the skin moves."""
+        spine = []
         for j in range(columns + 1):
             t = j / columns
-            taper = .35 + .65 * math.sin(math.pi * t) ** .5
-            x = sign * (x0 + (x1 - x0) * t)
-            z = z0 + (z1 - z0) * t + arch * math.sin(math.pi * t) + shift(t)
-            half_h, half_d = height / 2 * taper, thickness / 2 * taper
-            skins = [surface(x, z + half_h * k / 2) for k in (-2, -1, 0, 1, 2)]
-            skins = [y for y in skins if y is not None]
-            if not skins: raise ValueError(f'No skin behind the brow at x = {x:.4f}, z = {z:.4f}')
-            y = min(skins) - standoff - half_d
+            dx, dz = shift(t)
+            x = sign * (x0 + (x1 - x0) * t + dx)
+            z = z0 + (z1 - z0) * t + arch * math.sin(math.pi * t) + dz
+            y = front(x, z)
+            if y is None: raise ValueError(f'No skin behind the brow at x = {x:.4f}, z = {z:.4f}: move it onto the forehead')
+            spine.append(footprint((x, y, z)))
+        rest_spine = [place(w, skin_vertices, rest_normals) for w in spine]
+        points = []
+        for j, (foot, normal) in enumerate(rest_spine):
+            taper = .2 + .8 * math.sin(math.pi * j / columns) ** .5
+            up = _cross(normal, _sub(rest_spine[min(j + 1, columns)][0], rest_spine[max(j - 1, 0)][0]))
+            up = _mul(up, (1 if up[2] >= 0 else -1) / (math.hypot(*up) or 1.0))
             for k in range(sides):
                 phi = math.tau * k / sides
-                points.append((x, y + half_d * math.cos(phi), z + half_h * math.sin(phi)))
-            if j in (0, columns): caps.append((x, y, z))
-        return points + caps
+                # The upper arc is the brow you see; the lower arc lies inside the skin.
+                lift = thickness * taper * (math.sin(phi) if math.sin(phi) >= 0 else .35 * math.sin(phi))
+                points.append((footprint(_add(foot, _mul(up, height / 2 * taper * math.cos(phi)))), lift))
+        return points + [(spine[0], 0.0), (spine[-1], 0.0)]
 
-    vertices = layout(lambda t: 0.0)
+    def layout(bones, posed, sink_):
+        """The brow on the skin in pose `posed`: every point rides its footprint and stands off along the skin's normal."""
+        normals = rest_normals if posed is skin_vertices else _smooth_normals(index.triangles, posed)
+        result = []
+        for where, lift in bones:
+            foot, n = place(where, posed, normals)
+            result.append(_add(foot, _mul(n, lift - sink_)))
+        return result
+
     ring = lambda j, k: j * sides + k % sides
     faces = [(ring(j, k), ring(j, k + 1), ring(j + 1, k + 1), ring(j + 1, k)) for j in range(columns) for k in range(sides)]
-    start, end = len(vertices) - 2, len(vertices) - 1
+    start, end = (columns + 1) * sides, (columns + 1) * sides + 1
     faces += [(start, ring(0, k + 1), ring(0, k)) for k in range(sides)]
     faces += [(end, ring(columns, k), ring(columns, k + 1)) for k in range(sides)]
-    faces = _outward(vertices, faces)
-    return {'vertices': vertices, 'faces': faces, 'morphs': {name: layout(shift) for name, shift in shifts.items()}}
+    # Judge it as the verifier does: against the skin and the lids (a lowered brow may rest on the upper lid).
+    surface = {'vertices': skin_vertices, 'faces': skin_faces, 'morphs': skin_morphs}
+    if hole is not None:
+        offset = len(skin_vertices)
+        surface = {'vertices': skin_vertices + lid_vertices, 'faces': skin_faces + [tuple(i + offset for i in f) for f in lid_faces],
+                   'morphs': {name: list(targets) + lid_vertices for name, targets in skin_morphs.items()}}
+    flat = lambda t: (0.0, 0.0)
+    bones = {name: skeleton(shift) for name, shift in shifts.items()}
+    bones[None] = skeleton(flat)
+    moving = [n for n in skin_morphs if n not in shifts and any(region(p) and p != q for p, q in zip(skin_vertices, skin_morphs[n]))]
+    for attempt, sink_ in enumerate((sink, 2 * sink + .0002, 3 * sink + .0004)):
+        vertices = layout(bones[None], skin_vertices, sink_)
+        morphs, laid = {}, []
+        for name in list(shifts) + moving:
+            target = layout(bones.get(name, bones[None]), skin_morphs.get(name, skin_vertices), sink_)
+            if name not in shifts and max(math.dist(p, q) for p, q in zip(target, vertices)) < 1e-7: continue
+            morphs[name] = target
+            if name in skin_morphs: laid.append(name)
+        if attempt == 0: faces = _outward(vertices, faces)
+        result = {'vertices': vertices, 'faces': faces, 'morphs': morphs, 'laid': laid, 'sink': sink_}
+        contact = skin_contact(result, surface)
+        worst = max([('rest', contact['gap'])] + [(name, pose['gap']) for name, pose in contact['poses'].items()], key=lambda item: item[1])
+        if worst[1] <= ATTACH_TOLERANCE: break
+    else:
+        raise ValueError(f'The skin brow floats {worst[1] * 1000:.2f} mm off the skin at {worst[0]} even sunk {sink_ * 1000:.2f} mm: '
+                         'move `inner`/`outer` onto the forehead, away from the eye window, or pass hole=eye_hole(...)')
+    result['contact'] = contact
+    return result
 
 
 # ---------------------------------------------------------------- robot parts (Bolt: plates, rubber mouth edge)
@@ -2672,11 +2990,43 @@ def add_jaw_open(obj, jaw, weight=None, name='jawOpen', rigid=False, min_chin_dr
     return shape_key(obj, name, [tuple(inverse @ Vector(p)) for p in targets])
 
 
+def _snap_to_plane(vertices, faces, level, fraction=.25):
+    """Slide each vertex that lies within `fraction` of an edge's height from the plane z = `level` along that edge onto it.
+
+    A vertex a hair off the mouth line makes `bisect_plane` cut a sliver beside it, which shades as a seam and folds
+    when the jaw opens. Each such vertex moves along its crossing edge (the one to a neighbour on the other side that
+    reaches the plane soonest), so it stays on the old surface. Returns the new vertex list.
+    """
+    vertices = [tuple(v) for v in vertices]
+    neighbours = {}
+    for face in faces:
+        for a, b in zip(face, tuple(face[1:]) + (face[0],)):
+            neighbours.setdefault(a, set()).add(b)
+            neighbours.setdefault(b, set()).add(a)
+    result = list(vertices)
+    for i, v in enumerate(vertices):
+        d = v[2] - level
+        if d == 0: continue
+        best = None
+        for j in neighbours.get(i, ()):
+            e = vertices[j][2] - level
+            if (e > 0) == (d > 0) or e == 0: continue
+            t = d / (d - e)
+            if t < fraction and (best is None or t < best[0]): best = (t, j)
+        if best is not None:
+            t, j = best
+            moved = _add(v, _mul(_sub(vertices[j], v), t))
+            result[i] = (moved[0], moved[1], level)
+    return result
+
+
 def slit_mouth(obj, mouth_z, half_width, center_x=0.0, front_y=None):
     """Cut a closed mouth slit into a skin mesh along z = mouth_z for |x - center_x| < half_width on the front.
 
     Bisects the mesh at the mouth line and splits the edges on that line so the lips
-    can part (the corners stay joined). The seam vertices are tagged in the `jaw_seam`
+    can part (the corners stay joined). Vertices closer to the line than a quarter of
+    their crossing edge first slide along that edge onto it, so the cut leaves no
+    sliver faces (they shade as a seam across the face and fold when the jaw opens). The seam vertices are tagged in the `jaw_seam`
     point attribute (1 lower lip, 2 upper lip), so `add_jaw_open` opens exactly the
     lower lip: comparing coordinates against the mouth line would depend on how
     float32 rounds `mouth_z`. The front is y < `front_y` (default: the mean vertex
@@ -2689,6 +3039,10 @@ def slit_mouth(obj, mouth_z, half_width, center_x=0.0, front_y=None):
     bm = bmesh.new()
     bm.from_mesh(obj.data)
     if front_y is None: front_y = sum(v.co.y for v in bm.verts) / max(1, len(bm.verts))
+    # Vertices a hair off the line slide onto it first: the cut would leave slivers that shade as a seam and fold.
+    bm.verts.ensure_lookup_table()
+    snapped = _snap_to_plane([tuple(v.co) for v in bm.verts], [tuple(v.index for v in f.verts) for f in bm.faces], mouth_z)
+    for vertex, point in zip(bm.verts, snapped): vertex.co = point
     bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], dist=1e-7, plane_co=(0, 0, mouth_z), plane_no=(0, 0, 1))
     on_line = lambda v: abs(v.co.z - mouth_z) < SEAM_TOLERANCE and abs(v.co.x - center_x) < half_width - 1e-9 and v.co.y < front_y
     edges = [e for e in bm.edges if all(on_line(v) for v in e.verts)]
