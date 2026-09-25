@@ -269,12 +269,18 @@ blend=None, max_edge=None, socket=25, lining_gap=.0001, lining_rings=5,
 2. **Socket dip.** Skin much farther out is drawn in over `socket` degrees around
    the window (fading out by 3.2 eyeball radii), so the rim hugs the lids instead
    of opening a deep funnel where the face lies far in front of the eye (beside the
-   nose).
+   nose). The dip is applied first and the mound as a smooth maximum on the
+   drawn-in radius, so a wide `blend` (above about 0.45 eyeball radii) meets the dip
+   with no step: the two used to disagree where they met, a 3 mm step and a jagged
+   line under each eye at `blend=.016` on a 23 mm eye.
 3. **Window.** The skin is clipped along `eye_window(lids, margin)`: every
    direction from the eye center within `margin` degrees of the lids' opening
    envelope (between the lower lid's lowest edge and the upper lid's highest edge
    over every blink, squint and wide mix), with round ends. The lids cover every
-   other direction inside it, in every state, and reach past it. At the corners,
+   other direction inside it, in every state, and reach past it. Vertices near the
+   window first slide along an edge onto it, so the rim runs exactly round the
+   window (a clip that reused vertices up to 15% of an edge off it zig-zagged,
+   which showed as stair-stepped bands under the eye). At the corners,
    where the lids meet and barely move, the window reaches only `corner_margin`
    (2) degrees past them, so no pointed pocket of wall and lining opens beside the
    inner corner (round 4's "skin wedge").
@@ -294,7 +300,10 @@ blend=None, max_edge=None, socket=25, lining_gap=.0001, lining_rings=5,
    triangles; unsmoothed, neighbours turned up to 52 degrees apart and the lower rim
    showed facet ticks).
 
-Edges near the eye are split to `max_edge` (default 0.2 eyeball radii) first; each
+Edges near the eye are split to `max_edge` (default 0.2 eyeball radii) first, each
+new point on the smooth surface through the skin (a curve through its ends square
+to their normals) rather than on the blank's flat faces, which the mound and socket
+shaping turned into faint streaks radiating from the eye; each
 vertex costs a delta in every morph target that moves it (only those, since
 `export_glb` stores sparse morphs), so keep an eye on file size (E8: 3 MB).
 Call `eye_hole` once per eye on the blank, before `slit_mouth` and any shape keys,
@@ -305,11 +314,22 @@ calls in a row differ, because the second is cut into skin the first refined and
 reshaped (about 1,000 of 7,700 vertices had no mirror image with the eyes 52 mm
 apart). It cuts the left hole, keeps the half at x >= 0 and mirrors it.
 
-A crisp **lash line**: `build_eye(..., lash=True)` puts a near-black `lash`
-material (or pass your own material) on the lid faces along the upper edge
-(`lash_width` degrees deep at the middle, thinning toward the corners;
-`lash_side='both'` adds the lower lid). The faces are `lash_faces(lids, width,
-which)`; the line rides every blink, squint and wide with the lid. It returns `{'vertices',
+A crisp **lash line**: `build_eye(..., lash=True)` adds a near-black `lash`
+material (or pass your own material) on a lash band, `lash_geometry(lids, width=5,
+drop=None, which='upper')`: a thin closed crescent standing just in front of the
+lid, from `lash_width` degrees above the lid's edge down past it by `drop`
+degrees, both tapering to a point at each corner (no stubs past the corners, no
+prongs). Its vertices are fixed mixes of the lid's own, so it rides every blink,
+squint and wide exactly and keeps its size in every pose. Morphs add positions, so
+blink 1 + wide 1 (an idle blink while surprised) parts the lids by the wide travel:
+the default `drop` hangs the upper lash far enough that the lids still overlap by
+half their closing overlap plus a degree there, and no strip of iris shows under
+it from a little below (round 6: a quarter of a degree, 5 px of iris). The band is
+pushed out wherever a pose would bring it inside the lids' clearance.
+`lash_side='both'` adds a lower band (no drop). Lid eyes without `lash` get the
+same upper band as a thin seal in the lid's own material (a slightly fuller lid
+edge), so every lid eye stays closed at blink + wide, seen from below too. `lash_faces(lids, width, which)`
+still lists the lid faces along an edge, for your own material there. `eye_hole` returns `{'vertices',
 'faces', 'lids', 'window', 'rim', 'wall', 'pushed', 'rim_radius', 'lining',
 'mound', 'socket', 'bevel'}`: `mound` is the rim's radius where the skin was
 reshaped (where a brow ridge starts looking for the skin on a mounded eye).
@@ -495,13 +515,26 @@ first slides along that edge onto the line (it stays on the old surface), so the
 cut runs through vertices and no blank needs a row pre-snapped to the mouth.
 
 `sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0, fullness=None,
-crease=None, height=None)` gives a skin face soft lips and a lip line at rest: an
-upper and a fuller lower lip (each `fullness` proud, 9% of the half width;
-`height` 45% of it) either side of a crease along the mouth line (60% of the
-fullness deep), thinning to nothing just past the corners. It refines the skin
-round the mouth first, so run it on the blank before `mesh_from_geometry` and
-`slit_mouth`, then take `front_surface` of its result for the cavity and teeth.
-`slit_mouth` then cuts along the crease.
+crease=None, height=None, max_edge=None)` gives a skin face soft lips and a lip
+line at rest: an upper and a fuller lower lip (each `fullness` proud, 9% of the
+half width; `height` 45% of it) either side of a crease along the mouth line (60%
+of the fullness deep), thinning to nothing just past the corners. The skin round
+the mouth is rebuilt as a regular grid wrapped round the head (columns at even
+angles about a vertical axis through the mouth, so a frog mouth that turns round
+the sides of the head works): rows run parallel to the mouth line, finest at the
+crease, one lies exactly on it and a column falls on each corner, so every vertex
+along a row takes the same lip profile. The lips shade smoothly (round 6 refined
+the blank's faces instead and left a comb of short vertical streaks along the
+crease, 11-17 degrees off a smooth normal on the exported heads; now under 1), and
+`slit_mouth` cuts along that row with no slivers, which folded the mouth corners
+of an `sdf_blank` head at happy, angry and scared + jawOpen. The grid's points lie
+on the smooth surface through the skin, the skin round it is refined smoothly to
+the grid's spacing and joined to it by a ring of well-shaped triangles, and the
+lips push out horizontally so the rows stay level. `max_edge` is the grid's
+column spacing (default 12% of `height`). Run it on the blank before
+`mesh_from_geometry` and `slit_mouth`, then take `front_surface` of its result for
+the cavity and teeth; it raises a clear error when the mouth's skin is not one
+plain patch (a hole or another feature in the way) or wraps past 85 degrees.
 
 `teeth_row_geometry(style, center, half_width, depth, count, height, row='upper',
 width=None, thickness=None, sizes=None, span=150)` lays teeth along an elliptical
@@ -611,6 +644,13 @@ which seal the hole (above).
   skin over the mound.
 - A robot: `brow_plate_geometry` (robot plates, below).
 
+`dome_brow_geometry(hole, skin, side, roll=(152, 26), polar=(75, 67), height=26,
+...)` (from the Mossjaw build) is a heavy ridge arcing over an eye dome from the
+inner to the outer corner that *rolls*: browDown rolls its inner end down round the
+eye into an angry V and drops it forward onto the upper lid, browInnerUp rolls it
+the other way, browOuterUp lifts the outer end, and the lifts swell it up and off
+the dome. It returns a `crest` weight per vertex (1 on top) for shading paint.
+
 `brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50,
 height=12, thickness=None, arch=4, down=12, inner_up=10, outer_up=10, skin=...,
 hole=..., sink=None, clearance=.0002)` builds a heavy brow ridge for eyes that sit
@@ -653,7 +693,9 @@ nose into the skin: `tip` is the (x, z) of its middle, `size` its (half width,
 half height, projection) in meters. The bulb is a ball `projection` proud of the
 skin, joined to it by a smooth union with a rounded fillet, so there is no seam and
 no part to attach. Two soft nostril dimples are pressed up into its lower slope;
-their faces get material index 1 (give the mesh a dark nostril material second).
+their faces get material index 1 (give the mesh a dark nostril material second);
+the skin is cut along each dimple's contour, so the nostril's edge is a smooth
+curve (round 6's whole-triangle outline was saw-toothed and read as torn holes).
 It returns vertices, faces, `material_indices`, `tip`, `nostrils` and `sneer`, the
 left wing's (center, radius, offset) for `symmetric_offsets`: noseSneer lifts and
 flares each wing about 3.5 mm on a kid's 21 mm nose.
@@ -694,8 +736,12 @@ multiply the skin material's color. `skin_tints(vertices, base, patches=[...],
 mottle={'scale', 'amount', 'seed'})` computes one linear RGB tint per vertex:
 `base` is the skin material's color (hex or linear); each patch is a dict with
 `center`, `radius` (one number or an (x, y, z) triple), `color` (what the skin
-looks like at its middle; never brighter than `base`, so make the material the
-lightest tone) and `strength`, fading smoothly to nothing at its radius; `mottle`
+looks like at its middle) and `strength`, fading smoothly to nothing at its radius;
+tints only darken (they multiply the material, and engines store vertex colors
+0..1), so a color brighter than `base` needs `lighten=True`, which returns
+`{'tints', 'material'}`: the linear color to give the material (the brightest tone
+painted) and tints that paint `base` everywhere else, so a pale belly or jaw is
+just a patch (`use_vertex_colors(mat, paint['material'])` sets it); `mottle`
 darkens the skin by up to `amount` in smooth, repeatable blotches `scale` meters
 apart. `paint_vertices(obj, tints, layer='tint')` stores them as a point color
 attribute and `use_vertex_colors(mat, layer='tint')` multiplies the material's
@@ -707,7 +753,17 @@ before joining; nothing has to be re-applied by vertex order.
 paint_vertices(head, skin_tints(rest, base=SKIN, mottle={'scale': .006, 'amount': .05},
                patches=[{'center': cheek, 'radius': (.016, .01, .011), 'color': (.68, .17, .12), 'strength': .7}]))
 use_vertex_colors(skin)
+
+# A dark frog with a pale belly: the material becomes the belly tone, the rest is painted darker.
+paint = skin_tints(rest, base=GREEN, lighten=True, patches=[{'center': belly, 'radius': (.16, .12, .06), 'color': PALE}])
+paint_vertices(head, paint['tints'])
+use_vertex_colors(skin, paint['material'])
 ```
+
+For shade maps of your own (a hair cap's grooves, an ear's bowl, iris rings),
+`tint_for(color, base)` is the tint that turns material color `base` into `color`
+(each channel at most 1); paint any list of them with `paint_vertices`. For parts
+you build yourself, `outward_faces(vertices, faces)` winds a closed shell outward.
 
 glTF exports the tints as `COLOR_0`, which multiplies `baseColorFactor`. three.js
 does this for any primitive with `COLOR_0`. Unreal's Interchange import keeps them

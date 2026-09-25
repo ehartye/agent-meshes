@@ -9,10 +9,13 @@ import { verifyFaceContract } from '../src/face-contract.ts';
 import { readAccessor, readGLB } from '../src/gltf-read.ts';
 import { ARKIT_FACE_REQUIRED_MORPHS, contractExpectations } from '../src/arkit-face.ts';
 import { unrealAvailable, verifyUnreal } from '../src/unreal.ts';
+import { lipCreaseStreak } from './helpers/lip-streak.ts';
 
 const directories: string[] = [];
 // Each fixture's mouth line (glTF y) and half width.
-const MOUTHS: Record<string, [number, number]> = { test_head: [0.075, 0.022], test_robot: [NaN, 0], test_frog: [0.088, 0.055], test_kid: [0.088, 0.021] };
+const MOUTHS: Record<string, [number, number]> = { test_head: [0.075, 0.022], test_robot: [NaN, 0], test_frog: [0.088, 0.055], test_kid: [0.088, 0.021], test_lips_kid: [0.088, 0.021], test_lips_frog: [0.083, 0.068] };
+// Fixtures with soft lips (sculpt_lips): their crease must shade smoothly (round 6: a comb of streaks, 11-17 degrees).
+const LIPS = new Set(['test_kid', 'test_lips_kid', 'test_lips_frog']);
 
 /**
  * The steepest turn of the skin's shading normals (degrees per mm between vertices under 3 mm apart) in a band 15 mm
@@ -42,7 +45,7 @@ afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(p
 // Real Blender only: CI skips this, like the refine stage. Run it locally with Blender installed.
 const maybe = findBlender() ? it : it.skip;
 
-for (const fixture of ['test_head', 'test_robot', 'test_frog', 'test_kid']) maybe(`the helper-authored ${fixture} builds through agent-meshes build and passes arkit-face/1`, async () => {
+for (const fixture of ['test_head', 'test_robot', 'test_frog', 'test_kid', 'test_lips_kid', 'test_lips_frog']) maybe(`the helper-authored ${fixture} builds through agent-meshes build and passes arkit-face/1`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-face-rig-')); directories.push(directory);
   const config = join(directory, 'build.json');
   await writeFile(config, JSON.stringify({ version: 1, name: fixture, blender: { script: resolve(`tests/fixtures/face-rig/${fixture}.py`) }, output: 'generated' }));
@@ -82,6 +85,11 @@ for (const fixture of ['test_head', 'test_robot', 'test_frog', 'test_kid']) mayb
   // The skin shades as one surface across the mouth line: no sliver row beside the slit (a seam across the face).
   const [mouthY, halfWidth] = MOUTHS[fixture];
   if (Number.isFinite(mouthY)) expect(mouthBandTurn(bytes, mouthY, halfWidth)).toBeLessThan(5);
+  if (LIPS.has(fixture)) {
+    const streak = lipCreaseStreak(bytes, mouthY, halfWidth);
+    expect(streak.max).toBeLessThan(1.5);
+    expect(streak.reversals).toBeLessThan(3);
+  }
   // Every file stays within E8's 3 MB, the eye holes' extra skin included.
   expect(bytes.length).toBeLessThan(3_000_000);
 

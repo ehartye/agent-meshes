@@ -17,9 +17,9 @@ import struct
 __all__ = [
     'ARKIT_REQUIRED', 'ARKIT_OPTIONAL', 'ARKIT_GAZE', 'ARKIT_NAMES', 'CANONICAL_EMOTIONS', 'DEFAULT_LID_FOLLOW',
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
-    'eye_window', 'lash_faces', 'eye_hole', 'eye_holes', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry',
+    'eye_window', 'lash_faces', 'lash_geometry', 'eye_hole', 'eye_holes', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry', 'dome_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
-    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
+    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
@@ -394,6 +394,150 @@ def lash_faces(lids, width=5, which='upper'):
         share = (elevation - anchor) / (edge - anchor) if abs(edge - anchor) > 1e-9 else 1.0
         if share > 1 - fraction[key] - 1e-9: result.append(index)
     return result
+
+
+def lash_geometry(lids, width=5, drop=None, which='upper', offset=None, subdivide=2):
+    """A lash line for lid eyes: a thin tapered band hugging a lid's rim that rides every blink, squint and wide.
+
+    `lids` is a `lid_geometry` (or `eye_hole(...)['lids']`). The band lies just in front
+    of the lid's outer surface (`offset`, default 15% of the lid thickness), from
+    `width` degrees above the lid's edge at the middle of the opening to `drop` degrees
+    past it (default: enough to overlap the lids by half their closing overlap plus a
+    degree at blink 1 + wide 1; upper lid
+    only): lashes hang over the eye, and when blink and wide add up (an idle blink
+    while surprised) they close the parallax gap a view from below would see between
+    the lids. Width and drop taper with the opening's height to a point at each corner,
+    so the line is a clean crescent, with no stubs past the corners. Every vertex is a
+    fixed mix of the lid's own vertices, so its morphs are the same mix of theirs.
+    Returns vertices, faces and morphs {'blink', 'squint', 'wide'}; `build_eye(...,
+    lash=True)` joins it to the lids with a lash material.
+    """
+    if lids.get('style') != 'lid': raise ValueError('Lash lines belong to lid eyes (lid_geometry or eye_hole lids)')
+    if which not in ('upper', 'lower'): raise ValueError("Lash side must be 'upper' or 'lower'")
+    width = _number(width, 'Lash width', 0, 45, low_open=True)
+    center, vertices, morphs = lids['center'], lids['vertices'], lids['morphs']
+    yaws = lids['edges']['yaw']
+    columns = len(yaws)
+    half = len(vertices) // 2
+    rows_total = half // (2 * columns)          # anchor-to-stop rows plus the bead rows, per layer
+    stop = rows_total - BEAD_ROWS - 1           # the last row before the rim's bead
+    base = 0 if which == 'upper' else half
+    outer = lambda i, j: base + rows_total * columns + i * columns + j
+    meet = lids['meet']
+    edges = lids['edges'][which]
+    heights = [abs(e['rest'] - meet) for e in edges]
+    tallest = max(heights) or 1.0
+    shares = [h / tallest for h in heights]     # the opening's height at each column, 1 at the middle
+    middle = max(range(columns), key=lambda j: shares[j])
+    overlap = meet - lids['edges']['upper'][middle]['blink']         # how far the closed upper lid passes the meet line
+    elevation = lambda v: math.degrees(math.asin(max(-1.0, min(1.0, (v[2] - center[2]) / math.dist(v, center)))))
+    if drop is None and which == 'upper':
+        # At blink 1 + wide 1 (morphs add positions), how far the lower lid's top overlaps the upper lid's edge in the
+        # middle column; the band hangs far enough to make that half the closing overlap plus a degree.
+        posed = lambda i: tuple(vertices[i][k] + morphs['blink'][i][k] - vertices[i][k] + morphs['wide'][i][k] - vertices[i][k] for k in range(3))
+        in_column = lambda start: [start + layer * rows_total * columns + i * columns + middle for layer in (0, 1) for i in range(rows_total)]
+        covered = max(elevation(posed(i)) for i in in_column(half)) - min(elevation(posed(i)) for i in in_column(0))
+        drop = max(0.0, overlap / 2 - covered) + 1.0
+    drop = 0.0 if drop is None else _number(drop, 'Lash drop', 0, 30)
+    offset = .15 * lids['thickness'] if offset is None else _number(offset, 'Lash offset', 0)
+
+    def mix(weights, points):
+        p = [0.0, 0.0, 0.0]
+        for index, w in weights:
+            for k in range(3): p[k] += w * points[index][k]
+        return p
+
+    def column(j):
+        """Weights (vertex, share) of each band row in lid column j, top to bottom (one point where the lid is shut).
+
+        The rows lie on the straight line through the lid's last row before the rim and the rim's first bead row, by
+        their height above the lid's rest edge: those two keep their places relative to the edge in every pose (the
+        bead is sized from the rest shape), so the band keeps its size and shape as the lid blinks, and the line runs
+        in front of the rounded rim and on past the edge, down over the eye.
+        """
+        top, bead = outer(stop, j), outer(stop + 1, j)
+        toward = 1 if lids['anchors'][1 if which == 'upper' else 0] > edges[j]['rest'] else -1
+        height = lambda v: toward * (elevation(v) - edges[j]['rest'])
+        h0, h1 = height(vertices[top]), height(vertices[bead])
+        if shares[j] <= 0 or h0 - h1 < 1e-9: return [[(top, 1.0)]] * 5
+        above, below = width * math.sqrt(shares[j]), drop * shares[j]
+        result = []
+        for e in (above, above / 2, 0.0, -below / 2, -below):
+            t = (h0 - e) / (h0 - h1)
+            result.append([(top, 1 - t), (bead, t)])
+        return result
+
+    # The opening's columns and the shut corner column each side (the band's points), split `subdivide` ways between
+    # lid columns (mixes of both) so the taper is smooth.
+    open_columns = [j for j in range(columns) if shares[j] > 0]
+    if not open_columns: raise ValueError('The lid has no opening to line')
+    first, last = max(0, open_columns[0] - 1), min(columns - 1, open_columns[-1] + 1)
+    subdivide = _count(subdivide, 'Lash subdivision', 1)
+    band = []
+    for j in range(first, last + 1):
+        a = column(j)
+        if j == last: band.append(a); break
+        b = column(j + 1)
+        for s in range(subdivide):
+            t = s / subdivide
+            band.append([[(i, w * (1 - t)) for i, w in ra] + [(i, w * t) for i, w in rb] for ra, rb in zip(a, b)])
+    radius = math.dist(vertices[outer(stop, open_columns[len(open_columns) // 2])], center)
+    states = {name: morphs[name] for name in ('blink', 'squint', 'wide')}
+    # Every blink, squint and wide mix the lid clearance is judged at: a band point past the edge carries a lid chord
+    # on, so it may dip toward the eyeball mid-blink; each point is pushed out (all its poses scale alike, the morphs
+    # being linear) until its worst pose keeps the lids' own clearance.
+    required = lids['eye_radius'] + lids['min_clearance']
+    weights_cube = [(b, s, w) for b in (0, .25, .5, .75, 1) for s in (0, 1) for w in (0, 1)]
+
+    def scale_of(key):
+        rest = mix(key, vertices)
+        deltas = {name: _sub(mix(key, target), rest) for name, target in states.items()}
+        nearest = min(math.dist(_add(_add(_add(rest, _mul(deltas['blink'], b)), _mul(deltas['squint'], s)), _mul(deltas['wide'], w)), center)
+                      for b, s, w in weights_cube)
+        return required / nearest if nearest > 0 else 1.0
+    scale = lambda p, k: tuple(center[n] + (p[n] - center[n]) * k for n in range(3))
+    # A thin closed shell (a sheet seen from behind, as a view from below sees the hanging part, reads as a hole into
+    # the head): the outer sheet, an inner sheet `depth` behind it (never nearer the eyeball than the lids get), and
+    # walls round its edge.
+    depth = max(.0001, .1 * lids['thickness'])
+    out_vertices, index = [], {}
+    out_morphs = {name: [] for name in states}
+
+    def vertex(weights, inner):
+        merged = {}
+        for i, w in weights: merged[i] = merged.get(i, 0.0) + w
+        key = tuple(sorted((i, round(w, 12)) for i, w in merged.items() if abs(w) > 1e-12))
+        if (key, inner) not in index:
+            index[(key, inner)] = len(out_vertices)
+            least = scale_of(key)                                   # clear of the eyeball in every pose
+            k = max(1 + offset / radius, least + depth / radius)    # the outer sheet
+            if inner: k -= depth / radius
+            out_vertices.append(scale(mix(key, vertices), k))
+            for name, target in states.items(): out_morphs[name].append(scale(mix(key, target), k))
+        return index[(key, inner)]
+    outer_grid = [[vertex(w, False) for w in strand] for strand in band]
+    inner_grid = [[vertex(w, True) for w in strand] for strand in band]
+
+    def polygon(*corners):
+        unique = []
+        for v in corners:
+            if v not in unique: unique.append(v)
+        return tuple(unique) if len(unique) >= 3 else None
+    O, I, last, ends = outer_grid, inner_grid, len(band[0]) - 1, len(band) - 1
+    faces = []
+    for s in range(ends):
+        for k in range(last):
+            faces.append(polygon(O[s][k], O[s][k + 1], O[s + 1][k + 1], O[s + 1][k]))
+            faces.append(polygon(I[s + 1][k], I[s + 1][k + 1], I[s][k + 1], I[s][k]))
+        # Walls along the band's two long edges...
+        faces.append(polygon(O[s][0], O[s + 1][0], I[s + 1][0], I[s][0]))
+        faces.append(polygon(O[s + 1][last], O[s][last], I[s][last], I[s + 1][last]))
+    for k in range(last):
+        # ...and across its two ends (nothing where an end comes to a point).
+        faces.append(polygon(O[0][k + 1], O[0][k], I[0][k], I[0][k + 1]))
+        faces.append(polygon(O[ends][k], O[ends][k + 1], I[ends][k + 1], I[ends][k]))
+    faces = _outward(out_vertices, [f for f in faces if f])
+    return {'vertices': out_vertices, 'faces': faces, 'morphs': out_morphs, 'which': which, 'width': width, 'drop': drop}
 
 
 def _triangle_normals(vertices, faces):
@@ -849,14 +993,31 @@ def eye_window(lids, margin=6, corner_margin=2):
     return {'center': center, 'margin': margin, 'envelope': outline, 'polar_max': polar, 'level': level}
 
 
-def _refine(vertices, faces, near, max_edge, rounds=12):
+def _smooth_midpoint(a, b, na, nb):
+    """The middle of the cubic through a and b square to their unit normals (a PN-triangle edge): on the smooth surface.
+
+    A plain midpoint lies on the flat face between them, so a skin refined that way keeps its coarse facets, and
+    anything pushed out along its normals (lips) shades them as streaks at the blank's column spacing.
+    """
+    d = _sub(b, a)
+    bend = _add(_mul(na, _dot(d, na)), _mul(nb, -_dot(d, nb)))
+    middle = _sub(_mul(_add(a, b), .5), _mul(bend, .125))
+    # An edge in an axis plane (a symmetric blank's midline, a ring) keeps its midpoint in it exactly.
+    return tuple(a[k] if a[k] == b[k] else middle[k] for k in range(3))
+
+
+def _refine(vertices, faces, near, max_edge, rounds=12, normals=None):
     """Split every edge longer than `max_edge` with an end where `near(point)` holds, by longest-edge bisection.
 
     Faces touching a split edge become triangles; a triangle is only ever split
     across its longest edge first (the neighbours' longest edges are marked until
     that holds), so repeated rounds keep the triangles well shaped. Orientation is kept.
+    With `normals` (one unit normal per vertex) each new vertex lies on the smooth
+    surface through its edge (`_smooth_midpoint`) rather than on the flat face, takes
+    the mean of its ends' normals, and the result is (vertices, faces, normals).
     """
     vertices, faces = [tuple(v) for v in vertices], [tuple(f) for f in faces]
+    if normals is not None: normals = [tuple(n) for n in normals]
     key = lambda a, b: (a, b) if a < b else (b, a)
     length = lambda e: math.dist(vertices[e[0]], vertices[e[1]])
     edges_of = lambda face: [key(a, b) for a, b in zip(face, face[1:] + face[:1])]
@@ -890,7 +1051,12 @@ def _refine(vertices, faces, near, max_edge, rounds=12):
         middle = {}
         for e in marked:
             middle[e] = len(vertices)
-            vertices.append(_mul(_add(vertices[e[0]], vertices[e[1]]), .5))
+            if normals is None: vertices.append(_mul(_add(vertices[e[0]], vertices[e[1]]), .5)); continue
+            na, nb = normals[e[0]], normals[e[1]]
+            vertices.append(_smooth_midpoint(vertices[e[0]], vertices[e[1]], na, nb))
+            n = _add(na, nb)
+            size = math.hypot(*n)
+            normals.append(_mul(n, 1 / size) if size > 1e-12 else na)
         refined = []
         for face in faces:
             if len(face) != 3 or not any(e in marked for e in edges_of(face)):
@@ -906,7 +1072,7 @@ def _refine(vertices, faces, near, max_edge, rounds=12):
             elif n is None: refined += [(m, b, c), (a, m, q), (m, c, q)]
             else: refined += [(a, m, q), (m, b, n), (q, n, c), (m, n, q)]
         faces = refined
-    return vertices, faces
+    return (vertices, faces) if normals is None else (vertices, faces, normals)
 
 
 def _quality(vertices, face):
@@ -1020,36 +1186,42 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     reach, far, depth = push + blend + 2 * max_edge, 3.2 * eye_radius, 1.25 * (push + blend / 4)
     level = window['level']
     near = lambda p: math.dist(p, center) < reach or (math.dist(p, center) < far and level(p) < socket)
-    points, polygons = _refine(vertices, faces, near, max_edge)
+    # New points on the smooth surface through the skin, not on its flat faces: shaped round the eye, flat midpoints
+    # shade the blank's facets as streaks radiating from it.
+    points, polygons, _ = _refine(vertices, faces, near, max_edge, normals=_vertex_normals(vertices, faces))
     pushed = 0
     for i, point in enumerate(points):
         d = _sub(point, center)
         r = math.hypot(*d)
         if r < 1e-12: continue
         target = r
-        if r < push + blend:
-            # A smooth maximum of r and the mound radius: unchanged beyond the blend, never inside the lids.
-            h = max(blend - abs(r - push), 0.0) / blend
-            target = max(r, push) + h * h * blend / 4
-        elif socket > 0 and depth < r < far:
+        if socket > 0 and depth < r < far:
             # Draw far skin in toward `depth` near the window, fading out with angle and distance: the rim stays
             # within a quarter of the mound radius beyond it, and skin already that close is left alone.
             pull = (1 - _smoothstep(0, socket, max(0.0, level(point)))) * (1 - _smoothstep(.75 * far, far, r))
             target = r - (r - depth) * pull
+        if target < push + blend:
+            # Then a smooth maximum with the mound radius: unchanged beyond the blend, never inside the lids. Taken on
+            # the drawn-in radius, so a blend wide enough to reach the socket dip meets it with no step.
+            h = max(blend - abs(target - push), 0.0) / blend
+            target = max(target, push) + h * h * blend / 4
         if target != r:
             points[i] = _add(center, _mul(d, target / r))
             pushed += 1
-    # Pushing skin that ran inside the lids out onto the mound stretches its edges: split them again, and keep each
-    # new midpoint (on a chord of the shaped skin) out of the lids.
+    # Pushing skin that ran inside the lids out onto the mound stretches its edges: split them again (on the shaped
+    # skin's smooth surface), and keep each new midpoint out of the lids.
     for _ in range(6):
         count = len(points)
-        points, polygons = _refine(points, polygons, near, max_edge, rounds=1)
+        points, polygons, _ = _refine(points, polygons, near, max_edge, rounds=1, normals=_vertex_normals(points, polygons))
         if len(points) == count: break
         for i in range(count, len(points)):
             d = _sub(points[i], center)
             r = math.hypot(*d)
             if 1e-12 < r < push: points[i] = _add(center, _mul(d, push / r))
-    cut = _clip(points, polygons, window['level'], snap=.15)
+    # Vertices near the window slide onto it first, so the rim runs exactly round the window: the clip's snap alone
+    # reused vertices up to 15% of an edge off it, and the zig-zag showed as stair-stepped bands under the eye.
+    points, _ = _snap_to_level(points, polygons, window['level'], .25)
+    cut = _clip(points, polygons, window['level'], snap=.02)
     result = list(cut['vertices'])
     rim = set(cut['boundary'])
     kept = _tidy(result, cut['faces'], rim)
@@ -1192,7 +1364,10 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
     eye_left = _vector(eye_left, 3, 'Left eye center')
     if eye_left[0] <= 0: raise ValueError("eye_left is the character's left eye, at x > 0")
     left = eye_hole(vertices, faces, eye_left, eye_radius, **options)
-    source_vertices, source_faces = left['vertices'], left['faces']
+    # Points within a micron of the midline lie on it (smooth refinement leaves some a few nanometres off, and a clip
+    # there would add near-duplicate points).
+    source_vertices = [((0.0,) + tuple(p[1:])) if abs(p[0]) < 1e-6 else tuple(p) for p in left['vertices']]
+    source_faces = left['faces']
     if min(source_vertices[i][0] for index in left['wall'] for i in source_faces[index]) <= 0:
         raise ValueError('The eyes are so close that their holes meet at the midline: move them apart or make them smaller')
     side = lambda i: 0 if abs(source_vertices[i][0]) < 1e-12 else 1 if source_vertices[i][0] > 0 else -1
@@ -1917,7 +2092,7 @@ def _value_noise(point, scale, seed):
     return total
 
 
-def skin_tints(vertices, base=(1.0, 1.0, 1.0), patches=(), mottle=None):
+def skin_tints(vertices, base=(1.0, 1.0, 1.0), patches=(), mottle=None, lighten=False):
     """Per-vertex skin paint: soft color patches and mottling, as tints that multiply the skin material's color.
 
     `base` is the skin material's own color (an sRGB hex string such as '#f0c0a0',
@@ -1928,8 +2103,12 @@ def skin_tints(vertices, base=(1.0, 1.0, 1.0), patches=(), mottle=None):
     cheeks, lips, a lash line along the lid edge, shading in the sockets. `mottle`
     ({'scale': meters between blotches, 'amount': darkest share, 'seed'}) darkens the
     skin by up to `amount` in smooth, repeatable blotches. Returns one linear RGB tint
-    per vertex, each channel in 0..1 (a patch color brighter than `base` is rejected:
-    make the material the lightest skin tone). Put them on the mesh with
+    per vertex, each channel in 0..1. Tints can only darken (they multiply the
+    material, and engines store vertex colors 0..1), so a patch color brighter than
+    `base` is rejected unless `lighten=True`: then the result is {'tints', 'material'},
+    where 'material' is the linear color to give the skin material (the brightest
+    tone painted, channel by channel) and the tints paint `base` everywhere else, so
+    a pale belly or jaw is just a patch. Put them on the mesh with
     `paint_vertices(obj, tints)` and wire the material with `use_vertex_colors(mat)`;
     glTF exports them as COLOR_0, which multiplies the base color in three.js and
     Unreal (see the README for Unreal's material).
@@ -1946,7 +2125,8 @@ def skin_tints(vertices, base=(1.0, 1.0, 1.0), patches=(), mottle=None):
         color = linear_color(patch.get('color'))
         tint = []
         for c, b in zip(color, base):
-            if c > b + 1e-9: raise ValueError(f'Patch color {patch.get("color")!r} is brighter than the base in a channel: make the skin material the lightest tone')
+            if c > b + 1e-9 and not lighten:
+                raise ValueError(f'Patch color {patch.get("color")!r} is brighter than the base in a channel: pass lighten=True (it returns the material color to use) or make the skin material the lightest tone')
             tint.append(c / b if b > 0 else 1.0)
         layers.append((center, radii, tuple(tint), _number(patch.get('strength', 1), 'Patch strength', 0, 1)))
     if mottle is not None:
@@ -1964,8 +2144,24 @@ def skin_tints(vertices, base=(1.0, 1.0, 1.0), patches=(), mottle=None):
             if q >= 1: continue
             weight = strength * (1 - _smoothstep(0, 1, q))
             tint = [t + weight * (c * t - t) for t, c in zip(tint, color)]
-        result.append(tuple(min(1.0, max(0.0, t)) for t in tint))
-    return result
+        result.append(tint)
+    if not lighten: return [tuple(min(1.0, max(0.0, t)) for t in tint) for tint in result]
+    # The material takes the brightest tone painted; every tint is relative to it.
+    top = [max([b] + [b * tint[k] for tint in result]) for k, b in enumerate(base)]
+    tints = [tuple(min(1.0, max(0.0, t * b / m if m > 0 else 1.0)) for t, b, m in zip(tint, base, top)) for tint in result]
+    return {'tints': tints, 'material': tuple(top)}
+
+
+def tint_for(color, base):
+    """The vertex tint that turns material color `base` into `color` (channel ratios, each at most 1: tints only
+    darken), for per-vertex shade maps painted with `paint_vertices` (a hair cap's grooves, an ear's bowl, iris rings)."""
+    from agent_meshes_author import linear_color
+    return tuple(min(1.0, c / b) if b > 0 else 1.0 for c, b in zip(linear_color(color), linear_color(base)))
+
+
+def outward_faces(vertices, faces):
+    """The faces of a closed shell wound outward (all reversed when they enclose negative volume): for parts you build."""
+    return _outward([_vector(v, 3, 'Vertex') for v in vertices], [tuple(f) for f in faces])
 
 
 def _ellipsoid_distance(point, center, radii):
@@ -2044,46 +2240,313 @@ def sculpt_skin(vertices, faces, shapes, max_edge=None):
     return {'vertices': moved, 'faces': faces}
 
 
+def _row_offsets(limit, fine, coarse, grow_from, grow_to):
+    """Distances 0 .. `limit` from the mouth line: `fine` apart near it, easing to `coarse` between grow_from and grow_to."""
+    out, d = [0.0], 0.0
+    while True:
+        step = fine + (coarse - fine) * _smoothstep(grow_from, grow_to, d)
+        if d + 1.3 * step >= limit:
+            out.append(limit)
+            return out
+        d += step
+        out.append(d)
+
+
+def _zip_loops(inner, outer, q, points):
+    """Triangles filling the ring between two counter-clockwise loops (vertex indices; `inner` inside `outer`).
+
+    `q[i]` is vertex i in the 2-D parameter plane (both loops counter-clockwise there, the inner one convex), and
+    `points[i]` in 3-D. Each vertex is placed along the inner loop (an outer one where its closest point on the inner
+    loop lies), and the walk round both loops closes, each step, the triangle that advances the loop whose next
+    vertex comes first (falling back to the other when that would turn a triangle over); then it flips edges to
+    drop slivers. Returns counter-clockwise triangles, or None.
+    """
+    orient = lambda a, b, c: (q[b][0] - q[a][0]) * (q[c][1] - q[a][1]) - (q[b][1] - q[a][1]) * (q[c][0] - q[a][0])
+    # First clip the outer loop's sharp tips (teeth of the hole reaching out between the skin's faces) as ears: the
+    # walk only makes triangles with a vertex on each loop, so it cannot fill a tooth.
+    def angle(a, b, c):
+        u, v = _sub(q[a], q[b]), _sub(q[c], q[b])
+        return math.degrees(math.acos(max(-1.0, min(1.0, (u[0] * v[0] + u[1] * v[1]) / (math.hypot(*u) * math.hypot(*v) or 1e-30)))))
+
+    def inside(p, a, b, c):
+        return orient(a, b, p) > 0 and orient(b, c, p) > 0 and orient(c, a, p) > 0
+    outer, ears = list(outer), []
+    for _ in range(len(outer)):
+        clipped = False
+        k = 0
+        while k < len(outer) and len(outer) > 3:
+            a, b, c = outer[k - 1], outer[k], outer[(k + 1) % len(outer)]
+            if orient(a, b, c) > 0 and angle(a, b, c) < 80 and not any(inside(v, a, b, c) for v in inner + outer if v not in (a, b, c)):
+                ears.append((a, b, c))
+                del outer[k]
+                clipped = True
+            else: k += 1
+        if not clipped: break
+    m, n = len(inner), len(outer)
+    lengths = [math.dist(q[inner[k]], q[inner[(k + 1) % m]]) for k in range(m)]
+    total = sum(lengths)
+    offsets = [sum(lengths[:k]) for k in range(m)]
+
+    def along(v):
+        """How far round the inner loop the closest point to v lies."""
+        best = None
+        for k in range(m):
+            p0, p1 = q[inner[k]], q[inner[(k + 1) % m]]
+            dx, dz = p1[0] - p0[0], p1[1] - p0[1]
+            t = max(0.0, min(1.0, ((q[v][0] - p0[0]) * dx + (q[v][1] - p0[1]) * dz) / (dx * dx + dz * dz or 1e-30)))
+            d = math.hypot(p0[0] + t * dx - q[v][0], p0[1] + t * dz - q[v][1])
+            if best is None or d < best[0]: best = (d, offsets[k] + t * lengths[k])
+        return best[1]
+    start = min(range(n), key=lambda j: math.dist(q[outer[j]], q[inner[0]]))
+
+    def unwrap(values):
+        result, last = [], 0.0
+        for value in values:
+            value = (value - last + total / 2) % total - total / 2 + last
+            result.append(value)
+            last = value
+        return result
+    inner_angle = offsets + [total]
+    outer_angle = unwrap([along(outer[(start + k) % n]) for k in range(n + 1)])
+    outer_angle[-1] = outer_angle[0] + total
+    i = j = 0
+    result = []
+    while i < m or j < n:
+        a, b = inner[i % m], outer[(start + j) % n]
+        options = []
+        if j < n:
+            c = outer[(start + j + 1) % n]
+            if orient(b, c, a) > 0: options.append((outer_angle[j + 1], 0, (b, c, a)))
+        if i < m:
+            c = inner[(i + 1) % m]
+            if orient(c, a, b) > 0: options.append((inner_angle[i + 1], 1, (c, a, b)))
+        if not options: return None
+        _, which, triangle = min(options)
+        result.append(triangle)
+        if which == 0: j += 1
+        else: i += 1
+    result += ears
+    # Flip any edge between two ring triangles when that makes the worse of the pair better shaped (in 3-D) and both
+    # stay counter-clockwise: the loft leaves slivers where a loop runs close and parallel to the other.
+    for _ in range(8):
+        owner = {}
+        for index, t in enumerate(result):
+            for a, b in zip(t, t[1:] + t[:1]): owner[(a, b)] = index
+        flipped = False
+        for (a, b), one in list(owner.items()):
+            two = owner.get((b, a))
+            if two is None or one > two: continue
+            t1, t2 = result[one], result[two]
+            if (a, b) not in zip(t1, t1[1:] + t1[:1]) or (b, a) not in zip(t2, t2[1:] + t2[:1]): continue
+            c = next(v for v in t1 if v not in (a, b)); d = next(v for v in t2 if v not in (a, b))
+            new1, new2 = (c, a, d), (d, b, c)
+            if orient(*new1) <= 0 or orient(*new2) <= 0: continue
+            if min(_quality(points, new1), _quality(points, new2)) <= 1.05 * min(_quality(points, t1), _quality(points, t2)): continue
+            result[one], result[two] = new1, new2
+            flipped = True
+            for index in (one, two):
+                t = result[index]
+                for p, r in zip(t, t[1:] + t[:1]): owner[(p, r)] = index
+        if not flipped: break
+    return result
+
+
 def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=None, crease=None, height=None, max_edge=None):
     """Shape soft lips with a lip line into a skin face at rest: the upper and a fuller lower lip either side of a crease.
 
     For skin faces (kids, creatures) whose closed mouth would otherwise be a flat
-    surface with a slit. The lips span |x - center_x| < `half_width` (the slit's),
-    thinning to nothing just past the corners; each is a soft bulge `fullness` proud
-    along the skin's normal (default 9% of the half width; the lower lip 1.3 times
-    that), `height` tall (default 45% of the half width), and a crease `crease` deep
-    (default 60% of the fullness) runs along the mouth line between them, deepest in
-    the middle. The skin is refined around the mouth first (edges at most `max_edge`,
-    default a sixth of the height), so the lips are smooth. Run it on the blank
-    (before `mesh_from_geometry`, `slit_mouth` and the shape keys, after `eye_hole`
-    or `nose_geometry`), then take `front_surface` of the result for the cavity and
-    teeth. Returns vertices and faces; far vertices keep their indices.
+    surface with a slit. The lips span the mouth (|x - center_x| < `half_width` on
+    the mouth line, the slit's), thinning to nothing just past the corners; each is a
+    soft bulge `fullness` proud (default 9% of the half width; the lower lip 1.3
+    times that), `height` tall (default 45% of the half width), and a crease `crease`
+    deep (default 60% of the fullness) runs along the mouth line between them,
+    deepest in the middle.
+
+    The skin round the mouth is rebuilt as a regular grid wrapped round the head
+    (columns at even angles about a vertical axis through the mouth, so a wide
+    frog mouth that turns round the sides of the head works too). Its rows run
+    parallel to the mouth line, finest at the crease, one lies exactly on the line
+    and a column falls on each corner: every vertex along a row takes the same lip
+    profile, so the lips shade smoothly with no streaks, and `slit_mouth` cuts
+    along that row leaving no slivers (they fold when the jaw opens). The grid's
+    points lie on the smooth surface through the skin, not on its flat faces, and
+    a ring of triangles joins it to the skin round it, which is first refined
+    smoothly to the grid's spacing. The lips push out horizontally along the skin's
+    normal, so the rows stay level. `max_edge` is the grid's column spacing along
+    the mouth line (default 12% of the height). Run it on the blank (before
+    `mesh_from_geometry`, `slit_mouth` and the shape keys, after `eye_hole` or
+    `nose_geometry`), then take `front_surface` of the result for the cavity and
+    teeth. Returns vertices and faces (unused vertices dropped, the rest in order).
     """
     vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    faces = [tuple(f) for f in faces]
     mouth_z, half_width = _number(mouth_z, 'Mouth line'), _number(half_width, 'Mouth half-width', 0, low_open=True)
     center_x = _number(center_x, 'Mouth center')
     fullness = .09 * half_width if fullness is None else _number(fullness, 'Lip fullness', 0)
     crease = .6 * fullness if crease is None else _number(crease, 'Lip crease', 0)
     height = .45 * half_width if height is None else _number(height, 'Lip height', 0, low_open=True)
-    max_edge = height / 6 if max_edge is None else _number(max_edge, 'Max edge', 0, low_open=True)
     front = front_surface(vertices, faces)
     y = front(center_x, mouth_z)
     if y is None: raise ValueError(f'No skin at the mouth ({center_x:.4f}, {mouth_z:.4f}): put the mouth line on the face skin')
-    depth = abs(y - sum(v[1] for v in vertices) / len(vertices))
-    near = lambda v: abs(v[0] - center_x) < 1.4 * half_width and abs(v[2] - mouth_z) < 2.2 * height and v[1] < y + .5 * depth
-    vertices, faces = _refine(vertices, faces, near, max_edge)
+    # The grid wraps round a vertical axis through the mouth's middle, level with the middle of the head.
+    axis_y = sum(v[1] for v in vertices) / len(vertices)
+    radius = axis_y - y
+    if radius <= 0: raise ValueError('The mouth must be on the front of the head (the face looks down -Y)')
+    angle = lambda p: math.atan2(p[0] - center_x, axis_y - p[1])
+    q_of = lambda p: (radius * angle(p), p[2])
+
+    def corner_angles(surface):
+        result = []
+        for side in (1, -1):
+            yc = surface(center_x + side * half_width, mouth_z)
+            if yc is None: raise ValueError('The mouth corners run off the face skin: make the mouth narrower')
+            result.append(abs(angle((center_x + side * half_width, yc, mouth_z))))
+        return result
+    corners = corner_angles(front)
+    spacing = .12 * height if max_edge is None else _number(max_edge, 'Max edge', 0, low_open=True)
+    columns = max(4, round(radius * max(corners) / spacing))
+    reach = columns + max(2, math.ceil(.25 * columns))   # past 1.2 corner angles, where the lips end
+    # Rows: fine at the crease, easing to twice that across the lips.
+    fine = .05 * height
+    rows = sorted({mouth_z + d for d in _row_offsets(1.15 * height, fine, 2 * fine, .35 * height, .7 * height)}
+                  | {mouth_z - d for d in _row_offsets(1.3 * height, fine, 2 * fine, .35 * height, .7 * height)})
+    line = rows.index(mouth_z)
+
+    def extent():
+        phis = [k * (corners[0] if k >= 0 else corners[1]) / columns for k in range(-reach, reach + 1)]
+        if max(-phis[0], phis[-1]) > math.radians(85): raise ValueError('The lips wrap more than 85 degrees round the head: make the mouth narrower')
+        return phis, (radius * phis[0], rows[0]), (radius * phis[-1], rows[-1])
+    phis, lo_q, hi_q = extent()
+    column_step = radius * min(corners) / columns
+
+    # Refine the skin round the grid smoothly (new points on the curved surface, not its flat faces) to the grid's spacing.
     normals = _vertex_normals(vertices, faces)
+    margin = 3 * column_step
+    near = lambda p: (p[1] < axis_y and lo_q[1] - margin < p[2] < hi_q[1] + margin
+                      and lo_q[0] - margin < radius * angle(p) < hi_q[0] + margin)
+    vertices, faces, normals = _refine(vertices, faces, near, column_step, normals=normals)
+    q = [q_of(v) for v in vertices]
+    # The corners' angles on the refined skin, so the corner columns fall on x = center_x -/+ half_width.
+    corners = corner_angles(front_surface(vertices, faces))
+    phis, lo_q, hi_q = extent()
+
+    # Take out every front face over the grid and a margin: one hole with one boundary loop.
+    grow = .75 * column_step
+    orient = lambda a, b, c: (q[b][0] - q[a][0]) * (q[c][1] - q[a][1]) - (q[b][1] - q[a][1]) * (q[c][0] - q[a][0])
+    front_face = lambda f: all(vertices[i][1] < axis_y for i in f)
+    removed, kept = [], []
+    for face in faces:
+        low = [min(q[i][k] for i in face) for k in (0, 1)]
+        high = [max(q[i][k] for i in face) for k in (0, 1)]
+        over = front_face(face) and all(low[k] < hi_q[k] + grow and high[k] > lo_q[k] - grow for k in (0, 1))
+        (removed if over else kept).append(face)
+    def rim(removed):
+        """The hole's boundary loop, counter-clockwise in the parameter plane (the removed faces' unshared edges)."""
+        edges = {(a, b) for f in removed for a, b in zip(f, f[1:] + f[:1])}
+        step = {a: b for a, b in edges if (b, a) not in edges}
+        loop = [next(iter(step))]
+        while len(loop) <= len(step):
+            following = step.get(loop[-1])
+            if following is None: raise ValueError('The skin round the mouth has a hole or an open edge: the lips need plain face skin there')
+            if following == loop[0]: break
+            loop.append(following)
+        if len(loop) != len(step): raise ValueError('The skin round the mouth is not one patch (a hole or another feature is in the way of the lips)')
+        return loop
+    # Each rim vertex's place round the grid (where its closest point on the grid's edge lies): walking the rim, it
+    # must never step back, or the ring joining rim and grid would fold. Where it does (a notch in the rim, a face
+    # poking into the hole), take the face beyond that rim edge out too, until the rim runs round the grid.
+    width, tall = hi_q[0] - lo_q[0], hi_q[1] - lo_q[1]
+
+    def around(point):
+        x, z = min(max(point[0], lo_q[0]), hi_q[0]), min(max(point[1], lo_q[1]), hi_q[1])
+        sides = [(abs(z - lo_q[1]), x - lo_q[0]), (abs(x - hi_q[0]), width + z - lo_q[1]),
+                 (abs(z - hi_q[1]), width + tall + hi_q[0] - x), (abs(x - lo_q[0]), 2 * width + tall + hi_q[1] - z)]
+        return min(sides)[1]
+    perimeter = 2 * (width + tall)
+    for _ in range(40):
+        outer = rim(removed)
+        places = [around(q[v]) for v in outer]
+        behind = set()
+        for k, v in enumerate(outer):
+            w = outer[(k + 1) % len(outer)]
+            if (places[(k + 1) % len(outer)] - places[k] + perimeter / 2) % perimeter - perimeter / 2 < -1e-12: behind.add((w, v))
+        # A rim vertex nearer the grid than 3/4 of a column is a notch reaching for it: the faces round it go too.
+        close = {v for v in outer if math.hypot(max(lo_q[0] - q[v][0], 0.0, q[v][0] - hi_q[0]), max(lo_q[1] - q[v][1], 0.0, q[v][1] - hi_q[1])) < .75 * column_step}
+        # And a face with two or more edges on the rim pokes into the hole (a sawtooth rim).
+        edges_on = {(b, a) for a, b in zip(outer, outer[1:] + outer[:1])}
+        beyond = [f for f in kept if front_face(f) and (close.intersection(f) or sum((a, b) in edges_on for a, b in zip(f, f[1:] + f[:1])) >= 2
+                                                        or any((a, b) in behind for a, b in zip(f, f[1:] + f[:1])))]
+        if not beyond: break
+        removed += beyond
+        taken = set(beyond)
+        kept = [f for f in kept if f not in taken]
+    else: raise ValueError('The skin round the mouth is too uneven to join the lips to: refine the blank there or make the mouth smaller')
+    triangles = [(f[0], f[k], f[k + 1]) for f in removed for k in range(1, len(f) - 1)]
+    if not triangles or any(orient(*t) <= 0 for t in triangles):
+        raise ValueError('The skin round the mouth folds over or turns away from the front: the lips need plain face skin there')
+
+    # The grid's points on the smooth surface: barycentric, in the parameter plane, over the refined triangles.
+    cell = 4 * column_step
+    buckets = {}
+    for t in triangles:
+        xs, zs = [q[i][0] for i in t], [q[i][1] for i in t]
+        for bx in range(math.floor(min(xs) / cell), math.floor(max(xs) / cell) + 1):
+            for bz in range(math.floor(min(zs) / cell), math.floor(max(zs) / cell) + 1): buckets.setdefault((bx, bz), []).append(t)
+
+    def locate(point):
+        best = None
+        for a, b, c in buckets.get((math.floor(point[0] / cell), math.floor(point[1] / cell)), ()):
+            d = (q[b][1] - q[c][1]) * (q[a][0] - q[c][0]) + (q[c][0] - q[b][0]) * (q[a][1] - q[c][1])
+            u = ((q[b][1] - q[c][1]) * (point[0] - q[c][0]) + (q[c][0] - q[b][0]) * (point[1] - q[c][1])) / d
+            v = ((q[c][1] - q[a][1]) * (point[0] - q[c][0]) + (q[a][0] - q[c][0]) * (point[1] - q[c][1])) / d
+            w = 1 - u - v
+            if best is None or min(u, v, w) > best[0]: best = (min(u, v, w), (a, b, c), (u, v, w))
+        if best is None or best[0] < -1e-9: raise ValueError('The lips run off the face skin: make the mouth smaller or move it onto the face')
+        return best[1], best[2]
+
     bump = lambda d, r: (1 - (d / r) ** 2) ** 3 if abs(d) < r else 0.0
 
-    def lift(v):
-        u = (v[0] - center_x) / (1.2 * half_width)
-        if abs(u) >= 1: return 0.0
-        across = (1 - u * u) ** 1.5
-        dz = v[2] - mouth_z
-        lips = fullness * (bump(dz - .4 * height, .7 * height) + 1.3 * bump(dz + .45 * height, .8 * height))
-        return across * (lips - crease * bump(dz, .3 * height))
-    moved = [_add(v, _mul(n, lift(v))) if near(v) else v for v, n in zip(vertices, normals)]
-    return {'vertices': moved, 'faces': faces}
+    def place(phi, z, corner, on_corner=False):
+        qp = (radius * phi, z)
+        where, weights = locate(qp)
+        point = [sum(w * vertices[i][n] for w, i in zip(weights, where)) for n in range(3)]
+        normal = [sum(w * normals[i][n] for w, i in zip(weights, where)) for n in range(2)]
+        point[2] = z
+        # The lips: bulges either side of the crease, thinning to nothing past 1.2 corner angles.
+        u = phi / (1.2 * corner)
+        if abs(u) < 1:
+            dz = z - mouth_z
+            lips = fullness * (bump(dz - .4 * height, .7 * height) + 1.3 * bump(dz + .45 * height, .8 * height))
+            lift = (1 - u * u) ** 1.5 * (lips - crease * bump(dz, .3 * height))
+            flat = math.hypot(*normal)
+            if flat > 1e-9: point = [point[0] + lift * normal[0] / flat, point[1] + lift * normal[1] / flat, z]
+        if on_corner: point[0] = center_x + math.copysign(half_width, phi)   # where the slit ends
+        vertices.append(tuple(point))
+        q.append(qp)
+        return len(vertices) - 1
+
+    grid = {}
+    for r, z in enumerate(rows):
+        for k, phi in zip(range(-reach, reach + 1), phis):
+            grid[(k, r)] = place(phi, z, corners[0] if k >= 0 else corners[1], r == line and abs(k) == columns)
+    top = len(rows) - 1
+    new_faces = []
+    for r in range(top):
+        for k in range(-reach, reach):
+            a, b, c, d = grid[(k, r)], grid[(k + 1, r)], grid[(k + 1, r + 1)], grid[(k, r + 1)]
+            # Every cell's diagonal runs the same way: each vertex then meets six triangles in a point-symmetric fan,
+            # so its normal leans nowhere (mirrored diagonals leave a kink down the middle column).
+            new_faces += [(a, b, c), (a, c, d)]
+    inner = ([grid[(k, 0)] for k in range(-reach, reach)] + [grid[(reach, r)] for r in range(top)]
+             + [grid[(k, top)] for k in range(reach, -reach, -1)] + [grid[(-reach, r)] for r in range(top, 0, -1)])
+    ring = _zip_loops(inner, outer, q, vertices)
+    area = lambda loop: .5 * sum(q[a][0] * q[b][1] - q[b][0] * q[a][1] for a, b in zip(loop, loop[1:] + loop[:1]))
+    if ring is None or abs(sum(orient(*t) / 2 for t in ring) - (area(outer) - area(inner))) > 1e-6 * area(outer):
+        raise ValueError('The skin round the mouth is too uneven to join the lips to: refine the blank there or make the mouth smaller')
+    faces = kept + new_faces + ring
+    used = sorted({i for f in faces for i in f})
+    mapping = {old: new for new, old in enumerate(used)}
+    return {'vertices': [vertices[i] for i in used], 'faces': [tuple(mapping[i] for i in f) for f in faces]}
 
 
 def nose_geometry(vertices, faces, tip, size, nostrils=True, nostril_radius=None, nostril_depth=None, nostril_spacing=None,
@@ -2143,6 +2606,19 @@ def nose_geometry(vertices, faces, tip, size, nostrils=True, nostril_radius=None
     by_hole = lambda v: (lambda u, w, h: min((((u - hu) / radius) ** 2 + ((w - hw) / (.7 * radius)) ** 2 for hu, hw in holes), default=math.inf))(*frame(v))
     vertices, faces_out = _refine(vertices, faces, lambda v: around(v, 1.6), max_edge)
     if holes: vertices, faces_out = _refine(vertices, faces_out, lambda v: by_hole(v) < 2.2, min(max_edge, radius / 4))
+    # The nostril material ends on the dimple's contour (where it is 30% deep): the skin is cut along it, so the
+    # nostril's edge is a smooth curve rather than the saw-toothed outline of whole triangles.
+    edge = 1 - math.sqrt(.3)
+    dark = [False] * len(faces_out)
+    if holes:
+        vertices, faces_out, dark = _split(vertices, faces_out, lambda v: by_hole(v) - edge if abs(frame(v)[2]) < reach else 1.0, snap=.1)
+        # Triangulate the cut polygons without slivers (each keeps its side).
+        split = [k for k, f in enumerate(faces_out) if len(f) > 3]
+        for k in split:
+            triangles = _tidy(vertices, [faces_out[k]], set(faces_out[k]), rounds=0)
+            faces_out[k] = triangles[0]
+            faces_out += triangles[1:]
+            dark += [dark[k]] * (len(triangles) - 1)
     # The bulb: a ball `projection` proud of the skin, joined to it by a smooth union (sculpt_skin's fillet).
     depth_radius = max(rx, rz, projection)
     ball = [(_add(base, _mul(normal, projection - depth_radius)), (rx, depth_radius, rz), .5 * min(rx, rz))]
@@ -2156,9 +2632,7 @@ def nose_geometry(vertices, faces, tip, size, nostrils=True, nostril_radius=None
         wd = (1 - d2) ** 2 if d2 < 1 else 0.0
         moved.append(_add(p, _mul(dent, depth * wd)))
         weight.append(wd)
-    indices_out = [0] * len(faces_out)
-    if holes:
-        indices_out = [1 if sum(weight[i] for i in face) / len(face) > .3 else m for face, m in zip(faces_out, indices_out)]
+    indices_out = [1 if inside else 0 for inside in dark]
     deepest = [max(range(len(moved)), key=lambda i: (weight[i] if (frame(vertices[i])[0] > 0) == (hu > 0) else -1)) for hu, _ in holes]
     wing = _add(_add(base, _mul(ex, spacing)), _mul(ez, -.55 * rz))
     wing = _add(wing, _mul(normal, _union_height(wing, normal, ball)))
@@ -2370,6 +2844,115 @@ def cut_hole(vertices, faces, center=None, radius=None, exponent=2, level=None):
     if min(radii) <= 0: raise ValueError('Hole radius must be positive')
     power = _number(exponent, 'Hole exponent', 2, 40)
     return _clip(vertices, faces, lambda p: sum(abs((p[k] - center[k]) / radii[k]) ** power for k in range(3)) ** (1 / power) - 1)
+
+
+def _split(vertices, faces, level, snap=0.0):
+    """Cut every face that `level` crosses along its zero set, keeping both sides: (vertices, faces, inside flags).
+
+    `inside[k]` is True for faces where `level < 0`. The two sides share the cut's vertices, so the mesh stays one
+    closed surface, and a region painted from the flags has a smooth edge along the contour instead of following
+    whole triangles. As in `_clip`, a crossing within `snap` of an edge's end reuses that end (no slivers).
+    """
+    points = [_vector(v, 3, 'Vertex') for v in vertices]
+    values = [level(v) for v in points]
+
+    def fraction(p, q):
+        """Where along p -> q (p on the other side from q) the level crosses zero, as a fraction."""
+        inside = level(p) < 0
+        low, high = 0.0, 1.0
+        for _ in range(48):
+            mid = (low + high) / 2
+            if (level(_add(p, _mul(_sub(q, p), mid))) < 0) == inside: low = mid
+            else: high = mid
+        return low
+    if snap > 0:
+        # A vertex within `snap` of a crossing on one of its edges slides along that edge onto the contour first, so
+        # the cut cannot leave a sliver beside it (the crossing on a neighbouring edge would lie a hair from it).
+        neighbours = {}
+        for face in faces:
+            for a, b in zip(face, tuple(face[1:]) + (face[0],)):
+                neighbours.setdefault(a, set()).add(b); neighbours.setdefault(b, set()).add(a)
+        moved = {}
+        for i, value in enumerate(values):
+            best = None
+            for j in neighbours.get(i, ()):
+                if (values[j] < 0) == (value < 0): continue
+                t = fraction(points[i], points[j])
+                if t < snap and (best is None or t < best[0]): best = (t, j)
+            if best is not None: moved[i] = _add(points[i], _mul(_sub(points[best[1]], points[i]), best[0]))
+        for i, point in moved.items(): points[i] = point; values[i] = 0.0
+    crossings = {}
+
+    def cross(a, b):
+        key = (min(a, b), max(a, b))
+        if key not in crossings:
+            inner, outer = (a, b) if values[a] < 0 else (b, a)
+            p, q = points[inner], points[outer]
+            low = 1.0 if values[outer] == 0 else fraction(p, q)
+            if low < snap: crossings[key] = inner
+            elif low > 1 - snap: crossings[key] = outer
+            else:
+                crossings[key] = len(points)
+                points.append(_add(p, _mul(_sub(q, p), low)))
+        return crossings[key]
+
+    result, inside = [], []
+    for face in faces:
+        face = tuple(face)
+        sides = [values[i] < 0 for i in face]
+        if all(sides) or not any(sides):
+            result.append(face); inside.append(sides[0]); continue
+        polygons = {True: [], False: []}
+        for k, i in enumerate(face):
+            j = face[(k + 1) % len(face)]
+            polygons[sides[k]].append(i)
+            if sides[k] != sides[(k + 1) % len(face)]:
+                c = cross(i, j)
+                polygons[True].append(c); polygons[False].append(c)
+        for side, polygon in polygons.items():
+            polygon = [v for k, v in enumerate(polygon) if v != polygon[k - 1]]
+            if len(set(polygon)) >= 3: result.append(tuple(polygon)); inside.append(side)
+    return points, result, inside
+
+
+def _snap_to_level(vertices, faces, level, fraction):
+    """Slide each vertex within `fraction` of a crossing edge's length from the zero set of `level` along that edge
+    onto it (the nearest such crossing), so a clip or split there follows the contour exactly with no sliver beside
+    it. Returns (vertices, the indices moved)."""
+    points = [tuple(v) for v in vertices]
+    values = [level(v) for v in points]
+    neighbours = {}
+    for face in faces:
+        for a, b in zip(face, tuple(face[1:]) + (face[0],)):
+            neighbours.setdefault(a, set()).add(b); neighbours.setdefault(b, set()).add(a)
+
+    def crossing(p, q):
+        side = level(p) < 0
+        low, high = 0.0, 1.0
+        for _ in range(50):
+            mid = (low + high) / 2
+            if (level(_add(p, _mul(_sub(q, p), mid))) < 0) == side: low = mid
+            else: high = mid
+        return low
+    moved = {}
+    for i, value in enumerate(values):
+        if value == 0: continue
+        best = None
+        for j in neighbours.get(i, ()):
+            if (values[j] < 0) == (value < 0): continue
+            t = crossing(points[i], points[j])
+            if t < fraction and (best is None or t < best[0]): best = (t, j)
+        if best is not None:
+            # Just on the kept side (level >= 0), so the clip keeps it as a rim vertex.
+            t, j = best
+            for _ in range(8):
+                point = _add(points[i], _mul(_sub(points[j], points[i]), t))
+                if level(point) >= 0: break
+                t = t * (1 - 1e-9) if value >= 0 else t * (1 + 1e-9) + 1e-12
+            moved[i] = point
+    result = list(points)
+    for i, point in moved.items(): result[i] = point
+    return result, sorted(moved)
 
 
 def _clip(vertices, faces, level, snap=0.0):
@@ -2594,6 +3177,120 @@ def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, 
     return result
 
 
+def dome_brow_geometry(hole, skin, side, roll=(152, 26), polar=(75, 67), height=26, thickness=None, sink=None, down_roll=32,
+                       down_polar=12, inner_roll=26, outer_roll=16, lift=None, grow=.15, columns=20, sides=16):
+    """A heavy brow ridge arcing over an eye dome from the inner to the outer corner, laid on the skin, that rolls.
+
+    For creatures whose eyes sit in domes (`eye_hole` mounds a skin that runs through
+    the eye): Mossjaw's brows. `hole` is the eye's `eye_hole`/`eye_holes` result and
+    `skin` the skin geometry it was cut into ({'vertices', 'faces'}). `roll` is
+    (inner end, outer end) in degrees round the gaze axis (0 the outer side, 90 the
+    top; side 'R' mirrors), `polar` the angle from the gaze axis at the ends and at the
+    top, `height` the ridge's width in degrees across the dome, `thickness` how proud
+    it stands (default 44% of the eyeball radius), `sink` how deep its edges and
+    underside sink into the skin (default 30% of the thickness). The morphs roll it:
+    `browDown<Side>` rolls the inner end `down_roll` degrees down round the eye (an
+    angry V) and drops the ridge `down_polar` degrees forward onto the upper lid;
+    `browInnerUp` rolls it the other way by `inner_roll` (a worried slant) and
+    `browOuterUp<Side>` lifts the outer end by `outer_roll`; the lifts push it `lift`
+    meters off the dome (default 6% of the eyeball radius) with its crest `grow` times
+    taller. Every point's base is found on the skin along its direction from the eye
+    center; inside the eye's window it rests on the upper lid. Returns vertices, faces,
+    morphs, `crest` (0..1 per vertex, 1 on the top of the ridge, for paint) and
+    `contact`; seat it with `attach_to_skin(ridge, head)` so it also rides the skin's
+    own shapes, and rejects a ridge that floats.
+    """
+    if side not in _SIDES: raise ValueError("Brow side must be 'L' or 'R'")
+    lids = hole['lids']
+    center, EYE_RADIUS = _vector(lids['center'], 3, 'Eye center'), lids['eye_radius']
+    thickness = .44 * EYE_RADIUS if thickness is None else _number(thickness, 'Ridge thickness', 0, low_open=True)
+    sink = .3 * thickness if sink is None else _number(sink, 'Sink', 0)
+    lift = .06 * EYE_RADIUS if lift is None else _number(lift, 'Lift', 0)
+    columns, sides = _count(columns, 'Ridge columns', 2), _count(sides, 'Ridge sides', 6)
+    vertices_, faces_, _ = _skin_data(skin)
+    skin = {'vertices': vertices_, 'faces': faces_}
+    sign, suffix = (1, 'Left') if side == 'L' else (-1, 'Right')
+    level = hole['window']['level']
+    floor = lids['upper_radius'] + lids['thickness'] + .0002
+    index = _SkinIndex(skin['vertices'], skin['faces'], near=lambda p: math.dist(p, center) < 3 * EYE_RADIUS)
+
+    def direction(r, p):
+        r, p = math.radians(r), math.radians(p)
+        return (sign * math.sin(p) * math.cos(r), -math.cos(p), math.sin(p) * math.sin(r))
+
+    def base(d):
+        """The skin's distance from the eye center along `d` (the lid's, inside the window), and how far to sink there:
+        the full `sink` away from the eye's rim, fading to none at it, so the ridge meets the lid it may rest on."""
+        t, found = hole['mound'], False
+        for _ in range(16):
+            hit = index.nearest(tuple(center[k] + d[k] * t for k in range(3)), limit=.02)
+            if hit is None: break
+            facing = sum(d[k] * index.normal(hit[2])[k] for k in range(3))
+            if facing < .2: break
+            step = hit[0] / facing
+            t -= step
+            if abs(step) < 1e-8: found = True; break
+        outside = level(tuple(center[k] + d[k] * t for k in range(3))) if found else 0.0
+        if outside < 1: return floor, 0.0
+        near_rim = min(1.0, (outside - 1) / 8)     # the rim's bevel and wall are no base: blend from the lid onto the skin
+        # Where the skin runs off nearly along the ray (the dome's flank into the forehead between the eyes) the ridge
+        # goes under it rather than following it outward: it knots into the forehead there.
+        t = min(max(t, floor), hole['mound'] + .005)
+        return floor + (t - floor) * near_rim, sink * near_rim
+
+    def layout(shift):
+        points, crest = [], []
+        for j in range(columns + 1):
+            s = j / columns
+            d_roll, d_polar, d_lift, d_thick = shift(s)
+            r0 = roll[0] + (roll[1] - roll[0]) * s
+            r = r0 + d_roll
+            p = polar[0] + (polar[1] - polar[0]) * max(0.0, math.sin(math.radians(r0))) + d_polar
+            taper = .45 + .55 * math.sin(math.pi * s) ** .5
+            middle, _ = base(direction(r, p))
+            for k in range(sides):
+                phi = math.tau * k / sides
+                d = direction(r, p + height / 2 * taper * math.cos(phi))
+                t, sunk = base(d)
+                t = min(max(t, middle - .004), middle + .003)   # no jumps round a cross-section where the skin turns away
+                up = math.sin(phi)
+                # The upper arc is the ridge you see (it grows with `d_thick`); the lower arc lies inside the skin.
+                rise = thickness * taper * (up * (1 + d_thick) if up >= 0 else .35 * up) + d_lift
+                points.append(tuple(center[q] + d[q] * (t + rise - sunk) for q in range(3)))
+                crest.append(max(0.0, up) * (.6 + .4 * taper))
+        for j, k in ((0, 1), (columns, columns - 1)):   # each end is capped by a point just past its ring's middle
+            mid, nxt = (tuple(sum(p[q] for p in points[i * sides:(i + 1) * sides]) / sides for q in range(3)) for i in (j, k))
+            out = tuple(mid[q] - nxt[q] for q in range(3))
+            norm = math.sqrt(sum(x * x for x in out)) or 1.0
+            points.append(tuple(mid[q] + out[q] / norm * .5 * thickness for q in range(3)))
+            crest.append(0.0)
+        return points, crest
+
+    # browDown rolls the inner end down round the eye (the angry V) and drops the ridge forward over the upper lid;
+    # browInnerUp rolls it the other way, inner end up (the worried slant), and browOuterUp lifts the outer end; the lifts swell the ridge up and forward off the dome.
+    shifts = {
+        f'browDown{suffix}': lambda s: (down_roll * (1 - .45 * s), -down_polar * (.5 + .5 * math.sin(math.pi * s)), 0.0, 0.0),
+        'browInnerUp': lambda s: (-inner_roll * (1 - .35 * s), 9 * (1 - .5 * s), lift * .5 * (1.2 - .4 * s), grow * (1.2 - .4 * s)),
+        f'browOuterUp{suffix}': lambda s: (outer_roll * (.35 + .65 * s), 10 * (.3 + .7 * s), lift * .5 * (.8 + .4 * s), grow * (.8 + .4 * s)),
+    }
+    vertices, crest = layout(lambda s: (0.0, 0.0, 0.0, 0.0))
+    ring = lambda j, k: j * sides + k % sides
+    faces = [(ring(j, k), ring(j, k + 1), ring(j + 1, k + 1), ring(j + 1, k)) for j in range(columns) for k in range(sides)]
+    start, end = len(vertices) - 2, len(vertices) - 1
+    faces += [(start, ring(0, k + 1), ring(0, k)) for k in range(sides)]
+    faces += [(end, ring(columns, k), ring(columns, k + 1)) for k in range(sides)]
+    faces = _outward(vertices, faces)
+    result = {'vertices': vertices, 'faces': faces, 'crest': crest, 'morphs': {name: layout(shift)[0] for name, shift in shifts.items()}}
+    offset = len(skin['vertices'])
+    surface = {'vertices': list(skin['vertices']) + list(lids['vertices']),
+               'faces': list(skin['faces']) + [tuple(i + offset for i in f) for f in lids['faces']]}
+    contact = skin_contact(result, surface)
+    worst = max([('rest', contact['gap'])] + [(n, pose['gap']) for n, pose in contact['poses'].items()], key=lambda item: item[1])
+    if worst[1] > ATTACH_TOLERANCE: raise ValueError(f'The brow ridge floats {worst[1] * 1000:.2f} mm off the skin at {worst[0]}')
+    result['contact'] = contact
+    return result
+
+
 def _smooth_normals(triangles, vertices):
     """Area-weighted vertex normals of the vertices these triangles use, from `vertices` (any pose of the skin)."""
     sums = {}
@@ -2621,7 +3318,7 @@ def _on_footprint(footprint, vertices, normals):
 
 
 def skin_brow_geometry(skin, side, inner, outer, height=.004, thickness=.0016, arch=.002, down=.004, inner_up=.004,
-                       outer_up=.004, pinch=.002, sink=None, hole=None, columns=16, sides=10):
+                       outer_up=.004, pinch=.002, sink=None, hole=None, columns=16, sides=10, down_shape=1):
     """A brow lying on a skin face (a kid's hair-coloured brow), with browDown, browInnerUp and browOuterUp morphs.
 
     For round skin-faced heads, where `brow_ridge_geometry` (a ridge on an eye dome)
@@ -2641,8 +3338,9 @@ def skin_brow_geometry(skin, side, inner, outer, height=.004, thickness=.0016, a
     `sink` meters into the skin (default 15% of `thickness`), so no view sees daylight
     under it. The morphs move the brow over the face and lay it back on the skin at
     its new place: `browDown<Side>` lowers the inner end by `down` (the outer end a
-    third as much) and pinches it `pinch` toward the nose, so an angry brow knits and
-    tilts, `browInnerUp` lifts the inner end by `inner_up`, `browOuterUp<Side>`
+    third as much; `down_shape` above 1 gathers the drop toward the inner end, 3 for a
+    strong angry V over 20 degrees, whose inner end comes down onto the upper lid) and
+    pinches it `pinch` toward the nose, so an angry brow knits and tilts, `browInnerUp` lifts the inner end by `inner_up`, `browOuterUp<Side>`
     lifts the outer end by `outer_up` (meters). When the skin has morphs, every pose
     is laid on the skin in that pose (the brow rides the skin's own brow and cheek
     shapes), and those names are listed in `laid` so `attach_to_skin` does not add
@@ -2662,10 +3360,11 @@ def skin_brow_geometry(skin, side, inner, outer, height=.004, thickness=.0016, a
     sink = .15 * thickness if sink is None else _number(sink, 'Sink', 0)
     down, inner_up, outer_up, pinch = (_number(v, label, 0) for v, label in ((down, 'Brow down'), (inner_up, 'Brow inner up'), (outer_up, 'Brow outer up'), (pinch, 'Brow pinch')))
     columns, sides = _count(columns, 'Brow columns', 2), _count(sides, 'Brow sides', 6)
+    down_shape = _number(down_shape, 'Brow down shape', 1, 6)
     skin_vertices, skin_faces, skin_morphs = _skin_data(skin)
     # Each pose moves a point of the centre line (t = 0 inner, 1 outer) by (toward the temple, up) meters.
     shifts = {
-        f'browDown{suffix}': lambda t: (-pinch * (1 - t) ** 2, -down * (1 - 2 / 3 * t)),
+        f'browDown{suffix}': lambda t: (-pinch * (1 - t) ** 2, -down * (1 / 3 + 2 / 3 * (1 - t) ** down_shape)),
         'browInnerUp': lambda t: (0.0, inner_up * (1 - t)),
         f'browOuterUp{suffix}': lambda t: (0.0, outer_up * t),
     }
@@ -2676,26 +3375,39 @@ def skin_brow_geometry(skin, side, inner, outer, height=.004, thickness=.0016, a
     reach = max(down, inner_up, outer_up, pinch) + height + abs(arch) + .01
     region = lambda p: xs[0] - reach <= p[0] <= xs[1] + reach and min(z0, z1) - reach <= p[2] <= max(z0, z1) + reach
     front_faces = [f for f in skin_faces if any(region(skin_vertices[i]) for i in f)]
+    front = front_surface(skin_vertices, front_faces)
+    if hole is not None:
+        # The hole's wall and lining (inside its rim, toward the eye center) are not skin a brow can lie on: a lowered
+        # brow's points found their nearest skin there, millimetres deep, and folded the brow.
+        eye_center, inside = _vector(hole['lids']['center'], 3, 'Eye center'), .999 * hole['rim_radius'][0]
+        front_faces = [f for f in front_faces if math.dist(_mul(tuple(map(sum, zip(*(skin_vertices[i] for i in f)))), 1 / len(f)), eye_center) > inside]
     if not front_faces: raise ValueError(f'No skin behind the brow between x = {xs[0]:.4f} and {xs[1]:.4f} m: place it on the forehead')
     index = _SkinIndex(skin_vertices, front_faces, near=region)
     rest_normals = _smooth_normals(index.triangles, skin_vertices)
-    front = front_surface(skin_vertices, front_faces)
     if hole is not None:
         lid_index = _SkinIndex(lid_vertices, lid_faces)
         lid_normals = _smooth_normals(lid_index.triangles, lid_vertices)
 
     def footprint(point):
-        """Where on the rest skin a point settles: the skin, or the upper lid inside the eye's window."""
+        """Where on the rest skin a point settles: the skin, the upper lid inside the eye's window, and a blend of the
+        two over the first 2 degrees outside it (switching from one to the other folded a brow lowered over the rim)."""
         found = _footprint(index, point)
         if found is None: raise ValueError(f'No skin under the brow near ({point[0]:.4f}, {point[1]:.4f}, {point[2]:.4f}): move it onto the forehead')
-        if hole is not None and level(_on_footprint(found, skin_vertices, rest_normals)[0]) < 1:
-            on_lid = _footprint(lid_index, point)
-            if on_lid is not None: return 'lid', on_lid
+        if hole is not None:
+            toward_lid = 1 - _smoothstep(0, 2, min(level(point), level(_on_footprint(found, skin_vertices, rest_normals)[0])))
+            if toward_lid > 0:
+                on_lid = _footprint(lid_index, point)
+                if on_lid is not None: return 'mix', (found, on_lid, toward_lid)
         return 'skin', found
 
     def place(where, posed, normals):
         kind, found = where
-        return _on_footprint(found, lid_vertices, lid_normals) if kind == 'lid' else _on_footprint(found, posed, normals)
+        if kind == 'lid': return _on_footprint(found, lid_vertices, lid_normals)
+        if kind == 'skin': return _on_footprint(found, posed, normals)
+        on_skin, on_lid, t = found
+        (a, na), (b, nb) = _on_footprint(on_skin, posed, normals), _on_footprint(on_lid, lid_vertices, lid_normals)
+        n = _add(_mul(na, 1 - t), _mul(nb, t))
+        return _add(_mul(a, 1 - t), _mul(b, t)), _mul(n, 1 / (math.hypot(*n) or 1.0))
 
     def skeleton(shift):
         """The brow's footprints on the rest skin, with each point's lift off it: the pose's shape before the skin moves."""
@@ -2722,12 +3434,23 @@ def skin_brow_geometry(skin, side, inner, outer, height=.004, thickness=.0016, a
         return points + [(spine[0], 0.0), (spine[-1], 0.0)]
 
     def layout(bones, posed, sink_):
-        """The brow on the skin in pose `posed`: every point rides its footprint and stands off along the skin's normal."""
+        """The brow on the skin in pose `posed`: every point rides its footprint and stands off along its cross-section's
+        normal (the mean of its footprints' normals, smoothed along the brow). Each point on its own normal crossed its
+        neighbours where the skin turns quickly (a socket dip under a lowered brow), folding the brow's faces."""
         normals = rest_normals if posed is skin_vertices else _smooth_normals(index.triangles, posed)
+        placed = [place(where, posed, normals) for where, _ in bones]
+        section = []
+        for j in range(columns + 1):
+            n = [0.0, 0.0, 0.0]
+            for k in range(sides): n = _add(n, placed[j * sides + k][1])
+            section.append(_mul(n, 1 / (math.hypot(*n) or 1.0)))
+        for _ in range(2):
+            section = [(lambda n: _mul(n, 1 / (math.hypot(*n) or 1.0)))(_add(_mul(section[j], 2), _add(section[max(j - 1, 0)], section[min(j + 1, columns)])))
+                       for j in range(columns + 1)]
         result = []
-        for where, lift in bones:
-            foot, n = place(where, posed, normals)
-            result.append(_add(foot, _mul(n, lift - sink_)))
+        for index_, ((where, lift), (foot, n)) in enumerate(zip(bones, placed)):
+            j = min(index_ // sides, columns) if index_ < (columns + 1) * sides else (0 if index_ == (columns + 1) * sides else columns)
+            result.append(_add(foot, _mul(section[j], lift - sink_)))
         return result
 
     ring = lambda j, k: j * sides + k % sides
@@ -3366,8 +4089,9 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     a Blender-renamed `eye_white.001` is rejected). `slit` and `split_borders` go to
     `eyeball_geometry` (a slit pupil; iris vertices of its own for painted irises).
     `lash` gives the lids a crisp lash line: `True` for a near-black `lash` material
-    or a material of your own, on the lid faces within `lash_width` degrees of the
-    `lash_side` ('upper', 'lower', 'both') edge (`lash_faces`).
+    or a material of your own, on a tapered band `lash_width` degrees tall hugging
+    the `lash_side` ('upper', 'lower', 'both') lid's rim and, on the upper lid,
+    hanging a few degrees past it (`lash_geometry`).
     Returns a dict with the objects and the lid geometry report (radii, clearance,
     squint ratio).
     """
@@ -3406,16 +4130,34 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     eyeball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris, pupil, slit=slit, split_borders=split_borders), materials)
     bind_rigid(eyeball, rig, f'eye_{side}')
     lid_mat = _material(lid_material, 'lid', (.6, .36, .25), roughness=.55)
-    if lash is not None:
-        if style != 'lid': raise ValueError('A lash line belongs to lid eyes')
-        lash_mat = lash if hasattr(lash, 'node_tree') else _material(None, 'lash', (.03, .02, .02), roughness=.7)
-        dark = set(lash_faces(lids, lash_width, lash_side))
-        lid_obj = mesh_from_geometry(f'lids_{side}', dict(lids, material_indices=[int(i in dark) for i in range(len(lids['faces']))]),
-                                     [lid_mat, lash_mat], smooth=True)
+    if lash is not None and style != 'lid': raise ValueError('A lash line belongs to lid eyes')
+    if style == 'lid':
+        # Lid eyes always get the upper band that hangs past the lid's edge (lash_geometry): morphs add positions, so
+        # blink 1 + wide 1 parts the lids by the wide travel, and the band keeps them overlapping, seen from below
+        # too. With `lash` it is the lash line (upper, lower or both, in the lash material); without, a thin seal in
+        # the lid's own material, a slightly fuller lid edge.
+        if lash_side not in ('upper', 'lower', 'both'): raise ValueError("Lash side must be 'upper', 'lower' or 'both'")
+        parts = [{'vertices': lids['vertices'], 'faces': lids['faces'], 'morphs': lids['morphs'], 'materials': ['lid']}]
+        if lash is not None:
+            lash_mat = lash if hasattr(lash, 'node_tree') else _material(None, 'lash', (.03, .02, .02), roughness=.7, double_sided=True)
+            for which in (('upper', 'lower') if lash_side == 'both' else (lash_side,)):
+                band = lash_geometry(lids, lash_width, which=which)
+                parts.append({'vertices': band['vertices'], 'faces': band['faces'], 'morphs': band['morphs'], 'materials': ['lash']})
+            if lash_side == 'lower':
+                seal = lash_geometry(lids, 1.5)
+                parts.append({'vertices': seal['vertices'], 'faces': seal['faces'], 'morphs': seal['morphs'], 'materials': ['lid']})
+        else:
+            seal = lash_geometry(lids, 1.5)
+            parts.append({'vertices': seal['vertices'], 'faces': seal['faces'], 'morphs': seal['morphs'], 'materials': ['lid']})
+        joined = join_geometry(parts)
+        lids_out = dict(lids, vertices=joined['vertices'], faces=joined['faces'], morphs=joined['morphs'])
+        slots = [lid_mat] + ([lash_mat] if lash is not None else [])
+        lid_obj = mesh_from_geometry(f'lids_{side}', dict(lids_out, material_indices=joined['material_indices']), slots, smooth=True)
     else:
-        lid_obj = mesh_from_geometry(f'lids_{side}', lids, [lid_mat], smooth=style == 'lid')
+        lids_out = lids
+        lid_obj = mesh_from_geometry(f'lids_{side}', lids, [lid_mat], smooth=False)
     for key, morph in (('blink', 'eyeBlink'), ('squint', 'eyeSquint'), ('wide', 'eyeWide')):
-        shape_key(lid_obj, f'{morph}{suffix}', lids['morphs'][key])
+        shape_key(lid_obj, f'{morph}{suffix}', lids_out['morphs'][key])
     bind_rigid(lid_obj, rig, 'head')
     result = {'eyeball': eyeball, 'lids': lid_obj, 'socket': None, 'geometry': lids}
     if socket:
@@ -3585,11 +4327,22 @@ def paint_vertices(obj, tints, layer=PAINT_LAYER):
     return attribute
 
 
-def use_vertex_colors(mat, layer=PAINT_LAYER):
-    """Wire a material so its base color is multiplied by the vertex tint (glTF COLOR_0 times baseColorFactor)."""
+def use_vertex_colors(mat, color=None, layer=PAINT_LAYER):
+    """Wire a material so its base color is multiplied by the vertex tint (glTF COLOR_0 times baseColorFactor).
+
+    `color` (hex or linear) first sets the material's base color: pass `skin_tints(..., lighten=True)['material']`,
+    the brightest tone painted, which the tints were made relative to.
+    """
+    from agent_meshes_author import linear_color
     tree = mat.node_tree
     shader = tree.nodes.get('Principled BSDF')
     if shader is None: raise ValueError(f'Material {mat.name} has no Principled BSDF')
+    if color is not None:
+        color = (*linear_color(color), 1.0)
+        shader.inputs['Base Color'].default_value = color
+        linked = [link for link in tree.links if link.to_socket == shader.inputs['Base Color']]
+        for link in linked:
+            if link.from_node.bl_idname == 'ShaderNodeMix': link.from_node.inputs[7].default_value = color
     if any(link.to_socket == shader.inputs['Base Color'] for link in tree.links): return mat
     color = tuple(shader.inputs['Base Color'].default_value)
     attribute = tree.nodes.new('ShaderNodeVertexColor')
