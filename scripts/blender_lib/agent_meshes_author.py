@@ -273,8 +273,12 @@ def fuse_meshes(objects, name, voxel_size, smooth_passes=2, expected_components=
     return fused
 
 
-def sweep_mesh(centers, radii, radial_segments=48, twist=None, initial_normal=None):
+def sweep_mesh(centers, radii, radial_segments=48, twist=None, initial_normal=None, closed=False):
     """Return vertices and outward faces; radians twist is per ring.
+
+    With `closed`, the path is a loop (a ring, a collar, a torus-shaped rim): the last
+    center joins the first (do not repeat it), there are no caps, and the frame's
+    twist mismatch round the loop is spread evenly over the rings so there is no seam.
 
     Uses the minimum rotation taking one tangent to the next. Cusps/repeated
     points are rejected rather than hiding a frame reversal. No arbitrary
@@ -286,26 +290,40 @@ def sweep_mesh(centers, radii, radial_segments=48, twist=None, initial_normal=No
     count = len(centers)
     if isinstance(radial_segments, bool) or not isinstance(radial_segments, int) or radial_segments < 3:
         raise ValueError('Radial segments must be an integer of at least 3')
-    if count < 2 or len(radii) != count:
+    if count < (3 if closed else 2) or len(radii) != count:
         raise ValueError('Need matching centers/radii and at least 3 radial segments')
+    if closed and dot(sub(centers[0], centers[-1]), sub(centers[0], centers[-1])) < 1e-20:
+        raise ValueError('A closed sweep joins its last point to its first point: do not repeat the first point at the end')
     if any(dot(sub(b,a),sub(b,a)) < 1e-20 for a,b in zip(centers, centers[1:])):
         raise ValueError('Repeated path point')
     if any(min(r) <= 0 for r in radii): raise ValueError('Ellipse radii must be positive')
     twist = [_number(v, 'Twist') for v in twist] if twist is not None else [0.0] * count
     if len(twist) != count: raise ValueError('Twist must match ring count')
-    tangents = [unit(sub(centers[min(i+1,count-1)], centers[max(0,i-1)])) for i in range(count)]
+    if closed: tangents = [unit(sub(centers[(i+1) % count], centers[i-1])) for i in range(count)]
+    else: tangents = [unit(sub(centers[min(i+1,count-1)], centers[max(0,i-1)])) for i in range(count)]
     t = tangents[0]
     axis = unit(_vector(initial_normal, 3, 'Initial normal')) if initial_normal is not None else min(((1,0,0),(0,1,0),(0,0,1)), key=lambda v: abs(dot(v,t)))
     n = unit(sub(axis,mul(t,dot(axis,t))))
-    vertices = []
-    previous = t
-    for center, radius, t, angle in zip(centers, radii, tangents, twist):
+    def transport(n, previous, t):
         axis = cross(previous,t)
         c = max(-1.0,min(1.0,dot(previous,t)))
         if c < -0.99999: raise ValueError('Sweep path has an antiparallel cusp')
         # Rodrigues in the cross-product form, stable for near-parallel tangents.
         n = add(add(n,cross(axis,n)),mul(cross(axis,cross(axis,n)),1/(1+c)))
-        n = unit(sub(n,mul(t,dot(n,t))))
+        return unit(sub(n,mul(t,dot(n,t))))
+
+    if closed:
+        # Carry the first frame once round the loop; spread the angle it comes back turned by over the rings.
+        start, m, previous = n, n, tangents[0]
+        for t_ in tangents[1:] + tangents[:1]:
+            m = transport(m, previous, t_); previous = t_
+        mismatch = math.atan2(dot(cross(m, start), tangents[0]), dot(m, start))
+        twist = [angle - mismatch * i / count for i, angle in enumerate(twist)]
+        n = start
+    vertices = []
+    previous = t
+    for center, radius, t, angle in zip(centers, radii, tangents, twist):
+        n = transport(n, previous, t)
         b = cross(t,n)
         for j in range(radial_segments):
             theta = math.tau*j/radial_segments
@@ -314,12 +332,15 @@ def sweep_mesh(centers, radii, radial_segments=48, twist=None, initial_normal=No
             vertices.append(add(center,add(mul(n,rx),mul(b,ry))))
         previous = t
     faces = []
-    for i in range(count-1):
+    for i in range(count if closed else count-1):
+        k = (i+1) % count
         for j in range(radial_segments):
             a,b = i*radial_segments+j, i*radial_segments+(j+1)%radial_segments
-            faces.append((a,b,b+radial_segments,a+radial_segments))
-    faces.append(tuple(reversed(range(radial_segments))))
-    faces.append(tuple((count-1)*radial_segments+j for j in range(radial_segments)))
+            c,d = k*radial_segments+(j+1)%radial_segments, k*radial_segments+j
+            faces.append((a,b,c,d))
+    if not closed:
+        faces.append(tuple(reversed(range(radial_segments))))
+        faces.append(tuple((count-1)*radial_segments+j for j in range(radial_segments)))
     return vertices, faces
 
 
@@ -338,13 +359,35 @@ def make_mesh(name, vertices, faces, material=None):
     return obj
 
 
-def material(name, color, metalness=0, roughness=0.4):
-    """Create PBR material. RGB values are linear components in the range 0..1."""
+def linear_color(value):
+    """A linear RGB triple from an sRGB hex string ('#rrggbb' or '#rgb', as in a concept sheet) or a linear 0..1 triple."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text.startswith('#') or len(text) not in (4, 7) or any(c not in '0123456789abcdefABCDEF' for c in text[1:]):
+            raise ValueError(f'Color {value!r} must be an sRGB hex string like "#ffaa00" or a linear (r, g, b) triple')
+        digits = text[1:] if len(text) == 7 else ''.join(c * 2 for c in text[1:])
+        srgb = [int(digits[k:k + 2], 16) / 255 for k in (0, 2, 4)]
+        return tuple(c / 12.92 if c <= .04045 else ((c + .055) / 1.055) ** 2.4 for c in srgb)
+    color = _vector(value, 3, 'Linear color')
+    if any(v < 0 or v > 1 for v in color): raise ValueError('Linear color components must be in 0..1')
+    return color
+
+
+def material(name, color, metalness=0, roughness=0.4, emission=None, emission_strength=1.0):
+    """Create a PBR material. `color` is an sRGB hex string ('#e8a27c', converted to linear) or linear 0..1 RGB.
+
+    `emission` (hex or linear, like `color`) makes it glow: a robot's lens glass or
+    antenna bulb. glTF exports it as `emissiveFactor`, and a strength above 1 as
+    `KHR_materials_emissive_strength`; three.js and Unreal both read them.
+    """
     name = _name(name)
-    color = _vector(color, 3, 'Linear color')
+    color = linear_color(color)
     metalness, roughness = _number(metalness, 'Metalness'), _number(roughness, 'Roughness')
-    if any(v < 0 or v > 1 for v in (*color, metalness, roughness)):
-        raise ValueError('Color, metalness and roughness must be in 0..1')
+    if any(v < 0 or v > 1 for v in (metalness, roughness)):
+        raise ValueError('Metalness and roughness must be in 0..1')
+    glow = None if emission is None else linear_color(emission)
+    strength = _number(emission_strength, 'Emission strength')
+    if strength < 0: raise ValueError('Emission strength must be at least 0')
     import bpy
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -352,6 +395,10 @@ def material(name, color, metalness=0, roughness=0.4):
     shader.inputs['Base Color'].default_value = (*color[:3],1)
     shader.inputs['Metallic'].default_value = metalness
     shader.inputs['Roughness'].default_value = roughness
+    if glow is not None:
+        socket = shader.inputs.get('Emission Color') or shader.inputs.get('Emission')
+        socket.default_value = (*glow, 1)
+        shader.inputs['Emission Strength'].default_value = strength
     return mat
 
 
@@ -377,6 +424,8 @@ def export_glb(path, objects):
     Geometry modifiers must be resolved by the author before adding morphs;
     applying them here would discard morph topology. Original selection is
     restored after export. This function deliberately preserves authored weights.
+    Morph deltas that are float noise (at most a micron, or 1e-4 of a normal) are
+    dropped after export and the rest stored as sparse accessors (`prune_glb_morphs`).
     """
     import bpy
     objects = list(objects)
@@ -392,7 +441,20 @@ def export_glb(path, objects):
             export_apply=False, export_morph=True, export_morph_normal=True,
             export_animations=True, export_skins=True, export_yup=True,
             export_cameras=False, export_lights=False)
+        # Blender's exporter drops JSON-shaped custom properties; write root extras (for
+        # example the arkit-face/1 contract from set_face_contract) into the GLB directly.
+        import json
+        from agent_meshes_face import EXTRAS_PROPERTY, merge_glb_node_extras, prune_glb_morphs
+        extras = {obj.name: json.loads(obj[EXTRAS_PROPERTY]) for obj in objects if EXTRAS_PROPERTY in obj.keys()}
+        if extras: merge_glb_node_extras(path, extras)
+        # Blender writes float-noise normal deltas (~1e-7) for every vertex of every shape key: about 1.2 MB a face.
+        prune_glb_morphs(path)
     finally:
         bpy.ops.object.select_all(action='DESELECT')
         for obj in previous_selection: obj.select_set(True)
         bpy.context.view_layer.objects.active = previous_active
+
+
+# Face-rig helpers live in a sibling module; importing them here keeps one entry point.
+# agent_meshes_face never imports this module at load time, so there is no import cycle.
+from agent_meshes_face import *  # noqa: E402,F401,F403

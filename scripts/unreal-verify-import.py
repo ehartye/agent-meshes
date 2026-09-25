@@ -49,6 +49,22 @@ def skeletal_mesh_facts(mesh):
     facts['lods'] = lods
     facts['vertices'] = [subsystem.get_num_verts(mesh, lod) for lod in range(lods)]
     facts['materialSlots'] = len(mesh.get_editor_property('materials'))
+    # USkeletalMesh::bHasVertexColors: the import kept the GLB's COLOR_0 (skin paint).
+    value = getattr(mesh, 'has_vertex_colors', None)
+    facts['hasVertexColors'] = bool(value() if callable(value) else value) if value is not None else None
+    facts['materials'] = [material_facts(slot.get_editor_property('material_interface')) for slot in mesh.get_editor_property('materials')]
+    return facts
+
+
+def material_facts(material):
+    """A material slot's material and the base material it instances (Interchange's glTF M_Default multiplies the
+    base color by the mesh's vertex colors, COLOR_0, through its MF_BaseColor function)."""
+    if material is None: return None
+    facts = {'name': material.get_name()}
+    try:
+        facts['base'] = material.get_base_material().get_path_name().split('.')[0]
+    except Exception:
+        facts['error'] = traceback.format_exc()
     return facts
 
 
