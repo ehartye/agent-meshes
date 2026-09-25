@@ -17,7 +17,7 @@ import struct
 __all__ = [
     'ARKIT_REQUIRED', 'ARKIT_OPTIONAL', 'ARKIT_GAZE', 'ARKIT_NAMES', 'CANONICAL_EMOTIONS', 'DEFAULT_LID_FOLLOW',
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
-    'eye_window', 'lash_faces', 'lash_geometry', 'eye_hole', 'eye_holes', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry', 'dome_brow_geometry',
+    'eye_window', 'lash_faces', 'lash_geometry', 'eye_hole', 'eye_holes', 'continuous_lid_edges', 'CONTINUOUS_OPTIONS', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry', 'dome_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
     'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
@@ -551,14 +551,14 @@ def _triangle_normals(vertices, faces):
     return result
 
 
-def _folded(vertices, faces, morphs):
-    """Names of morph weight combinations (singles at .5 and 1, all sums at 1) that flip a triangle."""
+def _folded(vertices, faces, morphs, skip=()):
+    """Names of morph weight combinations (singles at .5 and 1, all sums at 1, less the `skip` sets) that flip a triangle."""
     names = list(morphs)
     rest = _triangle_normals(vertices, faces)
     combos = [({name: w}, f'{name}={w}') for name in names for w in (.5, 1)]
     for mask in range(1, 1 << len(names)):
         chosen = [n for k, n in enumerate(names) if mask >> k & 1]
-        if len(chosen) > 1: combos.append(({n: 1 for n in chosen}, '+'.join(chosen)))
+        if len(chosen) > 1 and not any(set(s) <= set(chosen) for s in skip): combos.append(({n: 1 for n in chosen}, '+'.join(chosen)))
     found = []
     for weights, label in combos:
         moved = [tuple(v[k] + sum(w * (morphs[n][i][k] - v[k]) for n, w in weights.items()) for k in range(3)) for i, v in enumerate(vertices)]
@@ -1121,9 +1121,43 @@ def _tidy(vertices, faces, touched, rounds=4):
     return result
 
 
+CONTINUOUS_OPTIONS = ('opening', 'meet', 'overlap', 'squint', 'squint_upper_share', 'wide', 'corner', 'thickness', 'gap', 'crease',
+                      'lash_width', 'lower_lash_width', 'column_step')
+
+
 def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25, lining_gap=.0001,
-             lining_rings=5, corner_margin=2, bevel=.5, **lid_options):
-    """Open a skin's eye hole that meets the lids all the way round, so no view looks past the lids into the head.
+             lining_rings=5, corner_margin=2, bevel=.5, style='continuous', **lid_options):
+    """Make a lid eye in a skin: by default the skin itself becomes the lids (`style='continuous'`).
+
+    **`style='continuous'` (the default).** The skin round the eye is rebuilt as one
+    surface: it flows over the eyeball as the upper and lower lids, each lid's margin
+    turns inward round a half-round as thick as the lid (`thickness`) onto the lid's
+    inner surface, which runs back under the lid to a fornix and turns down onto a
+    lining that wraps the eyeball to a pole behind it. The two margins meet in one
+    point at each corner (the canthus), and the skin runs on past it unbroken. One
+    soft crease (`crease`, a share of the eyeball radius deep) lies above the upper
+    lid; none below. There are no separate lid shells, no hole wall and no lash or
+    seal band: `eyeBlink`, `eyeSquint` and `eyeWide` are shape keys of the skin's lid
+    rows (a rolling curtain from the margin to the anchor past the fornix), which
+    `build_eye(..., hole=hole, skin=head)` adds to the head, and the lash line is
+    paint on the upper lid's margin rows (`lash_width` degrees). The margins' paths
+    come from `continuous_lid_edges` (`opening`, `meet`, `overlap`, `squint`,
+    `squint_upper_share`, `wide`, `corner`), and the lids' radius is solved so that
+    every vertex the lid morphs move stays `clearance` outside the eyeball over every
+    blink, squint and wide mix (`lid_clearance`); the closed upper lid passes in front
+    of the lower one, which rises behind it far enough that blink 1 + wide 1 still
+    closes. Folded faces and uncovered eyeball in any contract state are rejected.
+    Returns {'vertices', 'faces', 'style', 'lids' (margins, radii, `min_clearance`,
+    `squint_ratio`), 'window', 'motion' (each moving vertex's rest position and
+    targets), 'lash' and 'lining_points' (paint by position), 'still' (the moving
+    region, for `eye_hole_mask`), 'mound', 'rim', 'wall', 'patch', 'rim_radius'}.
+
+    **`style='shells'`** is the earlier construction, kept for heads built with it:
+    separate lid shells stitched into a hole in the skin, described below. Its
+    rim, bevel, wall and lash bands meet the eye as separate surfaces, which read as
+    stacked bands round every eye (the P1a round 6-7 critics' "terraced sockets").
+
+    Shells: open a skin's eye hole that meets the lids all the way round, so no view looks past the lids into the head.
 
     Pass the same `lid_options` (opening, meet, wide, ...) as to `build_eye`: this
     builds the same `lid_geometry` and shapes the skin around it, in three steps.
@@ -1172,6 +1206,12 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     (the lining's radii under the lower and upper lid), 'mound' (the rim's radius
     where the skin was reshaped), 'bevel' (the bevel ring's vertex indices)}.
     """
+    if style == 'continuous':
+        unknown = sorted(set(lid_options) - set(CONTINUOUS_OPTIONS))
+        if unknown: raise ValueError(f"eye_hole(style='continuous') takes {', '.join(CONTINUOUS_OPTIONS)}, not {', '.join(unknown)} (shell-lid options: pass style='shells')")
+        return _continuous_eye_hole(vertices, faces, center, eye_radius, margin=margin, clearance=clearance, blend=blend, max_edge=max_edge,
+                                    socket=socket, **lid_options)
+    if style != 'shells': raise ValueError("eye_hole style must be 'continuous' or 'shells'")
     center = _vector(center, 3, 'Eye center')
     eye_radius = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
     lids = lid_geometry(center, eye_radius, **lid_options)
@@ -1331,7 +1371,7 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
         wall.append(len(kept)); kept.append((steps_b[-1], steps_a[-1], pole))
     return {'vertices': result, 'faces': kept, 'lids': lids, 'window': window, 'rim': sorted(rim), 'wall': wall,
             'pushed': pushed, 'rim_radius': (min(radii), max(radii)), 'lining': (lining['lower'], lining['upper']),
-            'mound': push + blend / 4, 'socket': socket, 'bevel': bevels}
+            'mound': push + blend / 4, 'socket': socket, 'bevel': bevels, 'style': 'shells'}
 
 
 def _mirror_lids(lids):
@@ -1400,6 +1440,7 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
         result['rim'] = sorted(v(vertex(i)) for i in hole['rim'] if vertex(i) is not None)
         result['bevel'] = [v(vertex(i)) for i in hole['bevel'] if vertex(i) is not None]
         result['wall'] = [f(new_face[i]) for i in hole['wall'] if i in new_face]
+        if 'patch' in hole: result['patch'] = [f(new_face[i]) for i in hole['patch'] if i in new_face]
         result.pop('vertices', None); result.pop('faces', None)
         result['vertices'], result['faces'] = points, faces_out
         return result
@@ -1409,8 +1450,685 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
     right['lids'] = _mirror_lids(left['lids'])
     level, window = left['window']['level'], left['window']
     right['window'] = dict(window, level=lambda p: level(mirror_x(p)), center=mirror_x(window['center']))
+    if left.get('style') == 'continuous':
+        # A continuous eye's lid motion, paint and still region are kept by position: mirror them.
+        still = left['still']
+        right['still'] = lambda p: still(mirror_x(p))
+        right['motion'] = [(mirror_x(rest), {name: mirror_x(v) for name, v in moved.items()}) for rest, moved in left['motion']]
+        right['lash'] = {key: [mirror_x(v) for v in points] for key, points in left['lash'].items()}
+        right['lining_points'] = [mirror_x(v) for v in left['lining_points']]
     holes['R'] = right
     return {'vertices': points, 'faces': faces_out, 'L': holes['L'], 'R': holes['R']}
+
+
+# ---------------------------------------------------------------- continuous eyes: the lids are the skin
+
+# Rows of a continuous eye's lid from the lash row to the anchor (a share of the way; the anchor itself is the first
+# skin row), and from the anchor on to the patch's edge: finest at the lash line and round the crease.
+_LID_ROWS = (.12, .25, .38, .5, .6, .69, .77, .84, .9, .95)
+_SKIN_ROWS = (0.0, .04, .08, .13, .19, .26, .34, .43, .53, .64, .76, .88, 1.0)
+_ROLL_ROWS = 4          # the lid margin's half-round, from the outer surface to the inner one
+_INNER_ROWS = 4         # the inner lid surface, from the margin back to the fornix
+_FORNIX = (30, 60, 90)  # the fornix: a quarter turn from the inner lid surface down onto the lining
+_LINING_ROWS = 3        # the lining round the eyeball behind the fornix, to a pole behind it
+_FAN = 5                # ladders round each corner of the eye (the canthus)
+
+
+def _direction(yaw, elevation):
+    """The unit direction from an eye center at (yaw, elevation) degrees: 0/0 looks down -Y, yaw toward +X."""
+    y, e = math.radians(yaw), math.radians(elevation)
+    return (math.cos(e) * math.sin(y), -math.cos(e) * math.cos(y), math.sin(e))
+
+
+def _angles(d):
+    """(yaw, elevation) in degrees of a direction from an eye center."""
+    length = math.hypot(*d) or 1.0
+    return math.degrees(math.atan2(d[0], -d[1])), math.degrees(math.asin(max(-1.0, min(1.0, d[2] / length))))
+
+
+def continuous_lid_edges(yaws, opening=(45, 38, 30), meet=-8, overlap=6, squint=.45, squint_upper_share=.35, wide=(10, 4),
+                         corner=1.25):
+    """The lid margins of a continuous eye (`eye_hole(style='continuous')`) in every state, one entry per yaw.
+
+    Returns (profile, upper, lower) per yaw: `profile` is 1 in the middle of the opening and 0 at and past its
+    corners; `upper` and `lower` map 'rest', 'blink', 'squint' and 'wide' to the margin's elevation in degrees (the
+    upper lid's lowest point, the lower lid's highest). Every motion scales with the profile, so the corners (the
+    canthus) stay put and the skin runs on past them unbroken. The closed upper lid passes `overlap` degrees (less
+    toward the corners) below the meet line, in front of the lower lid, which rises behind it by the wide travel less
+    half of that, so blink 1 + wide 1 (morphs add) still overlaps by half of `overlap` (enough that a view
+    from 25 degrees below, where the lower lid stands a lid thickness behind the upper one, sees no strip between them).
+    """
+    width, upper, lower = _vector(opening, 3, 'Opening')
+    wide_up, wide_down = _vector(wide, 2, 'Wide')
+    travel = (1 - squint) * (upper + lower)
+    result = []
+    for yaw in yaws:
+        p = max(0.0, 1 - (yaw / width) ** 2) ** corner
+        q = p ** .75
+        up = meet + (upper - meet) * p
+        low = meet - (lower + meet) * p
+        rise = (wide_up + wide_down) * p - overlap * q / 2
+        # Squint narrows the middle of the eye and pinches the corners less (p^1.5): steep corners whose margin turned
+        # from rising at rest to falling at blink + squint twisted the rounded margin over there.
+        pinch = p ** 1.5
+        result.append((p,
+                       {'rest': up, 'blink': meet - overlap * q, 'squint': up - squint_upper_share * travel * pinch, 'wide': up + wide_up * p},
+                       {'rest': low, 'blink': meet + rise, 'squint': low + (1 - squint_upper_share) * travel * pinch, 'wide': low - wide_down * p}))
+    return result
+
+
+def _patch_rim(faces, q, level, around, step, front_face, what):
+    """Take the front faces over a convex region of the parameter plane out of a skin, as `sculpt_lips` does.
+
+    `level(point)` is how far a point of the plane lies outside the region (negative inside) and `around(point)` its
+    angle round the region's middle. Faces within 3/4 of `step` of the region go; so do rim vertices that step back
+    round it or come within 3/4 of a step of it, and faces that poke into the hole, so a ring of triangles can join
+    the rim to a grid over the region. Returns (kept faces, removed faces, the hole's boundary loop, counter-clockwise).
+    """
+    grow = .75 * step
+    removed, kept = [], []
+    for face in faces:
+        centroid = tuple(sum(q[i][k] for i in face) / len(face) for k in (0, 1))
+        over = front_face(face) and (min(level(q[i]) for i in face) < grow or level(centroid) < grow)
+        (removed if over else kept).append(face)
+
+    def components(group):
+        """The faces of `group` split into edge-connected pieces, largest first."""
+        owner = {}
+        for n, f in enumerate(group):
+            for a, b in zip(f, f[1:] + f[:1]): owner.setdefault((min(a, b), max(a, b)), []).append(n)
+        seen, pieces = set(), []
+        for start in range(len(group)):
+            if start in seen: continue
+            piece, todo = [], [start]
+            seen.add(start)
+            while todo:
+                n = todo.pop(); piece.append(n)
+                f = group[n]
+                for a, b in zip(f, f[1:] + f[:1]):
+                    for m in owner[(min(a, b), max(a, b))]:
+                        if m not in seen: seen.add(m); todo.append(m)
+            pieces.append(piece)
+        return sorted(pieces, key=len, reverse=True)
+    def one_hole(removed, kept):
+        """One hole with one rim: stray removed faces apart from the main piece stay, islands of skin left inside it go."""
+        pieces = components(removed)
+        if len(pieces) > 1:
+            main = set(pieces[0])
+            kept = kept + [f for n, f in enumerate(removed) if n not in main]
+            removed = [removed[n] for n in sorted(main)]
+        islands = components(kept)
+        if len(islands) > 1:
+            rest = set(islands[0])
+            removed = removed + [f for n, f in enumerate(kept) if n not in rest and front_face(f)]
+            kept = [f for n, f in enumerate(kept) if n in rest or not front_face(f)]
+        return removed, kept
+    removed, kept = one_hole(removed, kept)
+
+    def pinches(removed):
+        """Vertices the hole's boundary passes twice (the removed region touches itself there)."""
+        edges = {(a, b) for f in removed for a, b in zip(f, f[1:] + f[:1])}
+        count = {}
+        for a, b in edges:
+            if (b, a) not in edges: count[a] = count.get(a, 0) + 1
+        return {v for v, n in count.items() if n > 1}
+
+    def rim(removed):
+        edges = {(a, b) for f in removed for a, b in zip(f, f[1:] + f[:1])}
+        following_of = {a: b for a, b in edges if (b, a) not in edges}
+        if not following_of: raise ValueError(f'No skin over {what}')
+        loop = [next(iter(following_of))]
+        while len(loop) <= len(following_of):
+            following = following_of.get(loop[-1])
+            if following is None: raise ValueError(f'The skin round {what} has a hole or an open edge')
+            if following == loop[0]: break
+            loop.append(following)
+        if len(loop) != len(following_of):
+            raise ValueError(f'The skin round {what} is not one patch: another feature is in the way (for two eyes whose patches meet, '
+                             'cut both at once with eye_holes)')
+        return loop
+    for _ in range(400):
+        pinched = pinches(removed)
+        if pinched:
+            # The region touches itself at a vertex (a sliver of skin reaching in): take the faces round it too.
+            beyond = [f for f in kept if front_face(f) and pinched.intersection(f)]
+            if beyond:
+                taken = {id(f) for f in beyond}
+                removed += beyond
+                kept = [f for f in kept if id(f) not in taken]
+                removed, kept = one_hole(removed, kept)
+                continue
+        outer = rim(removed)
+        places = [around(q[v]) for v in outer]
+        behind = set()
+        for k, v in enumerate(outer):
+            w = outer[(k + 1) % len(outer)]
+            if (places[(k + 1) % len(outer)] - places[k] + math.pi) % math.tau - math.pi < -1e-12: behind.add((w, v))
+        close = {v for v in outer if level(q[v]) < .75 * step}
+        edges_on = {(b, a) for a, b in zip(outer, outer[1:] + outer[:1])}
+        beyond = [f for f in kept if front_face(f) and (close.intersection(f) or sum((a, b) in edges_on for a, b in zip(f, f[1:] + f[:1])) >= 2
+                                                        or any((a, b) in behind for a, b in zip(f, f[1:] + f[:1])))]
+        if not beyond: return kept, removed, outer
+        removed += beyond
+        taken = {id(f) for f in beyond}
+        kept = [f for f in kept if id(f) not in taken]
+        removed, kept = one_hole(removed, kept)
+    raise ValueError(f'The skin round {what} is too uneven to join to: refine the blank there or make the eye smaller')
+
+
+def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25,
+                         opening=(45, 38, 30), meet=-8, overlap=6, squint=.45, squint_upper_share=.2, wide=(10, 4), corner=1.25,
+                         thickness=None, gap=None, crease=.035, lash_width=5, lower_lash_width=2.5, column_step=2.5):
+    """`eye_hole(style='continuous')`: the skin itself flows over the eyeball as the lids (see `eye_hole`)."""
+    center = _vector(center, 3, 'Eye center')
+    r = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
+    width, up_open, low_open = _vector(opening, 3, 'Opening')
+    for label, value in (('Opening half-width', width), ('Upper opening', up_open), ('Lower opening', low_open)):
+        _number(value, label, 0, 70, low_open=True)
+    meet = _number(meet, 'Meet elevation')
+    if not -low_open < meet < up_open: raise ValueError('Meet elevation must lie inside the opening')
+    overlap = _number(overlap, 'Overlap', 0, 20)
+    clearance = _number(clearance, 'Clearance', 0)
+    squint = _number(squint, 'Squint open fraction', .05, .95)
+    share = _number(squint_upper_share, 'Squint upper share', 0, 1)
+    wide_up, wide_down = _vector(wide, 2, 'Wide')
+    if not (0 <= wide_up <= 16 and 0 <= wide_down <= 16): raise ValueError('Wide travel must be 0-16 degrees each way')
+    corner = _number(corner, 'Corner exponent', .6, 4)
+    t = max(.0008, .1 * r) if thickness is None else _number(thickness, 'Lid thickness', 0, low_open=True)
+    gap = max(.00025, .02 * r) if gap is None else _number(gap, 'Lid gap', 0)
+    crease = _number(crease, 'Crease depth', 0, .15) * r
+    lash_width = _number(lash_width, 'Lash width', 0, 15)
+    lower_lash_width = _number(lower_lash_width, 'Lower lash width', 0, 15)
+    blend = .5 * r if blend is None else _number(blend, "Mound blend", 0, low_open=True)
+    max_edge = .2 * r if max_edge is None else _number(max_edge, 'Maximum edge', 0, low_open=True)
+    socket = _number(socket, 'Socket band', 0, 90)
+    step = _number(column_step, 'Column step', .5, 8)
+    states = ('blink', 'squint', 'wide')
+
+    # Columns of yaw, one on each corner of the opening (the canthus), running 14 degrees on past them.
+    n = max(4, math.ceil(width / step))
+    dpsi = width / n
+    m = math.ceil(14 / dpsi)
+    yaws = [k * dpsi for k in range(-(n + m), n + m + 1)]
+    first, last = m, m + 2 * n
+    columns = len(yaws)
+    inside = lambda j: first < j < last
+    edges = continuous_lid_edges(yaws, (width, up_open, low_open), meet, overlap, squint, share, (wide_up, wide_down), corner)
+    height = lambda e: math.sin(math.radians(e))
+    _, mid_u, mid_l = edges[columns // 2]
+    squint_ratio = (height(mid_u['squint']) - height(mid_l['squint'])) / (height(mid_u['rest']) - height(mid_l['rest']))
+    if not .25 <= squint_ratio <= .6: raise ValueError(f'Squint leaves {squint_ratio:.2f} of the opening; the contract needs 0.25-0.6')
+
+    # Radii. A linear morph moves each vertex on a chord, which dips toward the eye by R (1 - cos(sweep / 2)), so every
+    # lid vertex that moves the margin's whole way (its rounded margin, down to the inner surface) sits at least
+    # (eyeball radius + clearance) / cos(sweep / 2) from the center, for the widest sweep any weight mix gives there.
+    # The upper lid stands a lid thickness and a gap proud of the lower one in the middle, so the closed upper lid passes
+    # in front of it, and converges on it toward the corners, where the two margins meet in one point.
+    # Positions scale with the radius, so each margin's nearest approach over every weight mix is the radius times that
+    # of a unit sphere (summed chords land outside the sphere, so this is less than cos(sweep / 2)).
+    unit = lambda e: lid_clearance((0.0, 0.0, 0.0), 1e-12, [_direction(0, e['rest'])], [[_direction(0, e[s])] for s in states]) + 1e-12
+    proud = [(t + gap) * _smoothstep(0, .8, p) for p, _, _ in edges]
+    need = lambda e: (r + clearance) / unit(e)
+    base = max(max(need(low), need(up) - lift) for (p, up, low), lift in zip(edges, proud))
+    base = max(base, r + clearance + .25 * t)
+    inner_u = [base + lift for lift in proud]
+    inner_l = [base] * columns
+    up_reach, low_reach, side_reach = wide_up + 8, wide_down + 8, 8.0
+    roll_of = lambda inner, p: math.degrees(t / (2 * (inner + t / 2))) * _smoothstep(0, .25, p)
+    # The anchors, where the lid rows stop moving (the crease lies on the upper one): far enough past the lash rows that
+    # wide, which lifts the margin toward them, never folds the rows between (upper rows move linearly, lower ones on a
+    # smoothstep, so the lower anchor keeps 1.6 times the travel).
+    anchor_u = [up['rest'] + roll_of(inner_u[j], p) + lash_width * math.sqrt(p) + max(wide_up * p + 4, 8) for j, (p, up, _) in enumerate(edges)]
+    anchor_l = [low['rest'] - roll_of(inner_l[j], p) - lower_lash_width * math.sqrt(p) - max(1.6 * wide_down * p + 4, 8) for j, (p, _, low) in enumerate(edges)]
+    # The patch reaches 10 degrees past the upper anchor and 8 past the lower, inside a convex outline (two parabolas and the end columns), so no
+    # corner of it runs off along the head where the directions from the eye graze the skin.
+    ends = (yaws[-1] ** 2)
+    shape_ = lambda yaw: 1 - yaw * yaw / ends
+    top_end, bottom_end = anchor_u[0] + 16, anchor_l[0] - 8
+    lift_top = max((a + 16 - top_end) / shape_(y) for y, a in zip(yaws[1:-1], anchor_u[1:-1]))
+    drop_bottom = max((bottom_end - (a - 12)) / shape_(y) for y, a in zip(yaws[1:-1], anchor_l[1:-1]))
+    tops = [min(80.0, top_end + lift_top * shape_(y)) for y in yaws]
+    bottoms = [max(-80.0, bottom_end - drop_bottom * shape_(y)) for y in yaws]
+    if any(tp < a + 4 for tp, a in zip(tops, anchor_u)) or any(bt > a - 4 for bt, a in zip(bottoms, anchor_l)):
+        raise ValueError('The upper lid reaches too close to straight up from the eye center: lower the opening or `wide`')
+    lids = {
+        'style': 'lid', 'construction': 'continuous', 'center': center, 'eye_radius': r,
+        'edges': {'yaw': yaws, 'upper': [e[1] for e in edges], 'lower': [e[2] for e in edges]},
+        'anchors': (min(anchor_l), max(anchor_u)), 'opening': (width, up_open, low_open), 'wide': (wide_up, wide_down),
+        'meet': meet, 'thickness': t, 'aperture': r * math.sin(math.radians(width)), 'band': None,
+        'vertices': [], 'faces': [], 'morphs': {s: [] for s in states}, 'squint_ratio': squint_ratio,
+        'lower_rise': max(e[2]['blink'] - meet for e in edges), 'upper_radius': max(inner_u), 'lower_radius': base,
+    }
+    window = eye_window(lids, margin, min(2, margin))
+    level = window['level']
+
+    # The skin: refined near the eye, then shaped along each direction from the center as for shell eyes (a mound
+    # lifting skin that ran inside the lids out onto the lid surface, a socket dip drawing far skin in beside the nose).
+    def column_of(yaw): return min(columns - 1, max(0, round(yaw / dpsi) + n + m))
+
+    def outer_at(d):
+        yaw, elevation = _angles(d)
+        j = column_of(yaw)
+        low, up = inner_l[j] + t, inner_u[j] + t
+        return low + (up - low) * _smoothstep(meet - 10, meet + 10, elevation)
+    far = 3.2 * r
+    reach = max(inner_u) + t + blend + 2 * max_edge
+    near = lambda p: math.dist(p, center) < reach or (math.dist(p, center) < far and level(p) < socket)
+    points, polygons, _ = _refine(vertices, faces, near, max_edge, normals=_vertex_normals(vertices, faces))
+    pushed = 0
+    for i, point in enumerate(points):
+        d = _sub(point, center)
+        rad = math.hypot(*d)
+        if rad < 1e-12 or rad > far: continue
+        u = _mul(d, 1 / rad)
+        push = outer_at(u)
+        depth, target = 1.25 * (push + blend / 4), rad
+        if socket > 0 and depth < rad < far:
+            pull = (1 - _smoothstep(0, socket, max(0.0, level(point)))) * (1 - _smoothstep(.75 * far, far, rad))
+            target = rad - (rad - depth) * pull
+        if target < push + blend:
+            h = max(blend - abs(target - push), 0.0) / blend
+            target = max(target, push) + h * h * blend / 4
+        if target != rad:
+            points[i] = _add(center, _mul(u, target))
+            pushed += 1
+
+    # Below a full cheek the skin runs away from the eye fast (the directions graze it): keep the patch's lower edge on
+    # skin within 2.4 eyeball radii of the center (but at least 8 degrees past the lower anchor), so its join to the
+    # skin round it does not stretch across the cheek toward the mouth.
+    shaped = _SkinIndex(points, polygons, near=lambda p: math.dist(p, center) < 4 * r)
+
+    def skin_distance(yaw, e):
+        d, reach_ = _direction(yaw, e), max(inner_u) + t
+        for _ in range(24):
+            hit = shaped.nearest(_add(center, _mul(d, reach_)), limit=.02)
+            if hit is None: return math.inf
+            facing = _dot(d, shaped.normal(hit[2]))
+            if facing < .15: return math.inf
+            step_ = hit[0] / facing
+            reach_ -= step_
+            if abs(step_) < 1e-7: return reach_
+        return reach_
+    middle_column = columns // 2
+    lowest = anchor_l[middle_column] - 8
+    e = lowest
+    while e - 1 >= bottoms[middle_column] and skin_distance(0.0, e - 1) <= 2.4 * r: e -= 1
+    if e > bottoms[middle_column]:
+        drop_bottom = max((bottom_end - (a - 8)) / shape_(y) for y, a in zip(yaws[1:-1], anchor_l[1:-1]))
+        drop_bottom = max(drop_bottom, bottom_end - e)
+        bottoms = [max(-80.0, bottom_end - drop_bottom * shape_(y)) for y in yaws]
+
+    # The patch: a grid over (yaw, elevation) round the eye replaces the skin there. `q` is its parameter plane.
+    R0 = max(inner_u) + t
+    to_q = lambda yaw, e: (R0 * math.radians(yaw), R0 * math.radians(e))
+    x_end = R0 * math.radians(yaws[-1])
+    top_q = lambda x: R0 * math.radians(top_end + lift_top * max(0.0, 1 - (x / x_end) ** 2))
+    bottom_q = lambda x: R0 * math.radians(bottom_end - drop_bottom * max(0.0, 1 - (x / x_end) ** 2))
+    patch_level = lambda p: max(abs(p[0]) - x_end, p[1] - top_q(p[0]), bottom_q(p[0]) - p[1])
+    middle_q = (0.0, (top_q(0) + bottom_q(0)) / 2)
+    patch_around = lambda p: math.atan2(p[1] - middle_q[1], p[0])
+    front = lambda p: p[1] < center[1] and math.dist(p, center) < 6 * r
+    q_of = lambda p: to_q(*_angles(_sub(p, center)))
+    fine = .5 * R0 * math.radians(dpsi) + .03 * r
+    band = 4 * fine
+
+    def near_edge(p): return front(p) and abs(patch_level(q_of(p))) < band
+    points, polygons, _ = _refine(points, polygons, near_edge, fine, normals=_vertex_normals(points, polygons))
+    points = [tuple(p) for p in points]
+    q = [q_of(p) for p in points]
+    kept, removed, outer = _patch_rim(polygons, q, patch_level, patch_around, fine, lambda f: all(front(points[i]) for i in f), 'the eye')
+
+    # The shaped skin's distance from the eye center over the patch (barycentric in the parameter plane).
+    triangles = [(f[0], f[k], f[k + 1]) for f in removed for k in range(1, len(f) - 1)]
+    cell = 4 * fine
+    buckets = {}
+    for tri in triangles:
+        xs, zs = [q[i][0] for i in tri], [q[i][1] for i in tri]
+        for bx in range(math.floor(min(xs) / cell), math.floor(max(xs) / cell) + 1):
+            for bz in range(math.floor(min(zs) / cell), math.floor(max(zs) / cell) + 1): buckets.setdefault((bx, bz), []).append(tri)
+
+    def skin_radius(yaw, e):
+        qp = to_q(yaw, e)
+        best = None
+        for a, b, c in buckets.get((math.floor(qp[0] / cell), math.floor(qp[1] / cell)), ()):
+            d = (q[b][1] - q[c][1]) * (q[a][0] - q[c][0]) + (q[c][0] - q[b][0]) * (q[a][1] - q[c][1])
+            if abs(d) < 1e-30: continue
+            u = ((q[b][1] - q[c][1]) * (qp[0] - q[c][0]) + (q[c][0] - q[b][0]) * (qp[1] - q[c][1])) / d
+            v = ((q[c][1] - q[a][1]) * (qp[0] - q[c][0]) + (q[a][0] - q[c][0]) * (qp[1] - q[c][1])) / d
+            w = 1 - u - v
+            if best is None or min(u, v, w) > best[0]: best = (min(u, v, w), (a, b, c), (u, v, w))
+        if best is None or best[0] < -1e-6:
+            raise ValueError(f"The skin does not surround this eye at yaw {yaw:.0f}, elevation {e:.0f} degrees ({best and best[0]}): place the eye center behind the skin, away from the head's edge")
+        return sum(wt * math.dist(points[i], center) for wt, i in zip(best[2], best[1]))
+
+    # ---- the grid's rows, bottom to top: the skin below, the lower lid, its lash row and margin, then the upper margin,
+    # its lash row, the upper lid and the skin above. Past the corners the margins and lash rows are one row.
+    rows = ([('bottom', k) for k in range(len(_SKIN_ROWS) - 1, -1, -1)] + [('lower', k) for k in range(len(_LID_ROWS) - 1, -1, -1)]
+            + [('L1', 0), ('L0', 0), ('U0', 0), ('U1', 0)] + [('upper', k) for k in range(len(_LID_ROWS))]
+            + [('top', k) for k in range(len(_SKIN_ROWS))])
+    alias = lambda j, region: 'L0' if not inside(j) and region in ('U0', 'U1', 'L0', 'L1') else region
+    roll_u = [roll_of(inner_u[j], p) for j, (p, _, _) in enumerate(edges)]
+    roll_l = [roll_of(inner_l[j], p) for j, (p, _, _) in enumerate(edges)]
+
+    def elevation(j, region, k, state='rest'):
+        """A grid row's elevation in a state: the margin and lash rows move with the margin, the lid rows less and
+        less toward the anchor (a rolling curtain), the skin past the anchor not at all."""
+        p, up, low = edges[j]
+        u0_rest, l0_rest = up['rest'] + roll_u[j], low['rest'] - roll_l[j]
+        du, dl = up[state] - up['rest'], low[state] - low['rest']
+        u1, l1 = u0_rest + lash_width * math.sqrt(p), l0_rest - lower_lash_width * math.sqrt(p)
+        if region == 'U0': return u0_rest + du
+        if region == 'L0': return l0_rest + dl
+        if region == 'U1': return u1 + du
+        if region == 'L1': return l1 + dl
+        if region == 'upper':
+            # The upper lid unrolls from its crease: linear from the lash row to the anchor.
+            s = _LID_ROWS[k]
+            return u1 + s * (anchor_u[j] - u1) + (1 - s) * du
+        if region == 'lower':
+            s = _LID_ROWS[k]
+            return l1 - s * (l1 - anchor_l[j]) + (1 - _smoothstep(0, 1, s)) * dl
+        if region == 'top': return anchor_u[j] + _SKIN_ROWS[k] * (tops[j] - anchor_u[j])
+        return anchor_l[j] - _SKIN_ROWS[k] * (anchor_l[j] - bottoms[j])
+
+    keys, grid, skin_of, region_of = [], {}, {}, {}
+    for j in range(columns):
+        for i, (region, k) in enumerate(rows):
+            key = (j, alias(j, region), k)
+            if key not in skin_of:
+                skin_of[key] = skin_radius(yaws[j], elevation(j, key[1], k))
+                region_of[key] = region
+                keys.append(key)
+            grid[(j, i)] = key
+    # The sampled skin is piecewise flat: smooth its radius with a Gaussian over the sphere of directions (4 degrees),
+    # easing from none on the outer two rings (the join to the skin round the patch) to full four rings in, before the
+    # lid and the crease are shaped on it. (A relaxation over the grid's indices bent it where the rows crowd.)
+    row_of = {row: i for i, row in enumerate(rows)}
+    sigma = 4.0
+    where = {key: _direction(yaws[key[0]], elevation(*key)) for key in keys}
+    buckets_d = {}
+    cell_d = math.radians(3 * sigma)
+    for key, d in where.items(): buckets_d.setdefault(tuple(math.floor(c / cell_d) for c in d), []).append(key)
+    edge_rings = {}
+    for (j, i), key in grid.items():
+        ring = min(j, columns - 1 - j, i, len(rows) - 1 - i)
+        edge_rings[key] = max(edge_rings.get(key, 0), ring)
+    smoothed = {}
+    for key, d in where.items():
+        weight = _smoothstep(1.5, 4.5, edge_rings[key])
+        if weight <= 0: continue
+        cell_key = tuple(math.floor(c / cell_d) for c in d)
+        total = value = 0.0
+        for a in (-1, 0, 1):
+            for b in (-1, 0, 1):
+                for c in (-1, 0, 1):
+                    for other in buckets_d.get((cell_key[0] + a, cell_key[1] + b, cell_key[2] + c), ()):
+                        angle = math.degrees(math.acos(max(-1.0, min(1.0, _dot(d, where[other])))))
+                        if angle > 3 * sigma: continue
+                        w = math.exp(-.5 * (angle / sigma) ** 2)
+                        total += w; value += w * skin_of[other]
+        smoothed[key] = skin_of[key] + weight * (value / total - skin_of[key])
+    skin_of.update(smoothed)
+
+    # Each column's profile away from the margin, above and below: the lid sphere (a lid thickness outside its inner
+    # surface) near the margin, then one cubic that leaves it level and meets the smoothed skin with the skin's own
+    # slope, where the skin rises steeply enough to be met without an overshoot (a blend by weight left a bump there:
+    # a second fold). One soft crease is pressed in on the upper anchor; none below.
+    radius_of = {}
+    sides_rows = (
+        ([('U0', 0), ('U1', 0)] + [('upper', k) for k in range(len(_LID_ROWS))] + [('top', k) for k in range(len(_SKIN_ROWS))], .75, 1.1),
+        ([('L0', 0), ('L1', 0)] + [('lower', k) for k in range(len(_LID_ROWS))] + [('bottom', k) for k in range(len(_SKIN_ROWS))], .15, 1.0))
+    for number, (side_rows, start_share, join_share) in enumerate(sides_rows):
+        upper_side = number == 0
+        columns_data = []
+        for j in range(columns):
+            p, up, low = edges[j]
+            fade = 1 - _smoothstep(width, width + 10, abs(yaws[j]))
+            lid, anchor = (inner_u[j] + t, anchor_u[j]) if upper_side else (inner_l[j] + t, anchor_l[j])
+            chain, rows_of = [], []
+            for n_row, (region, k) in enumerate(side_rows):
+                key = grid[(j, row_of[(region, k)])]
+                if not chain or chain[-1] != key: chain.append(key); rows_of.append(n_row)
+                else: rows_of[-1] = n_row
+            angle = [abs(elevation(*key) - elevation(*chain[0])) for key in chain]
+            skin = [skin_of[key] for key in chain]
+            reach = abs(anchor - elevation(*chain[0]))
+            lid = skin[0] + fade * (lid - skin[0]) if not inside(j) else lid
+            a0 = start_share * reach
+
+            def evenness(i, skin=skin, angle=angle, lid=lid, a0=a0):
+                need, h = skin[i] - lid, angle[i] - a0
+                m = (skin[i + 1] - skin[i]) / max(1e-9, angle[i + 1] - angle[i])
+                if need <= 1e-9: return abs(m * h) / max(1e-9, lid * math.radians(h)) + 1   # skin at or inside the lid: meet it soon
+                return abs(m * h / need - 2)                                                  # 0 for a parabola
+            candidates = [i for i in range(len(chain) - 2) if angle[i] >= join_share * reach] or [len(chain) - 3]
+            best = min(candidates, key=evenness)
+            columns_data.append((chain, rows_of, angle, skin, lid, a0, reach, candidates, angle[best] / max(reach, 1e-9)))
+        # The join, chosen per column as a share of the way to its anchor, is smoothed across the columns (Gaussian, 3
+        # columns) and the skin is read between rows there: joins that jumped a row between neighbouring columns left
+        # creases running down the face from the eye.
+        chosen = [data[8] for data in columns_data]
+        shares = []
+        for j in range(columns):
+            total = weight = 0.0
+            for jj in range(max(0, j - 9), min(columns, j + 10)):
+                w = math.exp(-.5 * ((jj - j) / 3) ** 2)
+                total += w * chosen[jj]; weight += w
+            shares.append(total / weight)
+        for j, (chain, rows_of, angle, skin, lid, a0, reach, candidates, _) in enumerate(columns_data):
+            # The cubic leaves the lid level and meets the skin along its segment at the join: where the skin climbs
+            # about twice as steeply as the cubic must on average, so it bends evenly along its whole length (a parabola),
+            # not hard at one end, and a lid set deep under a full cheek meets it in one long hollow.
+            a1 = min(max(shares[j] * reach, a0 + 1e-6), angle[-2])
+            seg = max(0, min(len(chain) - 2, next((i for i in range(len(chain) - 1) if angle[i + 1] >= a1), len(chain) - 2)))
+            m1 = (skin[seg + 1] - skin[seg]) / max(1e-9, angle[seg + 1] - angle[seg])
+            r1 = skin[seg] + m1 * (a1 - angle[seg])
+            h = max(1e-9, a1 - a0)
+            for i, key in enumerate(chain):
+                if angle[i] <= a0: value = lid
+                elif angle[i] >= a1: value = skin[i]
+                else:
+                    u = (angle[i] - a0) / h
+                    value = (2 * u ** 3 - 3 * u ** 2 + 1) * lid + (-2 * u ** 3 + 3 * u ** 2) * r1 + (u ** 3 - u ** 2) * h * m1
+                if upper_side and reach > 1e-9:
+                    share = angle[i] / reach
+                    value -= crease * (1 - _smoothstep(.55 * width, 1.1 * width, abs(yaws[j]))) * math.exp(-((share - 1.0) / .15) ** 2)
+                radius_of.setdefault(key, value)
+
+    # ---- the bag behind the margin: each margin vertex's ladder turns round the lid's rounded margin onto its inner
+    # surface, runs back under the lid to the fornix, turns down onto the lining and wraps the eyeball to a pole behind
+    # it. Round each corner a fan of ladders (sharing the corner's roll, one radial line) closes the bag sideways.
+    back = (0.0, 1.0, 0.0)
+
+    def ladder(j, which, fan=None):
+        """Per state (rest first), the ladder's points after its margin vertex: roll, inner, fornix, lining rows."""
+        p, up, low = edges[j]
+        if which == 'upper': inner, sign, run, roll, edge = inner_u[j], 1, up_reach, roll_u[j], up
+        else: inner, sign, run, roll, edge = inner_l[j], -1, low_reach, roll_l[j], low
+        mid, lining = inner + t / 2, r + .35 * (base - r)
+        fall = inner - lining
+        span = math.degrees(fall / inner)
+        yaw = yaws[j]
+        result = []
+        for state in ('rest',) + states:
+            shift = edge[state] - edge['rest']
+            out = []
+            for k in range(1, _ROLL_ROWS + 1):
+                theta = math.pi * k / _ROLL_ROWS
+                out.append(_add(center, _mul(_direction(yaw, edge[state] + sign * roll * (1 - math.sin(theta))), mid + t / 2 * math.cos(theta))))
+            if fan is None:
+                start = edge['rest'] + sign * roll
+                for k in range(1, _INNER_ROWS + 1):
+                    s = k / _INNER_ROWS
+                    out.append(_add(center, _mul(_direction(yaw, start + sign * s * run + (1 - _smoothstep(0, 1, s)) * shift), inner)))
+                at = lambda arc: _direction(yaw, start + sign * (run + arc))
+            else:
+                a = math.radians(fan)
+                length = side_reach + (up_reach - side_reach) * max(0.0, math.sin(a)) + (low_reach - side_reach) * max(0.0, -math.sin(a))
+                dy, de = math.cos(a), math.sin(a)
+                for k in range(1, _INNER_ROWS + 1):
+                    s = k / _INNER_ROWS
+                    out.append(_add(center, _mul(_direction(yaw + dy * s * length, meet + de * s * length), inner)))
+                at = lambda arc: _direction(yaw + dy * (length + arc), meet + de * (length + arc))
+            for w in _FORNIX:
+                ww = math.radians(w)
+                out.append(_add(center, _mul(at(span * math.sin(ww)), inner - fall * (1 - math.cos(ww)))))
+            fornix = at(span)
+            for k in range(1, _LINING_ROWS + 1):
+                s = k / (_LINING_ROWS + 1)
+                d = _add(_mul(fornix, 1 - s), _mul(back, s))
+                out.append(_add(center, _mul(d, lining / math.hypot(*d))))
+            result.append(out)
+        return result, lining
+
+    up_row, low_row = row_of[('U0', 0)], row_of[('L0', 0)]
+    loop = [(grid[(j, up_row)], ladder(j, 'upper'), 'upper') for j in range(first + 1, last)]
+    loop += [(grid[(last, up_row)], ladder(last, 'upper', 90 - 180 * f / (_FAN - 1)), 'corner') for f in range(_FAN)]
+    loop += [(grid[(j, low_row)], ladder(j, 'lower'), 'lower') for j in range(last - 1, first, -1)]
+    loop += [(grid[(first, up_row)], ladder(first, 'upper', -90 - 180 * f / (_FAN - 1)), 'corner') for f in range(_FAN)]
+    lining = loop[0][1][1]
+
+    # ---- vertices, morph targets and faces of the patch
+    verts, targets, roles, ids = [], {s: [] for s in states}, [], {}
+
+    def vertex(key, rest, moved, role):
+        if key not in ids:
+            ids[key] = len(verts)
+            verts.append(rest)
+            for s in states: targets[s].append(moved[s])
+            roles.append(role)
+        return ids[key]
+    for key in keys:
+        j, region, k = key
+        radius = radius_of[key]
+        at = lambda state: _add(center, _mul(_direction(yaws[j], elevation(j, region, k, state)), radius))
+        vertex(('g',) + key, at('rest'), {s: at(s) for s in states}, region)
+    grid_id = {cell: ids[('g',) + key] for cell, key in grid.items()}
+    faces_out = []
+
+    def face(*corners):
+        unique = []
+        for c in corners:
+            if c not in unique: unique.append(c)
+        if len(unique) >= 3: faces_out.append(tuple(unique))
+    for j in range(columns - 1):
+        for i in range(len(rows) - 1):
+            if i == low_row and (inside(j) or inside(j + 1)): continue   # the eye's opening
+            a, b, c, d = grid_id[(j, i)], grid_id[(j + 1, i)], grid_id[(j + 1, i + 1)], grid_id[(j, i + 1)]
+            # Split each cell along the diagonal that leaves it flatter: a crease or the lid's corner running across the
+            # cells against a fixed diagonal zig-zags (ticks along the crease).
+            if len({a, b, c, d}) == 4:
+                n = lambda x, y, z: (lambda v: _mul(v, 1 / (math.hypot(*v) or 1)))(_cross(_sub(verts[y], verts[x]), _sub(verts[z], verts[x])))
+                if _dot(n(a, b, d), n(b, c, d)) > _dot(n(a, b, c), n(a, c, d)):
+                    face(a, b, d)
+                    face(b, c, d)
+                    continue
+            face(a, b, c)
+            face(a, c, d)
+    kinds = ['roll'] * _ROLL_ROWS + ['inner'] * _INNER_ROWS + ['fornix'] * len(_FORNIX) + ['lining'] * _LINING_ROWS
+    ladders = []
+    for number, (margin_vertex, (positions, _), role) in enumerate(loop):
+        rungs = [ids[('g',) + margin_vertex]]
+        for k, rest in enumerate(positions[0]):
+            # A corner's roll is one radial line where the two margins meet: every ladder of its fan shares it.
+            key = ('roll', margin_vertex, k) if role == 'corner' and k < _ROLL_ROWS else ('bag', number, k)
+            rungs.append(vertex(key, rest, {s: positions[1 + n_][k] for n_, s in enumerate(states)}, f'{role}-{kinds[k]}-{k}'))
+        ladders.append(rungs)
+    pole_point = _add(center, _mul(back, lining))
+    pole = vertex(('pole',), pole_point, {s: pole_point for s in states}, 'pole')
+    first_bag = len(faces_out)
+    for a, b in zip(ladders, ladders[1:] + ladders[:1]):
+        for k in range(len(a) - 1):
+            face(b[k], a[k], a[k + 1])
+            face(b[k], a[k + 1], b[k + 1])
+        face(b[-1], a[-1], pole)
+    bag_count = len(faces_out) - first_bag
+
+    # ---- the lids' checks: clearance over every weight mix, no folds, coverage in every contract state
+    moving = [v for v in range(len(verts)) if any(math.dist(targets[s][v], verts[v]) > 1e-9 for s in states)]
+    worst = lid_clearance(center, r, [verts[v] for v in moving], [[targets[s][v] for v in moving] for s in states])
+    if worst < clearance - 1e-9:
+        raise ValueError(f'A lid vertex comes {worst * 1000:.2f} mm from the eyeball mid-blink (needs {clearance * 1000:.2f}): lower `wide` or `overlap`')
+    # Blink 1 with squint 1 (an eye already shut, squeezed) turns the margin near the corners from rising at rest to
+    # falling, and the summed chords of two large rotations twist a thin strip of the rounded margin there, hidden
+    # inside the closed lids; the contract's inversion check does not use that pair. Every other mix must not fold.
+    folded = _folded(verts, faces_out, targets, skip=[('blink', 'squint')])
+    if folded: raise ValueError(f'Lid faces fold over at {", ".join(folded)}; raise `corner` (now {corner}), lower `wide` or widen the opening')
+    geometry = {'vertices': verts, 'faces': faces_out, 'morphs': targets, 'aperture': r, 'band': None}
+    uncovered = eye_coverage_problems(center, r, geometry, samples=41)
+    if uncovered: raise ValueError(f'The lids leave the eyeball uncovered: {uncovered[0]}; raise `overlap` or lower `wide`')
+
+    # ---- join the grid to the skin round it: a ring of triangles between the rim and the grid's outer loop
+    offset = len(points)
+    all_points = points + verts
+    all_q = q + [to_q(yaws[j], elevation(j, region, k)) for j, region, k in [key for key in keys]] + [q_of(v) for v in verts[len(keys):]]
+    boundary = ([grid_id[(j, 0)] for j in range(columns - 1)] + [grid_id[(columns - 1, i)] for i in range(len(rows) - 1)]
+                + [grid_id[(j, len(rows) - 1)] for j in range(columns - 1, 0, -1)] + [grid_id[(0, i)] for i in range(len(rows) - 1, 0, -1)])
+    inner_loop = []
+    for v in boundary:
+        if not inner_loop or inner_loop[-1] != v + offset: inner_loop.append(v + offset)
+    while inner_loop[0] == inner_loop[-1]: inner_loop.pop()
+    orient = lambda a, b, c: (all_q[b][0] - all_q[a][0]) * (all_q[c][1] - all_q[a][1]) - (all_q[b][1] - all_q[a][1]) * (all_q[c][0] - all_q[a][0])
+    area = lambda loop_: .5 * sum(all_q[a][0] * all_q[b][1] - all_q[b][0] * all_q[a][1] for a, b in zip(loop_, loop_[1:] + loop_[:1]))
+    # Where the rim runs too close and ragged beside the grid for the ring to close, take more skin out and try again.
+    for grow in (1.0, 1.75, 2.5, 3.5):
+        if grow > 1: kept, _, outer = _patch_rim(polygons, q, patch_level, patch_around, grow * fine, lambda f: all(front(points[i]) for i in f), 'the eye')
+        ring = _zip_loops(inner_loop, outer, all_q, all_points)
+        if ring is not None and abs(sum(orient(*tri) / 2 for tri in ring) - (area(outer) - area(inner_loop))) <= 1e-6 * abs(area(outer)): break
+    else:
+        raise ValueError('The skin round the eye is too uneven to join the lids to: refine the blank there or make the eye smaller')
+    joined = kept + ring + [tuple(i + offset for i in f) for f in faces_out]
+    used = sorted({i for f in joined for i in f})
+    mapping = {old: new for new, old in enumerate(used)}
+    out_vertices = [all_points[i] for i in used]
+    out_faces = [tuple(mapping[i] for i in f) for f in joined]
+    patch_start = len(kept) + len(ring)
+    patch = [mapping[v + offset] for v in range(len(verts))]
+
+    # Lash paint: the upper lid's outer rows down to its margin, round the margin and the first half of its inner
+    # surface (dark under the lid from below). The lining: the rest of the inner surfaces, the fornix and the lining.
+    lash = {'upper': set(), 'lower': set()}
+    lining_set = set()
+    for v, role in enumerate(roles):
+        if role in ('U0', 'U1'): lash['upper'].add(v)
+        if role in ('L0', 'L1'): lash['lower'].add(v)
+        if role.startswith(('upper-roll', 'corner-roll', 'upper-inner')) or role.startswith('upper-fornix') and int(role.rsplit('-', 1)[1]) < _ROLL_ROWS + _INNER_ROWS + 1:
+            lash['upper'].add(v)
+        if role.startswith('lower-roll'): lash['lower'].add(v)
+        if '-inner-' in role or '-fornix-' in role or '-lining-' in role or role == 'pole':
+            if not role.startswith('upper-inner') or int(role.rsplit('-', 1)[1]) == _ROLL_ROWS + _INNER_ROWS - 1: lining_set.add(v)
+    for j in (first, last):   # the corner vertex belongs to both lash lines and, for its roll, to the lining side
+        lash['upper'].add(grid_id[(j, up_row)])
+    lining_set.update(v for v, role in enumerate(roles) if role.startswith('corner-roll') and role.endswith(f'-{_ROLL_ROWS - 1}'))
+    point = lambda v: out_vertices[patch[v]]
+    motion = [(point(v), {s: targets[s][v] for s in states}) for v in moving]
+    lids.update(min_clearance=worst, grid=len(keys), crease=crease)
+    return {
+        'vertices': out_vertices, 'faces': out_faces, 'lids': lids, 'window': window, 'style': 'continuous',
+        'rim': sorted(patch[grid_id[(j, up_row)]] for j in range(first, last + 1)) + sorted(patch[grid_id[(j, low_row)]] for j in range(first + 1, last)),
+        'wall': list(range(patch_start + first_bag, patch_start + first_bag + bag_count)), 'bevel': [],
+        'patch': list(range(patch_start, len(out_faces))), 'pushed': pushed, 'motion': motion,
+        'lash': {key: [point(v) for v in sorted(values)] for key, values in lash.items()}, 'lining_points': [point(v) for v in sorted(lining_set)],
+        'rim_radius': (base + .5 * t, max(inner_u) + t), 'lining': (lining, lining), 'mound': max(inner_u) + t + blend / 4,
+        'socket': socket, 'still': _moving_region(center, yaws, anchor_u, anchor_l, width),
+    }
+
+
+def _moving_region(center, yaws, anchor_u, anchor_l, width):
+    """How many degrees a point lies outside the skin a continuous eye's lids move (between its anchors, and at most
+    10 degrees past its corners); negative inside. `eye_hole_mask` keeps skin shapes off that region."""
+    step = yaws[1] - yaws[0]
+
+    def table(values, yaw):
+        k = min(len(yaws) - 2, max(0, int((yaw - yaws[0]) / step)))
+        s = min(1.0, max(0.0, (yaw - yaws[k]) / step))
+        return values[k] + s * (values[k + 1] - values[k])
+
+    def level(point):
+        yaw, elevation = _angles(_sub(point, center))
+        if _sub(point, center)[1] > 0: return 90.0
+        return max(elevation - table(anchor_u, yaw), table(anchor_l, yaw) - elevation, abs(yaw) - (width + 10))
+    return level
 
 
 def shutter_hole(vertices, faces, center, eye_radius, hole_radius=None, max_edge=None, cap_rings=5, **shutter_options):
@@ -1506,7 +2224,8 @@ def eye_hole_mask(*holes, band=None):
     reach = MASK_BAND if band is None else _number(band, 'Mask band', 3)
     parts = []
     for hole in holes:
-        level, center = hole['window']['level'], _vector(hole['lids']['center'], 3, 'Eye center')
+        # A continuous eye keeps its whole moving lid region still (its lids are the skin); a shell eye its rim.
+        level, center = hole.get('still') or hole['window']['level'], _vector(hole['lids']['center'], 3, 'Eye center')
         mound, radius = hole['mound'], hole['lids']['eye_radius']
         parts.append((level, center, mound, reach, .5 * radius))
 
@@ -2388,8 +3107,9 @@ def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=Non
     front = front_surface(vertices, faces)
     y = front(center_x, mouth_z)
     if y is None: raise ValueError(f'No skin at the mouth ({center_x:.4f}, {mouth_z:.4f}): put the mouth line on the face skin')
-    # The grid wraps round a vertical axis through the mouth's middle, level with the middle of the head.
-    axis_y = sum(v[1] for v in vertices) / len(vertices)
+    # The grid wraps round a vertical axis through the mouth's middle, level with the middle of the head: the middle of
+    # its depth, not the mean of its vertices, which a finely meshed feature (a continuous eye) pulls forward.
+    axis_y = (min(v[1] for v in vertices) + max(v[1] for v in vertices)) / 2
     radius = axis_y - y
     if radius <= 0: raise ValueError('The mouth must be on the front of the head (the face looks down -Y)')
     angle = lambda p: math.atan2(p[0] - center_x, axis_y - p[1])
@@ -2673,9 +3393,27 @@ def ellipsoid_geometry(center, radii, rings=24, segments=32, exponent=2):
     return {'vertices': vertices, 'faces': _outward(vertices, faces)}
 
 
+_SDF_SHAPES = {}
+
+
 def ellipsoid_sdf(point, center, radii):
-    """Approximate signed distance from a point to an ellipsoid (exact for a sphere; negative inside), for sdf_blank."""
-    return _ellipsoid_distance(_vector(point, 3, 'Point'), _vector(center, 3, 'Center'), _vector(radii, 3, 'Radii'))
+    """Approximate signed distance from a point to an ellipsoid (exact for a sphere; negative inside), for sdf_blank.
+
+    A head field calls this hundreds of thousands of times: the center and radii are checked once per distinct pair
+    (a Mossjaw build spent 17 minutes re-validating them), and a point that is already a tuple of three floats is used
+    as it is.
+    """
+    try:
+        shape = _SDF_SHAPES.get((center, radii))
+    except TypeError:   # lists are not hashable: check them every time
+        shape = None
+    if shape is None:
+        shape = (_vector(center, 3, 'Center'), _vector(radii, 3, 'Radii'))
+        try:
+            if len(_SDF_SHAPES) < 4096: _SDF_SHAPES[(center, radii)] = shape
+        except TypeError: pass
+    if not (type(point) is tuple and len(point) == 3 and all(type(c) is float for c in point)): point = _vector(point, 3, 'Point')
+    return _ellipsoid_distance(point, *shape)
 
 
 def smooth_min(a, b, k):
@@ -3107,6 +3845,7 @@ def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, 
         lids = hole['lids']
         if math.dist(tuple(lids['center']), center) > 1e-9: raise ValueError('This hole belongs to another eye')
         floor, level = lids['upper_radius'] + lids['thickness'] + clearance, hole['window']['level']
+        if hole.get('style') == 'continuous': floor, level = None, None   # the lids are the skin: lie on it everywhere
     else:
         floor, level = None, None
     shifts = {
@@ -3212,6 +3951,18 @@ def dome_brow_geometry(hole, skin, side, roll=(152, 26), polar=(75, 67), height=
     sign, suffix = (1, 'Left') if side == 'L' else (-1, 'Right')
     level = hole['window']['level']
     floor = lids['upper_radius'] + lids['thickness'] + .0002
+    floor_at = lambda d: floor
+    continuous = hole.get('style') == 'continuous'
+    if continuous:
+        # The lids are the skin, the upper lid standing prouder than the lower: the floor is the lid surface on the
+        # side of the meet line a direction is on.
+        # Less the crease's depth, so a ridge over the crease settles into it rather than bridging it.
+        upper_lid = lids['upper_radius'] + lids['thickness'] - lids.get('crease', 0.0) - .0002
+        lower_lid, meet = lids['lower_radius'] + lids['thickness'], lids['meet']
+        floor = lower_lid
+        floor_at = lambda d: lower_lid + (upper_lid - lower_lid) * _smoothstep(meet - 10, meet + 10, math.degrees(math.asin(max(-1.0, min(1.0, d[2])))))
+        # Over the window (the opening and the lid rows round it) the ridge rests on that smooth lid sphere, as over shell
+        # lids, and blends onto the skin over 8 degrees past it.
     index = _SkinIndex(skin['vertices'], skin['faces'], near=lambda p: math.dist(p, center) < 3 * EYE_RADIUS)
 
     def direction(r, p):
@@ -3231,12 +3982,13 @@ def dome_brow_geometry(hole, skin, side, roll=(152, 26), polar=(75, 67), height=
             t -= step
             if abs(step) < 1e-8: found = True; break
         outside = level(tuple(center[k] + d[k] * t for k in range(3))) if found else 0.0
-        if outside < 1: return floor, 0.0
+        low = floor_at(d)
+        if outside < 1: return low, 0.0
         near_rim = min(1.0, (outside - 1) / 8)     # the rim's bevel and wall are no base: blend from the lid onto the skin
         # Where the skin runs off nearly along the ray (the dome's flank into the forehead between the eyes) the ridge
         # goes under it rather than following it outward: it knots into the forehead there.
-        t = min(max(t, floor), hole['mound'] + .005)
-        return floor + (t - floor) * near_rim, sink * near_rim
+        t = min(max(t, low), hole['mound'] + .005)
+        return low + (t - low) * near_rim, sink * near_rim
 
     def layout(shift):
         points, crest = [], []
@@ -4069,9 +4821,79 @@ def mesh_from_geometry(name, geometry, materials, smooth=True):
     return obj
 
 
+class _PointLookup:
+    """Find the entry stored at (within `tolerance` of) a point: a continuous eye's lid data travels by position."""
+
+    def __init__(self, entries, tolerance=2e-6):
+        self.tolerance, self.cells = tolerance, {}
+        for point, value in entries:
+            self.cells.setdefault(tuple(round(c / tolerance) for c in point), []).append((point, value))
+
+    def get(self, point):
+        key = tuple(round(c / self.tolerance) for c in point)
+        best = None
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for stored, value in self.cells.get((key[0] + dx, key[1] + dy, key[2] + dz), ()):
+                        d = math.dist(stored, point)
+                        if d <= self.tolerance and (best is None or d < best[0]): best = (d, value)
+        return None if best is None else best[1]
+
+
+def _continuous_lids(skin, side, hole, lash, lash_side, lining_material):
+    """Give a skin with a continuous eye hole its eye's shape keys and paint: eyeBlink, eyeSquint, eyeWide and the lash."""
+    from agent_meshes_author import shape_key
+    import bpy
+    if skin is None or getattr(skin, 'type', None) != 'MESH':
+        raise ValueError("A continuous eye_hole's lids are the skin: pass build_eye(..., hole=hole, skin=<the head mesh object>)")
+    suffix = _SIDES[side]
+    world = skin.matrix_world
+    inverse = world.inverted()
+    points = [tuple(world @ v.co) for v in skin.data.vertices]
+    motion = _PointLookup(hole['motion'])
+    found, targets = 0, {name: list(points) for name in ('blink', 'squint', 'wide')}
+    for i, point in enumerate(points):
+        moved = motion.get(point)
+        if moved is None: continue
+        found += 1
+        for name, target in moved.items(): targets[name][i] = target
+    if found < len(hole['motion']) * .98:
+        raise ValueError(f'Only {found} of the {len(hole["motion"])} lid vertices of this eye are on {skin.name}: build the head from the '
+                         'eye_hole result and leave the eye region alone (lips, noses and slits elsewhere are fine)')
+    keys = skin.data.shape_keys
+    for key, morph in (('blink', 'eyeBlink'), ('squint', 'eyeSquint'), ('wide', 'eyeWide')):
+        if keys and f'{morph}{suffix}' in keys.key_blocks: raise ValueError(f'{skin.name} already has {morph}{suffix}')
+        from mathutils import Vector
+        shape_key(skin, f'{morph}{suffix}', [tuple(inverse @ Vector(p)) for p in targets[key]])
+    # Paint by material: the lash line on the upper lid's margin (and the lower's with lash_side='both'), the lining inside.
+    def slot_of(mat):
+        for k, existing in enumerate(skin.data.materials):
+            if existing is not None and existing.name == mat.name: return k
+        skin.data.materials.append(mat)
+        return len(skin.data.materials) - 1
+    regions = []
+    if lash is not None:
+        lash_mat = lash if hasattr(lash, 'node_tree') else _material(None, 'lash', (.03, .02, .02), roughness=.7)
+        for which in (('upper', 'lower') if lash_side == 'both' else (lash_side,)):
+            regions.append((hole['lash'][which], lash_mat))
+    lining_mat = lining_material if hasattr(lining_material, 'node_tree') else _material(None, 'eye_lining', (.05, .028, .024), roughness=.85)
+    regions.append((hole['lining_points'], lining_mat))
+    for members, mat in regions:
+        lookup = _PointLookup([(p, True) for p in members])
+        inside = [lookup.get(p) is not None for p in points]
+        index = None
+        for polygon in skin.data.polygons:
+            if all(inside[v] for v in polygon.vertices):
+                if index is None: index = slot_of(mat)
+                polygon.material_index = index
+    skin.data.update()
+    return found
+
+
 def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_material=None, eye_materials=None,
               iris=26, pupil=12, socket=True, margin=6, hole=None, slit=None, split_borders=False, lash=None, lash_width=5,
-              lash_side='upper', **options):
+              lash_side='upper', skin=None, lining_material=None, **options):
     """Build one eye: an eyeball bound to `eye_L`/`eye_R`, lids (or shutters) with morphs, and a socket cup.
 
     `style='lid'` uses `lid_geometry`, `style='shutter'` uses `shutter_geometry`;
@@ -4103,7 +4925,16 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     if bone is None: raise ValueError(f'Rig has no eye_{side} bone; build it with face_skeleton')
     pivot = rig.matrix_world @ bone.head_local
     if math.dist(tuple(pivot), center) > 1e-5: raise ValueError(f'eye_{side} pivots at {tuple(pivot)}, not at the eyeball center {center}')
-    if hole is not None:
+    continuous = hole is not None and hole.get('style') == 'continuous'
+    if continuous:
+        if style != 'lid': raise ValueError("This hole was made for lid eyes: eye_hole for lids, shutter_hole for shutters")
+        if options: raise ValueError(f'Pass the lid options ({", ".join(sorted(options))}) to eye_hole; build_eye reuses its lids')
+        lids = hole['lids']
+        if math.dist(tuple(lids['center']), center) > 1e-9 or abs(lids['eye_radius'] - radius) > 1e-12:
+            raise ValueError('This eye_hole was cut for another eye center or radius')
+        if lash_side not in ('upper', 'lower', 'both'): raise ValueError("Lash side must be 'upper', 'lower' or 'both'")
+        socket = False
+    elif hole is not None:
         lids = hole['lids']
         if lids['style'] != style:
             raise ValueError(f"This hole was made for {lids['style']} eyes: eye_hole for lids, shutter_hole for shutters")
@@ -4129,6 +4960,9 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     ]
     eyeball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris, pupil, slit=slit, split_borders=split_borders), materials)
     bind_rigid(eyeball, rig, f'eye_{side}')
+    if continuous:
+        _continuous_lids(skin, side, hole, lash, lash_side, lining_material)
+        return {'eyeball': eyeball, 'lids': None, 'socket': None, 'geometry': lids}
     lid_mat = _material(lid_material, 'lid', (.6, .36, .25), roughness=.55)
     if lash is not None and style != 'lid': raise ValueError('A lash line belongs to lid eyes')
     if style == 'lid':
@@ -4356,7 +5190,47 @@ def use_vertex_colors(mat, color=None, layer=PAINT_LAYER):
     return mat
 
 
-def join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60):
+def _area_loop_normals(vertices, faces, sharp):
+    """Per face corner, the area-weighted normal of the faces round its vertex that it reaches without crossing a sharp edge."""
+    face_normals = []
+    for face in faces:
+        n = (0.0, 0.0, 0.0)
+        for i in range(1, len(face) - 1): n = _add(n, _cross(_sub(vertices[face[i]], vertices[face[0]]), _sub(vertices[face[i + 1]], vertices[face[0]])))
+        face_normals.append(n)   # length is twice the area
+    around = {}
+    for index, face in enumerate(faces):
+        for v in face: around.setdefault(v, []).append(index)
+    result = []
+    for index, face in enumerate(faces):
+        for k, v in enumerate(face):
+            # The smooth fan: faces round v joined through edges at v that are not sharp.
+            fan, todo = {index}, [index]
+            while todo:
+                f = todo.pop()
+                ring = faces[f]
+                j = ring.index(v)
+                for w in (ring[j - 1], ring[(j + 1) % len(ring)]):
+                    if (min(v, w), max(v, w)) in sharp: continue
+                    for g in around[v]:
+                        if g not in fan and w in faces[g]: fan.add(g); todo.append(g)
+            n = (0.0, 0.0, 0.0)
+            for f in fan: n = _add(n, face_normals[f])
+            length = math.hypot(*n)
+            result.append(_mul(n, 1 / length) if length > 1e-30 else (0.0, 0.0, 1.0))
+    return result
+
+
+def _set_area_normals(obj, sharp):
+    mesh = obj.data
+    vertices = [tuple(v.co) for v in mesh.vertices]
+    faces = [tuple(p.vertices) for p in mesh.polygons]
+    normals = _area_loop_normals(vertices, faces, sharp)
+    if hasattr(mesh, 'use_auto_smooth'): mesh.use_auto_smooth = True   # Blender before 4.1 needs it for custom normals
+    mesh.normals_split_custom_set(normals)
+    mesh.update()
+
+
+def join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60, area_normals=False):
     """Join every morph-bearing face part (skin, lids, teeth, tongue, cavity) into ONE mesh object.
 
     Unreal discards all morph names in a file when a name repeats across glTF
@@ -4370,7 +5244,9 @@ def join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60):
     Color attributes (skin paint from `paint_vertices`) are carried over, white where
     a part has none. Edges where the surface turns by more than `sharp_angle` degrees (the fold from
     skin into an `eye_hole` wall, a lid's rim) are marked sharp, so smooth shading
-    does not smear across them (None keeps every edge smooth).
+    does not smear across them (None keeps every edge smooth). `area_normals=True` stores the rest normals
+    weighted by face area (split at the sharp edges) as custom normals: Blender weights by corner angle, and a
+    finely split row beside coarse faces (a continuous eye's rolled lid margin) then shades as ticks along it.
     """
     import bpy
     geometry, smooth, colors = [], [], []
@@ -4407,6 +5283,7 @@ def join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60):
         if layer == PAINT_LAYER or obj.data.color_attributes.active_color is None:
             obj.data.color_attributes.active_color = attribute
             obj.data.color_attributes.render_color_index = obj.data.color_attributes.find(layer)
+    if area_normals: _set_area_normals(obj, sharp if sharp_angle is not None else set())
     for morph, targets in joined['morphs'].items(): shape_key(obj, morph, targets)
     if rig is not None: bind_rigid(obj, rig, bone)
     return obj

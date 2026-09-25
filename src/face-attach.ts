@@ -168,11 +168,48 @@ function barycentric(p: number[], a: number[], b: number[], c: number[]): number
   return [1 - v - w, v, w];
 }
 
+const moves = (s: AttachSurface, v: number, names: Iterable<string>) => {
+  for (const name of names) { const d = s.targets.get(name); if (d && Math.hypot(d[v * 3], d[v * 3 + 1], d[v * 3 + 2]) > 0.00001) return true; }
+  return false;
+};
+
 /**
- * Find the attached parts of a face and judge their contact with the skin at rest and at each morph at weight 1.
- * `surfaces` are the face's opaque, non-eyeball primitives; `eyes` gives each eye's center (and morph side).
+ * Sort welded pieces into mouth parts, eyes, lids, skin and attached parts. A piece an eye morph moves is a lid, unless
+ * it is skin-sized: a continuous eye's lids are the skin itself (`eye_hole(style='continuous')`), and that skin is still
+ * judged as skin (a part it slides under fails).
  */
-export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morphNames: string[]): AttachReport {
+function classify(surfaces: AttachSurface[], pieces: Map<number, Piece>, eyes: AttachEye[]): void {
+  const size = (p: Piece) => Math.hypot(p.hi[0] - p.lo[0], p.hi[1] - p.lo[1], p.hi[2] - p.lo[2]);
+  for (const piece of pieces.values()) {
+    const names = new Set(piece.tris.flatMap(([i]) => surfaces[i].names));
+    if ([...names].some(mouthName)) piece.kind = 'mouth';
+    else if ([...names].some(n => /^eye_(white|iris|pupil)/.test(n))) piece.kind = 'eye';
+    else if (piece.verts.some(([i, v]) => moves(surfaces[i], v, LID_MORPHS))) piece.kind = 'lid';
+  }
+  const biggest = Math.max(0, ...[...pieces.values()].filter(p => p.kind === 'part' || p.kind === 'lid').map(size));
+  for (const piece of pieces.values()) if (piece.kind === 'lid' && size(piece) >= SKIN_SHARE * biggest) piece.kind = 'skin';
+  // How far each eye's separate lids reach from its center: a piece wholly inside that belongs to the eye (a shutter housing).
+  const eyeMorphs = eyes.map(e => ['eyeBlink', 'eyeSquint', 'eyeWide'].map(m => `${m}${e.suffix}`));
+  const reach = eyes.map((eye, e) => {
+    let far = 0;
+    for (const piece of pieces.values()) if (piece.kind === 'lid') for (const [i, v] of piece.verts) {
+      const s = surfaces[i];
+      if (moves(s, v, eyeMorphs[e])) far = Math.max(far, Math.hypot(s.rest[v * 3] - eye.center[0], s.rest[v * 3 + 1] - eye.center[1], s.rest[v * 3 + 2] - eye.center[2]));
+    }
+    return far;
+  });
+  for (const piece of pieces.values()) {
+    if (piece.kind !== 'part') continue;
+    const names = new Set(piece.tris.flatMap(([i]) => surfaces[i].names));
+    if ([...names].some(socketName) || eyes.some((eye, e) => reach[e] > 0 && piece.verts.every(([i, v]) =>
+      Math.hypot(surfaces[i].rest[v * 3] - eye.center[0], surfaces[i].rest[v * 3 + 1] - eye.center[1], surfaces[i].rest[v * 3 + 2] - eye.center[2]) <= EYE_REACH * reach[e]))) piece.kind = 'eye';
+  }
+  const largest = Math.max(0, ...[...pieces.values()].filter(p => p.kind === 'part' || p.kind === 'skin').map(size));
+  for (const piece of pieces.values()) if (piece.kind === 'part' && size(piece) >= SKIN_SHARE * largest) piece.kind = 'skin';
+}
+
+/** The surfaces welded by position into connected pieces (the pieces split by materials and sharp edges join again). */
+function weld(surfaces: AttachSurface[]): Map<number, Piece> {
   // Weld every surface by position so the pieces split by materials and sharp edges join again.
   const ids = new Map<string, number>(), node: Int32Array[] = [];
   for (const s of surfaces) {
@@ -202,28 +239,26 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
       for (let k = 0; k < 3; k++) { piece.lo[k] = Math.min(piece.lo[k], s.rest[v * 3 + k]); piece.hi[k] = Math.max(piece.hi[k], s.rest[v * 3 + k]); }
     }
   });
-  const moves = (s: AttachSurface, v: number, names: Iterable<string>) => {
-    for (const name of names) { const d = s.targets.get(name); if (d && Math.hypot(d[v * 3], d[v * 3 + 1], d[v * 3 + 2]) > 0.00001) return true; }
-    return false;
-  };
-  const eyeMorphs = eyes.map(e => ['eyeBlink', 'eyeSquint', 'eyeWide'].map(m => `${m}${e.suffix}`));
-  // How far each eye's lids reach from its center: a piece wholly inside that belongs to the eye (a shutter housing).
-  const reach = eyes.map((eye, e) => {
-    let far = 0;
-    surfaces.forEach(s => { for (let v = 0; v < s.count; v++) if (moves(s, v, eyeMorphs[e])) far = Math.max(far, Math.hypot(s.rest[v * 3] - eye.center[0], s.rest[v * 3 + 1] - eye.center[1], s.rest[v * 3 + 2] - eye.center[2])); });
-    return far;
-  });
+  return pieces;
+}
+
+/** Per surface, 1 for each triangle (index / 3) of an attached part: a brow, ridge, nostril or freckle lying on the face. */
+export function attachedTriangles(surfaces: AttachSurface[], eyes: AttachEye[]): Uint8Array[] {
+  const pieces = weld(surfaces);
+  classify(surfaces, pieces, eyes);
+  const out = surfaces.map(s => new Uint8Array(s.triangles.length / 3));
+  for (const piece of pieces.values()) if (piece.kind === 'part') for (const [i, t] of piece.tris) out[i][t / 3] = 1;
+  return out;
+}
+
+/**
+ * Find the attached parts of a face and judge their contact with the skin at rest and at each morph at weight 1.
+ * `surfaces` are the face's opaque, non-eyeball primitives; `eyes` gives each eye's center (and morph side).
+ */
+export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morphNames: string[]): AttachReport {
+  const pieces = weld(surfaces);
   const size = (p: Piece) => Math.hypot(p.hi[0] - p.lo[0], p.hi[1] - p.lo[1], p.hi[2] - p.lo[2]);
-  for (const piece of pieces.values()) {
-    const names = new Set(piece.tris.flatMap(([i]) => surfaces[i].names));
-    if ([...names].some(mouthName)) piece.kind = 'mouth';
-    else if ([...names].some(n => /^eye_(white|iris|pupil)/.test(n))) piece.kind = 'eye';
-    else if (piece.verts.some(([i, v]) => moves(surfaces[i], v, LID_MORPHS))) piece.kind = 'lid';
-    else if ([...names].some(socketName) || eyes.some((eye, e) => reach[e] > 0 && piece.verts.every(([i, v]) =>
-      Math.hypot(surfaces[i].rest[v * 3] - eye.center[0], surfaces[i].rest[v * 3 + 1] - eye.center[1], surfaces[i].rest[v * 3 + 2] - eye.center[2]) <= EYE_REACH * reach[e]))) piece.kind = 'eye';
-  }
-  const largest = Math.max(0, ...[...pieces.values()].filter(p => p.kind === 'part').map(size));
-  for (const piece of pieces.values()) if (piece.kind === 'part' && size(piece) >= SKIN_SHARE * largest) piece.kind = 'skin';
+  classify(surfaces, pieces, eyes);
   const contact = [...pieces.values()].filter(p => p.kind === 'skin' || p.kind === 'lid');
   const parts = [...pieces.values()].filter(p => p.kind === 'part');
 

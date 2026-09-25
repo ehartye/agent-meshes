@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { ballNose, browBar, tube, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { ballNose, browBar, tube, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, terracedSocket, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -15,7 +15,7 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(result.failures).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.contract).toBe('arkit-face/1');
-    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-coverage', 'eye-oblique', 'lid-follow', 'materials', 'attached-parts', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open']);
+    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-coverage', 'eye-oblique', 'lid-follow', 'materials', 'attached-parts', 'eye-crease', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open']);
     expect(result.measurements.eyes.L!.radius).toBeCloseTo(0.012, 5);
     expect(result.measurements.eyes.L!.center[0]).toBeCloseTo(0.03, 5);
     expect(result.measurements.eyes.L!.minLidClearance).toBeGreaterThan(0.0005);
@@ -131,6 +131,25 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(entry.count).toBeGreaterThan(0);
     for (const [x, y] of entry.at) expect(Math.hypot(x, y + 0.045)).toBeLessThan(0.025);
     expect(result.measurements.inversions.length).toBeLessThanOrEqual(20);
+  });
+
+  it('counts at most one fold above and below a plain lid eye, and fails a terraced socket of stacked bands', async () => {
+    const plain = await report();
+    const crease = plain.measurements.eyes.L!.crease!;
+    expect(crease.above).toBeLessThanOrEqual(1);
+    expect(crease.below).toBeLessThanOrEqual(1);
+    expect(plain.failures.filter(f => f.startsWith('eye-crease'))).toEqual([]);
+    // The P1a round 6-7 critics: 3-4 stacked bands round every shell-lid eye. Two 1.5 mm terraces above and below fold
+    // the median line three times on each side of the eye (onto each terrace, and onto the mask from the lid).
+    const terraced = await report(head => terracedSocket(head, 'L'));
+    const left = terraced.measurements.eyes.L!.crease!;
+    expect(left.above).toBeGreaterThanOrEqual(2);
+    expect(left.below).toBeGreaterThanOrEqual(2);
+    expect(Object.values(left.at!).flat().every(d => d > 0 && d <= 1.3)).toBe(true);
+    const failures = terraced.failures.filter(f => f.startsWith('eye-crease'));
+    expect(failures.some(f => /eye_L: the skin above the eye folds \d times/.test(f))).toBe(true);
+    expect(failures.some(f => /eye_L: the skin below the eye folds \d times/.test(f))).toBe(true);
+    expect(failures.some(f => /eye_R/.test(f))).toBe(false);
   });
 
   it('names the eye, the state and the uncovered heights when a closed blink leaves eyeball showing', async () => {

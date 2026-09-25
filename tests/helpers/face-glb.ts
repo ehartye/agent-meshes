@@ -572,3 +572,32 @@ export function tube(head: SynthHead, standoff: number): void {
   if (volume < 0) for (let t = 0; t < indices.length; t += 3) [indices[t + 1], indices[t + 2]] = [indices[t + 2], indices[t + 1]];
   head.meshes.push({ name: 'rubber', material: 'rubber', positions, indices, bones: positions.map(() => 'head'), targets: [] });
 }
+
+/**
+ * A terraced socket, as the P1a round 6-7 critics saw round shell-lid eyes: the skin round one eye steps toward the viewer
+ * in two 1.5 mm terraces above and below the opening (a rim, a mound ring) instead of flowing into the lids.
+ */
+export function terracedSocket(head: SynthHead, side: 'L' | 'R'): void {
+  const [cx, cy] = EYES[side], z = EYES[side][2] + 0.016, reach = 0.035, hole = { x: 0.0065, low: -0.006, high: 0.011 };
+  const positions: Vec3[] = [], indices: number[] = [];
+  const quad = (a: Vec3, b: Vec3, c: Vec3, d: Vec3) => { const base = positions.length; positions.push(a, b, c, d); indices.push(base, base + 1, base + 2, base, base + 2, base + 3); };
+  // Bands outward from the opening, each 1.5 mm nearer the viewer than the last, joined by risers.
+  for (const sign of [1, -1]) {
+    const edge = sign > 0 ? hole.high : hole.low, rows = [edge, edge + sign * 0.003, edge + sign * 0.006, sign * reach];
+    for (let k = 0; k < 3; k++) {
+      const y0 = rows[k], y1 = rows[k + 1], depth = z + 0.0015 * k;
+      const [lo, hi] = sign > 0 ? [y0, y1] : [y1, y0];
+      quad([cx - reach, cy + lo, depth], [cx + reach, cy + lo, depth], [cx + reach, cy + hi, depth], [cx - reach, cy + hi, depth]);
+      if (k < 2) {
+        const riser = sign > 0
+          ? [[cx - reach, cy + y1, depth], [cx + reach, cy + y1, depth], [cx + reach, cy + y1, depth + 0.0015], [cx - reach, cy + y1, depth + 0.0015]]
+          : [[cx - reach, cy + y1, depth + 0.0015], [cx + reach, cy + y1, depth + 0.0015], [cx + reach, cy + y1, depth], [cx - reach, cy + y1, depth]];
+        quad(...(riser as [Vec3, Vec3, Vec3, Vec3]));
+      }
+    }
+  }
+  quad([cx - reach, cy + hole.low, z], [cx - hole.x, cy + hole.low, z], [cx - hole.x, cy + hole.high, z], [cx - reach, cy + hole.high, z]);
+  quad([cx + hole.x, cy + hole.low, z], [cx + reach, cy + hole.low, z], [cx + reach, cy + hole.high, z], [cx + hole.x, cy + hole.high, z]);
+  const index = head.meshes.findIndex(m => m.name === `eye_mask_${side}`);
+  head.meshes[index] = { name: `eye_mask_${side}`, material: 'skin', positions, indices, targets: [], bones: positions.map(() => 'head') };
+}

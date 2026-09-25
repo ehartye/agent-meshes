@@ -94,12 +94,13 @@ def build():
     parts, eyeballs = [head, cavity, upper, lower, fangs, tongue, nose, fin], []
     for side in 'LR':
         center = EYE_L if side == 'L' else (-EYE_L[0], EYE_L[1], EYE_L[2])
-        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, eye_materials=eye_mats, iris=32, pupil=10, hole=holes[side])
+        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, eye_materials=eye_mats, iris=32, pupil=10, hole=holes[side], skin=head)
         eyeballs.append(eye['eyeball'])
         parts.append(eye['lids'])
         mound = holes[side]['mound']
-        ridge = brow_ridge_geometry(center, mound, side, inner=15, outer=70, elevation=OPENING[1] + 20, height=24, arch=6,
-                                    thickness=.35 * mound, skin=skin_surface, hole=holes[side])
+        # Above the upper lid's crease: the continuous lid's skin below it moves with blink, squint and wide.
+        ridge = brow_ridge_geometry(center, mound, side, inner=15, outer=70, elevation=OPENING[1] + 27, height=12, arch=6,
+                                    thickness=.3 * mound, skin=skin_surface, hole=holes[side])
         ridge = attach_to_skin(ridge, head)
         brow = mesh_from_geometry(f'brow_{side}', ridge, [skin])
         for name, targets in ridge['morphs'].items(): shape_key(brow, name, targets)

@@ -9,10 +9,12 @@ dark socket beside the lids in 3/4 view; `eye_hole` now shapes each hole from it
 and lining sealing them), and the fangs have their own `teeth_exposed` material. Round 4 found the ridges hanging
 2.5-7.6 mm over the domes: `brow_ridge_geometry(..., skin=..., hole=...)` now lays each ridge on the skin, and the
 nostrils show how a small part rides a skin shape (`attach_to_skin` gives them the skin's own noseSneer deltas).
+Round 8: the lids are the dome's own skin (`eye_holes`, continuous), so the domes read as one surface, not the stacked
+shells of the shell-lid holes, and the ridges sit above the upper lids' creases.
 Blender coordinates: Z up, meters, the face looks down -Y, character left is +X.
 """
 from agent_meshes_author import (
-    JawHinge, add_jaw_open, attach_to_skin, brow_ridge_geometry, build_eye, ellipsoid_geometry, exposed_teeth_geometry, eye_hole, eye_hole_mask,
+    JawHinge, add_jaw_open, attach_to_skin, brow_ridge_geometry, build_eye, ellipsoid_geometry, exposed_teeth_geometry, eye_holes, eye_hole_mask,
     face_contract, face_skeleton, front_surface, join_face_parts, material, mesh_from_geometry, mouth_cavity_geometry,
     join_geometry, recommended_gaze, shape_key, slit_mouth, soft_offset, symmetric_offsets, teeth_row_geometry, tongue_geometry,
 )
@@ -33,10 +35,9 @@ def build():
 
     blank = ellipsoid_geometry(HEAD_CENTER, HEAD_RADII, rings=56, segments=72)
     vertices, faces = blank['vertices'], blank['faces']
-    holes = {}
-    for side, eye in (('L', EYE_L), ('R', EYE_R)):
-        holes[side] = eye_hole(vertices, faces, eye, EYE_RADIUS, opening=OPENING)
-        vertices, faces = holes[side]['vertices'], holes[side]['faces']
+    # Both eyes at once, as exact mirror images: each eye's skin patch reaches toward the other's.
+    cut = eye_holes(vertices, faces, EYE_L, EYE_RADIUS, opening=OPENING)
+    vertices, faces, holes = cut['vertices'], cut['faces'], {'L': cut['L'], 'R': cut['R']}
     front = front_surface(vertices, faces)
     skin_surface = {'vertices': vertices, 'faces': faces}  # the skin with its eye holes cut, for parts that lie on it
     jaw = JawHinge.ear(vertices, MOUTH_Z, MOUTH_HW)
@@ -92,12 +93,13 @@ def build():
     parts, eyeballs = [head, cavity, upper, lower, fangs, tongue, nose], []
     for side, center in (('L', EYE_L), ('R', EYE_R)):
         eye = build_eye(rig, side, center, EYE_RADIUS, style='lid', lid_material=skin, eye_materials=[lemon, iris, pupil],
-                        iris=30, pupil=10, hole=holes[side])
+                        iris=30, pupil=10, hole=holes[side], skin=head)
         eyeballs.append(eye['eyeball'])
         parts.append(eye['lids'])
-        # The heavy brow ridge lies on the skin over the eye's mound, sunk into it like a fold of skin; its morphs
+        # The heavy brow ridge lies on the skin over the eye's mound, above the upper lid's crease (the lid's skin below it
+        # moves with blink, squint and wide), sunk into it like a fold of skin; its morphs
         # slide it over the skin and lay it back on (browDown drops the inner end onto the upper lid).
-        ridge = brow_ridge_geometry(center, holes[side]['mound'], side, elevation=OPENING[1] + 22, skin=skin_surface, hole=holes[side])
+        ridge = brow_ridge_geometry(center, holes[side]['mound'], side, elevation=OPENING[1] + 30, skin=skin_surface, hole=holes[side])
         brow = mesh_from_geometry(f'brow_{side}', ridge, [skin])
         for name, targets in ridge['morphs'].items(): shape_key(brow, name, targets)
         parts.append(brow)

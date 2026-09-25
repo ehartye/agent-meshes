@@ -3,7 +3,7 @@ import { ARKIT_FACE_BONE_PARENTS, ARKIT_FACE_CONTRACT, ARKIT_FACE_OPTIONAL_MORPH
 import { morphNameAudit } from './gltf-morphs.ts';
 import { auditSkins } from './gltf-skins.ts';
 import { verifyGLB } from './export.ts';
-import { attachedParts, type AttachedPart } from './face-attach.ts';
+import { attachedParts, attachedTriangles, type AttachedPart } from './face-attach.ts';
 import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument, type GLTFMaterial } from './gltf-read.ts';
 
 /**
@@ -87,6 +87,21 @@ export const OBLIQUE_GRID = 64;
  * for a 0.23 m head framed like the E2 render).
  */
 export const MIN_LID_FOLLOW = 0.0015;
+/**
+ * Terraced sockets (the P1a round 6-7 critics): a lid eye built from separate surfaces (a skin rim, its fold and bevel,
+ * a mound ring, lid shells, a lash or seal band) shows 3-4 stacked bands round the eye where one soft crease belongs.
+ * Along radial lines in a front view, from the lid margin out over the lid and skin (`CREASE_REACH` eyeball radii from
+ * the eye center, above and below the eye: the socket, short of the brow and the cheek), the surface's slope is traced
+ * and every fold is counted: a stretch where the surface turns back toward the viewer by at least `CREASE_TURN`
+ * degrees within `CREASE_SPAN` eyeball radii of surface (a crease, a step up onto another surface, or the recovery
+ * from a step down off one). A gentle hollow turns far more slowly and is no fold. The median line may fold once above
+ * the eye (the lid crease) and once below (where the lower lid meets a full cheek, or a dome meets the face; on a plain
+ * face it does not fold there at all); a terraced socket folds two to four times. Shutter eyes (blades that translate
+ * behind a hard face plate) are not judged.
+ */
+export const CREASE_REACH = 1.3, CREASE_TURN = 20, CREASE_SPAN = 0.06, CREASE_ABOVE = 1, CREASE_BELOW = 1;
+/** Radial line directions (degrees, 90 straight up) above and below each eye. */
+export const CREASE_LINES = Object.freeze({ above: [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130], below: [230, 235, 240, 245, 250, 255, 260, 265, 270, 275, 280, 285, 290, 295, 300, 305, 310] });
 const LID_MOTION = 0.00001, UPPER_TEETH_TOLERANCE = 0.0001, BOUND = 0.999, PIVOT_TOLERANCE = 0.001;
 /** Inverted triangles within this of a spot's first one are reported as one spot; at most SPOTS spots per report. */
 const SPOT_RADIUS = 0.005, SPOTS = 4, MAX_INVERSIONS = 20;
@@ -105,9 +120,18 @@ export interface EyeCoverage { samples: number; neutral: number; visible: Record
 export interface EyeOblique { views: number; states: number; rays: number; leaks: number; window: number; worst: string | null }
 /** How far lid follow moves the upper lid's edge in a front view: up at eyeLookUp = 1, down at eyeLookDown = 1 (m). */
 export interface EyeLidFollow { up: number; down: number; restTop: number }
+/**
+ * Folds counted along radial lines round one eye at rest (see `CREASE_TURN`): the median line above and below the eye,
+ * the most on any line, and each line's count by direction; `skipped` says why an eye was not judged (shutters).
+ */
+export interface EyeCrease {
+  above: number; below: number; worstAbove: number; worstBelow: number; lines: Record<string, number>;
+  /** Where each line folds: distance from the eye center in the front view, in eyeball radii. */
+  at?: Record<string, number[]>; skipped?: string;
+}
 interface EyeMeasure {
   center: number[]; radius: number; minLidClearance: number | null; eyeballs: string[]; lidVertices: number; coverage: EyeCoverage | null;
-  oblique: EyeOblique | null; lidFollow: EyeLidFollow | null;
+  oblique: EyeOblique | null; lidFollow: EyeLidFollow | null; crease: EyeCrease | null;
 }
 export interface FaceContractReport {
   contract: typeof ARKIT_FACE_CONTRACT; ok: boolean; failures: string[]; warnings: string[]; checks: FaceCheck[];
@@ -452,7 +476,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     const offset = Math.hypot((min[0] + max[0]) / 2 - center.x, (min[1] + max[1]) / 2 - center.y, (min[2] + max[2]) / 2 - center.z);
     if (offset > PIVOT_TOLERANCE) eyeProblems.push(`eye_${side} pivots ${mm(offset)} from its eyeball's center (allowed ${mm(PIVOT_TOLERANCE)})`);
     eyes[side] = { center, radius, balls };
-    measurements.eyes[side] = { center: center.toArray().map(v => round(v)), radius: round(radius), minLidClearance: null, eyeballs: balls.map(b => b.label), lidVertices: 0, coverage: null, oblique: null, lidFollow: null };
+    measurements.eyes[side] = { center: center.toArray().map(v => round(v)), radius: round(radius), minLidClearance: null, eyeballs: balls.map(b => b.label), lidVertices: 0, coverage: null, oblique: null, lidFollow: null, crease: null };
   }
   check('eyes', eyeProblems, 'each eyeball is bound 100% to its eye bone, which pivots at its center');
 
@@ -832,6 +856,88 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   check('attached-parts', attached.problems, attached.parts.length
     ? `${attached.parts.length} attached part(s) sit on the skin at rest and at every morph (worst gap ${(Math.max(...attached.parts.map(p => p.gap)) * 1000).toFixed(2)} mm)`
     : 'no small parts are joined to the face');
+
+  // 10g. eye crease: one soft crease above a lid eye and none below, not the stacked bands of a terraced socket
+  if (eyes.L && eyes.R) {
+    const surfaces = all.filter(i => !eyeballInstances.has(i) && !i.transparent);
+    const eyeList = (['L', 'R'] as const).map(side => ({ center: eyes[side]!.center.toArray() as [number, number, number], radius: eyes[side]!.radius, suffix: side === 'L' ? 'Left' as const : 'Right' as const }));
+    // Attached parts (brows, ridges, freckles) lie on the skin: the lines read the skin under them.
+    const parts = attachedTriangles(surfaces, eyeList);
+    const bare = surfaces.map((instance, n) => {
+      const kept: number[] = [];
+      for (let t = 0; t < instance.triangles.length; t += 3) if (!parts[n][t / 3]) kept.push(instance.triangles[t], instance.triangles[t + 1], instance.triangles[t + 2]);
+      return Uint32Array.from(kept);
+    });
+    const creaseProblems: string[] = [];
+    for (const side of ['L', 'R'] as const) {
+      const suffix = side === 'L' ? 'Left' : 'Right', { center, radius, balls } = eyes[side]!;
+      // Shutter blades translate: every moving vertex of a blade shares one delta. Lids turn, so their deltas differ.
+      const deltas = new Set<string>();
+      for (const instance of surfaces) {
+        const blink = instance.targets.get(`eyeBlink${suffix}`);
+        if (blink) for (let v = 0; v < instance.count; v++) if (Math.hypot(blink[v * 3], blink[v * 3 + 1], blink[v * 3 + 2]) > LID_MOTION) deltas.add([0, 1, 2].map(k => Math.round(blink[v * 3 + k] * 1e5)).join(','));
+      }
+      if (deltas.size <= 4) { measurements.eyes[side]!.crease = { above: 0, below: 0, worstAbove: 0, worstBelow: 0, lines: {}, skipped: 'shutter eye (translating blades)' }; continue; }
+      const reach = CREASE_REACH * radius, step = radius / 400;
+      const buffer = raster(center.x - reach, center.x + reach, center.y - reach, center.y + reach, Math.ceil(2 * reach / step) + 1);
+      surfaces.forEach((instance, n) => draw(buffer, instance.rest, bare[n], n));
+      const ballBuffer = raster(center.x - reach, center.x + reach, center.y - reach, center.y + reach, buffer.nx);
+      for (const ball of balls) draw(ballBuffer, ball.rest, ball.triangles, 0);
+      const span = CREASE_SPAN * radius, d = 3;
+      const lines: Record<string, number> = {}, foldAt: Record<string, number[]> = {}, counts: Record<'above' | 'below', number[]> = { above: [], below: [] };
+      for (const [where, angles] of Object.entries(CREASE_LINES) as ['above' | 'below', number[]][]) for (const angle of angles) {
+        const a = angle * Math.PI / 180, heights: number[] = [];
+        let started = false, first = 0;
+        for (let k = 0; k * buffer.step <= reach; k++) {
+          const x = center.x + k * buffer.step * Math.cos(a), y = center.y + k * buffer.step * Math.sin(a);
+          const i = Math.round((x - buffer.x0) / buffer.step), j = Math.round((y - buffer.y0) / buffer.step);
+          if (i < 0 || j < 0 || i >= buffer.nx || j >= buffer.ny) break;
+          const cell = j * buffer.nx + i, z = buffer.depth[cell];
+          // Skip the eyeball in the opening: the line starts at the first lid or skin in front of it.
+          const onEyeball = ballBuffer.depth[cell] > -Infinity && ballBuffer.depth[cell] >= z;
+          // A line starts in the eye's opening (on the eyeball) and is read from the first lid or skin past it; one
+          // that starts on skin (an eye hidden behind it) is not a socket to judge.
+          if (k === 0 && !onEyeball) break;
+          if (!started) { if (onEyeball || z === -Infinity) continue; started = true; first = k; }
+          // Past the eye's outline (a dome on top of the head turning back over it) the line leaves the socket.
+          if (z === -Infinity || onEyeball || z < center.z) break;
+          heights.push(z);
+        }
+        // The slope angle along the line (degrees; negative where the surface falls away from the viewer going outward),
+        // and the distance along the surface itself: near the eye's outline the surface runs almost along the view, and
+        // a turn over a millimetre of skin there crosses only a sliver of the picture.
+        const slope: number[] = [], arc: number[] = [0];
+        for (let k = 1; k < heights.length; k++) arc.push(arc[k - 1] + Math.hypot(buffer.step, heights[k] - heights[k - 1]));
+        for (let k = d; k < heights.length - d; k++) slope.push(Math.atan2(heights[k + d] - heights[k - d], 2 * d * buffer.step) * 180 / Math.PI);
+        // A fold: the surface turns back toward the viewer by CREASE_TURN within CREASE_SPAN of surface. Such turns
+        // closer together than the span are one fold.
+        let folds = 0, last = -Infinity;
+        const at: number[] = [];
+        for (let k = 0; k < slope.length; k++) {
+          let low = slope[k];
+          for (let m = k + 1; m < slope.length && arc[m + d] - arc[k + d] <= span; m++) {
+            if (slope[m] - low >= CREASE_TURN) {
+              if (arc[k + d] - last > span) { folds++; at.push(round((first + k + d) * buffer.step / radius, 3)); }
+              last = arc[k + d];
+              break;
+            }
+            low = Math.min(low, slope[m]);
+          }
+        }
+        foldAt[`${angle}`] = at;
+        if (!heights.length) continue;
+        lines[`${angle}`] = folds;
+        counts[where].push(folds);
+      }
+      if (!counts.above.length && !counts.below.length) { measurements.eyes[side]!.crease = { above: 0, below: 0, worstAbove: 0, worstBelow: 0, lines: {}, skipped: 'no eyeball shows at rest' }; continue; }
+      const median = (values: number[]) => { const sorted = [...values].sort((x, y) => x - y); return sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0; };
+      const crease: EyeCrease = { above: median(counts.above), below: median(counts.below), worstAbove: Math.max(0, ...counts.above), worstBelow: Math.max(0, ...counts.below), lines, at: foldAt };
+      measurements.eyes[side]!.crease = crease;
+      if (crease.above > CREASE_ABOVE) creaseProblems.push(`eye_${side}: the skin above the eye folds ${crease.above} times along the median line from the lid margin out (${CREASE_REACH} eyeball radii; at most ${CREASE_ABOVE}, the lid crease): stacked bands, a terraced socket; build the lids from the skin itself (eye_hole(style='continuous'))`);
+      if (crease.below > CREASE_BELOW) creaseProblems.push(`eye_${side}: the skin below the eye folds ${crease.below} times along the median line from the lower lid margin out (at most ${CREASE_BELOW}, where the lid meets the cheek): stacked bands under the eye; build the lids from the skin itself (eye_hole(style='continuous'))`);
+    }
+    check('eye-crease', creaseProblems, `along ${CREASE_LINES.above.length + CREASE_LINES.below.length} radial lines round each eye, at most ${CREASE_ABOVE} fold above (the lid crease) and ${CREASE_BELOW} below (the lid meeting the cheek): no terraced socket`);
+  } else check('eye-crease', [], '', 'the eyes were not found');
 
   // 11-12. extras
   const carriers = [...graph.world.keys()].filter(n => isRecord(nodes[n]?.extras) && isRecord((nodes[n].extras as Record<string, unknown>).arkitFace));

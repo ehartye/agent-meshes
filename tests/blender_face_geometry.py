@@ -703,12 +703,10 @@ class BrowTests(unittest.TestCase):
 
     def skin(self):
         blank = ellipsoid_geometry(*self.HEAD, rings=60, segments=80)
-        vertices, faces = blank['vertices'], blank['faces']
-        holes = {}
-        for side, eye in (('L', self.EYE), ('R', mirror_x(self.EYE))):
-            holes[side] = eye_hole(vertices, faces, eye, self.R, opening=self.OPENING)
-            vertices, faces = holes[side]['vertices'], holes[side]['faces']
-        return {'vertices': vertices, 'faces': faces}, holes
+        # Both eyes at once: on this wide face each eye's skin patch reaches toward the other's.
+        from agent_meshes_face import eye_holes
+        cut = eye_holes(blank['vertices'], blank['faces'], self.EYE, self.R, opening=self.OPENING)
+        return {'vertices': cut['vertices'], 'faces': cut['faces']}, {'L': cut['L'], 'R': cut['R']}
 
     def test_brow_ridge_lies_on_the_skin_at_rest_and_in_every_brow_morph(self):
         skin, holes = self.skin()
@@ -1118,14 +1116,24 @@ def eye_streak(hole, center, radius):
     return worst
 
 
+def shell_hole(*args, **options):
+    """The earlier shell-lid eye hole (separate lid shells in a hole in the skin), still available as style='shells'."""
+    return eye_hole(*args, style='shells', **options)
+
+
+def shell_holes(*args, **options):
+    from agent_meshes_face import eye_holes
+    return eye_holes(*args, style='shells', **options)
+
+
 class EyeHoleTests(unittest.TestCase):
-    """eye_hole shapes the skin from the lids: a mound over them, a window cut, and a wall and lining that seal the eye."""
+    """eye_hole(style='shells') shapes the skin from separate lids: a mound over them, a window cut, a wall and lining that seal the eye."""
     HEAD = ((0, 0, .12), (.085, .09, .115))
     EYE, R, OPENING = (.033, -.067, .145), .014, (45, 38, 30)
 
     def hole(self, **options):
         blank = ellipsoid_geometry(*self.HEAD, rings=48, segments=64)
-        return eye_hole(blank['vertices'], blank['faces'], self.EYE, self.R, opening=self.OPENING, **options)
+        return shell_hole(blank['vertices'], blank['faces'], self.EYE, self.R, opening=self.OPENING, **options)
 
     def test_the_window_holds_every_edge_travel_with_round_ends_inside_the_lids_reach(self):
         lids = lid_geometry(self.EYE, self.R, opening=self.OPENING)
@@ -1167,7 +1175,7 @@ class EyeHoleTests(unittest.TestCase):
         blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=56, segments=72)
         for blend in (None, .012, .016):
             with self.subTest(blend=blend):
-                hole = eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=(46, 40, 30), **({} if blend is None else {'blend': blend}))
+                hole = shell_hole(blank['vertices'], blank['faces'], eye, radius, opening=(46, 40, 30), **({} if blend is None else {'blend': blend}))
                 wall, width = set(hole['wall']), .5 * radius if blend is None else blend
                 edge = hole['mound'] - width / 4 + width
                 skin = [f for i, f in enumerate(hole['faces']) if i not in wall]
@@ -1179,7 +1187,7 @@ class EyeHoleTests(unittest.TestCase):
         # 1.6-1.8 degrees off a smooth fit round the eye (faint radial streaks). Refined on the smooth surface: 0.7.
         eye, radius = (.034, -.066, .152), .017
         blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=56, segments=72)
-        hole = eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=(46, 40, 30))
+        hole = shell_hole(blank['vertices'], blank['faces'], eye, radius, opening=(46, 40, 30))
         self.assertLess(eye_streak(hole, eye, radius), 1.0)
 
     def test_the_skin_stays_closed_and_meets_the_lids_all_round(self):
@@ -1227,7 +1235,7 @@ class EyeHoleTests(unittest.TestCase):
         # The frog's skin passes 5.7 mm above its eye's center: the mound pushes it out over the lids.
         blank = ellipsoid_geometry((0, 0, .12), (.11, .085, .10), rings=56, segments=72)
         eye = (.045, -.052, .182)
-        hole = eye_hole(blank['vertices'], blank['faces'], eye, .02, opening=(48, 36, 28))
+        hole = shell_hole(blank['vertices'], blank['faces'], eye, .02, opening=(48, 36, 28))
         outer = hole['lids']['upper_radius'] + hole['lids']['thickness']
         self.assertGreater(hole['pushed'], 100)
         self.assertGreaterEqual(hole['rim_radius'][0], outer)
@@ -1242,7 +1250,7 @@ class EyeHoleTests(unittest.TestCase):
         self.assertTrue([v for v in vertices if 0 < mask(v) < 1], 'the mask fades in smoothly')
 
     def test_eye_holes_are_exact_mirror_images(self):
-        from agent_meshes_face import eye_holes
+        eye_holes = shell_holes
         # Eyes set close together: two eye_hole calls in a row leave about 1,000 of 7,700 vertices without a mirror image.
         blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=48, segments=64)
         cut = eye_holes(blank['vertices'], blank['faces'], (.026, -.07, .15), .017, opening=(46, 40, 30))
@@ -1269,7 +1277,7 @@ class EyeHoleTests(unittest.TestCase):
         # Round 5: each rim vertex took its bevel from its own irregular clipped triangles, so neighbours' bevels turned
         # up to 52 degrees apart and the lower rim showed facet ticks.
         blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=56, segments=72)
-        hole = eye_hole(blank['vertices'], blank['faces'], (.034, -.066, .152), .017, opening=(46, 40, 30))
+        hole = shell_hole(blank['vertices'], blank['faces'], (.034, -.066, .152), .017, opening=(46, 40, 30))
         vertices, faces, bevel = hole['vertices'], hole['faces'], set(hole['bevel'])
         way, edges = {}, []
         for index in hole['wall']:
@@ -1319,7 +1327,7 @@ class EyeHoleTests(unittest.TestCase):
         # vertices now slide onto the window first, so every rim vertex lies on it.
         eye, radius = (.034, -.066, .152), .017
         blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=56, segments=72)
-        hole = eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=(46, 40, 30))
+        hole = shell_hole(blank['vertices'], blank['faces'], eye, radius, opening=(46, 40, 30))
         level = hole['window']['level']
         off = max(abs(level(hole['vertices'][i])) for i in hole['rim'])
         self.assertLess(off, .05, f'rim vertices lie on the window (degrees off it: {off:.3f})')
@@ -1341,6 +1349,179 @@ class EyeHoleTests(unittest.TestCase):
             with self.subTest(radius=radius):
                 self.assertGreaterEqual(lift, .0015)
                 self.assertGreaterEqual(DEFAULT_LID_FOLLOW['up'] * lids['wide'][0], 8, 'the helpers tie lid follow to the wide travel')
+
+
+def front_folds(vertices, faces, center, radius, angles, reach=1.3, turn=20, span=.06):
+    """The verifier's eye-crease measure on a pure-Python skin: folds along radial lines in a front view.
+
+    From the first lid or skin in front of the eyeball out to `reach` eyeball radii, the surface's slope along the line
+    is traced (the face looks down -Y, so depth toward the viewer is -y) and every stretch where it turns back toward
+    the viewer by `turn` degrees within `span` eyeball radii of surface counts as one fold.
+    """
+    cell, grid, tris = .001, {}, []
+    for f in faces:
+        for k in range(1, len(f) - 1):
+            t = (f[0], f[k], f[k + 1])
+            xs, zs = [vertices[i][0] for i in t], [vertices[i][2] for i in t]
+            for a in range(math.floor(min(xs) / cell), math.floor(max(xs) / cell) + 1):
+                for b in range(math.floor(min(zs) / cell), math.floor(max(zs) / cell) + 1): grid.setdefault((a, b), []).append(len(tris))
+            tris.append(t)
+
+    def depth(x, z):
+        best = None
+        for n in grid.get((math.floor(x / cell), math.floor(z / cell)), ()):
+            a, b, c = (vertices[i] for i in tris[n])
+            d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2])
+            if abs(d) < 1e-20: continue
+            u = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / d
+            w = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / d
+            if min(u, w, 1 - u - w) < -1e-9: continue
+            y = u * a[1] + w * b[1] + (1 - u - w) * c[1]
+            best = -y if best is None else max(best, -y)
+        return best
+    step, result = radius / 400, {}
+    for angle in angles:
+        a, heights, started = math.radians(angle), [], False
+        for k in range(int(reach * radius / step) + 1):
+            x, z = center[0] + k * step * math.cos(a), center[2] + k * step * math.sin(a)
+            h = depth(x, z)
+            r2 = radius * radius - (x - center[0]) ** 2 - (z - center[2]) ** 2
+            on_ball = r2 > 0 and (h is None or -center[1] + math.sqrt(r2) >= h)
+            if not started:
+                if on_ball or h is None: continue
+                started = True
+            if h is None or on_ball or h < -center[1]: break   # past the eye's outline, onto skin behind its center
+            heights.append(h)
+        d, width, arc = 3, span * radius, [0.0]
+        for k in range(1, len(heights)): arc.append(arc[-1] + math.hypot(step, heights[k] - heights[k - 1]))
+        slope = [math.degrees(math.atan2(heights[k + d] - heights[k - d], 2 * d * step)) for k in range(d, len(heights) - d)]
+        count, last = 0, -1e9
+        for k in range(len(slope)):
+            low = slope[k]
+            for m in range(k + 1, len(slope)):
+                if arc[m + d] - arc[k + d] > width: break
+                if slope[m] - low >= turn:
+                    if arc[k + d] - last > width: count += 1
+                    last = arc[k + d]
+                    break
+                low = min(low, slope[m])
+        result[angle] = count
+    return result
+
+
+ABOVE, BELOW = list(range(50, 131, 10)), list(range(230, 311, 10))
+
+
+class ContinuousEyeHoleTests(unittest.TestCase):
+    """eye_hole's default (style='continuous'): the skin itself flows over the eyeball as the lids, one surface."""
+    KID = ((0, 0, .13), (.088, .085, .11)), (.034, -.066, .152), .017, (46, 40, 30)
+    FROG = ((0, 0, .12), (.11, .085, .10)), (.045, -.052, .182), .02, (48, 36, 28)
+    _cache = {}
+
+    def hole(self, which='KID'):
+        if which not in self._cache:
+            head, eye, radius, opening = getattr(self, which)
+            blank = ellipsoid_geometry(*head, rings=56, segments=72)
+            self._cache[which] = eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=opening)
+        return self._cache[which]
+
+    def patch(self, hole, whole=False):
+        """The patch (the grid, the margins, the lids' inner surfaces and lining), or the whole skin, with its lid morphs."""
+        faces = hole['faces'] if whole else [hole['faces'][i] for i in hole['patch']]
+        used = sorted({i for f in faces for i in f})
+        index = {old: new for new, old in enumerate(used)}
+        vertices = [hole['vertices'][i] for i in used]
+        moved = {tuple(round(c, 12) for c in rest): targets for rest, targets in hole['motion']}
+        morphs = {name: [moved.get(tuple(round(c, 12) for c in v), {name: v})[name] for v in vertices] for name in ('blink', 'squint', 'wide')}
+        return {'vertices': vertices, 'faces': [tuple(index[i] for i in f) for f in faces], 'morphs': morphs}
+
+    def test_the_default_is_one_closed_surface_with_no_separate_lids(self):
+        hole = self.hole()
+        self.assertEqual(hole['style'], 'continuous')
+        self.assertEqual(hole['lids']['vertices'], [], 'no lid shells: the lids are the skin')
+        # One closed, consistently wound surface: every edge is used exactly twice, in opposite directions, so there are
+        # no T-junctions (a vertex resting on another triangle's edge), no cracks and no open rims round the eye.
+        closed_and_consistent(self, hole['vertices'], hole['faces'])
+        self.assertGreater(signed_volume(hole['vertices'], hole['faces']), 0)
+        self.assertGreater(len(hole['motion']), 500, 'blink, squint and wide move the skin itself')
+
+    def test_every_lid_vertex_clears_the_eyeball_at_every_weight_mix(self):
+        for which in ('KID', 'FROG'):
+            with self.subTest(which):
+                hole, (_, eye, radius, _) = self.hole(which), getattr(self, which)
+                rest = [p for p, _ in hole['motion']]
+                morphs = [[m[name] for _, m in hole['motion']] for name in ('blink', 'squint', 'wide')]
+                self.assertGreaterEqual(lid_clearance(eye, radius, rest, morphs), .0005 - 1e-9)
+                self.assertGreaterEqual(hole['lids']['min_clearance'], .0005 - 1e-9)
+
+    def test_blinks_close_and_squints_narrow_as_the_contract_asks(self):
+        for which in ('KID', 'FROG'):
+            with self.subTest(which):
+                hole, (_, eye, radius, _) = self.hole(which), getattr(self, which)
+                geometry = dict(self.patch(hole), aperture=radius)
+                self.assertEqual(eye_coverage_problems(eye, radius, geometry, samples=61), [])
+                self.assertTrue(.25 <= hole['lids']['squint_ratio'] <= .6)
+                # Closed lids overlap enough that a view from 25 degrees below finds no strip between them at blink 1 +
+                # wide 1 (morphs add; the lower lid stands a lid thickness behind the upper one).
+                geometry = dict(self.patch(hole, whole=True), aperture=radius)
+                a = math.radians(-25)
+                turn = lambda p: (p[0], eye[1] + (p[1] - eye[1]) * math.cos(a) - (p[2] - eye[2]) * math.sin(a), eye[2] + (p[1] - eye[1]) * math.sin(a) + (p[2] - eye[2]) * math.cos(a))
+                below = {'vertices': [turn(p) for p in geometry['vertices']], 'faces': geometry['faces'], 'aperture': radius,
+                         'morphs': {n: [turn(p) for p in m] for n, m in geometry['morphs'].items()}}
+                seen = eye_coverage(eye, radius, below, {'blink': 1, 'wide': 1}, samples=61)
+                band = [j for _, j in seen['visible'] if abs(j * seen['step'] - radius) <= .6 * radius]
+                self.assertEqual(band, [])
+
+    def test_the_margins_meet_in_one_point_at_each_corner_and_stay_there(self):
+        hole = self.hole()
+        edges = hole['lids']['edges']
+        width = hole['lids']['opening'][0]
+        for yaw, upper, lower in zip(edges['yaw'], edges['upper'], edges['lower']):
+            if abs(yaw) >= width - 1e-9:
+                # Past the corners the margins are one row of skin in every state: no notch, no slit.
+                self.assertEqual(len({round(v, 9) for v in list(upper.values()) + list(lower.values())}), 1, yaw)
+
+    def test_one_crease_above_and_none_below(self):
+        # The P1a round 6-7 critics: shell lids in a skin hole showed 3-4 stacked bands round every eye. Along radial
+        # lines in a front view (the verifier's eye-crease check), the median line folds once above (the lid crease)
+        # and not at all below.
+        for which in ('KID', 'FROG'):
+            with self.subTest(which):
+                hole, (_, eye, radius, _) = self.hole(which), getattr(self, which)
+                folds = front_folds(hole['vertices'], hole['faces'], eye, radius, ABOVE + BELOW)
+                above, below = sorted(folds[a] for a in ABOVE), sorted(folds[a] for a in BELOW)
+                self.assertLessEqual(above[len(above) // 2], 1, folds)
+                self.assertEqual(below[len(below) // 2], 0, folds)
+
+    def test_wide_lifts_the_upper_margin_far_enough_for_lid_follow(self):
+        hole = self.hole()
+        middle = len(hole['lids']['edges']['yaw']) // 2
+        upper = hole['lids']['edges']['upper'][middle]
+        lift = math.radians(upper['wide'] - upper['rest']) * hole['lids']['upper_radius'] * math.cos(math.radians(upper['rest']))
+        self.assertGreaterEqual(DEFAULT_LID_FOLLOW['up'] * lift, .0015)
+
+    def test_skin_shapes_leave_the_moving_lids_alone_and_mirror(self):
+        from agent_meshes_face import eye_holes
+        head, eye, radius, opening = self.KID
+        blank = ellipsoid_geometry(*head, rings=56, segments=72)
+        cut = eye_holes(blank['vertices'], blank['faces'], eye, radius, opening=opening)
+        closed_and_consistent(self, cut['vertices'], cut['faces'])
+        left, right = cut['L'], cut['R']
+        mask = eye_hole_mask(left, right)
+        for rest, _ in left['motion']: self.assertEqual(mask(rest), 0.0)
+        mirrored = {tuple(round(c, 9) for c in mirror_x(p)) for p, _ in left['motion']}
+        self.assertEqual(mirrored, {tuple(round(c, 9) for c in p) for p, _ in right['motion']})
+        keys = {tuple(round(c, 9) for c in v) for v in cut['vertices']}
+        self.assertTrue(all(tuple(round(c, 9) for c in p) in keys for p, _ in right['motion']), 'the right eye moves its own skin')
+        self.assertEqual(mask((.03, -.07, .06)), 1.0, 'the cheek by the mouth moves freely')
+
+    def test_shell_options_are_refused_with_the_way_back(self):
+        head, eye, radius, opening = self.KID
+        blank = ellipsoid_geometry(*head, rings=24, segments=32)
+        with self.assertRaisesRegex(ValueError, "style='shells'"):
+            eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=opening, span_margin=15)
+        with self.assertRaisesRegex(ValueError, 'continuous'):
+            eye_hole(blank['vertices'], blank['faces'], eye, radius, style='round')
 
 
 class ShutterHoleTests(unittest.TestCase):
@@ -1398,7 +1579,9 @@ class DomeBrowTests(unittest.TestCase):
     def test_the_ridge_lies_on_the_dome_and_rolls_without_folding(self):
         from agent_meshes_face import dome_brow_geometry, eye_holes
         blank = ellipsoid_geometry((0, 0, .12), (.11, .085, .10), rings=56, segments=72)
-        cut = eye_holes(blank['vertices'], blank['faces'], (.045, -.052, .182), .02, opening=(48, 36, 28))
+        # Mossjaw's builder made this helper against shell-lid holes; on a continuous hole its browInnerUp end cap still
+        # floats (a known gap, in the round-8 report), so it is proven on style='shells' here.
+        cut = eye_holes(blank['vertices'], blank['faces'], (.045, -.052, .182), .02, opening=(48, 36, 28), style='shells')
         skin = {'vertices': cut['vertices'], 'faces': cut['faces']}
         ridges = {side: dome_brow_geometry(cut[side], skin, side) for side in 'LR'}
         for side, ridge in ridges.items():

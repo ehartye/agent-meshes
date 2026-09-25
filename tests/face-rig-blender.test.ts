@@ -67,6 +67,15 @@ for (const fixture of ['test_head', 'test_robot', 'test_frog', 'test_kid', 'test
     expect(report.measurements.eyes[side]!.lidFollow!.up).toBeGreaterThanOrEqual(0.0015);
     expect(report.measurements.eyes[side]!.lidFollow!.down).toBeGreaterThanOrEqual(0.0015);
   }
+  // One soft crease above each lid eye and at most the lid meeting the cheek below: no terraced socket (P1a round 8).
+  // Plain faces (the kid, the frog's domes) do not fold below at all. Shutter eyes are not judged.
+  for (const side of ['L', 'R'] as const) {
+    const crease = report.measurements.eyes[side]!.crease!;
+    if (fixture === 'test_robot') { expect(crease.skipped).toMatch(/shutter/); continue; }
+    expect(crease.above).toBeLessThanOrEqual(1);
+    expect(crease.below).toBeLessThanOrEqual(1);
+    if (fixture === 'test_kid' || fixture === 'test_frog') expect(crease.below).toBe(0);
+  }
   if (fixture === 'test_kid') {
     // Skin brows lie on the skin in every pose; the fused nose's wings lift visibly with noseSneer.
     const brows = report.measurements.attached.filter(part => /browDown/.test(part.part));
@@ -81,6 +90,11 @@ for (const fixture of ['test_head', 'test_robot', 'test_frog', 'test_kid', 'test
     let darkest = 1;
     for (let i = 0; i < tint.count; i++) darkest = Math.min(darkest, tint.data[i * tint.size + 1]);
     expect(darkest).toBeLessThan(0.8);
+    // The lids are the skin (eye_hole's continuous default): no separate lid mesh parts; the lash line and the lining
+    // inside the lids are paint on it (their own materials in the one face mesh).
+    const materials = face.primitives.map(p => doc.json.materials![p.material!].name);
+    expect(materials).toEqual(expect.arrayContaining(['skin', 'lash', 'eye_lining']));
+    expect(materials).not.toContain('lid');
   }
   // The skin shades as one surface across the mouth line: no sliver row beside the slit (a seam across the face).
   const [mouthY, halfWidth] = MOUTHS[fixture];

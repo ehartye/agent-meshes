@@ -165,7 +165,9 @@ squint, eye coverage (front rays across each eyeball must all hit a lid or skin 
 with squint 1 and with wide 1, and show nothing outside the neutral opening mid-blink or at
 squint), oblique eye views (rays from the front, 3/4 at 35-45 degrees of yaw and 20 degrees above
 and below, in every lid and emotion state, must never reach the socket or the inside of the head:
-the lids must meet the skin all the way round, which `eye_hole` builds), lid follow (the upper
+the lids must meet the skin all the way round, which `eye_hole` builds), no terraced socket
+(`eye-crease`: at most one fold above each lid eye, its crease, and one below along radial lines out to
+1.3 eyeball radii), lid follow (the upper
 lid's edge moves at least 1.5 mm up at eyeLookUp = 1 and down at eyeLookDown = 1), opaque face
 materials (an alpha-blended or masked lid, skin or tooth fails, and hides nothing in any ray
 check), the `extras.arkitFace` schema and `exposedTeeth` (teeth that show at rest must be in

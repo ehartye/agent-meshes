@@ -6,7 +6,7 @@ Check: node scripts/agent-meshes.mjs verify <output>/model.glb --contract arkit-
 Blender coordinates: Z up, meters, the face looks down -Y, character left is +X.
 """
 from agent_meshes_author import (
-    JawHinge, add_jaw_open, build_eye, ellipsoid_geometry, eye_hole, eye_hole_mask, face_contract, face_skeleton, front_surface,
+    JawHinge, add_jaw_open, build_eye, ellipsoid_geometry, eye_holes, eye_hole_mask, face_contract, face_skeleton, front_surface,
     join_face_parts, material, mesh_from_geometry, mouth_cavity_geometry, recommended_gaze, shape_key, slit_mouth, soft_offset,
     symmetric_offsets, teeth_row_geometry, tongue_geometry,
 )
@@ -22,14 +22,14 @@ def build():
     skin = material('skin', (.62, .36, .24), roughness=.55)
     rig = face_skeleton(head=(0, 0, .09), eye_left=EYE_L, eye_right=EYE_R, name='Face rig')
 
-    # Head blank with eye holes shaped from the lids (eye_hole, with build_eye's lid options): the skin mounds over
-    # the lids, opens along their window and walls down into them, so no view sees past the lids into the head.
+    # Head blank whose skin becomes the lids (eye_holes, continuous): one surface flows over each eyeball as the lids,
+    # rolls round their margins into a lining behind them, and meets itself at the corners, so no view sees past the
+    # lids into the head and no band or notch rings the eye.
     blank = ellipsoid_geometry(HEAD_CENTER, HEAD_RADII, rings=48, segments=64)
     vertices, faces = blank['vertices'], blank['faces']
-    holes = {}
-    for side, eye in (('L', EYE_L), ('R', EYE_R)):
-        holes[side] = eye_hole(vertices, faces, eye, EYE_RADIUS, opening=OPENING)
-        vertices, faces = holes[side]['vertices'], holes[side]['faces']
+    # Both eyes at once, as exact mirror images: each eye's skin patch reaches toward the other's.
+    cut = eye_holes(vertices, faces, EYE_L, EYE_RADIUS, opening=OPENING)
+    vertices, faces, holes = cut['vertices'], cut['faces'], {'L': cut['L'], 'R': cut['R']}
     front = front_surface(vertices, faces)
     # A puppet jaw hinged at the back of the head, level with the mouth: the chin drops with the lips.
     jaw = JawHinge.ear(vertices, MOUTH_Z, MOUTH_HALF_WIDTH)
@@ -76,7 +76,7 @@ def build():
 
     for side, center in (('L', EYE_L), ('R', EYE_R)):
         # The same lids the hole was shaped around; its lining seals the eye, so there is no dark socket cup.
-        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, style='lid', hole=holes[side])
+        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, style='lid', hole=holes[side], skin=head)
         eyeballs.append(eye['eyeball'])
         parts.append(eye['lids'])
 

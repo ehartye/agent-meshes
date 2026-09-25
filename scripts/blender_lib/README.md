@@ -198,7 +198,8 @@ with an identity rest rotation: gaze yaw is a turn about the bone's local Y (up)
 pitch about its local X. `bind_rigid(mesh, rig, bone='head')` binds every vertex
 100% to one bone.
 
-`join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60)` joins
+`join_face_parts(parts, name='face', rig=None, bone='head', sharp_angle=60,
+area_normals=False)` joins
 every morph-bearing part (skin, lids, teeth, tongue, mouth cavity) into **one**
 mesh object, keeping each part's materials, smooth flags and shape keys; a part
 without a key keeps its rest shape in it. `None` parts are skipped (a sealed eye
@@ -211,14 +212,25 @@ exports as one glTF mesh with one primitive per material, all carrying the same
 morph names. The parts are consumed and UV maps are not carried. With `rig`, the
 result is bound to `bone`. Eyeballs stay separate: they are bound to their eye
 bones and carry no morphs. The pure `join_geometry(parts)` does the same for
-geometry dicts.
+geometry dicts. With
+`area_normals=True` the rest normals are stored as custom normals weighted by face
+area (split at the sharp edges): Blender weights them by corner angle, and a
+finely split row beside coarser faces then shades as ticks along it.
 
 ### Eyes: eyeball, lids or shutters, and the skin's eye hole
 
 `build_eye(rig, side, center, radius, style='lid', lid_material=None,
 socket_material=None, eye_materials=None, iris=26, pupil=12, socket=True,
-margin=6, hole=None, **options)` builds one eye (`side` is `'L'` or `'R'`, and
-`center` must be the eye bone's head):
+margin=6, hole=None, skin=None, lining_material=None, **options)` builds one eye
+(`side` is `'L'` or `'R'`, and `center` must be the eye bone's head). With a
+continuous `eye_hole` (the default, below) the lids are the skin itself: pass the
+head mesh as `skin=head` and `build_eye` adds `eyeBlink<Side>`, `eyeSquint<Side>`
+and `eyeWide<Side>` to it (found by position, so cut the mouth, sculpt the lips
+and fuse the nose first if you like), paints the lash line (`lash=True` or your
+material; `lash_side='both'` paints the lower margin too) and the lining inside
+the lids (`lining_material`, default a dark `eye_lining`) as their own material
+slots on the head, and returns `lids` None (`join_face_parts` skips it). Without
+`skin` it raises and says so. The rest of this list is about shell eyes.
 
 - `eyeball_<side>`: a sphere whose poles lie on the gaze axis, with rings on the
   iris and pupil borders and three material slots `eye_white`, `eye_iris`,
@@ -247,7 +259,82 @@ margin=6, hole=None, **options)` builds one eye (`side` is `'L'` or `'R'`, and
 It returns `{'eyeball', 'lids', 'socket', 'geometry'}`; `geometry` reports the lid
 radii, `min_clearance` and the achieved `squint_ratio`.
 
-**The eye hole: the skin must meet the lids all the way round.** Round 3 cut eye
+**The eye hole: the lids are the skin (`eye_hole`, `style='continuous'`, the default).**
+The P1a round 6 and 7 critics found every shell-lid eye terraced: a lash band, the
+lid shell, a fold line at the skin's rim, its bevel and a ring at the mound's edge
+stacked 3-4 bands where one soft crease belongs, with notches where the lid ends met
+the rim. Each round smoothed one seam and exposed the next, because the bands were
+separate surfaces meeting at the eye. `eye_hole(vertices, faces, center,
+eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25,
+style='continuous', opening=(45, 38, 30), meet=-8, overlap=6, squint=.45,
+squint_upper_share=.2, wide=(10, 4), corner=1.25, thickness=None, gap=None,
+crease=.035, lash_width=5, lower_lash_width=2.5, column_step=2.5)` rebuilds the skin
+round the eye as **one surface**:
+
+- A grid over (yaw, elevation) from the eye center replaces the skin in a convex
+  patch round the eye and is joined to the skin round it by a ring of triangles
+  (as `sculpt_lips` joins the lips). Its rows run parallel to the lid margins.
+- The skin flows over the eyeball as the upper and lower lids. Each margin turns
+  inward over a half-round as thick as the lid (`thickness`, default 10% of the
+  eyeball radius) onto the lid's inner surface, which runs back under the lid to a
+  fornix and turns down onto a lining that wraps the eyeball to a pole behind it.
+  So the margin is a rounded edge of the skin itself, and every ray through the
+  opening meets the eyeball, a lid or the lining, never the head's inside.
+- The margins meet in one point at each corner (the canthus) and stay there in
+  every state (every motion scales with the opening's profile), and the skin runs
+  on past the corner unbroken: no notch, no slit.
+- The upper lid keeps its sphere up to one soft crease (`crease`, a share of the
+  eyeball radius deep) on the line where the lid rows stop moving; above it the
+  lid meets the (smoothed) skin in one cubic. The lower lid meets the cheek in one
+  cubic that bends evenly along its length, and has no crease.
+- `eyeBlink`, `eyeSquint` and `eyeWide` are shape keys of the skin's lid rows: the
+  margins follow `continuous_lid_edges(yaws, opening, meet, overlap, squint,
+  squint_upper_share, wide, corner)` and the rows behind them follow as a rolling
+  curtain (linear to the upper crease, easing out below). The closed upper lid
+  passes `overlap` degrees in front of the lower one, which rises behind it by the
+  wide travel less half the overlap, so blink 1 + wide 1 stays closed, seen
+  from 25 degrees below too.
+- The lid radius is solved exactly: every vertex a lid morph moves stays
+  `clearance` outside the eyeball over every blink, squint and wide mix
+  (`lid_clearance`). The upper lid stands a lid thickness and a gap proud of the
+  lower one in the middle (the closed upper lid passes in front of it) and meets it
+  at the corners. Folded faces (any single morph at 0.5 and 1, and every sum of
+  them except blink 1 with squint 1, an already shut eye squeezed, where two large
+  summed chords twist a thin strip of the rounded margin inside the closed lids;
+  the contract's inversion check does not use that pair) and uncovered eyeball in
+  any contract state are rejected.
+- The lash line is paint: the upper margin's outer rows (`lash_width` degrees,
+  tapering to the corners), its half-round and the lid's inner surface carry the
+  `lash` material (`build_eye(..., lash=True)`), so it follows the margin exactly
+  and reads, from below, as the dark underside of the lashes.
+
+The skin is first shaped round the eye as for shell eyes (a mound over the lids,
+blended over `blend`, default half an eyeball radius; a socket dip beside the nose), so
+the patch meets a skin that already clears the lids. On a symmetric head use
+`eye_holes`: each eye's patch reaches toward the other's (two `eye_hole` calls on a
+wide face say "cut both at once with eye_holes"). The result has `vertices`,
+`faces`, `style`, `lids` (the margins' `edges` per state, `upper_radius` and
+`lower_radius` of the lids' inner surfaces, `thickness`, `crease`, `min_clearance`,
+`squint_ratio`; no vertices), `window` (the opening envelope, as for shells),
+`motion` (each moving vertex's rest position and targets), `lash` and
+`lining_points` (paint by position), `still` (the region the lid morphs move,
+which `eye_hole_mask` keeps other skin shapes off), `mound`, `rim`, `wall` and
+`patch` (face indices). A brow ridge on a continuous eye must lie above the upper
+crease (`brow_ridge_geometry` lays it on the skin itself; the lid's skin below the
+crease moves with the lids): the frog fixtures put theirs 30 and 24 degrees above
+the opening. `dome_brow_geometry` still expects shell holes (its browInnerUp end
+cap floats on a continuous one).
+
+The `arkit-face/1` verifier's `eye-crease` check measures the terraces: along 17
+radial lines above and 17 below each eye in a front view, out to 1.3 eyeball radii,
+it counts every place the surface turns back toward the viewer by 20 degrees within
+0.06 eyeball radii of surface (a crease, or a step onto another surface). The
+median line may fold once above (the crease) and once below (where the lower lid
+meets a full cheek or a dome meets the face; on a plain face none); the round-7
+shell eyes fold 2-3 times above.
+
+**Shell eyes (`style='shells'`)**, the earlier construction, are kept for heads
+built with them. The skin must meet the lids all the way round. Round 3 cut eye
 holes with `cut_hole` at 1.32 eyeball radii and found a black hole beside each eye
 in 3/4 view: the lids ended in a hard cut at their outer corners and lay well
 inside the rim (the rim of a sphere cut sits near the eye center on a curved
@@ -255,9 +342,8 @@ head), so the view ran past them into the dark socket. No hole radius fixes that
 a smaller hole covers the eye's inner corner, a larger one opens more gap. So for
 lid eyes the hole is shaped from the lids:
 
-`eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005,
-blend=None, max_edge=None, socket=25, lining_gap=.0001, lining_rings=5,
-**lid_options)` takes the head blank and the same lid options as the eye
+`eye_hole(..., style='shells', lining_gap=.0001, lining_rings=5, corner_margin=2,
+bevel=.5, **lid_options)` takes the head blank and the same lid options as the eye
 (`opening`, `meet`, `wide`, ...), builds that `lid_geometry`, and:
 
 1. **Mound.** Skin nearer the eye center than the lids' outer surface plus
@@ -314,7 +400,7 @@ calls in a row differ, because the second is cut into skin the first refined and
 reshaped (about 1,000 of 7,700 vertices had no mirror image with the eyes 52 mm
 apart). It cuts the left hole, keeps the half at x >= 0 and mirrors it.
 
-A crisp **lash line**: `build_eye(..., lash=True)` adds a near-black `lash`
+For shell eyes, a crisp **lash line**: `build_eye(..., lash=True)` adds a near-black `lash`
 material (or pass your own material) on a lash band, `lash_geometry(lids, width=5,
 drop=None, which='upper')`: a thin closed crescent standing just in front of the
 lid, from `lash_width` degrees above the lid's edge down past it by `drop`
@@ -334,26 +420,26 @@ still lists the lid faces along an edge, for your own material there. `eye_hole`
 'mound', 'socket', 'bevel'}`: `mound` is the rim's radius where the skin was
 reshaped (where a brow ridge starts looking for the skin on a mounded eye).
 
-**Skin shapes near an eye hole** (brows, cheeks) must leave its rim, wall and
-lining still: a strong brow offset drags the rim over its wall and folds the skin
+**Skin shapes near an eye hole** (brows, cheeks) must leave a continuous eye's
+moving lid rows (a shell eye's rim, wall and lining) still: brow and lid shapes
+would add up on the same skin, and on a shell eye a strong brow offset drags the
+rim over its wall and folds the skin
 there. Pass `mask=eye_hole_mask(*holes)` to their `soft_offset` or
-`symmetric_offsets`: 0 on the rim and everything inside the mound, rising smoothly
-over `band` degrees outside the window (`MASK_BAND`, 20, whatever the hole's
+`symmetric_offsets`: 0 over a continuous eye's moving lid rows (a shell eye's rim
+and everything inside its mound), rising smoothly over `band` degrees outside them (`MASK_BAND`, 20, whatever the hole's
 `socket`; round 5 used the socket band, so a hole cut with `socket=0` masked out
 every skin shape) and half an eyeball radius. The worked examples do this.
 
 ```python
-holes = {}
-for side, eye in (('L', EYE_L), ('R', EYE_R)):
-    holes[side] = eye_hole(vertices, faces, eye, EYE_RADIUS, opening=OPENING)
-    vertices, faces = holes[side]['vertices'], holes[side]['faces']
+cut = eye_holes(vertices, faces, EYE_L, EYE_RADIUS, opening=OPENING)   # both eyes, mirror images
+vertices, faces, holes = cut['vertices'], cut['faces'], {'L': cut['L'], 'R': cut['R']}
 head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces}, [skin])
 slit_mouth(head, MOUTH_Z, MOUTH_HALF_WIDTH)
 still = eye_hole_mask(*holes.values())
 left, right = symmetric_offsets(rest, brow_center, .02, (0, 0, -.004), mask=still)
 ...
-eye = build_eye(rig, 'L', EYE_L, EYE_RADIUS, lid_material=skin, hole=holes['L'])
-parts.append(eye['lids'])               # eye['socket'] is None: the lining seals the eye
+eye = build_eye(rig, 'L', EYE_L, EYE_RADIUS, hole=holes['L'], skin=head, lash=True)   # the lids are the head's skin
+parts.append(eye['lids'])               # None for a continuous eye; eye['socket'] is None: the lining seals the eye
 ```
 
 **Shutter eyes** (a robot's flat face) take `shutter_hole(vertices, faces, center,
@@ -520,8 +606,9 @@ line at rest: an upper and a fuller lower lip (each `fullness` proud, 9% of the
 half width; `height` 45% of it) either side of a crease along the mouth line (60%
 of the fullness deep), thinning to nothing just past the corners. The skin round
 the mouth is rebuilt as a regular grid wrapped round the head (columns at even
-angles about a vertical axis through the mouth, so a frog mouth that turns round
-the sides of the head works): rows run parallel to the mouth line, finest at the
+angles about a vertical axis through the mouth, half way through the head's depth,
+so a frog mouth that turns round the sides of the head works; the axis used to sit
+at the mean of the vertices, which a finely meshed continuous eye pulled forward): rows run parallel to the mouth line, finest at the
 crease, one lies exactly on it and a column falls on each corner, so every vertex
 along a row takes the same lip profile. The lips shade smoothly (round 6 refined
 the blank's faces instead and left a comb of short vertical streaks along the
@@ -727,7 +814,9 @@ k)` for cheeks, jowls and a chin, and `smooth_max(d, -other, k)` to carve), star
 shaped from `center`. The rays follow `ellipsoid_geometry`'s grid bent toward the
 face (`front` crowds the columns toward -Y, `band` the rings toward the middle), so
 the eyes, nose and mouth get most of the samples; with `segments` a multiple of 4
-the blank is left-right symmetric with a meridian on x = 0, as `eye_holes` needs.
+the blank is left-right symmetric with a meridian on x = 0, as `eye_holes` needs. `ellipsoid_sdf` checks a
+center and radii once per distinct pair and takes a tuple of three floats as it is,
+so a field of a few ellipsoids sampled hundreds of thousands of times stays fast.
 
 ### Skin paint: `skin_tints`, `paint_vertices`, `use_vertex_colors`
 

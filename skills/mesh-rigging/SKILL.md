@@ -94,15 +94,16 @@ exposed fangs). The rules that are easy to get wrong:
   sliver row shades as a seam). Skin faces get soft lips and a lip line from `sculpt_lips` first. Add a dark `mouth_cavity_geometry` bag fitted
   to the face with `surface=front_surface(skin_vertices, skin_faces)` so it never pokes through the
   cheeks, and make fangs or buck teeth with `exposed_teeth_geometry` (declared in `exposedTeeth`).
-- Open lid eyes with `eye_hole(vertices, faces, center, radius, **lid_options)` and pass it to
-  `build_eye(..., hole=...)`: it shapes the skin from the lids (mound, socket dip, a window cut
-  and a wall and lining that seal the eye), so the skin meets the lids all the way round and no
-  3/4 view looks into the head. A sphere cut (`cut_hole`) leaves a black hole beside the lids in
-  3/4 view whatever its radius. Robot shutter eyes take `shutter_hole` (a sealed tube back from
-  the face plate, with the blades checked against it) and `build_eye(style='shutter', hole=...)`.
-  Mask brow and cheek offsets near the eyes with `mask=eye_hole_mask(*holes)`.
-  On a symmetric head cut both with `eye_holes(vertices, faces, eye_left, radius, ...)` (exact
-  mirror images); give lids a lash line with `build_eye(..., lash=True)`.
+- Open lid eyes with `eye_hole(vertices, faces, center, radius, **lid_options)` (`eye_holes(vertices, faces,
+  eye_left, radius, ...)` on a symmetric head: exact mirror images, and each eye's patch may reach the
+  other's) and pass it to `build_eye(..., hole=..., skin=head)`: the skin itself becomes the lids (one
+  surface with a rounded margin, a lining behind it, one soft crease above and a closed corner), and
+  `build_eye` adds the eye's blink, squint and wide shape keys to the head and paints the lash line
+  (`lash=True`). Separate lid shells in a skin hole (`style='shells'`) read as stacked bands round the eye
+  and fail the verifier's `eye-crease` check. A sphere cut (`cut_hole`) leaves a black hole beside the lids
+  in 3/4 view. Robot shutter eyes take `shutter_hole` (a sealed tube back from the face plate, with the
+  blades checked against it) and `build_eye(style='shutter', hole=...)`. Mask brow and cheek offsets near
+  the eyes with `mask=eye_hole_mask(*holes)`, and lay brow ridges above the upper lid's crease.
 - Teeth that show at rest get their own material, `teeth_exposed`, listed in `exposed_teeth`.
 - Brows on a round skin face: `skin_brow_geometry(head, side, inner, outer, hole=holes[side])`
   with the head object after its shape keys: it lays the brow on the skin along its normal in

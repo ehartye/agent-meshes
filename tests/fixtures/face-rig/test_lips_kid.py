@@ -113,7 +113,7 @@ def build():
     parts, eyeballs = [head, cavity, upper, lower, buck, tongue, brow_obj, hair], []
     for side in 'LR':
         center = EYE_L if side == 'L' else (-EYE_L[0], EYE_L[1], EYE_L[2])
-        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, hole=holes[side], eye_materials=eye_mats, lash=True)
+        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, hole=holes[side], eye_materials=eye_mats, lash=True, skin=head)
         eyeballs.append(eye['eyeball'])
         parts.append(eye['lids'])
     face = join_face_parts(parts, 'face', rig=rig)
