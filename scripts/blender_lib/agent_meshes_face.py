@@ -17,7 +17,7 @@ import struct
 __all__ = [
     'ARKIT_REQUIRED', 'ARKIT_OPTIONAL', 'ARKIT_GAZE', 'ARKIT_NAMES', 'CANONICAL_EMOTIONS', 'DEFAULT_LID_FOLLOW',
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
-    'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
+    'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
     'symmetric_offsets', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
@@ -362,7 +362,8 @@ def _box(x0, x1, y0, y1, z0, z1):
 
 
 def shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=0, overlap=None, clearance=.0005,
-                     thickness=None, blade_height=None, squint=.45, squint_upper_share=.35, wide=(.2, .1), gap=None):
+                     thickness=None, blade_height=None, squint=.45, squint_upper_share=.35, wide=(.2, .1), gap=None,
+                     surface=None, skin_clearance=.0005):
     """Robot shutter blades that slide vertically in planes in front of the eye.
 
     Both blades are flat plates perpendicular to the gaze axis. The lower blade's
@@ -380,6 +381,13 @@ def shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=
     upper blade's top above the eyeball and the lower blade's bottom below it, and
     `overlap` (default: the wide travel plus 8% of the radius) keeps a full blink
     closed while the eyes are wide. Explicit values that cannot do this are rejected.
+
+    Blades that tall stick out past the eye, so they must slide behind the skin: pass
+    the head's `surface` (`front_surface(...)` of the skin with its eye holes cut)
+    and the helper rejects blades that poke `skin_clearance` short of the skin in
+    front of the eye anywhere they travel. Flat blades suit a flat face with the
+    eyes recessed behind it (a tin can, `ellipsoid_geometry(exponent=6)`); on a
+    round head they poke through the forehead.
     """
     center = _vector(center, 3, 'Eye center')
     r = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
@@ -445,8 +453,33 @@ def shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=
         faces += [tuple(i + len(vertices) for i in face) for face in blade_faces]
         vertices += rest
         for state in morphs: morphs[state] += blade_vertices(key, state)[0]
+    skin_gap = None
+    if surface is not None:
+        if not callable(surface): raise ValueError('surface must be a function (x, z) -> y, such as front_surface(...)')
+        # Each blade slides vertically, so over [0, 1]^3 it sweeps the band between its lowest and highest corner poses.
+        worst, where = math.inf, None
+        for key in ('upper', 'lower'):
+            plane = upper_plane if key == 'upper' else lower_plane
+            lows = [at(key, c) - (0 if key == 'upper' else blade) for c in corners]
+            z0, z1 = min(lows), max(lows) + blade
+            y = cy - plane - thickness
+            for i in range(13):
+                x = cx - half + 2 * half * i / 12
+                for k in range(25):
+                    z = cz + z0 + (z1 - z0) * k / 24
+                    skin = surface(x, z)
+                    # Only skin in front of the eye counts: through the eye hole a ray finds the back of the head.
+                    if skin is None or skin >= cy: continue
+                    if y - skin < worst: worst, where = y - skin, (key, x - cx, z - cz)
+        if where is not None:
+            skin_gap = worst
+            if worst < skin_clearance - 1e-12:
+                raise ValueError(f'The {where[0]} shutter blade would poke {max(0.0, -worst) * 1000:.1f} mm out of the skin '
+                                 f'({where[1] / r:+.2f}, {where[2] / r:+.2f} eyeball radii from the eye): recess the eye behind a '
+                                 f'flatter face, narrow the aperture or shrink the opening')
     result = {
         'vertices': vertices, 'faces': faces, 'morphs': morphs, 'style': 'shutter', 'edges': edges, 'aperture': half,
+        'skin_clearance': skin_gap,
         'upper_plane': upper_plane, 'lower_plane': lower_plane, 'thickness': thickness, 'squint_ratio': squint_ratio,
         'blade_height': blade, 'overlap': overlap,
         'min_clearance': lid_clearance(center, r, vertices, [morphs[s] for s in names]),
@@ -960,18 +993,29 @@ def symmetric_offsets(vertices, center, radius, offset, mask=None):
     return soft_offset(vertices, center, radius, offset, mask), soft_offset(vertices, mirror_x(center), radius, mirror_x(offset), mask)
 
 
-def ellipsoid_geometry(center, radii, rings=24, segments=32):
-    """A closed, outward-wound UV ellipsoid with poles on the Z axis: a head blank to cut and morph."""
+def ellipsoid_geometry(center, radii, rings=24, segments=32, exponent=2):
+    """A closed, outward-wound UV ellipsoid with poles on the Z axis: a head blank to cut and morph.
+
+    `exponent` above 2 makes a superellipsoid, |x/rx|^p + |y/ry|^p + |z/rz|^p = 1: a
+    tin can with rounded edges at 6 (Bolt), boxier as it grows. Flat faces keep a
+    robot's recessed shutters and plates behind the skin.
+    """
     cx, cy, cz = _vector(center, 3, 'Ellipsoid center')
     rx, ry, rz = _vector(radii, 3, 'Ellipsoid radii')
     if min(rx, ry, rz) <= 0: raise ValueError('Ellipsoid radii must be positive')
     rings, segments = _count(rings, 'Ellipsoid rings', 3), _count(segments, 'Ellipsoid segments', 3)
+    power = _number(exponent, 'Ellipsoid exponent', 2, 40)
+
+    def point(sx, sy, sz):
+        norm = (abs(sx) ** power + abs(sy) ** power + abs(sz) ** power) ** (1 / power)
+        return (cx + rx * sx / norm, cy + ry * sy / norm, cz + rz * sz / norm)
+
     vertices = [(cx, cy, cz + rz)]
     for k in range(1, rings):
         polar = math.pi * k / rings
         for j in range(segments):
             a = math.tau * j / segments
-            vertices.append((cx + rx * math.sin(polar) * math.cos(a), cy + ry * math.sin(polar) * math.sin(a), cz + rz * math.cos(polar)))
+            vertices.append(point(math.sin(polar) * math.cos(a), math.sin(polar) * math.sin(a), math.cos(polar)))
     vertices.append((cx, cy, cz - rz))
     ring = lambda k, j: 1 + k * segments + j % segments
     faces = [(0, ring(0, j), ring(0, j + 1)) for j in range(segments)]
@@ -1216,6 +1260,249 @@ def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, 
     morphs = {name: layout(delta) for name, delta in shifts.items()}
     return {'vertices': vertices, 'faces': faces, 'morphs': morphs, 'base_radius': base,
             'min_clearance': lid_clearance(center, radius, vertices, list(morphs.values()))}
+
+
+# ---------------------------------------------------------------- robot parts (Bolt: plates, rubber mouth edge)
+
+def _turn_y(point, pivot, degrees):
+    """Turn `point` about the Y axis (the gaze axis) through `pivot`: positive lifts points on the +X side."""
+    a = math.radians(degrees)
+    x, z = point[0] - pivot[0], point[2] - pivot[2]
+    return (pivot[0] + x * math.cos(a) - z * math.sin(a), point[1], pivot[2] + x * math.sin(a) + z * math.cos(a))
+
+
+def brow_plate_geometry(center, size, side, down=12, drop=None, inner_up=10, outer_up=10, surface=None, clearance=.0005):
+    """A rigid brow plate (a robot's metal brow bar) with browDown, browInnerUp and browOuterUp morphs.
+
+    `size` is (width, depth, height) in meters and `center` the middle of the bar;
+    the face looks down -Y. Each morph turns the whole bar rigidly in the face plane:
+    `browDown<Side>` turns it about its outer end so the inner end (toward the nose)
+    drops by `down` degrees and lowers the bar by `drop` (default 40% of its height),
+    `browInnerUp` lifts the inner end by `inner_up` degrees about the outer end, and
+    `browOuterUp<Side>` lifts the outer end by `outer_up` about the inner end. With
+    `surface` (`front_surface(...)` of the head) the bar's back face is placed
+    `clearance` in front of the face at every weight combination, so it never sinks
+    into the plate it rides on. Returns vertices, faces and morphs; bind it to `head`
+    and join it into the face mesh.
+    """
+    cx, cy, cz = _vector(center, 3, 'Brow center')
+    width, depth, height = _vector(size, 3, 'Brow size')
+    for label, value in (('Brow width', width), ('Brow depth', depth), ('Brow height', height)): _number(value, label, 0, low_open=True)
+    if side not in _SIDES: raise ValueError("Brow side must be 'L' or 'R'")
+    suffix, sign = _SIDES[side], 1 if side == 'L' else -1
+    down, inner_up, outer_up = (_number(v, label, 0, 45) for v, label in ((down, 'Brow down'), (inner_up, 'Brow inner up'), (outer_up, 'Brow outer up')))
+    drop = .4 * height if drop is None else _number(drop, 'Brow drop', 0)
+    clearance = _number(clearance, 'Clearance', 0)
+    if surface is not None and not callable(surface): raise ValueError('surface must be a function (x, z) -> y, such as front_surface(...)')
+    inner, outer = (cx - sign * width / 2, cy, cz), (cx + sign * width / 2, cy, cz)
+    # Positive turns lift +X; the right bar mirrors the left one.
+    moves = {
+        f'browDown{suffix}': lambda p: _add(_turn_y(p, outer, sign * down), (0, 0, -drop)),
+        'browInnerUp': lambda p: _turn_y(p, outer, -sign * inner_up),
+        f'browOuterUp{suffix}': lambda p: _turn_y(p, inner, sign * outer_up),
+    }
+
+    def bar(front):
+        vertices, faces = _box(cx - width / 2, cx + width / 2, front, front + depth, cz - height / 2, cz + height / 2)
+        return vertices, faces
+
+    front = cy - depth / 2
+    if surface is not None:
+        # Sample the back face densely at every weight combination: the morphs only turn the bar in the face plane,
+        # so its back stays at one y and must clear the most forward skin under any pose.
+        names = list(moves)
+        back = [(cx + width * (i / 6 - .5), cz + height * (k / 3 - .5)) for i in range(7) for k in range(4)]
+        worst = math.inf
+        for mask in range(1 << len(names)):
+            for x, z in back:
+                point = (x, 0.0, z)
+                shifted = point
+                for bit, name in enumerate(names):
+                    if mask >> bit & 1: shifted = _add(shifted, _sub(moves[name](point), point))
+                skin = surface(shifted[0], shifted[2])
+                if skin is not None: worst = min(worst, skin)
+        if worst == math.inf: raise ValueError('No skin found behind the brow plate')
+        front = worst - clearance - depth
+    vertices, faces = bar(front)
+    return {'vertices': vertices, 'faces': faces, 'morphs': {name: [move(v) for v in vertices] for name, move in moves.items()},
+            'inner': inner, 'outer': outer}
+
+
+def _vertex_normals(vertices, faces):
+    normals = [[0.0, 0.0, 0.0] for _ in vertices]
+    for face in faces:
+        for i in range(1, len(face) - 1):
+            a, b, c = vertices[face[0]], vertices[face[i]], vertices[face[i + 1]]
+            n = _cross(_sub(b, a), _sub(c, a))
+            for index in (face[0], face[i], face[i + 1]):
+                for k in range(3): normals[index][k] += n[k]
+    result = []
+    for n in normals:
+        length = math.hypot(*n)
+        result.append(tuple(v / length for v in n) if length > 1e-30 else (0.0, 0.0, 0.0))
+    return result
+
+
+def _thick_clip(vertices, normals, faces, plane_z, keep_above, thickness):
+    """The part of a closed outward shell on one side of z = plane_z, as a closed shell `thickness` thick."""
+    keep = (lambda z: z >= plane_z) if keep_above else (lambda z: z <= plane_z)
+    out, out_normals, mapping, crossings = [], [], {}, {}
+
+    def kept(i):
+        if i not in mapping:
+            mapping[i] = len(out); out.append(vertices[i]); out_normals.append(normals[i])
+        return mapping[i]
+
+    def cross(i, j):
+        key = (min(i, j), max(i, j))
+        if key not in crossings:
+            a, b = vertices[key[0]], vertices[key[1]]
+            t = (plane_z - a[2]) / (b[2] - a[2])
+            point = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, plane_z)
+            n = _add(_mul(normals[key[0]], 1 - t), _mul(normals[key[1]], t))
+            crossings[key] = len(out); out.append(point); out_normals.append(n)
+        return crossings[key]
+
+    shell = []
+    for face in faces:
+        inside = [keep(vertices[i][2]) for i in face]
+        if not any(inside): continue
+        polygon = []
+        for k, i in enumerate(face):
+            j = face[(k + 1) % len(face)]
+            if inside[k]: polygon.append(kept(i))
+            if inside[k] != inside[(k + 1) % len(face)] and plane_z not in (vertices[i][2], vertices[j][2]): polygon.append(cross(i, j))
+        polygon = [v for k, v in enumerate(polygon) if v != polygon[k - 1]]
+        if len(polygon) >= 3: shell.append(tuple(polygon))
+    used = {}
+    for face in shell:
+        for a, b in zip(face, face[1:] + face[:1]):
+            used[(a, b)] = used.get((a, b), 0) + 1
+    boundary = [(a, b) for (a, b) in used if (b, a) not in used]
+    on_rim = {v for edge in boundary for v in edge}
+    count = len(out)
+    inner = []
+    for index, (point, n) in enumerate(zip(out, out_normals)):
+        if index in on_rim:
+            # Rim partners stay in the cut plane, so the rim is a flat band `thickness` wide.
+            n = (n[0], n[1], 0.0)
+        length = math.hypot(*n) or 1.0
+        p = _sub(point, _mul(n, thickness / length))
+        z = max(p[2], plane_z) if keep_above else min(p[2], plane_z)
+        inner.append((p[0], p[1], z))
+    faces_out = list(shell) + [tuple(v + count for v in reversed(face)) for face in shell]
+    faces_out += [(b, a, a + count, b + count) for a, b in boundary]
+    return {'vertices': out + inner, 'faces': faces_out, 'rim': sorted((v, v + count) for v in on_rim)}
+
+
+def split_plates(vertices, faces, split_z, thickness, gap=0.0, gum_z=None):
+    """Split a closed head surface at z = `split_z` into a skull and a chin plate, each a closed shell with thick edges.
+
+    The cut follows the plane exactly (no stair steps), so the chin plate's rim sits
+    at `split_z - gap / 2` and the skull's at `split_z + gap / 2`. Each part gets an
+    inner wall `thickness` behind its outer surface and a flat rim band joining them,
+    so an opened jaw shows solid edges instead of a paper-thin open shell. Pass the
+    upper teeth's gum line as `gum_z`: the chin plate moves with `jawOpen`, and the
+    arkit-face/1 verifier fails any jaw-moved skin above the gum line, so a split
+    that would put the plate's rim above it is rejected. Returns {'skull', 'plate'},
+    each with vertices, faces and `rim` (outer, inner) vertex pairs; give the plate
+    `add_jaw_open(..., rigid=True)`.
+    """
+    split_z = _number(split_z, 'Split height')
+    thickness = _number(thickness, 'Plate thickness', 0, low_open=True)
+    gap = _number(gap, 'Plate gap', 0)
+    top, bottom = split_z + gap / 2, split_z - gap / 2
+    if gum_z is not None and bottom > _number(gum_z, 'Gum line') + 1e-12:
+        raise ValueError(f"The chin plate's rim (z {bottom:.4f}) would reach above the upper teeth's gum line (z {gum_z:.4f}), "
+                         'where jawOpen may not move the skin: split lower or raise the teeth roots')
+    vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    faces = _outward(vertices, [tuple(f) for f in faces])
+    zs = [v[2] for v in vertices]
+    if not min(zs) < bottom <= top < max(zs): raise ValueError('The split must cross the head')
+    normals = _vertex_normals(vertices, faces)
+    return {'skull': _thick_clip(vertices, normals, faces, top, True, thickness),
+            'plate': _thick_clip(vertices, normals, faces, bottom, False, thickness)}
+
+
+def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, center_x=0.0, segments=24, sides=8,
+                          standoff=.0003, smile=(.0015, .004), frown=.004, stretch=.004, funnel=.004, pinch=.2):
+    """A robot's rubber mouth edge: an upper and a lower rubber tube along the mouth slot, carrying the mouth shapes.
+
+    For heads whose jaw is a rigid plate (Bolt): the plates stay rigid and these
+    edges flex. The tubes run from -`half_width` to +`half_width` about `center_x`,
+    just above and below `mouth_z`, touching at rest so the slot is closed, and sit
+    `standoff` in front of the head's front `surface` (`front_surface(...)`). Morphs:
+    `mouthSmile<Side>` lifts that corner by smile[1] and pulls it out by smile[0],
+    `mouthFrown<Side>` lowers it by `frown`, `mouthStretch<Side>` pulls it out by
+    `stretch`, and `mouthFunnel` pushes the middle forward by `funnel`, pinches the
+    corners in by `pinch` of the half-width and rounds the lips apart. With `jaw` (a
+    `JawHinge`), `jawOpen` carries the lower tube rigidly with the chin plate; the
+    upper tube stays on the skull. Every ring moves as a whole, so the tubes never
+    twist. Returns vertices, faces, morphs, and the `upper` and `lower` vertex indices.
+    """
+    if not callable(surface): raise ValueError('surface must be a function (x, z) -> y, such as front_surface(...)')
+    mouth_z, center_x = _number(mouth_z, 'Mouth line'), _number(center_x, 'Mouth center')
+    half = _number(half_width, 'Mouth half-width', 0, low_open=True)
+    radius = _number(radius, 'Rubber radius', 0, low_open=True)
+    segments, sides = _count(segments, 'Rubber segments', 4), _count(sides, 'Rubber sides', 4)
+    standoff = _number(standoff, 'Standoff', 0)
+    smile_out, smile_up = _vector(smile, 2, 'Smile')
+    frown, stretch, funnel = (_number(v, label, 0) for v, label in ((frown, 'Frown'), (stretch, 'Stretch'), (funnel, 'Funnel')))
+    pinch = _number(pinch, 'Pinch', 0, .9)
+    vertices, faces, rings, upper, lower = [], [], {'upper': [], 'lower': []}, [], []
+    for key, zc in (('upper', mouth_z + radius), ('lower', mouth_z - radius)):
+        start = len(vertices)
+        for s in range(segments + 1):
+            x = center_x - half + 2 * half * s / segments
+            skins = [surface(x, zc + radius * math.sin(math.tau * k / sides)) for k in range(sides)] + [surface(x, zc)]
+            skins = [y for y in skins if y is not None]
+            if not skins: raise ValueError(f'No head surface behind the mouth edge at x = {x:.4f}')
+            yc = min(skins) - radius - standoff
+            ring = []
+            for k in range(sides):
+                a = math.tau * k / sides
+                ring.append(len(vertices))
+                vertices.append((x, yc + radius * math.cos(a), zc + radius * math.sin(a)))
+            rings[key].append(ring)
+        grid = rings[key]
+        for s in range(segments):
+            for k in range(sides):
+                faces.append((grid[s][k], grid[s + 1][k], grid[s + 1][(k + 1) % sides], grid[s][(k + 1) % sides]))
+        for end, ring in ((0, grid[0]), (1, grid[-1])):
+            cap = len(vertices)
+            vertices.append(tuple(sum(vertices[i][k] for i in ring) / sides for k in range(3)))
+            for k in range(sides):
+                faces.append((cap, ring[k], ring[(k + 1) % sides]) if end == 0 else (cap, ring[(k + 1) % sides], ring[k]))
+        (upper if key == 'upper' else lower).extend(range(start, len(vertices)))
+    faces = _outward(vertices, faces)
+    for i, v in enumerate(vertices):
+        skin = surface(v[0], v[2])
+        if skin is not None and v[1] >= skin: raise ValueError('The mouth edge cuts into the head: raise standoff')
+    along = lambda v: max(-1.0, min(1.0, (v[0] - center_x) / half))
+    corner = lambda t: _smoothstep(0, 1, t) ** 1.5
+    lower_set = set(lower)
+
+    def offsets(offset_of):
+        return [_add(v, offset_of(v, i)) for i, v in enumerate(vertices)]
+
+    morphs = {}
+    for suffix, sign in (('Left', 1), ('Right', -1)):
+        morphs[f'mouthSmile{suffix}'] = offsets(lambda v, i, s=sign: _mul((s * smile_out, 0, smile_up), corner(s * along(v))))
+        morphs[f'mouthFrown{suffix}'] = offsets(lambda v, i, s=sign: _mul((0, 0, -frown), corner(s * along(v))))
+        morphs[f'mouthStretch{suffix}'] = offsets(lambda v, i, s=sign: _mul((s * stretch, 0, -.25 * stretch), corner(s * along(v))))
+
+    def funnel_offset(v, i):
+        t = along(v)
+        middle = 1 - t * t
+        apart = (-1 if i in lower_set else 1) * .3 * funnel * middle
+        return (-pinch * half * t * (1 - middle * .5) * .5, -funnel * (.5 + .5 * middle), apart)
+    morphs['mouthFunnel'] = offsets(funnel_offset)
+    if jaw is not None:
+        moved = jaw.targets([vertices[i] for i in lower], weight=1)
+        target = list(vertices)
+        for i, p in zip(lower, moved): target[i] = p
+        morphs['jawOpen'] = target
+    return {'vertices': vertices, 'faces': faces, 'morphs': morphs, 'upper': upper, 'lower': lower}
 
 
 # ---------------------------------------------------------------- contract extras

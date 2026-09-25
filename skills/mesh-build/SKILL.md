@@ -160,14 +160,16 @@ Checks everything computable in the `arkit-face/1` face-rig contract and prints 
 required morph names (exact spelling, one glTF mesh per name), zero rest weights, every morph
 moving at least 1 mm, no flipped triangles at 0.5/1 or across the emotion presets with
 `jawOpen` = 1, lid clearance of eyeball radius + 0.5 mm at blink .25/.5/.75/1 alone and with
-squint, the `extras.arkitFace` schema and `exposedTeeth`, the skull, teeth and every
+squint, eye coverage (front rays across each eyeball must all hit a lid or skin at blink 1 alone,
+with squint 1 and with wide 1, and show nothing outside the neutral opening mid-blink or at
+squint), the `extras.arkitFace` schema and `exposedTeeth` (teeth that show at rest must be
+declared), the skull, teeth and every
 morph-bearing part bound to `head` (a skull bound to an eye bone is named as such), upper teeth
 fixed and lower teeth, tongue and cavity carried by `jawOpen`, the chin (the face's lowest point)
 dropping by at least 10% of the face height at `jawOpen` = 1, the face above the upper teeth's
 gum line staying put, and a mouth that opens (between the teeth rows the front view meets teeth,
-tongue or cavity, not skin or nothing). It exits 1 and prints
+tongue or cavity, not skin; a ray that passes the teeth into the head is see-through). It exits 1 and prints
 `FAIL <check>: <problem>` lines on stderr. Teeth are found by the materials `teeth_upper` and
-`teeth_lower`. It does not render: blink coverage, a dark open mouth and gaze still need looking
-at. `node <plugin-root>/scripts/check-face-rig-browser.mjs [test_head|test_robot|test_frog]`
+`teeth_lower`. It does not render: a dark open mouth, gaze and shading still need looking at. `node <plugin-root>/scripts/check-face-rig-browser.mjs [test_head|test_robot|test_frog]`
 renders the helper-built test heads, including a jaw sheet (jawOpen 0, .5, 1 from the front,
 three-quarter and close up) captioned with the measured chin drop.

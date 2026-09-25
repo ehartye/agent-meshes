@@ -148,6 +148,7 @@ repeats them. `agent_meshes_author` re-exports all of them, so one import works:
 from agent_meshes_author import (face_skeleton, build_eye, JawHinge, add_jaw_open,
     slit_mouth, cut_hole, front_surface, teeth_row_geometry, exposed_teeth_geometry,
     mouth_cavity_geometry, tongue_geometry, brow_ridge_geometry, chin_drop,
+    brow_plate_geometry, split_plates, rubber_mouth_geometry, eye_coverage_problems,
     mesh_from_geometry, soft_offset, symmetric_offsets, shape_key,
     join_face_parts, face_contract, recommended_gaze)
 ```
@@ -159,8 +160,9 @@ helpers are pure Python and return `{'vertices', 'faces', ...}` dicts in world
 coordinates; the Blender wrappers build objects with identity transforms. The
 pure-Python checks run with `python tests/blender_face_geometry.py`. The complete
 worked examples are `tests/fixtures/face-rig/test_head.py` (round eyes, lids, an
-ear-hinged puppet jaw), `test_robot.py` (shutter eyes, grille teeth, a rigid chin
-plate) and `test_frog.py` (a wide frog: lid domes with brow ridges, saw teeth,
+ear-hinged puppet jaw), `test_robot.py` (Bolt's tin can: recessed shutter eyes,
+brow plates, a skull and chin plate with thick edges, grille teeth, a rubber mouth
+edge) and `test_frog.py` (a wide frog: lid domes with brow ridges, saw teeth,
 two exposed fangs, a cavity fitted to the curved face).
 
 ### Skeleton, binding and one face mesh
@@ -233,10 +235,41 @@ between a fixed anchor and the lid edge, like a rolling curtain:
 
 `shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=0,
 overlap=None, clearance=.0005, thickness=None, blade_height=None, squint=.45,
-squint_upper_share=.35, wide=(.2, .1), gap=None)` makes a robot's two flat blades
-in planes in front of the lens (heights are fractions of the eyeball radius). The
-blades translate, so clearance holds trivially at every weight, and the upper
-blade slides in front of the lower one. `recommended_gaze(opening, iris=26,
+squint_upper_share=.35, wide=(.2, .1), gap=None, surface=None, skin_clearance=.0005)`
+makes a robot's two flat blades in planes in front of the lens (heights are
+fractions of the eyeball radius). The blades translate, so clearance holds
+trivially at every weight, and the upper blade slides in front of the lower one.
+
+**Coverage, not only clearance.** Morph deltas add: at blink 1 + squint 1 each
+blade passes the meet line by its squint travel as well, so a blade sized for
+blink alone (the old 1.3 radii) stops short of the eyeball's edge and bares a
+crescent (-1.0 to -0.853 radii under the lower blade); blink 1 + wide 1 pulls the
+closed blades apart by the wide travel. The edges are linear in the weights, so
+the helper takes their extremes over the corners of [0, 1]^3: `blade_height`
+defaults to the least that keeps the upper blade's top above the eyeball and the
+lower blade's bottom below it (plus 5% of the radius), and `overlap` to the wide
+travel plus 8% of the radius. Explicit values that cannot cover are rejected.
+Blades that tall stick out past the eye: pass the skin's
+`surface=front_surface(skin_vertices, skin_faces)` (eye holes cut) and the helper
+rejects blades that would slide out through the face. Flat shutters need a flat
+face with the eyes recessed behind it (`ellipsoid_geometry(..., exponent=6)`, a
+tin can); on a round head they poke through the forehead.
+
+`lid_geometry` has the same trap: blink 1 + wide 1 parts the closed lids. It
+raises the closed lower lid behind the upper one past the meet line (in steps of
+a quarter of the wide travel, less half the overlap) until blink + wide stays
+closed, taking the least rise that does not fold the lid rim, and reports it as
+`lower_rise`.
+
+`eye_coverage(center, radius, geometry, weights)` casts front rays (along +Y) on
+a grid over the eyeball's disk, within the lids' `aperture` and between their
+anchors (`band`; the skin hides the rest), and returns the rays that reach the
+eyeball. `eye_coverage_problems(center, radius, geometry)` runs the contract
+states (`COVERAGE_STATES`: blink .25/.5/.75/1 alone and with squint 1, squint 1,
+wide 1, blink 1 with wide 1 and with both): every full blink must hide the whole
+eyeball and every closing state may show only what neutral shows. Both eye
+helpers run it and reject settings that fail; the `arkit-face/1` verifier's
+`eye-coverage` check casts the same rays through the whole exported head. `recommended_gaze(opening, iris=26,
 margin=4)` gives `yawMax`/`pitchMax` that keep the iris center inside the opening.
 
 ### Jaw, mouth slit, teeth and interior
@@ -367,6 +400,39 @@ end (sad, surprised), `browOuterUp<Side>` the outer end. Its base sits far
 enough out that no weight combination dips into the dome (`min_clearance`
 reports the margin), so it never cuts the lids. Make it a mesh, add its morphs
 with `shape_key`, and join it into the face.
+
+### Robot plates: brows, skull and chin plate, rubber mouth edge
+
+For a robot like Bolt, whose face is rigid metal plates:
+
+- `ellipsoid_geometry(center, radii, exponent=6)` is a tin-can blank (a
+  superellipsoid with rounded edges).
+- `split_plates(vertices, faces, split_z, thickness, gap=0, gum_z=None)` cuts a
+  closed head exactly at the plane z = `split_z` (no stair steps) into
+  `{'skull', 'plate'}`. Each is a closed shell: the outer surface, an inner wall
+  `thickness` behind it and a flat rim band joining them in the cut plane
+  (`rim` lists the (outer, inner) vertex pairs), so an open jaw shows solid
+  edges in three-quarter view instead of a paper-thin open shell. `gap` separates
+  the rims. Pass the upper teeth's gum line (their highest point) as `gum_z`: the
+  chin plate rides `jawOpen`, and the verifier fails jaw-moved skin above the gum
+  line, so a split that would put the plate's rim above it is rejected. Give the
+  plate `add_jaw_open(plate, jaw, rigid=True, min_chin_drop=.1)`.
+- `brow_plate_geometry(center, (width, depth, height), side, down=12, drop=None,
+  inner_up=10, outer_up=10, surface=None, clearance=.0005)` is a rigid brow bar.
+  `browDown<Side>` turns it about its outer end so the inner end drops by `down`
+  degrees and lowers it by `drop` (40% of its height), `browInnerUp` lifts the
+  inner end about the outer end, `browOuterUp<Side>` lifts the outer end about
+  the inner end. With `surface` its back sits `clearance` in front of the face at
+  every weight combination.
+- `rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015,
+  smile=(.0015, .004), frown=.004, stretch=.004, funnel=.004, pinch=.2)` is the
+  rubber mouth edge between the plates: an upper and a lower tube touching at
+  the mouth line, just proud of the face. It carries `mouthSmile`, `mouthFrown`,
+  `mouthStretch` (each side, fading in toward that corner) and `mouthFunnel`
+  (forward, pinched and rounded apart), so the plates stay rigid; with `jaw` its
+  lower tube rides `jawOpen` rigidly and the upper tube stays on the skull. Each
+  ring of a tube moves as one, so the tubes never twist. `upper` and `lower`
+  list each tube's vertices.
 
 ### Contract extras
 

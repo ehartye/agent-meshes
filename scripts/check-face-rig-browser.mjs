@@ -41,10 +41,10 @@ try {
   await page.evaluate(() => window.ready);
   const tiles = [];
   const shoot = (weights, view) => page.evaluate(([w, v]) => {
-    // A multi-material face is one glTF mesh but several three.js meshes: set each target on every one.
-    const meshes = []; viewer.root.traverse(o => { if (o.isMesh && o.morphTargetDictionary) meshes.push(o); });
+    // A multi-material face is one glTF mesh loaded as several three.js meshes; its node name (a morph group)
+    // drives the target on every primitive at once.
     viewer.resetMorph();
-    for (const mesh of meshes) for (const [target, weight] of Object.entries(w)) if (target in mesh.morphTargetDictionary) viewer.setMorph(mesh.name, target, weight);
+    for (const group of viewer.morphGroups) for (const [target, weight] of Object.entries(w)) if (viewer.morphTargets(group).includes(target)) viewer.setMorph(group, target, weight);
     if (v) viewer.view(v);
     return viewer.screenshot();
   }, [weights, view]);
@@ -70,9 +70,8 @@ try {
   const m = report.measurements;
   // E3 in pixels: an exact ID render (512 px tall, front view) of the silhouette, the upper and the lower teeth.
   const pixels = weight => page.evaluate(w => {
-    const meshes = []; viewer.root.traverse(o => { if (o.isMesh && o.morphTargetDictionary) meshes.push(o); });
     viewer.resetMorph();
-    for (const mesh of meshes) if ('jawOpen' in mesh.morphTargetDictionary) viewer.setMorph(mesh.name, 'jawOpen', w);
+    for (const group of viewer.morphGroups) if (viewer.morphTargets(group).includes('jawOpen')) viewer.setMorph(group, 'jawOpen', w);
     viewer.view({ position: [0, 0.11, 0.6], target: [0, 0.11, 0] });
     // The silhouette with everything drawn; the teeth alone (other: null hides the rest) so lips never occlude them.
     const shape = viewer.idRender({ materials: {}, other: '#ff0000', background: '#000000', width: 512, height: 512 });

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blende
 import agent_meshes_author
 from agent_meshes_face import (
     ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
-    eye_coverage, eye_coverage_problems,
+    eye_coverage, eye_coverage_problems, brow_plate_geometry, split_plates, rubber_mouth_geometry,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
     face_contract_extras, lid_clearance, lid_geometry, merge_glb_node_extras, mirror_x, mouth_cavity_geometry,
     recommended_gaze, shutter_geometry, socket_geometry, soft_offset, symmetric_offsets, teeth_row_geometry,
@@ -252,6 +252,27 @@ class ShutterTests(unittest.TestCase):
             shutter_geometry(CENTER, RADIUS, blade_height=1.3 * RADIUS)
         with self.assertRaisesRegex(ValueError, '(?i)overlap'):
             shutter_geometry(CENTER, RADIUS, overlap=.05 * RADIUS)
+
+
+    def test_shutters_that_poke_out_of_the_skin_are_rejected(self):
+        # A round head curves back faster than flat blades slide: the tall blades of a surface eye poke through
+        # the forehead. A tin-can face with the eyes recessed behind it hides them.
+        eye, radius = (.033, -.067, .145), .014
+        round_head = ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=48, segments=64)
+        vertices, faces = round_head['vertices'], round_head['faces']
+        for center in (eye, mirror_x(eye)):
+            cut = cut_hole(vertices, faces, center, .0185)
+            vertices, faces = cut['vertices'], cut['faces']
+        with self.assertRaisesRegex(ValueError, 'poke'):
+            shutter_geometry(eye, radius, surface=front_surface(vertices, faces))
+        tin = ellipsoid_geometry((0, 0, .13), (.075, .065, .10), rings=48, segments=64, exponent=6)
+        vertices, faces = tin['vertices'], tin['faces']
+        recessed = (.032, -.0415, .16)
+        for center in (recessed, mirror_x(recessed)):
+            cut = cut_hole(vertices, faces, (center[0], -.064, center[2]), .018)
+            vertices, faces = cut['vertices'], cut['faces']
+        shutters = shutter_geometry(recessed, .016, aperture=.021, surface=front_surface(vertices, faces))
+        self.assertGreater(shutters['skin_clearance'], 0)
 
 
 class EyeCoverageTests(unittest.TestCase):
@@ -548,6 +569,121 @@ class BrowTests(unittest.TestCase):
         right = brow_ridge_geometry(mirror_x(CENTER), dome, 'R', elevation=50)
         self.assertEqual(sorted(right['morphs']), ['browDownRight', 'browInnerUp', 'browOuterUpRight'])
         for a, b in zip(left['vertices'], right['vertices']): self.assertAlmostEqual(a[0], -b[0])
+
+
+def moved(rest, morphs, weights):
+    """Positions at named morph weights (linear, as engines mix them)."""
+    return [tuple(r[k] + sum(w * (morphs[n][i][k] - r[k]) for n, w in weights.items()) for k in range(3)) for i, r in enumerate(rest)]
+
+
+class RobotPartsTests(unittest.TestCase):
+    """Bolt's rigid brow plates, the skull / chin-plate split and the rubber mouth edge."""
+    head = dict(center=(0, 0, .13), radii=(.075, .065, .10), mouth_z=.085)
+
+    def blank(self):
+        return ellipsoid_geometry(self.head['center'], self.head['radii'], rings=40, segments=56)
+
+    def test_brow_plates_are_rigid_closed_bars_with_the_brow_morphs(self):
+        plate = brow_plate_geometry((.032, -.068, .19), (.04, .005, .008), 'L')
+        closed_and_consistent(self, plate['vertices'], plate['faces'])
+        self.assertGreater(signed_volume(plate['vertices'], plate['faces']), 0)
+        self.assertEqual(set(plate['morphs']), {'browDownLeft', 'browInnerUp', 'browOuterUpLeft'})
+        rest = plate['vertices']
+        for name, target in plate['morphs'].items():
+            with self.subTest(morph=name):
+                for i in range(len(rest)):
+                    for j in range(i):
+                        self.assertAlmostEqual(distance(rest[i], rest[j]), distance(target[i], target[j]), delta=1e-9, msg='the plate moves rigidly')
+                self.assertGreaterEqual(max(distance(a, b) for a, b in zip(rest, target)), .001, 'the morph is not dead')
+        inner = min(range(len(rest)), key=lambda i: rest[i][0])
+        outer = max(range(len(rest)), key=lambda i: rest[i][0])
+        dz = lambda name, i: plate['morphs'][name][i][2] - rest[i][2]
+        self.assertLess(dz('browDownLeft', inner), dz('browDownLeft', outer) - .001, 'browDown lowers the inner end more')
+        self.assertLess(dz('browDownLeft', outer), 0)
+        self.assertGreater(dz('browInnerUp', inner), .001)
+        self.assertGreater(dz('browOuterUpLeft', outer), .001)
+        self.assertAlmostEqual(dz('browOuterUpLeft', inner), 0, delta=.0003, msg='browOuterUp pivots on the inner end')
+        right = brow_plate_geometry((-.032, -.068, .19), (.04, .005, .008), 'R')
+        self.assertEqual(set(right['morphs']), {'browDownRight', 'browInnerUp', 'browOuterUpRight'})
+        for a, b in zip(sorted(plate['morphs']['browDownLeft']), sorted(mirror_x(p) for p in right['morphs']['browDownRight'])):
+            for k in range(3): self.assertAlmostEqual(a[k], b[k], delta=1e-9)
+
+    def test_brow_plates_stand_off_a_curved_face_at_every_weight(self):
+        blank = self.blank()
+        front = front_surface(blank['vertices'], blank['faces'])
+        plate = brow_plate_geometry((.032, 0, .19), (.04, .005, .008), 'L', surface=front, clearance=.0005)
+        names = list(plate['morphs'])
+        for mask in range(1 << len(names)):
+            weights = {n: 1 for k, n in enumerate(names) if mask >> k & 1}
+            for x, y, z in moved(plate['vertices'], plate['morphs'], weights):
+                skin = front(x, z)
+                if skin is not None: self.assertLessEqual(y, skin - .0005 + 1e-9, weights)
+        with self.assertRaises(ValueError):
+            brow_plate_geometry((.032, -.068, .19), (.04, .005, .008), 'X')
+
+    def test_a_boxy_blank_is_a_closed_superellipsoid(self):
+        tin = ellipsoid_geometry((0, 0, .13), (.075, .065, .10), rings=24, segments=32, exponent=6)
+        closed_and_consistent(self, tin['vertices'], tin['faces'])
+        self.assertGreater(signed_volume(tin['vertices'], tin['faces']), 0)
+        for x, y, z in tin['vertices']:
+            self.assertAlmostEqual((abs(x) / .075) ** 6 + (abs(y) / .065) ** 6 + (abs(z - .13) / .10) ** 6, 1, delta=1e-9)
+        # Flatter than the ellipsoid: a corner direction reaches much further out.
+        self.assertGreater(max(x + z for x, y, z in tin['vertices'] if abs(y) < .01), .15)
+        with self.assertRaises(ValueError):
+            ellipsoid_geometry((0, 0, 0), (1, 1, 1), exponent=1)
+
+    def test_split_plates_are_closed_thick_shells_clipped_at_the_split(self):
+        blank = self.blank()
+        parts = split_plates(blank['vertices'], blank['faces'], .08, .002)
+        for key in ('skull', 'plate'):
+            with self.subTest(part=key):
+                part = parts[key]
+                closed_and_consistent(self, part['vertices'], part['faces'])
+                self.assertGreater(signed_volume(part['vertices'], part['faces']), 0)
+                self.assertTrue(part['rim'], 'the cut edge is a rim of faces, not an open edge')
+        self.assertGreaterEqual(min(v[2] for v in parts['skull']['vertices']), .08 - 1e-9)
+        self.assertLessEqual(max(v[2] for v in parts['plate']['vertices']), .08 + 1e-9)
+        # The rim is as thick as asked: each outer rim vertex has an inner partner `thickness` away, in the split plane.
+        plate = parts['plate']
+        for outer, inner in plate['rim'][:20]:
+            self.assertAlmostEqual(distance(plate['vertices'][outer], plate['vertices'][inner]), .002, delta=.0003)
+            self.assertAlmostEqual(plate['vertices'][inner][2], .08, delta=1e-9)
+
+    def test_split_keeps_the_plate_rim_below_the_gum_line_and_off_the_mouth_line(self):
+        blank = self.blank()
+        with self.assertRaisesRegex(ValueError, 'gum'):
+            split_plates(blank['vertices'], blank['faces'], .09, .002, gum_z=.088)
+        parts = split_plates(blank['vertices'], blank['faces'], .085, .002, gap=.001, gum_z=.09)
+        self.assertLessEqual(max(v[2] for v in parts['plate']['vertices']), .0845 + 1e-9)
+        self.assertGreaterEqual(min(v[2] for v in parts['skull']['vertices']), .0855 - 1e-9)
+
+    def test_rubber_mouth_edge_carries_the_mouth_shapes_and_rides_the_jaw(self):
+        blank = self.blank()
+        front = front_surface(blank['vertices'], blank['faces'])
+        jaw = JawHinge.ear(blank['vertices'], self.head['mouth_z'], .035, angle=14, drop=.012)
+        mouth = rubber_mouth_geometry(front, self.head['mouth_z'], .035, jaw=jaw)
+        closed_and_consistent(self, mouth['vertices'], mouth['faces'])
+        self.assertEqual(set(mouth['morphs']), {'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight',
+                                                'mouthStretchLeft', 'mouthStretchRight', 'mouthFunnel', 'jawOpen'})
+        rest, morphs = mouth['vertices'], mouth['morphs']
+        for name, target in morphs.items():
+            self.assertGreaterEqual(max(distance(a, b) for a, b in zip(rest, target)), .001, name)
+        left = [i for i, v in enumerate(rest) if v[0] > .03]
+        right = [i for i, v in enumerate(rest) if v[0] < -.02]
+        self.assertTrue(all(morphs['mouthSmileLeft'][i][2] > rest[i][2] + .001 for i in left), 'smile lifts the left corner')
+        self.assertTrue(all(distance(morphs['mouthSmileLeft'][i], rest[i]) < 1e-9 for i in right), 'the right corner stays')
+        self.assertTrue(all(morphs['mouthFrownRight'][i][2] < rest[i][2] - .001 for i in right))
+        self.assertTrue(all(morphs['mouthFunnel'][i][1] < rest[i][1] for i in range(len(rest)) if abs(rest[i][0]) < .02), 'funnel pushes forward')
+        upper, lower = mouth['upper'], mouth['lower']
+        self.assertTrue(all(distance(morphs['jawOpen'][i], rest[i]) < 1e-12 for i in upper), 'the upper edge stays on the skull')
+        self.assertTrue(all(morphs['jawOpen'][i][2] < rest[i][2] - .005 for i in lower), 'the lower edge rides the chin plate')
+        for weights in ({'jawOpen': 1}, {'mouthSmileLeft': 1, 'mouthSmileRight': 1, 'jawOpen': .25}, {'mouthFunnel': 1, 'jawOpen': .6},
+                        {'mouthStretchLeft': 1, 'mouthStretchRight': 1, 'mouthFrownLeft': 1, 'mouthFrownRight': 1, 'jawOpen': .3}):
+            with self.subTest(weights=weights):
+                self.assertEqual(folded_faces(rest, moved(rest, morphs, weights), mouth['faces']), [])
+        for x, y, z in rest:
+            skin = front(x, z)
+            if skin is not None: self.assertLess(y, skin, 'the rubber edge sits proud of the plates')
 
 
 class SkinRegionTests(unittest.TestCase):
