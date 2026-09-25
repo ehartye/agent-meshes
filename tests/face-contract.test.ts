@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { ballNose, browBar, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { ballNose, browBar, tube, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -117,6 +117,22 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     });
   }
 
+  it('says where triangles flip: their rest centroids in mm and the face region, with the spots in the measurements', async () => {
+    // mouthFunnel mirrors the skin within 20 mm of (0, -45) mm across x: the triangles there flip (and collapse at 0.5).
+    const result = await report(head => { const face = mesh(head, 'face'); const t = face.targets.find(x => x.name === 'mouthFunnel')!; t.positions = face.positions.map(p => Math.hypot(p[0], p[1] + 0.045) < 0.02 ? [-p[0], p[1], p[2]] as Vec3 : p); });
+    const failure = result.failures.find(f => f.startsWith('inversion: mouthFunnel=1 '))!;
+    expect(failure).toMatch(/^inversion: mouthFunnel=1 flips \d+ triangle\(s\) on face\[skin\] at \(-?\d+\.\d, -?\d+\.\d, -?\d+\.\d\) mm \([a-z ]+\)/);
+    const spots = [...failure.matchAll(/\((-?\d+\.\d), (-?\d+\.\d), (-?\d+\.\d)\) mm/g)].map(m => m.slice(1).map(Number));
+    expect(spots.length).toBeGreaterThan(0);
+    expect(spots.length).toBeLessThanOrEqual(4);
+    for (const [x, y, z] of spots) expect(Math.hypot(x, y + 45, z - 60)).toBeLessThan(25);
+    const entry = result.measurements.inversions.find(i => i.combo === 'mouthFunnel=1')!;
+    expect(entry).toMatchObject({ part: 'face[skin]' });
+    expect(entry.count).toBeGreaterThan(0);
+    for (const [x, y] of entry.at) expect(Math.hypot(x, y + 0.045)).toBeLessThan(0.025);
+    expect(result.measurements.inversions.length).toBeLessThanOrEqual(20);
+  });
+
   it('names the eye, the state and the uncovered heights when a closed blink leaves eyeball showing', async () => {
     const result = await report(head => shutterEye(head, 'L', 1.3, 0.08));
     const failure = result.failures.find(f => f.startsWith('eye-coverage: eyeBlinkLeft=1 + eyeSquintLeft=1:'))!;
@@ -128,7 +144,31 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(result.measurements.eyes.R!.coverage!.visible['eyeBlinkRight=1 + eyeSquintRight=1']).toBe(0);
   });
 
+  it('finds a closed eye that parts by a thin strip seen only from below, which front rays miss', async () => {
+    // The blades overlap 0.24 mm at blink 1, but the upper one stands 3.2 mm in front of the lower: 15 degrees below sees between them.
+    const result = await report(head => shutterEye(head, 'L', 2.1, 0.02, 0.004));
+    const coverage = result.measurements.eyes.L!.coverage!;
+    expect(coverage.visible['eyeBlinkLeft=1']).toBe(0);
+    expect(coverage.pitched['-15']['eyeBlinkLeft=1']).toBeGreaterThan(0);
+    expect(coverage.pitched['15']['eyeBlinkLeft=1']).toBe(0);
+    const failure = result.failures.find(f => f.startsWith('eye-coverage: eyeBlinkLeft=1 seen from 15 degrees below:'))!;
+    expect(failure).toMatch(/rays reach eyeball_L/);
+    expect(result.measurements.eyes.R!.coverage!.pitched['-15']['eyeBlinkRight=1']).toBe(0);
+  });
+
+  it('finds a closed eye that parts only from 25 degrees below, as the round-6 kid did at blink 1 + wide 1', async () => {
+    // The blades overlap 1.5 mm at blink 1 with the upper one 5.2 mm in front: 15 degrees below still sees them meet, 25 does not.
+    const result = await report(head => shutterEye(head, 'L', 2.1, 0.125, 0.006));
+    const pitched = result.measurements.eyes.L!.coverage!.pitched;
+    expect(result.measurements.eyes.L!.coverage!.visible['eyeBlinkLeft=1']).toBe(0);
+    expect(pitched['-15']['eyeBlinkLeft=1']).toBe(0);
+    expect(pitched['-25']['eyeBlinkLeft=1']).toBeGreaterThan(0);
+    expect(result.failures.some(f => f.startsWith('eye-coverage: eyeBlinkLeft=1 seen from 25 degrees below:'))).toBe(true);
+  });
+
   it('passes shutter blades sized for every blink, squint and wide combination', async () => {
+    // From 15 and 25 degrees above and below, the eyeball's rim shows past these flat blades' far ends (0.9 eyeball radii
+    // from its center, round the housing of the robot's shutter eyes): that belongs to eye-oblique, not to closed lids parting.
     const result = await report(head => { shutterEye(head, 'L', 1.67); shutterEye(head, 'R', 1.67); });
     expect(result.failures).toEqual([]);
     expect(result.measurements.eyes.L!.coverage!.visible['eyeBlinkLeft=1 + eyeSquintLeft=1']).toBe(0);
@@ -269,6 +309,49 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     // A ridge that really floats is still caught.
     const floating = await report(head => domeRidge(head, 0.006, 0.002));
     expect(floating.failures.some(f => /attached-parts: .*ridge.* floats/.test(f))).toBe(true);
+  });
+
+  it('judges a heavy ridge taller than 3 mm along its contact with the dome, not as an appendage by its height', async () => {
+    // A 12 mm ridge on a 40 degree arc (about 20 mm long) stands out more than half its own size, as the round-6 frog's do.
+    for (const keel of [0, 0.003]) {
+      const result = await report(head => domeRidge(head, 0.012, 0, { arc: 40, keel }));
+      expect(result.failures, `keel ${keel}`).toEqual([]);
+      const ridge = result.measurements.attached.find(p => /ridge/.test(p.part))!;
+      expect(ridge.contact).toBe('lies');
+      expect(ridge.overhang).toBeLessThanOrEqual(0.0005);
+    }
+    // Pushed 2 mm off the dome, or touching at one end and leaning 3 mm off at the other: it floats along its length.
+    for (const [gap, lean] of [[0.002, 0], [0, 0.003]]) {
+      const floating = await report(head => domeRidge(head, 0.012, gap, { arc: 40, lean }));
+      expect(floating.measurements.attached.find(p => /ridge/.test(p.part))).toMatchObject({ contact: 'lies' });
+      expect(floating.failures.some(f => /^attached-parts: .*ridge.* floats \d\.\d\d mm off the skin at rest along \d+ of its \d+ slices/.test(f)), `gap ${gap} lean ${lean}`).toBe(true);
+    }
+    // Pushed 2 mm out with a 3 mm keel (the round-6 frog attack): every slice still dips into the dome, but the ridge's
+    // underside stands out of it at the edges along its length.
+    const pushed = await report(head => domeRidge(head, 0.012, 0.002, { arc: 40, keel: 0.003 }));
+    const ridge = pushed.measurements.attached.find(p => /ridge/.test(p.part))!;
+    expect(ridge.restGap).toBe(0);
+    expect(ridge.overhang).toBeGreaterThan(0.001);
+    expect(pushed.failures.some(f => /^attached-parts: ridge part at .* hangs \d\.\d\d mm off the skin at rest along \d+ of its \d+ slices .*attach_to_skin/.test(f))).toBe(true);
+  });
+
+  it('passes a round tube resting 0.3 mm in front of the skin (a robot rubber mouth edge), whose underside curves away by its shape', async () => {
+    const result = await report(head => tube(head, 0.0003));
+    expect(result.failures).toEqual([]);
+    expect(result.measurements.attached.find(p => /rubber/.test(p.part))).toMatchObject({ contact: 'lies', overhang: 0 });
+    // Standing 1 mm off, it floats.
+    expect((await report(head => tube(head, 0.001))).failures.some(f => /^attached-parts: .*rubber.* floats/.test(f))).toBe(true);
+  });
+
+  it('fails a static part the skin slides under while a morph plays, and passes one that carries the skin', async () => {
+    // noseSneerLeft slides the face 2.5 mm up under the nostril without lifting or burying it.
+    const stripped = await report(head => nostril(head, false, 0, [0, 0.0025]));
+    const failure = stripped.failures.find(f => f.startsWith('attached-parts: '))!;
+    expect(failure).toMatch(/^attached-parts: noseSneerLeft=1 slides the skin 2\.\d\d mm under face\[nostril\] part at .* while the part stays \(allowed 0\.50 mm\): carry the skin's noseSneerLeft deltas on it with attach_to_skin\(part, skin\)/);
+    expect(stripped.measurements.attached[0].slide).toBeGreaterThan(0.002);
+    const carried = await report(head => nostril(head, true, 0, [0, 0.0025]));
+    expect(carried.failures).toEqual([]);
+    expect(carried.measurements.attached[0].slide).toBeLessThan(0.0001);
   });
 
   it('judges a horn at the brow corner as an appendage rooted in the skin, not a part lying on it', async () => {

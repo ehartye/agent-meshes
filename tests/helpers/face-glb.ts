@@ -171,9 +171,11 @@ function eyeCorners(side: 'L' | 'R'): SynthMesh {
  * Robot shutters in front of an eye with no skin rim (the skin hole is wider than the eye): two flat blades that
  * translate, sized like `shutter_geometry`'s opening (.7, .55), meet 0 and squint .45. `blade` is the blade height in
  * eyeball radii and `overlap` how far the closed upper blade passes the meet line; round 2 used 1.3 and 0.08, which
- * leaves the bottom of the eye bare at blink 1 + squint 1 (and blink 1 + wide 1 open).
+ * leaves the bottom of the eye bare at blink 1 + squint 1 (and blink 1 + wide 1 open). `stand` is how far the upper
+ * blade stands in front of the eyeball (the lower one stands 0.8 mm): a small overlap with the blades far apart in
+ * depth closes the eye from the front but leaves a strip open from below (round 6's iris strip at blink 1 + wide 1).
  */
-export function shutterEye(head: SynthHead, side: 'L' | 'R', blade: number, overlap = 0.38): void {
+export function shutterEye(head: SynthHead, side: 'L' | 'R', blade: number, overlap = 0.38, stand = 0.0015): void {
   const [cx, cy, cz] = EYES[side], r = EYE_RADIUS, suffix = side === 'L' ? 'Left' : 'Right';
   const travel = (1 - 0.45) * (0.7 + 0.55) * r;
   const edges = {
@@ -181,7 +183,7 @@ export function shutterEye(head: SynthHead, side: 'L' | 'R', blade: number, over
     lower: { rest: -0.55 * r, blink: 0, squint: -0.55 * r + 0.65 * travel, wide: -0.65 * r },
   };
   const box = (key: 'upper' | 'lower', state: 'rest' | 'blink' | 'squint' | 'wide'): Vec3[] => {
-    const edge = edges[key][state], z = cz + r + (key === 'upper' ? 0.0015 : 0.0008);
+    const edge = edges[key][state], z = cz + r + (key === 'upper' ? stand : 0.0008);
     const [y0, y1] = key === 'upper' ? [edge, edge + blade * r] : [edge - blade * r, edge];
     return [[cx - 1.1 * r, cy + y0, z], [cx + 1.1 * r, cy + y0, z], [cx + 1.1 * r, cy + y1, z], [cx - 1.1 * r, cy + y1, z]];
   };
@@ -418,16 +420,18 @@ export function browBar(head: SynthHead, back = -0.0002, lift = 0): void {
 
 /**
  * A nostril (a 3 mm ball half sunk in the face plane) and a noseSneerLeft skin shape that swells the face under it
- * by `swell`. `carried` gives the nostril the skin's own noseSneerLeft deltas, as attach_to_skin does.
+ * by `swell` and slides it by `slide` (in the face plane). `carried` gives the nostril the skin's own noseSneerLeft
+ * deltas, as attach_to_skin does.
  */
-export function nostril(head: SynthHead, carried: boolean, swell = 0.003): void {
+export function nostril(head: SynthHead, carried: boolean, swell = 0.003, slide: [number, number] = [0, 0]): void {
   const center: Vec3 = [0.012, 0, 0.06], face = mesh(head, 'face');
-  const lift = (p: Vec3) => { const d = Math.hypot(p[0] - center[0], p[1] - center[1]) / 0.02; return d >= 1 ? 0 : swell * (1 - d * d * (3 - 2 * d)); };
-  face.targets.push({ name: 'noseSneerLeft', positions: face.positions.map(p => [p[0], p[1], p[2] + lift(p)] as Vec3) });
+  const weight = (p: Vec3) => { const d = Math.hypot(p[0] - center[0], p[1] - center[1]) / 0.02; return d >= 1 ? 0 : 1 - d * d * (3 - 2 * d); };
+  const sneer = (p: Vec3): Vec3 => [p[0] + slide[0] * weight(p), p[1] + slide[1] * weight(p), p[2] + swell * weight(p)];
+  face.targets.push({ name: 'noseSneerLeft', positions: face.positions.map(sneer) });
   const ball = sphere(center, 0.003, 8, 12);
   head.meshes.push({
     name: 'nostril_L', material: 'nostril', ...ball, bones: ball.positions.map(() => 'head'),
-    targets: carried ? [{ name: 'noseSneerLeft', positions: ball.positions.map(p => [p[0], p[1], p[2] + lift(p)] as Vec3) }] : [],
+    targets: carried ? [{ name: 'noseSneerLeft', positions: ball.positions.map(sneer) }] : [],
   });
   head.groups!.face.push('nostril_L');
   head.rootExtras = { arkitFace: { ...(head.rootExtras!.arkitFace as Record<string, unknown>), morphs: [...REQUIRED, 'noseSneerLeft'] } };
@@ -496,17 +500,20 @@ export function ballNose(head: SynthHead, gap = 0, swell = 0.003): void {
 }
 
 /**
- * A heavy brow ridge lying along a skin dome (Mossjaw's brow): a 30 mm dome beside the head with a ridge wrapped 120
+ * A heavy brow ridge lying along a skin dome (Mossjaw's brow): a 30 mm dome beside the head with a ridge wrapped `arc`
  * degrees round it, `lift` proud. The ridge's top lies farther out than its base, so at its ends the top reaches past
- * the base along the ridge's chord. `gap` lifts the whole ridge off the dome.
+ * the base along the ridge's chord. `gap` lifts the whole ridge off the dome; `lean` lifts it more toward one end
+ * (0 at the inner end, `lean` more at the outer end): a ridge touching at one end and hanging off elsewhere; `keel`
+ * sinks the middle of its underside that much deeper than its edges, as brow_ridge_geometry's lower arc does, so a
+ * ridge pushed out less than that still dips into the dome in every slice while its edges stand off it.
  */
-export function domeRidge(head: SynthHead, lift = 0.006, gap = 0): void {
+export function domeRidge(head: SynthHead, lift = 0.006, gap = 0, { arc = 120, lean = 0, keel = 0 } = {}): void {
   const center: Vec3 = [0.16, 0.02, 0.035], radius = 0.03;
   const dome = sphere(center, radius, 16, 24);
   head.meshes.push({ name: 'dome', material: 'skin', ...dome, bones: dome.positions.map(() => 'head'), targets: [] });
   const at = (u: number, v: number, layer: number): Vec3 => {
-    const yaw = (-60 + 120 * u) * Math.PI / 180, elevation = (20 + 16 * (v - 0.5)) * Math.PI / 180;
-    const r = layer ? radius + gap + 0.0002 + lift * Math.sin(Math.PI * v) : radius + gap - 0.0003;
+    const yaw = arc * (u - 0.5) * Math.PI / 180, elevation = (20 + 16 * (v - 0.5)) * Math.PI / 180, off = gap + lean * u;
+    const r = layer ? radius + off + 0.0002 + lift * Math.sin(Math.PI * v) : radius + off - 0.0003 - keel * Math.sin(Math.PI * v);
     return [center[0] + r * Math.cos(elevation) * Math.sin(yaw), center[1] + r * Math.sin(elevation), center[2] + r * Math.cos(elevation) * Math.cos(yaw)];
   };
   const ridge = slab(24, 6, at);
@@ -538,4 +545,30 @@ export function horn(head: SynthHead, gap = 0): void {
     indices.push((j + 1) % segments, j, base);
   }
   head.meshes.push({ name: 'horn_L', material: 'horn', positions, indices, bones: positions.map(() => 'head'), targets: [] });
+}
+
+/**
+ * A robot's rubber mouth edge (rubber_mouth_geometry): a round tube of eight sides, 1.5 mm in radius and 30 mm long,
+ * lying along x on the face plane `standoff` in front of it (a vertex toward the skin), with closed ends.
+ */
+export function tube(head: SynthHead, standoff: number): void {
+  const radius = 0.0015, sides = 8, segments = 10, y = -0.01, z = 0.06 + standoff + radius;
+  const positions: Vec3[] = [], indices: number[] = [];
+  for (let s = 0; s <= segments; s++) for (let k = 0; k < sides; k++) {
+    const a = 2 * Math.PI * k / sides;
+    positions.push([-0.015 + 0.03 * s / segments, y + radius * Math.sin(a), z - radius * Math.cos(a)]);
+  }
+  const ring = (s: number, k: number) => s * sides + (k % sides);
+  for (let s = 0; s < segments; s++) for (let k = 0; k < sides; k++) indices.push(ring(s, k), ring(s + 1, k), ring(s + 1, k + 1), ring(s, k), ring(s + 1, k + 1), ring(s, k + 1));
+  const first = positions.length; positions.push([-0.015, y, z]);
+  const last = positions.length; positions.push([0.015, y, z]);
+  for (let k = 0; k < sides; k++) { indices.push(first, ring(0, k + 1), ring(0, k)); indices.push(last, ring(segments, k), ring(segments, k + 1)); }
+  // Wind outward: flip every face if the signed volume came out negative.
+  let volume = 0;
+  for (let t = 0; t < indices.length; t += 3) {
+    const [a, b, c] = [positions[indices[t]], positions[indices[t + 1]], positions[indices[t + 2]]];
+    volume += a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0]);
+  }
+  if (volume < 0) for (let t = 0; t < indices.length; t += 3) [indices[t + 1], indices[t + 2]] = [indices[t + 2], indices[t + 1]];
+  head.meshes.push({ name: 'rubber', material: 'rubber', positions, indices, bones: positions.map(() => 'head'), targets: [] });
 }

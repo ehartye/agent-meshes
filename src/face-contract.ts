@@ -63,6 +63,18 @@ export const EYE_COVERAGE_STATES: readonly { kind: 'closed' | 'narrow' | 'wide';
   { kind: 'closed', blink: 1, squint: 0, wide: 1 }, { kind: 'closed', blink: 1, squint: 1, wide: 1 },
 ];
 /**
+ * Closed eye states are also judged from these pitches (degrees, + from above): lids that overlap seen from the front
+ * can still part by a strip seen from a little below or above when one stands in front of the other (round 6's kid
+ * showed an iris strip at blink 1 + wide 1 from 25 degrees below, and none from 15).
+ */
+export const COVERAGE_PITCHES: readonly number[] = Object.freeze([-25, -15, 15]);
+/**
+ * From those pitches only rays within this many eyeball radii of the eye's center height (in that view) count: the band
+ * where closed lids meet. Round 6's kid strip lay at 0.28-0.32; the eyeball's rim at a shutter housing (0.7-0.99, the
+ * robot) is eye-oblique's business.
+ */
+export const COVERAGE_PITCH_BAND = 0.6;
+/**
  * Oblique eye views: the front, 3/4 at 35 and 45 degrees of yaw to each side, and each of those 20 degrees above and
  * below. The 3/4 view exists to catch "looks fine only from the front": a gap between the lids and the skin's eye hole.
  */
@@ -76,10 +88,16 @@ export const OBLIQUE_GRID = 64;
  */
 export const MIN_LID_FOLLOW = 0.0015;
 const LID_MOTION = 0.00001, UPPER_TEETH_TOLERANCE = 0.0001, BOUND = 0.999, PIVOT_TOLERANCE = 0.001;
+/** Inverted triangles within this of a spot's first one are reported as one spot; at most SPOTS spots per report. */
+const SPOT_RADIUS = 0.005, SPOTS = 4, MAX_INVERSIONS = 20;
 
 export interface FaceCheck { id: string; ok: boolean; message: string; problems: string[] }
-/** Front rays cast across one eyeball: how many reach it, at neutral and in each coverage state (keyed by its weights). */
-export interface EyeCoverage { samples: number; neutral: number; visible: Record<string, number> }
+/**
+ * Front rays cast across one eyeball: how many reach it, at neutral and in each coverage state (keyed by its weights);
+ * `pitched` counts the rays that reach it in each closed state seen from each of `COVERAGE_PITCHES` (keyed by pitch), within
+ * `COVERAGE_PITCH_BAND` eyeball radii of its center height.
+ */
+export interface EyeCoverage { samples: number; neutral: number; visible: Record<string, number>; pitched: Record<string, Record<string, number>> }
 /**
  * Oblique rays around one eye, from every `OBLIQUE_VIEWS` direction in every lid and emotion state: how many were cast
  * and how many found the socket or the inside of the head first (a leak); `window` is the aimed disk's radius.
@@ -96,6 +114,11 @@ export interface FaceContractReport {
   validator: { errors: number; warnings: number };
   measurements: {
     height: number; morphs: string[]; morphMotion: Record<string, number>; inversionCombos: number;
+    /**
+     * Where triangles flip or collapse (at most 20 combinations): the combination, the part, how many triangles, and the
+     * rest-pose centers of up to 4 spots they gather in (m, glTF coordinates).
+     */
+    inversions: { combo: string; part: string; count: number; at: number[][] }[];
     /** Drop of the face's lowest point (the chin) at jawOpen = 1, the face height it is measured against, and their ratio. */
     chinDrop: number | null; faceHeight: number | null; chinDropRatio: number | null;
     /** Largest jawOpen motion of face skin above the upper teeth's gum line (the upper lip and everything above it). */
@@ -364,7 +387,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     if (skippedBecause) checks.push({ id, ok: false, message: `skipped: ${skippedBecause}`, problems: [`skipped because ${skippedBecause}`] });
     else checks.push({ id, ok: problems.length === 0, message: problems.length ? problems[0] : message, problems });
   };
-  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, restTeeth: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null }, attached: [] };
+  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, inversions: [], chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, restTeeth: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null }, attached: [] };
 
   // 1. glTF validator
   const validation = await verifyGLB(bytes);
@@ -510,21 +533,45 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   }
   measurements.inversionCombos = combos.length;
   const inversionProblems: string[] = [];
+  // Where on the face a spot is, for the author: above, at or below the eyes, the mouth (the upper teeth's bite edge)
+  // and the character's side (+X is the character's left).
+  const eyeLevel = eyes.L && eyes.R ? { y: (eyes.L.center.y + eyes.R.center.y) / 2, radius: (eyes.L.radius + eyes.R.radius) / 2 } : null;
+  const bites = all.filter(i => upperTeeth(i.names)).flatMap(i => Array.from({ length: i.count }, (_, v) => i.rest[v * 3 + 1]));
+  const bite = bites.length ? Math.min(...bites) : null;
+  const region = ([x, y]: number[]) => {
+    const side = x > 0.003 ? 'left' : x < -0.003 ? 'right' : '';
+    if (!eyeLevel) return side ? `character's ${side} side` : 'middle';
+    if (y > eyeLevel.y + 1.5 * eyeLevel.radius) return side ? `${side} brow` : 'forehead';
+    if (y >= eyeLevel.y - 1.5 * eyeLevel.radius) return side ? `${side} eye` : 'between the eyes';
+    if (bite !== null && Math.abs(y - bite) <= 0.25 * (eyeLevel.y - bite)) return side ? `${side} side of the mouth` : 'middle of the mouth';
+    if (bite === null || y > bite) return side ? `${side} cheek` : 'nose';
+    return side ? `${side} of the chin` : 'chin';
+  };
   for (const instance of all) {
     if (!instance.targets.size || !instance.triangles.length) continue;
-    const before = normals(instance.rest, instance.triangles);
+    const before = normals(instance.rest, instance.triangles), tris = instance.triangles, q = instance.rest;
     for (const combo of combos) {
       if (!Object.keys(combo.weights).some(name => instance.targets.has(name))) continue;
       const after = normals(positions(instance, combo.weights), instance.triangles);
       let flipped = 0, collapsed = 0;
+      // Spots: the rest centroids of the bad triangles, gathered within SPOT_RADIUS of each spot's first triangle.
+      const spots: { first: number[]; sum: number[]; count: number }[] = [];
       for (let t = 0; t < before.length; t += 3) {
         const area = Math.hypot(before[t], before[t + 1], before[t + 2]);
         if (area < 1e-14) continue;
         const dot = before[t] * after[t] + before[t + 1] * after[t + 1] + before[t + 2] * after[t + 2];
         if (dot <= 0) flipped++;
         else if (Math.hypot(after[t], after[t + 1], after[t + 2]) < 1e-3 * area) collapsed++;
+        else continue;
+        const centroid = [0, 1, 2].map(k => (q[tris[t] * 3 + k] + q[tris[t + 1] * 3 + k] + q[tris[t + 2] * 3 + k]) / 3);
+        const spot = spots.find(s => Math.hypot(s.first[0] - centroid[0], s.first[1] - centroid[1], s.first[2] - centroid[2]) <= SPOT_RADIUS);
+        if (spot) { spot.count++; for (let k = 0; k < 3; k++) spot.sum[k] += centroid[k]; } else spots.push({ first: centroid, sum: centroid.slice(), count: 1 });
       }
-      if (flipped || collapsed) inversionProblems.push(`${combo.label} ${[flipped ? `flips ${flipped}` : '', collapsed ? `collapses ${collapsed}` : ''].filter(Boolean).join(' and ')} triangle(s) on ${instance.label}`);
+      if (!flipped && !collapsed) continue;
+      const centers = spots.sort((a, b) => b.count - a.count).map(s => s.sum.map(v => v / s.count));
+      const where = centers.slice(0, SPOTS).map(c => `(${c.map(v => (v * 1000).toFixed(1)).join(', ')}) mm (${region(c)})`).join(', ');
+      inversionProblems.push(`${combo.label} ${[flipped ? `flips ${flipped}` : '', collapsed ? `collapses ${collapsed}` : ''].filter(Boolean).join(' and ')} triangle(s) on ${instance.label} at ${where}${centers.length > SPOTS ? ` and ${centers.length - SPOTS} more spot(s)` : ''}`);
+      if (measurements.inversions.length < MAX_INVERSIONS) measurements.inversions.push({ combo: combo.label, part: instance.label, count: flipped + collapsed, at: centers.slice(0, SPOTS).map(c => c.map(v => round(v, 4))) });
     }
   }
   check('inversion', inversionProblems, `no inverted or collapsed triangles across ${combos.length} weight combinations`);
@@ -582,7 +629,26 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
         return visible;
       };
       const neutral = new Set(look({}));
-      const coverage: EyeCoverage = { samples, neutral: neutral.size, visible: {} };
+      const coverage: EyeCoverage = { samples, neutral: neutral.size, visible: {}, pitched: {} };
+      // The eyeball and every opaque occluder (lids, lash bands, skin) seen from each pitch about the X axis.
+      const views = COVERAGE_PITCHES.map(pitch => {
+        const basis = viewBasis(0, pitch), c = toView(Float64Array.from(center.toArray()), basis);
+        const moved = balls.map(ball => toView(ball.rest, basis));
+        let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+        for (const points of moved) for (let v = 0; v < points.length; v += 3) { a0 = Math.min(a0, points[v]); a1 = Math.max(a1, points[v]); b0 = Math.min(b0, points[v + 1]); b1 = Math.max(b1, points[v + 1]); }
+        const ball = raster(a0, a1, b0, b1, COVERAGE_GRID);
+        balls.forEach((b, k) => draw(ball, moved[k], b.triangles, 0));
+        const rays = ball.depth.reduce((n, z) => n + (z > -Infinity ? 1 : 0), 0);
+        const look = (weights: Record<string, number>) => {
+          const front = raster(a0, a1, b0, b1, COVERAGE_GRID);
+          occluders.forEach((instance, k) => draw(front, toView(positions(instance, weights), basis), instance.triangles, k));
+          const visible: number[] = [];
+          for (let k = 0; k < ball.depth.length; k++) if (ball.depth[k] > -Infinity && ball.depth[k] > front.depth[k]) visible.push(k);
+          return visible.map(k => (ball.y0 + Math.floor(k / ball.nx) * ball.step - c[1]) / radius).filter(h => Math.abs(h) <= COVERAGE_PITCH_BAND);
+        };
+        coverage.pitched[String(pitch)] = {};
+        return { pitch, rays, look };
+      });
       for (const state of EYE_COVERAGE_STATES) {
         const weights = Object.fromEntries((['blink', 'squint', 'wide'] as const).filter(k => state[k]).map(k => [names[k], state[k]]));
         const label = Object.entries(weights).map(([name, w]) => `${name}=${w}`).join(' + ');
@@ -591,14 +657,20 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
         if (state.kind === 'closed' && visible.length) {
           const heights = visible.map(k => (eyeball.y0 + Math.floor(k / eyeball.nx) * eyeball.step - center.y) / radius);
           coverageProblems.push(`${label}: ${visible.length} of ${samples} front rays reach ${eyeLabel} (heights ${Math.min(...heights).toFixed(2)} to ${Math.max(...heights).toFixed(2)} eyeball radii about its center): a full blink must cover the whole eyeball, whatever squint and wide add (shutter_geometry and lid_geometry size the lids for this)`);
-        } else if (state.kind === 'narrow') {
+        }
+        if (state.kind === 'closed') for (const { pitch, rays, look: seen } of views) {
+          const heights = seen(weights);
+          coverage.pitched[String(pitch)][label] = heights.length;
+          if (heights.length && !visible.length) coverageProblems.push(`${label} seen from ${Math.abs(pitch)} degrees ${pitch < 0 ? 'below' : 'above'}: ${heights.length} of ${rays} rays reach ${eyeLabel} within ${COVERAGE_PITCH_BAND} eyeball radii of its center height, where closed lids meet (heights ${Math.min(...heights).toFixed(2)} to ${Math.max(...heights).toFixed(2)} in that view), while the front view sees it closed: the closed lids (and lash bands) part by a strip seen from ${pitch < 0 ? 'below' : 'above'}, where one stands in front of the other; overlap them further or bring them to the same depth where they meet`);
+        }
+        if (state.kind === 'narrow') {
           const extra = visible.filter(k => !neutral.has(k)).length;
           if (extra) coverageProblems.push(`${label}: ${extra} front rays see ${eyeLabel} where the neutral lid opening hides it (eyeball over a lid)`);
         }
       }
       measurements.eyes[side]!.coverage = coverage;
     }
-    check('eye-coverage', coverageProblems, `front rays across each eyeball: every full blink (alone, with squint 1, with wide 1) covers it, and blink .25/.5/.75 and squint show nothing outside the neutral opening`);
+    check('eye-coverage', coverageProblems, `front rays across each eyeball, and rays from ${COVERAGE_PITCHES.map(p => `${Math.abs(p)} degrees ${p < 0 ? 'below' : 'above'}`).join(' and ')} in closed states: every full blink (alone, with squint 1, with wide 1) covers it, and blink .25/.5/.75 and squint show nothing outside the neutral opening`);
   } else check('eye-coverage', [], '', 'the eyes were not found');
 
   // 10c. oblique eye views: from the front, 3/4 and above and below, nothing around an eye opens into the socket

@@ -11,12 +11,23 @@
  *
  * Contact is measured along the part's length: its surface is sampled densely and cut into slices across its longest
  * axis, and every slice must come within `ATTACH_TOLERANCE` of the skin (or dip into it). A ridge that touches the
- * skin at one end and hangs over it elsewhere fails, as does one hovering over the whole dome (round 4).
+ * skin at one end and hangs over it elsewhere fails, as does one hovering over the whole dome (round 4). Only an
+ * appendage (an ear or fin beside or behind the eyes, a horn that rises from the skin further than its base spreads
+ * along it) need touch the skin just at its root.
+ *
+ * A part seated in the skin must also be sealed across its width: along its length, wherever it dips more than
+ * `ATTACH_TOLERANCE` into the skin, its surface that faces the skin must not stand out of it (a ridge pushed off its dome
+ * still dips in along its middle, while its underside hangs off it). A part resting on the skin (a round tube) is
+ * judged by its gap alone.
+ *
+ * While a morph plays, the skin under a part must not slide away beneath it: where the part touches the skin at rest,
+ * the skin's own delta there is compared with the part's, and skin moving more than `ATTACH_TOLERANCE` under a part
+ * that stays (moves less than half as far) fails; attach_to_skin gives each part vertex exactly the skin's delta there.
  */
 export const ATTACH_TOLERANCE = 0.0005;
 /** A morph that leaves less than this share of a part's rest visibility above the skin buries it. */
 export const ATTACH_MIN_VISIBLE = 0.5;
-const STANDS_OUT = 0.003, SLICE = 0.0015, MAX_SLICES = 32, SAMPLE = 0.0015, CELL = 0.002, SEARCH = 0.012, SKIN_SHARE = 1 / 3, EYE_REACH = 1.1;
+const STANDS_OUT = 0.003, BASE_SHARE = 1 / 3, SLICE = 0.0015, MAX_SLICES = 32, SAMPLE = 0.0015, CELL = 0.002, SEARCH = 0.012, SKIN_SHARE = 1 / 3, EYE_REACH = 1.1;
 
 export interface AttachSurface {
   label: string; names: string[]; count: number; rest: Float64Array; targets: Map<string, Float64Array>; triangles: Uint32Array;
@@ -27,12 +38,18 @@ export interface AttachedPart {
   part: string; vertices: number; center: number[]; morphs: string[]; restGap: number; gap: number; worst: string; poses: number;
   restVisible: number;
   /**
-   * `lies` for a part on the face (in front of the eyes' depth less an eyeball radius): brows, ridges, nostrils, which
-   * must touch the skin along their whole length; `root` for an appendage beside or behind the eyes (an ear, a fin) or
-   * one that stands out of the skin more than 3 mm and more than half its own size (a horn at a brow corner),
-   * which may stand out from the head but must touch it somewhere.
+   * `lies` for a part on the face: brows, ridges (however heavy), nostrils, which must touch the skin along their whole
+   * length; `root` for an appendage beside or behind the eyes (an ear, a fin) or one that rises out of the skin more
+   * than 3 mm and further than its base spreads along the skin (a horn at a brow corner), which may stand out from the
+   * head but must touch it somewhere.
    */
   contact: 'lies' | 'root';
+  /** How far the part rises above the skin (or its own underside, when it floats), and how far its base (the lowest third of that rise) spreads along the skin (m). */
+  rise: number; base: number;
+  /** How far the underside of a part lying on the face stands out of the skin it is seated in at rest, in slices that dip into it (0 when sealed) (m). */
+  overhang: number;
+  /** The most the skin slides under the part, while it stays, at any morph at weight 1 (m). */
+  slide: number;
   /** The attached part(s) this one sits on, when it touches them rather than the skin (a nostril on a nose ball). */
   host?: string;
 }
@@ -78,10 +95,12 @@ function closest(p: number[], a: number[], b: number[], c: number[], out: number
 
 /**
  * Signed distances from points to a triangle soup (outward normals: positive outside), capped at SEARCH. With `feet`,
- * each point's nearest surface point is written there (NaN when nothing lies within SEARCH).
+ * each point's nearest surface point is written there (NaN when nothing lies within SEARCH), and with `owners` the
+ * index of the triangle it lies on (-1).
  */
-function signedDistances(points: number[][], tris: number[][][], feet?: Float64Array): Float64Array {
+function signedDistances(points: number[][], tris: number[][][], feet?: Float64Array, owners?: Int32Array): Float64Array {
   if (feet) feet.fill(NaN);
+  if (owners) owners.fill(-1);
   const out = new Float64Array(points.length).fill(SEARCH);
   if (!tris.length) return out;
   const cell = (v: number) => Math.floor(v / CELL);
@@ -122,10 +141,31 @@ function signedDistances(points: number[][], tris: number[][][], feet?: Float64A
     }
     if (owner < 0 || Math.sqrt(found) > SEARCH) return;
     if (feet) { feet[n * 3] = best[0]; feet[n * 3 + 1] = best[1]; feet[n * 3 + 2] = best[2]; }
+    if (owners) owners[n] = owner;
     const normal = normals[owner], side = (p[0] - best[0]) * normal[0] + (p[1] - best[1]) * normal[1] + (p[2] - best[2]) * normal[2];
     out[n] = side < 0 ? -Math.sqrt(found) : Math.sqrt(found);
   });
   return out;
+}
+
+/** Where each point of a cloud lies along its principal (longest) axis, and the cloud's length along it. */
+function principal(points: number[][]): { along: number[]; length: number } {
+  const mean = [0, 1, 2].map(k => points.reduce((sum, p) => sum + p[k], 0) / (points.length || 1));
+  const cov = [0, 1, 2].map(r => [0, 1, 2].map(c => points.reduce((sum, p) => sum + (p[r] - mean[r]) * (p[c] - mean[c]), 0)));
+  let axis = [1, 1, 1];
+  for (let n = 0; n < 50; n++) { const next = [0, 1, 2].map(r => cov[r][0] * axis[0] + cov[r][1] * axis[1] + cov[r][2] * axis[2]); const len = Math.hypot(...next) || 1; axis = next.map(x => x / len); }
+  const along = points.map(p => (p[0] - mean[0]) * axis[0] + (p[1] - mean[1]) * axis[1] + (p[2] - mean[2]) * axis[2]);
+  return { along, length: along.length ? Math.max(...along) - Math.min(...along) : 0 };
+}
+
+/** Barycentric weights of p (on or near triangle abc) for a, b and c. */
+function barycentric(p: number[], a: number[], b: number[], c: number[]): number[] {
+  const v0 = [0, 1, 2].map(k => b[k] - a[k]), v1 = [0, 1, 2].map(k => c[k] - a[k]), v2 = [0, 1, 2].map(k => p[k] - a[k]);
+  const dot = (x: number[], y: number[]) => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  const d00 = dot(v0, v0), d01 = dot(v0, v1), d11 = dot(v1, v1), d20 = dot(v2, v0), d21 = dot(v2, v1), det = d00 * d11 - d01 * d01;
+  if (Math.abs(det) < 1e-30) return [1, 0, 0];
+  const v = (d11 * d20 - d01 * d21) / det, w = (d00 * d21 - d01 * d20) / det;
+  return [1 - v - w, v, w];
 }
 
 /**
@@ -224,22 +264,24 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
     };
     // Contact triangles that could come near the part in any pose: within SEARCH plus the largest morph motion.
     const expand = SEARCH + reachOf;
-    const candidates: [number, number][] = [];
+    // Each candidate remembers its piece and whether that is a lid (lids slide under brows and skin rims by design).
+    const candidates: [number, number, boolean, Piece][] = [];
     for (const other of against) for (const [i, t] of other.tris) {
       const s = surfaces[i], q = s.rest;
       const tri = [s.triangles[t], s.triangles[t + 1], s.triangles[t + 2]];
       if ([0, 1, 2].some(k => Math.max(...tri.map(v => q[v * 3 + k])) < piece.lo[k] - expand || Math.min(...tri.map(v => q[v * 3 + k])) > piece.hi[k] + expand)) continue;
-      candidates.push([i, t]);
+      candidates.push([i, t, other.kind === 'lid', other]);
     }
-    const trianglesNear = (positions: Float64Array[], points: number[][]) => {
+    /** The candidate triangles near the points in this pose; `ids` receives each one's candidate index. */
+    const trianglesNear = (positions: Float64Array[], points: number[][], ids?: number[]) => {
       const lo = [0, 1, 2].map(k => Math.min(...points.map(p => p[k])) - SEARCH), hi = [0, 1, 2].map(k => Math.max(...points.map(p => p[k])) + SEARCH);
       const tris: number[][][] = [];
-      for (const [i, t] of candidates) {
+      candidates.forEach(([i, t], id) => {
         const s = surfaces[i], q = positions[i], a = s.triangles[t] * 3, b = s.triangles[t + 1] * 3, c = s.triangles[t + 2] * 3;
         let outside = false;
         for (let k = 0; k < 3 && !outside; k++) outside = Math.max(q[a + k], q[b + k], q[c + k]) < lo[k] || Math.min(q[a + k], q[b + k], q[c + k]) > hi[k];
-        if (!outside) tris.push([[q[a], q[a + 1], q[a + 2]], [q[b], q[b + 1], q[b + 2]], [q[c], q[c + 1], q[c + 2]]]);
-      }
+        if (!outside) { tris.push([[q[a], q[a + 1], q[a + 2]], [q[b], q[b + 1], q[b + 2]], [q[c], q[c + 1], q[c + 2]]]); ids?.push(id); }
+      });
       return tris;
     };
     // Slices along the part's length, by where each sample meets the skin: each rest sample is replaced by its nearest
@@ -247,23 +289,87 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
     // a dome shares its slice with the base under it instead of reaching past the base at the ends.
     const rest = samples.map(s => at(pose(null), s));
     const feet = new Float64Array(rest.length * 3);
-    const restDistance = signedDistances(rest, trianglesNear(pose(null), rest), feet);
-    const foot = rest.map((p, n) => Number.isNaN(feet[n * 3]) ? p : [feet[n * 3], feet[n * 3 + 1], feet[n * 3 + 2]]);
-    const mean = [0, 1, 2].map(k => foot.reduce((sum, p) => sum + p[k], 0) / foot.length);
-    const cov = [0, 1, 2].map(r => [0, 1, 2].map(c => foot.reduce((sum, p) => sum + (p[r] - mean[r]) * (p[c] - mean[c]), 0)));
-    let axis = [1, 1, 1];
-    for (let n = 0; n < 50; n++) { const next = [0, 1, 2].map(r => cov[r][0] * axis[0] + cov[r][1] * axis[1] + cov[r][2] * axis[2]); const len = Math.hypot(...next) || 1; axis = next.map(x => x / len); }
-    const along = foot.map(p => (p[0] - mean[0]) * axis[0] + (p[1] - mean[1]) * axis[1] + (p[2] - mean[2]) * axis[2]);
-    const from = Math.min(...along), length = Math.max(...along) - from;
+    const restIds: number[] = [], restTris = trianglesNear(pose(null), rest, restIds), restOwners = new Int32Array(rest.length);
+    const restDistance = signedDistances(rest, restTris, feet, restOwners);
+    const footed = rest.map((_, n) => !Number.isNaN(feet[n * 3]));
+    const foot = rest.map((p, n) => footed[n] ? [feet[n * 3], feet[n * 3 + 1], feet[n * 3 + 2]] : p);
+    // Samples too far out to find the skin (the top of a ridge more than SEARCH proud) take no part in placing the
+    // slices: they join the end slice nearest them rather than making slices of their own that only seem to float.
+    const { along } = principal(foot), placed = footed.some(Boolean) ? along.filter((_, n) => footed[n]) : along;
+    const from = Math.min(...placed), length = Math.max(...placed) - from;
     const count = Math.min(MAX_SLICES, Math.max(1, Math.ceil(length / SLICE)));
-    const slice = along.map(t => Math.min(count - 1, Math.floor((t - from) / (length || 1) * count)));
-    // A part lies on the face (brows, ridges, nostrils: touching along its whole length) unless it sits beside or behind
-    // the eyes (an ear, a fin) or stands out of the skin more than half its own size (a horn at a brow corner).
-    // How far it rises above its own nearest point (a part floating clear of the skin is not an appendage for that).
-    const within = [...restDistance].filter(d => d < SEARCH), height = within.length ? Math.max(...within) - Math.min(...within) : 0;
+    const slice = along.map(t => Math.max(0, Math.min(count - 1, Math.floor((t - from) / (length || 1) * count))));
+    // A part lies on the face (brows, ridges, nostrils: touching along its whole length) unless it is an appendage,
+    // by placement or by shape: it sits beside or behind the eyes (an ear, a fin), or it rises out of the skin more than
+    // STANDS_OUT and further than its base spreads along the skin (a horn at a brow corner). A ridge is long along the
+    // skin however heavy it is. The rise is measured from the skin, or from the part's own underside when it floats (a
+    // gap must not make a ridge a horn); the base is the part's lowest third of that rise, so a ridge touching at one
+    // end and hanging off along the rest keeps its whole underside in its base.
+    const within = [...restDistance].filter(d => d < SEARCH);
+    const level = within.length ? Math.max(0, Math.min(...within)) : 0, rise = within.length ? Math.max(...within) - level : 0;
+    const bottom = foot.filter((_, n) => footed[n] && restDistance[n] <= level + BASE_SHARE * rise);
+    const base = bottom.length > 1 ? principal(bottom).length : 0;
     const behind = eyes.length > 0 && center[2] < Math.min(...eyes.map(e => e.center[2] - e.radius));
-    const span = Math.max(...[0, 1, 2].map(k => piece.hi[k] - piece.lo[k]));
-    const lies = !behind && !(height > STANDS_OUT && height > 0.5 * span);
+    const lies = !behind && !(rise > STANDS_OUT && rise > base);
+
+    // Where the part touches the skin at rest (its vertices within ATTACH_TOLERANCE of it, or in it): the skin triangle
+    // under each and its barycentric weights there, as attach_to_skin records them. Lid triangles are left out.
+    const touching: { i: number; v: number; s: number; tri: number[]; w: number[] }[] = [];
+    {
+      const points = piece.verts.map(([i, v]) => [surfaces[i].rest[v * 3], surfaces[i].rest[v * 3 + 1], surfaces[i].rest[v * 3 + 2]]);
+      const ids: number[] = [], vertexFeet = new Float64Array(points.length * 3), owners = new Int32Array(points.length);
+      const distance = signedDistances(points, trianglesNear(pose(null), points, ids), vertexFeet, owners);
+      piece.verts.forEach(([i, v], n) => {
+        if (distance[n] > ATTACH_TOLERANCE || owners[n] < 0) return;
+        const [s, t, lid] = candidates[ids[owners[n]]];
+        if (lid) return;
+        const q = surfaces[s].rest, tri = [surfaces[s].triangles[t], surfaces[s].triangles[t + 1], surfaces[s].triangles[t + 2]];
+        const corner = (k: number) => [q[tri[k] * 3], q[tri[k] * 3 + 1], q[tri[k] * 3 + 2]];
+        touching.push({ i, v, s, tri, w: barycentric([vertexFeet[n * 3], vertexFeet[n * 3 + 1], vertexFeet[n * 3 + 2]], corner(0), corner(1), corner(2)) });
+      });
+    }
+    /** The most the skin moves under the part, relative to it, where the part stays (moves less than half as far). */
+    const slides = (name: string) => {
+      let worst = 0;
+      for (const { i, v, s, tri, w } of touching) {
+        const skinDelta = surfaces[s].targets.get(name), own = surfaces[i].targets.get(name);
+        const under = [0, 1, 2].map(k => skinDelta ? w[0] * skinDelta[tri[0] * 3 + k] + w[1] * skinDelta[tri[1] * 3 + k] + w[2] * skinDelta[tri[2] * 3 + k] : 0);
+        const moved = [0, 1, 2].map(k => own ? own[v * 3 + k] : 0);
+        if (Math.hypot(...moved) >= 0.5 * Math.hypot(...under)) continue;
+        worst = Math.max(worst, Math.hypot(under[0] - moved[0], under[1] - moved[1], under[2] - moved[2]));
+      }
+      return worst;
+    };
+
+    // The underside at rest, where the part is seated in the skin: in a slice that dips more than ATTACH_TOLERANCE into
+    // the skin it sits in (the surface pieces it touches, not a lid), the underside was meant to be sealed, so where the
+    // part's surface faces that skin and stands out of it, light shows under its edge. A ridge pushed out from its dome
+    // still dips into it in every slice while its underside hangs off it along its length (the round-6 frog). A part
+    // resting on the skin (a round rubber mouth tube laid 0.3 mm in front of it, a bead sitting on it) is judged by its
+    // gap alone: its underside curves away from the skin by its own shape. Winding is taken from the part: the surface
+    // out of the skin mostly faces away from it.
+    const overhang = new Float64Array(count), seatedDepth = new Float64Array(count).fill(Infinity);
+    restDistance.forEach((d, n) => { seatedDepth[slice[n]] = Math.min(seatedDepth[slice[n]], d); });
+    if (lies) {
+      const normal = (a: number[], b: number[], c: number[]) => {
+        const u = [0, 1, 2].map(k => b[k] - a[k]), v = [0, 1, 2].map(k => c[k] - a[k]);
+        const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]], length = Math.hypot(...n) || 1;
+        return n.map(x => x / length);
+      };
+      const candidateOf = (n: number) => restOwners[n] >= 0 ? candidates[restIds[restOwners[n]]] : undefined;
+      const seated = new Set(rest.flatMap((_, n) => { const c = candidateOf(n); return c && !c[2] && restDistance[n] <= ATTACH_TOLERANCE ? [c[3]] : []; }));
+      const facing = samples.map((sample, n) => {
+        const c = candidateOf(n);
+        if (!c || c[2] || !seated.has(c[3]) || restDistance[n] >= SEARCH) return NaN;
+        const q = pose(null)[sample.i], corner = (v: number) => [q[v * 3], q[v * 3 + 1], q[v * 3 + 2]];
+        const own = normal(corner(sample.a), corner(sample.b), corner(sample.c)), t = restTris[restOwners[n]], under = normal(t[0], t[1], t[2]);
+        return own[0] * under[0] + own[1] * under[1] + own[2] * under[2];
+      });
+      let sense = 0;
+      facing.forEach((f, n) => { if (!Number.isNaN(f) && restDistance[n] > ATTACH_TOLERANCE) sense += f; });
+      facing.forEach((f, n) => { if ((sense < 0 ? -f : f) < -0.5 && seatedDepth[slice[n]] < -ATTACH_TOLERANCE) overhang[slice[n]] = Math.max(overhang[slice[n]], restDistance[n]); });
+    }
+    const hangs = Math.max(0, ...overhang), hanging = overhang.filter(h => h > ATTACH_TOLERANCE).length;
 
     const evaluate = (name: string | null) => {
       const positions = pose(name);
@@ -279,7 +385,7 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
       return { gap: lies ? gap : Math.max(0, nearest), floating: lies ? floating : nearest > ATTACH_TOLERANCE ? count : 0, visible: outside / samples.length };
     };
     const measured = evaluate(null);
-    const entry: AttachedPart = { part: label, vertices: piece.verts.length, center: center.map(c => round(c)), morphs, restGap: round(measured.gap), gap: round(measured.gap), worst: 'rest', poses: 1, restVisible: round(measured.visible, 4), contact: lies ? 'lies' : 'root' };
+    const entry: AttachedPart = { part: label, vertices: piece.verts.length, center: center.map(c => round(c)), morphs, restGap: round(measured.gap), gap: round(measured.gap), worst: 'rest', poses: 1, restVisible: round(measured.visible, 4), contact: lies ? 'lies' : 'root', rise: round(rise), base: round(base), overhang: round(hangs), slide: 0 };
     if (host) entry.host = host;
     const skin = host ? `the skin or ${host}, the part it sits on,` : 'the skin';
     const problems: string[] = [];
@@ -287,6 +393,7 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
     if (measured.gap > ATTACH_TOLERANCE) problems.push(lies
       ? `${label} floats ${mm(measured.gap)} off ${skin} at rest along ${measured.floating} of its ${count} slices (allowed ${mm(ATTACH_TOLERANCE)}): a part joined to the face must sit on the skin along its whole length with no air gap; ${fix}`
       : `${label} floats ${mm(measured.gap)} off the head at rest: an ear, fin or horn may stand out from the head but must touch it at its root; sink its root into the skin (attach_to_skin(part, skin, depth=...))`);
+    else if (hangs > ATTACH_TOLERANCE) problems.push(`${label} hangs ${mm(hangs)} off ${skin} at rest along ${hanging} of its ${count} slices (allowed ${mm(ATTACH_TOLERANCE)}): its underside stands out of the skin at its edges, so light shows under it; a part joined to the face must sit on the skin across its whole width; ${fix}`);
     // Every morph that moves the part or the skin and lids near it, at weight 1.
     const near = (s: AttachSurface, q: Float64Array, v: number) => q[v * 3] >= piece.lo[0] - SEARCH && q[v * 3] <= piece.hi[0] + SEARCH && q[v * 3 + 1] >= piece.lo[1] - SEARCH && q[v * 3 + 1] <= piece.hi[1] + SEARCH && q[v * 3 + 2] >= piece.lo[2] - SEARCH && q[v * 3 + 2] <= piece.hi[2] + SEARCH;
     for (const name of morphNames) {
@@ -297,8 +404,11 @@ export function attachedParts(surfaces: AttachSurface[], eyes: AttachEye[], morp
       if (result.gap > entry.gap) { entry.gap = round(result.gap); entry.worst = `${name}=1`; }
       if (result.gap > ATTACH_TOLERANCE && measured.gap <= ATTACH_TOLERANCE) problems.push(`${name}=1 lifts ${label} ${mm(result.gap)} off ${skin}${lies ? ` along ${result.floating} of its ${count} slices` : ''} (allowed ${mm(ATTACH_TOLERANCE)}): the part must follow the skin while its morphs play; give it the skin's own deltas with attach_to_skin(part, skin) and keep its own morphs on the skin`);
       if (measured.visible > 0 && result.visible < ATTACH_MIN_VISIBLE * measured.visible) problems.push(`${name}=1 buries ${label} in the skin: ${(result.visible * 100).toFixed(0)}% of it shows, against ${(measured.visible * 100).toFixed(0)}% at rest (it sinks where the skin moves and the part does not); carry the skin's ${name} deltas on it with attach_to_skin(part, skin)`);
+      const slide = slides(name);
+      if (slide > entry.slide) entry.slide = round(slide);
+      if (slide > ATTACH_TOLERANCE) problems.push(`${name}=1 slides ${host ? `the surface (the skin or ${host})` : 'the skin'} ${mm(slide)} under ${label} while the part stays (allowed ${mm(ATTACH_TOLERANCE)}): carry the skin's ${name} deltas on it with attach_to_skin(part, skin)`);
     }
-    if (problems.length > 3) problems.splice(3, problems.length - 3, `${label}: ${problems.length - 3} more morphs lift or bury it`);
+    if (problems.length > 3) problems.splice(3, problems.length - 3, `${label}: ${problems.length - 3} more morphs lift, bury or slide under it`);
     return { entry, problems };
   };
   // Judge every part against the skin and lids first. A part that fails may sit on another attached part instead (a
