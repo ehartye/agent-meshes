@@ -78,8 +78,10 @@ def build_face(robot=False):
     enamel_upper = material('teeth_upper', (.9, .88, .8), roughness=.3)
     enamel_lower = material('teeth_lower', (.88, .86, .78), roughness=.3)
     style = 'grille' if robot else 'rounded'
-    upper = mesh_from_geometry('teeth_upper', teeth_row_geometry(style, (0, -.0795, .0765), .02, .012, 6, .006, row='upper'), [enamel_upper])
-    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry(style, (0, -.0745, .0735), .018, .011, 6, .005, row='lower'), [enamel_lower])
+    # The robot's grille blocks are thicker than rounded teeth: set them back so the closed chin plate hides them.
+    back = .002 if robot else 0
+    upper = mesh_from_geometry('teeth_upper', teeth_row_geometry(style, (0, -.0795 + back, .0765), .02, .012, 6, .006, row='upper'), [enamel_upper])
+    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry(style, (0, -.0745 + back, .0735), .018, .011, 6, .005, row='lower'), [enamel_lower])
     add_jaw_open(lower, jaw, rigid=True)
     parts, eyeballs = [head, cavity, upper, lower] + extra, []
     if not robot:

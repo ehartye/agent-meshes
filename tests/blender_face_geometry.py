@@ -14,7 +14,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
 import agent_meshes_author
 from agent_meshes_face import (
-    ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
+    ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
+    eye_coverage, eye_coverage_problems,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
     face_contract_extras, lid_clearance, lid_geometry, merge_glb_node_extras, mirror_x, mouth_cavity_geometry,
     recommended_gaze, shutter_geometry, socket_geometry, soft_offset, symmetric_offsets, teeth_row_geometry,
@@ -171,6 +172,11 @@ class LidTests(unittest.TestCase):
                     no_inversion(self, lids['vertices'], mix(lids['vertices'], [target], [weight]), lids['faces'])
         no_inversion(self, lids['vertices'], mix(lids['vertices'], [lids['morphs']['blink'], lids['morphs']['squint']], [1, 1]), lids['faces'])
 
+    def test_a_wide_travel_the_lids_cannot_close_over_is_rejected(self):
+        # blink 1 + wide 1 parts linear lids by the wide travel; closing that gap here folds the lid rim.
+        with self.assertRaisesRegex(ValueError, 'uncovered|fold'):
+            self.lids(wide=(20, 10))
+
     def test_settings_that_fold_the_lid_rim_are_rejected(self):
         with self.assertRaisesRegex(ValueError, 'fold'):
             self.lids(opening=(45, 38, 30), corner=.5)
@@ -206,10 +212,85 @@ class ShutterTests(unittest.TestCase):
         self.assertGreater(shutter['upper_plane'], shutter['lower_plane'])
 
     def test_closed_shutters_cover_the_lens_with_overlap(self):
-        shutter = shutter_geometry(CENTER, RADIUS, overlap=.002)
+        shutter = shutter_geometry(CENTER, RADIUS, overlap=.005)
         upper_edge, lower_edge = shutter['edges']['upper'], shutter['edges']['lower']
-        self.assertLessEqual(upper_edge['blink'], lower_edge['blink'] - .002 + 1e-9)
+        self.assertLessEqual(upper_edge['blink'], lower_edge['blink'] - .005 + 1e-9)
         self.assertGreater(upper_edge['rest'], lower_edge['rest'])
+
+
+    def blade_spans(self, shutter, weights):
+        """(bottom, top) of the upper and the lower blade at blink/squint/wide weights."""
+        moved = mix(shutter['vertices'], [shutter['morphs'][k] for k in ('blink', 'squint', 'wide')], weights)
+        upper, lower = moved[:8], moved[8:]
+        span = lambda blade: (min(v[2] for v in blade), max(v[2] for v in blade))
+        return span(upper), span(lower)
+
+    def test_every_blink_squint_wide_combination_covers_the_eyeball(self):
+        # The critic's Bolt (aperture 1.3 r) and the defaults. Blades translate, so edges are linear in the weights.
+        grid = [k / 4 for k in range(5)]
+        for options in ({}, dict(aperture=RADIUS * 1.3125), dict(squint=.3, wide=(.3, .2)), dict(opening=(.9, .8), meet=.2)):
+            shutter = shutter_geometry(CENTER, RADIUS, **options)
+            for b in grid:
+                for s in grid:
+                    for w in grid:
+                        with self.subTest(options=options, weights=(b, s, w)):
+                            (u0, u1), (l0, l1) = self.blade_spans(shutter, (b, s, w))
+                            self.assertGreaterEqual(u1, CENTER[2] + RADIUS - 1e-9, 'the upper blade reaches past the top of the eyeball')
+                            self.assertLessEqual(l0, CENTER[2] - RADIUS + 1e-9, 'the lower blade reaches past the bottom of the eyeball')
+                            if b == 1: self.assertLess(u0, l1, 'a full blink closes the shutters')
+            self.assertEqual(eye_coverage_problems(CENTER, RADIUS, shutter), [])
+
+    def test_blink_and_squint_do_not_lift_the_lower_blade_off_the_eyeball(self):
+        # Round-2 critic: at blink 1 + squint 1 the default 1.3 r blade stopped at -0.853 r.
+        shutter = shutter_geometry(CENTER, RADIUS)
+        _, (bottom, _) = self.blade_spans(shutter, (1, 1, 0))
+        self.assertLessEqual(bottom, CENTER[2] - RADIUS + 1e-9)
+        self.assertGreaterEqual(shutter['blade_height'], RADIUS * (1 + .447))
+
+    def test_settings_that_cannot_cover_the_eyeball_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'blade'):
+            shutter_geometry(CENTER, RADIUS, blade_height=1.3 * RADIUS)
+        with self.assertRaisesRegex(ValueError, '(?i)overlap'):
+            shutter_geometry(CENTER, RADIUS, overlap=.05 * RADIUS)
+
+
+class EyeCoverageTests(unittest.TestCase):
+    """Front-view ray casts over the eyeball disk: closed lids cover it, closing lids never uncover it."""
+
+    def test_default_lids_and_shutters_cover_every_contract_state(self):
+        for name, geometry in (('lids', lid_geometry(CENTER, RADIUS)), ('shutters', shutter_geometry(CENTER, RADIUS)),
+                               ('almond lids', lid_geometry(CENTER, RADIUS, opening=(50, 55, 40), meet=-15, corner=1.75))):
+            with self.subTest(eye=name):
+                self.assertEqual(eye_coverage_problems(CENTER, RADIUS, geometry), [])
+
+    def test_the_states_include_blink_alone_with_squint_and_with_wide(self):
+        labels = [state['label'] for state in COVERAGE_STATES]
+        for b in (.25, .5, .75, 1):
+            self.assertIn(f'blink {b:g}', labels)
+            self.assertIn(f'blink {b:g} + squint 1', labels)
+        self.assertIn('blink 1 + wide 1', labels)
+        self.assertIn('blink 1 + squint 1 + wide 1', labels)
+
+    def test_a_full_blink_and_a_wide_eye_still_close(self):
+        # Surprised (eyeWide 1) plus an idle blink: the lids and blades must still meet.
+        for geometry in (lid_geometry(CENTER, RADIUS), shutter_geometry(CENTER, RADIUS)):
+            with self.subTest(style=geometry['style']):
+                seen = eye_coverage(CENTER, RADIUS, geometry, {'blink': 1, 'wide': 1})
+                self.assertEqual(seen['visible'], [], 'nothing of the eyeball shows')
+                self.assertGreater(seen['samples'], 200)
+
+    def test_an_uncovered_sliver_is_reported(self):
+        shutter = shutter_geometry(CENTER, RADIUS)
+        # The round-2 defect: lift the lower blade's squint target so blink + squint leaves the bottom of the eye bare.
+        broken = dict(shutter, morphs=dict(shutter['morphs']))
+        broken['morphs']['squint'] = shutter['morphs']['squint'][:8] + [(x, y, z + .6 * RADIUS) for x, y, z in shutter['morphs']['squint'][8:]]
+        problems = eye_coverage_problems(CENTER, RADIUS, broken)
+        self.assertTrue(any(p.startswith('blink 1 + squint 1:') and 'eyeball' in p for p in problems), problems)
+        # A blink that opens the lower blade further shows eyeball outside the neutral opening.
+        opening = dict(shutter, morphs=dict(shutter['morphs']))
+        opening['morphs']['blink'] = shutter['morphs']['blink'][:8] + [(x, y, z - .4 * RADIUS) for x, y, z in shutter['vertices'][8:]]
+        problems = eye_coverage_problems(CENTER, RADIUS, opening)
+        self.assertTrue(any(p.startswith('blink 0.25:') and 'outside the neutral opening' in p for p in problems), problems)
 
 
 class EyeballTests(unittest.TestCase):

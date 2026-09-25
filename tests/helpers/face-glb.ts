@@ -65,24 +65,88 @@ function box(center: Vec3, size: Vec3) {
   return grid(1, 1, (u, v) => add(center, [(u - 0.5) * size[0], (v - 0.5) * size[1], size[2] / 2]));
 }
 
-/** Lid patch on a sphere around the eye, turned about the eye's X axis for each morph. */
-function lids(side: 'L' | 'R', radius: number, sweeps = { blink: -30, squint: -10, wide: 5 }): SynthMesh {
+/** Rotations (degrees, + raises the lid) of each lid for each morph: blink overshoots the meet line so blink + wide still closes. */
+export const LID_SWEEPS = { upper: { blink: -56, squint: -10, wide: 5 }, lower: { blink: 32, squint: 8, wide: -5 } };
+
+/**
+ * Upper and lower lids: spherical patches around the eye, wide enough to cover the whole eyeball, each turned about
+ * the eye's X axis for each morph. At rest the opening runs from 30 degrees below the gaze axis to 35 above.
+ */
+function lids(side: 'L' | 'R', radius: number, sweeps = LID_SWEEPS): SynthMesh {
   const center = EYES[side], suffix = side === 'L' ? 'Left' : 'Right';
-  const at = (yaw: number, elevation: number): Vec3 => {
+  const at = (r: number, yaw: number, elevation: number): Vec3 => {
     const y = yaw * Math.PI / 180, e = elevation * Math.PI / 180;
-    return add(center, [radius * Math.cos(e) * Math.sin(y), radius * Math.sin(e), radius * Math.cos(e) * Math.cos(y)]);
+    return add(center, [r * Math.cos(e) * Math.sin(y), r * Math.sin(e), r * Math.cos(e) * Math.cos(y)]);
   };
-  const upper = grid(4, 3, (u, v) => at(-40 + 80 * u, 70 - 30 * v));
-  const turn = (degrees: number) => upper.positions.map(p => rotateX(p, center, -degrees));
+  const upper = grid(16, 16, (u, v) => at(radius, -89 + 178 * u, 150 - 115 * v));
+  const lower = grid(16, 16, (u, v) => at(radius - 0.0005, -89 + 178 * u, -30 - 120 * v));
+  const positions = [...upper.positions, ...lower.positions];
+  const indices = [...upper.indices, ...lower.indices.map(i => i + upper.positions.length)];
+  const turn = (state: 'blink' | 'squint' | 'wide') => [
+    ...upper.positions.map(p => rotateX(p, center, -sweeps.upper[state])),
+    ...lower.positions.map(p => rotateX(p, center, -sweeps.lower[state])),
+  ];
   return {
-    name: `lids_${side}`, material: 'lid', positions: upper.positions, indices: upper.indices,
+    name: `lids_${side}`, material: 'lid', positions, indices,
     targets: [
-      { name: `eyeBlink${suffix}`, positions: turn(sweeps.blink) },
-      { name: `eyeSquint${suffix}`, positions: turn(sweeps.squint) },
-      { name: `eyeWide${suffix}`, positions: turn(sweeps.wide) },
+      { name: `eyeBlink${suffix}`, positions: turn('blink') },
+      { name: `eyeSquint${suffix}`, positions: turn('squint') },
+      { name: `eyeWide${suffix}`, positions: turn('wide') },
     ],
-    bones: upper.positions.map(() => 'head'),
+    bones: positions.map(() => 'head'),
   };
+}
+
+/**
+ * Skin in front of the lids with a hole for the opening, as a head's socket rim does: turning lid patches never meet
+ * at the far corners of the eye, so the skin hides the corners and the lids close the hole.
+ */
+function eyeMask(side: 'L' | 'R'): SynthMesh {
+  const [cx, cy] = EYES[side], z = EYES[side][2] + 0.016, hole = { x: 0.0065, low: -0.006, high: 0.0065 }, reach = 0.02;
+  const positions: Vec3[] = [], indices: number[] = [];
+  const quad = (x0: number, x1: number, y0: number, y1: number) => {
+    const base = positions.length;
+    positions.push([cx + x0, cy + y0, z], [cx + x1, cy + y0, z], [cx + x1, cy + y1, z], [cx + x0, cy + y1, z]);
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  };
+  quad(-reach, reach, hole.high, reach); quad(-reach, reach, -reach, hole.low);
+  quad(-reach, -hole.x, hole.low, hole.high); quad(hole.x, reach, hole.low, hole.high);
+  return { name: `eye_mask_${side}`, material: 'skin', positions, indices, targets: [], bones: positions.map(() => 'head') };
+}
+
+/**
+ * Robot shutters in front of an eye with no skin rim (the skin hole is wider than the eye): two flat blades that
+ * translate, sized like `shutter_geometry`'s opening (.7, .55), meet 0 and squint .45. `blade` is the blade height in
+ * eyeball radii and `overlap` how far the closed upper blade passes the meet line; round 2 used 1.3 and 0.08, which
+ * leaves the bottom of the eye bare at blink 1 + squint 1 (and blink 1 + wide 1 open).
+ */
+export function shutterEye(head: SynthHead, side: 'L' | 'R', blade: number, overlap = 0.38): void {
+  const [cx, cy, cz] = EYES[side], r = EYE_RADIUS, suffix = side === 'L' ? 'Left' : 'Right';
+  const travel = (1 - 0.45) * (0.7 + 0.55) * r;
+  const edges = {
+    upper: { rest: 0.7 * r, blink: -overlap * r, squint: 0.7 * r - 0.35 * travel, wide: 0.9 * r },
+    lower: { rest: -0.55 * r, blink: 0, squint: -0.55 * r + 0.65 * travel, wide: -0.65 * r },
+  };
+  const box = (key: 'upper' | 'lower', state: 'rest' | 'blink' | 'squint' | 'wide'): Vec3[] => {
+    const edge = edges[key][state], z = cz + r + (key === 'upper' ? 0.0015 : 0.0008);
+    const [y0, y1] = key === 'upper' ? [edge, edge + blade * r] : [edge - blade * r, edge];
+    return [[cx - 1.1 * r, cy + y0, z], [cx + 1.1 * r, cy + y0, z], [cx + 1.1 * r, cy + y1, z], [cx - 1.1 * r, cy + y1, z]];
+  };
+  const at = (state: 'rest' | 'blink' | 'squint' | 'wide') => [...box('upper', state), ...box('lower', state)];
+  const positions = at('rest');
+  const index = head.meshes.findIndex(m => m.name === `lids_${side}`);
+  head.meshes[index] = {
+    name: `lids_${side}`, material: 'lid', positions, indices: [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7],
+    targets: [{ name: `eyeBlink${suffix}`, positions: at('blink') }, { name: `eyeSquint${suffix}`, positions: at('squint') }, { name: `eyeWide${suffix}`, positions: at('wide') }],
+    bones: positions.map(() => 'head'),
+  };
+  head.meshes = head.meshes.filter(m => m.name !== `eye_mask_${side}`);
+}
+
+/** Rebuild one eye's lids with other sweeps (for negative fixtures). */
+export function relid(head: SynthHead, side: 'L' | 'R', sweeps: typeof LID_SWEEPS): void {
+  const index = head.meshes.findIndex(m => m.name === `lids_${side}`);
+  head.meshes[index] = lids(side, 0.015, sweeps);
 }
 
 export const JAW_DROP = 0.03;
@@ -153,7 +217,7 @@ export function passingHead(): SynthHead {
     ],
     meshes: [
       { name: 'skull', material: 'skin', ...skull, targets: [], bones: skull.positions.map(() => 'head') },
-      faceMesh, eye('L'), eye('R'), lids('L', 0.015), lids('R', 0.015),
+      faceMesh, eye('L'), eye('R'), lids('L', 0.015), lids('R', 0.015), eyeMask('L'), eyeMask('R'),
       { name: 'teeth_upper', material: 'teeth_upper', ...upperTeeth, targets: [], bones: upperTeeth.positions.map(() => 'head') },
       { name: 'teeth_lower', material: 'teeth_lower', ...lowerTeeth, targets: [{ name: 'jawOpen', positions: jaw(lowerTeeth.positions) }], bones: lowerTeeth.positions.map(() => 'head') },
       { name: 'tongue', material: 'tongue', ...tongue, targets: [{ name: 'jawOpen', positions: jaw(tongue.positions) }], bones: tongue.positions.map(() => 'head') },

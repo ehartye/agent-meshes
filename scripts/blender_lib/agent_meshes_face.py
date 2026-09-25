@@ -16,7 +16,7 @@ import struct
 
 __all__ = [
     'ARKIT_REQUIRED', 'ARKIT_OPTIONAL', 'ARKIT_GAZE', 'ARKIT_NAMES', 'CANONICAL_EMOTIONS', 'DEFAULT_LID_FOLLOW',
-    'lid_geometry', 'shutter_geometry', 'lid_clearance', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
+    'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
     'symmetric_offsets', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
@@ -241,64 +241,78 @@ def lid_geometry(center, eye_radius, opening=(45, 38, 30), meet=-8, overlap=4, c
     yaws = [-span + 2 * span * j / columns for j in range(columns + 1)]
     profile = [max(0.0, 1 - (yaw / width) ** 2) ** corner for yaw in yaws]
     travel = (1 - squint) * (upper + lower)
-    states = {
-        'upper': {
-            'rest': [meet + (upper - meet) * p for p in profile],
-            'blink': [meet - overlap for _ in profile],
-            'squint': [meet + (upper - meet) * p - share * travel * p for p in profile],
-            'wide': [meet + (upper - meet) * p + wide_up * p for p in profile],
-        },
-        'lower': {
-            'rest': [meet - (lower + meet) * p for p in profile],
-            'blink': [meet for _ in profile],
-            'squint': [meet - (lower + meet) * p + (1 - share) * travel * p for p in profile],
-            'wide': [meet - (lower + meet) * p - wide_down * p for p in profile],
-        },
-    }
-    middle = columns // 2
-    height = lambda key, state: math.sin(math.radians(states[key][state][middle]))
-    squint_ratio = (height('upper', 'squint') - height('lower', 'squint')) / (height('upper', 'rest') - height('lower', 'rest'))
-    if not .25 <= squint_ratio <= .6:
-        raise ValueError(f'Squint leaves {squint_ratio:.2f} of the opening; the contract needs 0.25-0.6')
-    anchors = {
-        'upper': min(86.0, max(max(e) for e in states['upper'].values()) + 20),
-        'lower': max(-86.0, min(min(e) for e in states['lower'].values()) - 20),
-    }
+    aperture = eye_radius * math.sin(math.radians(width))
     required = eye_radius + clearance
-
-    def build(key, inner):
-        layers = {state: _lid_layers(center, inner, thickness, yaws, anchors[key], edges, rows) for state, edges in states[key].items()}
-        return layers
-
-    def solve(key, radius):
-        for _ in range(60):
-            layers = build(key, radius)
-            reach = lid_clearance(center, eye_radius, layers['rest'], [layers[s] for s in ('blink', 'squint', 'wide')]) + eye_radius
-            if reach >= required - 1e-12: return radius, layers
-            radius *= required / reach * (1 + 1e-9)
-        raise ValueError('Could not find a lid radius with enough clearance')
-
-    lower_radius, lower_layers = solve('lower', max(required, _number(min_radius, 'Minimum lid radius', 0) if min_radius is not None else 0))
-    upper_radius, upper_layers = solve('upper', max(required, lower_radius + thickness + gap))
     grid = [[0] * (columns + 1) for _ in range(rows + 1)]
     faces_one = _thick_grid(grid, grid)
-    offset = len(lower_layers['rest'])
-    upper_faces = _outward(upper_layers['rest'], faces_one)
-    lower_faces = _outward(lower_layers['rest'], faces_one)
-    vertices = upper_layers['rest'] + lower_layers['rest']
-    faces = upper_faces + [tuple(i + offset for i in face) for face in lower_faces]
-    morphs = {state: upper_layers[state] + lower_layers[state] for state in ('blink', 'squint', 'wide')}
+
+    def attempt(rise):
+        # Linear morphs add, so blink 1 + wide 1 (surprised plus an idle blink) parts the closed lids by the wide travel.
+        # Behind the upper lid, the closed lower lid can rise past the meet line by `rise` times that travel (less half
+        # the overlap) to keep them overlapping. Near the corners, where the wide travel is small, it stays on the line.
+        states = {
+            'upper': {
+                'rest': [meet + (upper - meet) * p for p in profile],
+                'blink': [meet - overlap for _ in profile],
+                'squint': [meet + (upper - meet) * p - share * travel * p for p in profile],
+                'wide': [meet + (upper - meet) * p + wide_up * p for p in profile],
+            },
+            'lower': {
+                'rest': [meet - (lower + meet) * p for p in profile],
+                'blink': [meet + rise * max(0.0, (wide_up + wide_down) * p - overlap / 2) for p in profile],
+                'squint': [meet - (lower + meet) * p + (1 - share) * travel * p for p in profile],
+                'wide': [meet - (lower + meet) * p - wide_down * p for p in profile],
+            },
+        }
+        middle = columns // 2
+        height = lambda key, state: math.sin(math.radians(states[key][state][middle]))
+        squint_ratio = (height('upper', 'squint') - height('lower', 'squint')) / (height('upper', 'rest') - height('lower', 'rest'))
+        if not .25 <= squint_ratio <= .6:
+            raise ValueError(f'Squint leaves {squint_ratio:.2f} of the opening; the contract needs 0.25-0.6')
+        anchors = {
+            'upper': min(86.0, max(max(e) for e in states['upper'].values()) + 20),
+            'lower': max(-86.0, min(min(e) for e in states['lower'].values()) - 20),
+        }
+
+        def solve(key, radius):
+            for _ in range(60):
+                layers = {state: _lid_layers(center, radius, thickness, yaws, anchors[key], edges, rows) for state, edges in states[key].items()}
+                reach = lid_clearance(center, eye_radius, layers['rest'], [layers[s] for s in ('blink', 'squint', 'wide')]) + eye_radius
+                if reach >= required - 1e-12: return radius, layers
+                radius *= required / reach * (1 + 1e-9)
+            raise ValueError('Could not find a lid radius with enough clearance')
+
+        lower_radius, lower_layers = solve('lower', max(required, _number(min_radius, 'Minimum lid radius', 0) if min_radius is not None else 0))
+        upper_radius, upper_layers = solve('upper', max(required, lower_radius + thickness + gap))
+        offset = len(lower_layers['rest'])
+        vertices = upper_layers['rest'] + lower_layers['rest']
+        faces = _outward(upper_layers['rest'], faces_one) + [tuple(i + offset for i in face) for face in _outward(lower_layers['rest'], faces_one)]
+        morphs = {state: upper_layers[state] + lower_layers[state] for state in ('blink', 'squint', 'wide')}
+        folded = _folded(vertices, faces, morphs)
+        if folded: return None, f'Lid faces fold over at {", ".join(folded)}; raise `corner` (now {corner}) or widen the opening'
+        # Above the upper lid's anchor and below the lower lid's the eyeball is the skin's to hide.
+        band = (lower_radius * math.sin(math.radians(anchors['lower'])), upper_radius * math.sin(math.radians(anchors['upper'])))
+        uncovered = eye_coverage_problems(center, eye_radius, {'vertices': vertices, 'faces': faces, 'morphs': morphs, 'aperture': aperture, 'band': band})
+        if uncovered: return None, f'The lids leave the eyeball uncovered: {uncovered[0]}; raise `overlap`, lower `wide` or raise `corner`'
+        return (states, vertices, faces, morphs, upper_radius, lower_radius, squint_ratio, rise, band), None
+
+    # The least lower-lid rise that keeps blink + wide closed: every extra degree adds to blink + squint's sweep.
+    problems = []
+    for rise in (0, .25, .5, .75, 1):
+        built, problem = attempt(rise)
+        if built: break
+        if problem not in problems: problems.append(problem)
+    else: raise ValueError('; '.join(problems))
+    states, vertices, faces, morphs, upper_radius, lower_radius, squint_ratio, rise, band = built
     minimum = lid_clearance(center, eye_radius, vertices, [morphs[s] for s in ('blink', 'squint', 'wide')])
-    folded = _folded(vertices, faces, morphs)
-    if folded: raise ValueError(f'Lid faces fold over at {", ".join(folded)}; raise `corner` (now {corner}) or widen the opening')
     edges = {'yaw': yaws}
     for key in ('upper', 'lower'):
         edges[key] = [{state: states[key][state][j] for state in states[key]} for j in range(columns + 1)]
     return {
         'vertices': vertices, 'faces': faces, 'morphs': morphs, 'style': 'lid',
         'upper_radius': upper_radius, 'lower_radius': lower_radius, 'thickness': thickness,
-        'min_clearance': minimum, 'squint_ratio': squint_ratio, 'edges': edges,
-        'opening': (width, upper, lower), 'wide': (wide_up, wide_down),
+        'min_clearance': minimum, 'squint_ratio': squint_ratio, 'edges': edges, 'aperture': aperture, 'band': band,
+        'opening': (width, upper, lower), 'wide': (wide_up, wide_down), 'lower_rise': rise,
     }
 
 
@@ -357,6 +371,15 @@ def shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=
     weight keeps the whole blade at least that far from the eye center. Heights are
     fractions of the eyeball radius above (+) and below (-) the eye center:
     `opening` = (upper edge, lower edge depth) at rest, `meet` where they close.
+    `aperture` is the blades' half-width in meters (default 1.1 radii).
+
+    Morphs add linearly, so blink 1 + squint 1 pushes each blade past the meet line
+    by the squint travel too, and blink 1 + wide 1 pulls the blades apart by the wide
+    travel. The blades are sized for every blink/squint/wide combination in [0, 1]^3:
+    `blade_height` (default: the least that works plus 5% of the radius) keeps the
+    upper blade's top above the eyeball and the lower blade's bottom below it, and
+    `overlap` (default: the wide travel plus 8% of the radius) keeps a full blink
+    closed while the eyes are wide. Explicit values that cannot do this are rejected.
     """
     center = _vector(center, 3, 'Eye center')
     r = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
@@ -365,14 +388,20 @@ def shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=
     meet = _number(meet, 'Meet height')
     if not -lower < meet < upper: raise ValueError('Meet height must lie inside the opening')
     half = 1.1 * r if aperture is None else _number(aperture, 'Aperture half-width', 0, low_open=True)
-    overlap = .08 * r if overlap is None else _number(overlap, 'Overlap', 0)
+    wide_up, wide_down = _vector(wide, 2, 'Wide')
+    _number(wide_up, 'Wide lift', 0); _number(wide_down, 'Wide drop', 0)
+    wide_travel = (wide_up + wide_down) * r
+    if overlap is None: overlap = wide_travel + .08 * r
+    else:
+        overlap = _number(overlap, 'Overlap', 0)
+        if overlap <= wide_travel:
+            raise ValueError(f'Overlap {overlap * 1000:.2f} mm opens the shutters at blink 1 + wide 1: it must exceed '
+                             f'the wide travel ({wide_travel * 1000:.2f} mm)')
     clearance = _number(clearance, 'Clearance', 0)
     thickness = max(.0006, .06 * r) if thickness is None else _number(thickness, 'Blade thickness', 0, low_open=True)
     gap = max(.0002, .02 * r) if gap is None else _number(gap, 'Blade gap', 0)
-    blade = 1.3 * r if blade_height is None else _number(blade_height, 'Blade height', 0, low_open=True)
     squint = _number(squint, 'Squint open fraction', .05, .95)
     share = _number(squint_upper_share, 'Squint upper share', 0, 1)
-    wide_up, wide_down = _vector(wide, 2, 'Wide')
     travel = (1 - squint) * (upper + lower) * r
     edges = {
         'upper': {'rest': upper * r, 'blink': meet * r - overlap, 'squint': upper * r - share * travel, 'wide': (upper + wide_up) * r},
@@ -381,6 +410,25 @@ def shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=
     squint_ratio = (edges['upper']['squint'] - edges['lower']['squint']) / (edges['upper']['rest'] - edges['lower']['rest'])
     if not .25 <= squint_ratio <= .6:
         raise ValueError(f'Squint leaves {squint_ratio:.2f} of the opening; the contract needs 0.25-0.6')
+    # Each edge is linear in the weights, so its extremes over [0, 1]^3 lie at the corners of the weight cube.
+    corners = [(b, s, w) for b in (0, 1) for s in (0, 1) for w in (0, 1)]
+    names = ('blink', 'squint', 'wide')
+
+    def at(key, weights):
+        return edges[key]['rest'] + sum(k * (edges[key][state] - edges[key]['rest']) for k, state in zip(weights, names))
+
+    upper_low = min(corners, key=lambda c: at('upper', c))
+    lower_high = max(corners, key=lambda c: at('lower', c))
+    need_upper, need_lower = r - at('upper', upper_low), r + at('lower', lower_high)
+    need = max(need_upper, need_lower)
+    worst = upper_low if need_upper >= need_lower else lower_high
+    label = ' + '.join(f'{n} 1' for n, k in zip(names, worst) if k) or 'rest'
+    if blade_height is None: blade = need + .05 * r
+    else:
+        blade = _number(blade_height, 'Blade height', 0, low_open=True)
+        if blade < need - 1e-12:
+            raise ValueError(f'Blade height {blade * 1000:.2f} mm leaves the eyeball uncovered at {label}: '
+                             f'the blades must be at least {need * 1000:.2f} mm ({need / r:.3f} eyeball radii) tall')
     lower_plane = r + clearance
     upper_plane = lower_plane + thickness + gap
     cx, cy, cz = center
@@ -397,11 +445,111 @@ def shutter_geometry(center, eye_radius, aperture=None, opening=(.7, .55), meet=
         faces += [tuple(i + len(vertices) for i in face) for face in blade_faces]
         vertices += rest
         for state in morphs: morphs[state] += blade_vertices(key, state)[0]
-    return {
-        'vertices': vertices, 'faces': faces, 'morphs': morphs, 'style': 'shutter', 'edges': edges,
+    result = {
+        'vertices': vertices, 'faces': faces, 'morphs': morphs, 'style': 'shutter', 'edges': edges, 'aperture': half,
         'upper_plane': upper_plane, 'lower_plane': lower_plane, 'thickness': thickness, 'squint_ratio': squint_ratio,
-        'min_clearance': lid_clearance(center, r, vertices, [morphs[s] for s in ('blink', 'squint', 'wide')]),
+        'blade_height': blade, 'overlap': overlap,
+        'min_clearance': lid_clearance(center, r, vertices, [morphs[s] for s in names]),
     }
+    uncovered = eye_coverage_problems(center, r, result)
+    if uncovered: raise ValueError(f'The shutters leave the eyeball uncovered: {uncovered[0]}')
+    return result
+
+
+def _state(label, kind, blink=0, squint=0, wide=0):
+    return {'label': label, 'kind': kind, 'weights': {'blink': blink, 'squint': squint, 'wide': wide}}
+
+
+# Rig-contract invariant 1 (blink .25/.5/.75/1, alone and with squint 1) plus squint, wide, and blink with wide
+# (surprised plus an idle blink). A 'closed' state hides the whole eyeball; a 'narrow' one shows only what neutral shows.
+COVERAGE_STATES = tuple(
+    [_state(f'blink {b:g}', 'narrow', b) for b in (.25, .5, .75)]
+    + [_state(f'blink {b:g} + squint 1', 'narrow', b, 1) for b in (.25, .5, .75)]
+    + [_state('squint 1', 'narrow', squint=1), _state('wide 1', 'wide', wide=1)]
+    + [_state('blink 1', 'closed', 1), _state('blink 1 + squint 1', 'closed', 1, 1),
+       _state('blink 1 + wide 1', 'closed', 1, wide=1), _state('blink 1 + squint 1 + wide 1', 'closed', 1, 1, 1)]
+)
+
+
+def eye_coverage(center, radius, geometry, weights=None, samples=81, aperture=None):
+    """Which front-view rays across the eyeball's disk reach the eyeball before any lid geometry.
+
+    Rays run along +Y (the face looks down -Y) on a `samples` x `samples` grid over
+    the disk of `radius` around `center`, limited to |x - cx| <= `aperture` (default:
+    the geometry's `aperture`, the lids' or blades' half-width) and to heights
+    dz in the geometry's `band` (the lids' anchors), if any: the skin hides the rest. `geometry` has vertices, faces and morphs {'blink', 'squint', 'wide'};
+    `weights` mixes them linearly, as engines do. Returns {'visible': grid cells
+    (i, j) whose ray reaches the eyeball, 'samples': rays cast, 'step': grid spacing,
+    'lowest' / 'highest': the visible rays' extreme heights in eyeball radii}.
+    """
+    cx, cy, cz = _vector(center, 3, 'Eye center')
+    r = _number(radius, 'Eyeball radius', 0, low_open=True)
+    samples = _count(samples, 'Coverage samples', 5)
+    half = geometry.get('aperture') if aperture is None else aperture
+    half = r if half is None else min(r, _number(half, 'Aperture'))
+    low, high = geometry.get('band') or (-r, r)
+    rest = geometry['vertices']
+    moved = [list(v) for v in rest]
+    for name, w in (weights or {}).items():
+        if not w: continue
+        for i, (a, b) in enumerate(zip(rest, geometry['morphs'][name])):
+            for k in range(3): moved[i][k] += w * (b[k] - a[k])
+    step = 2 * r / (samples - 1)
+    x0, z0 = cx - r, cz - r
+    limit = (r * .999) ** 2
+    eye_y, covered = {}, set()
+    for i in range(samples):
+        dx = x0 + i * step - cx
+        if abs(dx) > half + 1e-12: continue
+        for j in range(samples):
+            dz = z0 + j * step - cz
+            if dx * dx + dz * dz < limit and low <= dz <= high: eye_y[(i, j)] = cy - math.sqrt(r * r - dx * dx - dz * dz)
+    for face in geometry['faces']:
+        for t in range(1, len(face) - 1):
+            a, b, c = moved[face[0]], moved[face[t]], moved[face[t + 1]]
+            d = (b[2] - c[2]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[2] - c[2])
+            if abs(d) < 1e-18: continue
+            i0 = max(0, math.ceil((min(a[0], b[0], c[0]) - x0) / step - 1e-9))
+            i1 = min(samples - 1, math.floor((max(a[0], b[0], c[0]) - x0) / step + 1e-9))
+            j0 = max(0, math.ceil((min(a[2], b[2], c[2]) - z0) / step - 1e-9))
+            j1 = min(samples - 1, math.floor((max(a[2], b[2], c[2]) - z0) / step + 1e-9))
+            for i in range(i0, i1 + 1):
+                x = x0 + i * step
+                for j in range(j0, j1 + 1):
+                    key = (i, j)
+                    if key in covered or key not in eye_y: continue
+                    z = z0 + j * step
+                    u = ((b[2] - c[2]) * (x - c[0]) + (c[0] - b[0]) * (z - c[2])) / d
+                    v = ((c[2] - a[2]) * (x - c[0]) + (a[0] - c[0]) * (z - c[2])) / d
+                    if u < -1e-9 or v < -1e-9 or 1 - u - v < -1e-9: continue
+                    if u * a[1] + v * b[1] + (1 - u - v) * c[1] < eye_y[key] - 1e-9: covered.add(key)
+    visible = sorted(k for k in eye_y if k not in covered)
+    heights = [(z0 + j * step - cz) / r for _, j in visible]
+    return {'visible': visible, 'samples': len(eye_y), 'step': step,
+            'lowest': min(heights) if heights else None, 'highest': max(heights) if heights else None}
+
+
+def eye_coverage_problems(center, radius, geometry, samples=81, aperture=None):
+    """Front-view coverage problems of lids or shutters across `COVERAGE_STATES` (empty when the eye stays covered).
+
+    A closed state (blink 1, alone or with squint and wide) must hide every ray over
+    the eyeball within the aperture; a closing state (mid-blink, squint) may show
+    only rays the neutral opening shows, so no eyeball appears over a lid. The
+    `arkit-face/1` verifier runs the same states on the whole exported head.
+    """
+    def look(weights): return eye_coverage(center, radius, geometry, weights, samples, aperture)
+    neutral = set(look({})['visible'])
+    problems = []
+    for state in COVERAGE_STATES:
+        if state['kind'] == 'wide': continue
+        seen = look(state['weights'])
+        if state['kind'] == 'closed' and seen['visible']:
+            problems.append(f"{state['label']}: {len(seen['visible'])} of {seen['samples']} front rays reach the eyeball "
+                            f"(heights {seen['lowest']:+.3f} to {seen['highest']:+.3f} eyeball radii); a full blink must cover it")
+        elif state['kind'] == 'narrow':
+            extra = [k for k in seen['visible'] if k not in neutral]
+            if extra: problems.append(f"{state['label']}: {len(extra)} front rays see the eyeball outside the neutral opening")
+    return problems
 
 
 def eyeball_geometry(center, radius, iris=26, pupil=12, rings=16, segments=32):

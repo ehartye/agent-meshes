@@ -41,10 +41,25 @@ export const MIN_MORPH_MOTION = 0.001;
 export const MIN_CHIN_DROP_RATIO = 0.1;
 /** The upper lip and the face above it may move at most this much under jawOpen = 1. */
 export const UPPER_LIP_TOLERANCE = 0.0005;
+/** Rays per eyeball width for the eye-coverage check (about 0.5 mm apart on a 12 mm eye). */
+export const COVERAGE_GRID = 48;
+/**
+ * Rig-contract invariant 1: blink .25/.5/.75/1, alone and with squint 1, plus squint and wide alone and a full blink
+ * with wide (surprised plus an idle blink). A closed state must hide the whole eyeball; a closing one may show only
+ * rays the neutral opening shows (no eyeball over a lid). Wide is measured, not judged: it opens the eye by design.
+ */
+export const EYE_COVERAGE_STATES: readonly { kind: 'closed' | 'narrow' | 'wide'; blink: number; squint: number; wide: number }[] = [
+  ...[0.25, 0.5, 0.75].flatMap(blink => [{ kind: 'narrow' as const, blink, squint: 0, wide: 0 }, { kind: 'narrow' as const, blink, squint: 1, wide: 0 }]),
+  { kind: 'narrow', blink: 0, squint: 1, wide: 0 }, { kind: 'wide', blink: 0, squint: 0, wide: 1 },
+  { kind: 'closed', blink: 1, squint: 0, wide: 0 }, { kind: 'closed', blink: 1, squint: 1, wide: 0 },
+  { kind: 'closed', blink: 1, squint: 0, wide: 1 }, { kind: 'closed', blink: 1, squint: 1, wide: 1 },
+];
 const LID_MOTION = 0.00001, UPPER_TEETH_TOLERANCE = 0.0001, BOUND = 0.999, PIVOT_TOLERANCE = 0.001;
 
 export interface FaceCheck { id: string; ok: boolean; message: string; problems: string[] }
-interface EyeMeasure { center: number[]; radius: number; minLidClearance: number | null; eyeballs: string[]; lidVertices: number }
+/** Front rays cast across one eyeball: how many reach it, at neutral and in each coverage state (keyed by its weights). */
+export interface EyeCoverage { samples: number; neutral: number; visible: Record<string, number> }
+interface EyeMeasure { center: number[]; radius: number; minLidClearance: number | null; eyeballs: string[]; lidVertices: number; coverage: EyeCoverage | null }
 export interface FaceContractReport {
   contract: typeof ARKIT_FACE_CONTRACT; ok: boolean; failures: string[]; warnings: string[]; checks: FaceCheck[];
   validator: { errors: number; warnings: number };
@@ -56,6 +71,8 @@ export interface FaceContractReport {
     upperLipMove: number | null;
     /** What a front view hits first between the teeth rows at jawOpen = 1, at the mouth center and to each side. */
     mouthOpen: { height: number; xs: number[]; hits: string[] } | null;
+    /** Front rays over the teeth rows at rest: how many land on teeth before anything else (declared exposedTeeth may show). */
+    restTeeth: { samples: number; visible: number } | null;
     eyes: Partial<Record<'L' | 'R', EyeMeasure>>; teeth: { upperMove: number | null; lowerDrop: number | null };
   };
 }
@@ -191,6 +208,38 @@ function rayZ(points: Float64Array, a: number, b: number, c: number, x: number, 
   return u * points[a * 3 + 2] + v * points[b * 3 + 2] + w * points[c * 3 + 2];
 }
 
+/** A front-view depth buffer over a grid of (x, y) rays: the frontmost z and which part owns it. */
+interface Raster { x0: number; y0: number; step: number; nx: number; ny: number; depth: Float64Array; owner: Int32Array }
+
+function raster(x0: number, x1: number, y0: number, y1: number, columns: number): Raster {
+  const step = Math.max(x1 - x0, 1e-9) / (columns - 1), nx = columns, ny = Math.max(2, Math.ceil((y1 - y0) / step) + 1);
+  return { x0, y0, step, nx, ny, depth: new Float64Array(nx * ny).fill(-Infinity), owner: new Int32Array(nx * ny).fill(-1) };
+}
+
+/** Rasterize triangles into the buffer, keeping the frontmost (largest z) surface per ray. */
+function draw(target: Raster, points: Float64Array, tris: Uint32Array, owner: number): void {
+  const { x0, y0, step, nx, ny, depth } = target;
+  for (let t = 0; t < tris.length; t += 3) {
+    const a = tris[t] * 3, b = tris[t + 1] * 3, c = tris[t + 2] * 3;
+    const ax = points[a], ay = points[a + 1], bx = points[b], by = points[b + 1], cx = points[c], cy = points[c + 1];
+    const i0 = Math.max(0, Math.ceil((Math.min(ax, bx, cx) - x0) / step - 1e-9)), i1 = Math.min(nx - 1, Math.floor((Math.max(ax, bx, cx) - x0) / step + 1e-9));
+    const j0 = Math.max(0, Math.ceil((Math.min(ay, by, cy) - y0) / step - 1e-9)), j1 = Math.min(ny - 1, Math.floor((Math.max(ay, by, cy) - y0) / step + 1e-9));
+    if (i0 > i1 || j0 > j1) continue;
+    const d = (by - cy) * (ax - cx) + (cx - bx) * (ay - cy);
+    if (Math.abs(d) < 1e-18) continue;
+    for (let j = j0; j <= j1; j++) {
+      const y = y0 + j * step;
+      for (let i = i0; i <= i1; i++) {
+        const x = x0 + i * step;
+        const u = ((by - cy) * (x - cx) + (cx - bx) * (y - cy)) / d, v = ((cy - ay) * (x - cx) + (ax - cx) * (y - cy)) / d, w = 1 - u - v;
+        if (u < -1e-9 || v < -1e-9 || w < -1e-9) continue;
+        const z = u * points[a + 2] + v * points[b + 2] + w * points[c + 2], k = j * nx + i;
+        if (z > depth[k]) { depth[k] = z; target.owner[k] = owner; }
+      }
+    }
+  }
+}
+
 /** Problems with a root node's `extras` against the `arkit-face/1` schema; `exposedTeeth` is checked separately. */
 export function faceExtrasProblems(extras: unknown, fileMorphs?: string[]): string[] {
   const problems: string[] = [];
@@ -244,7 +293,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     if (skippedBecause) checks.push({ id, ok: false, message: `skipped: ${skippedBecause}`, problems: [`skipped because ${skippedBecause}`] });
     else checks.push({ id, ok: problems.length === 0, message: problems.length ? problems[0] : message, problems });
   };
-  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null } };
+  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, restTeeth: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null } };
 
   // 1. glTF validator
   const validation = await verifyGLB(bytes);
@@ -283,7 +332,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   check('skinning', unskinned.length ? [`mesh node(s) not bound to the skin: ${unskinned.join(', ')}`] : [], 'every mesh is bound to the skin');
 
   // 4. eyes
-  const eyes: Partial<Record<'L' | 'R', { center: Vector3; radius: number }>> = {};
+  const eyes: Partial<Record<'L' | 'R', { center: Vector3; radius: number; balls: Instance[] }>> = {};
   const eyeProblems: string[] = [];
   const eyeballInstances = new Set<Instance>();
   for (const side of ['L', 'R'] as const) {
@@ -308,8 +357,8 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     }
     const offset = Math.hypot((min[0] + max[0]) / 2 - center.x, (min[1] + max[1]) / 2 - center.y, (min[2] + max[2]) / 2 - center.z);
     if (offset > PIVOT_TOLERANCE) eyeProblems.push(`eye_${side} pivots ${mm(offset)} from its eyeball's center (allowed ${mm(PIVOT_TOLERANCE)})`);
-    eyes[side] = { center, radius };
-    measurements.eyes[side] = { center: center.toArray().map(v => round(v)), radius: round(radius), minLidClearance: null, eyeballs: balls.map(b => b.label), lidVertices: 0 };
+    eyes[side] = { center, radius, balls };
+    measurements.eyes[side] = { center: center.toArray().map(v => round(v)), radius: round(radius), minLidClearance: null, eyeballs: balls.map(b => b.label), lidVertices: 0, coverage: null };
   }
   check('eyes', eyeProblems, 'each eyeball is bound 100% to its eye bone, which pivots at its center');
 
@@ -440,6 +489,46 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     check('lid-clearance', lidProblems, `lid vertices stay >= eyeball radius + ${mm(LID_CLEARANCE)} from the eye center at blink .25/.5/.75/1, alone and with squint`);
   } else check('lid-clearance', [], '', 'the eyes were not found');
 
+  // 10b. eye coverage: front rays across each eyeball, lids, skin and everything else in front of it
+  if (eyes.L && eyes.R) {
+    const coverageProblems: string[] = [];
+    const occluders = all.filter(i => !eyeballInstances.has(i));
+    for (const side of ['L', 'R'] as const) {
+      const suffix = side === 'L' ? 'Left' : 'Right', { center, radius, balls } = eyes[side]!;
+      const names = { blink: `eyeBlink${suffix}`, squint: `eyeSquint${suffix}`, wide: `eyeWide${suffix}` };
+      const eyeLabel = [...new Set(balls.map(b => b.label.replace(/\[.*\]$/, '')))].join(', ');
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const ball of balls) for (let v = 0; v < ball.count; v++) { x0 = Math.min(x0, ball.rest[v * 3]); x1 = Math.max(x1, ball.rest[v * 3]); y0 = Math.min(y0, ball.rest[v * 3 + 1]); y1 = Math.max(y1, ball.rest[v * 3 + 1]); }
+      const eyeball = raster(x0, x1, y0, y1, COVERAGE_GRID);
+      for (const ball of balls) draw(eyeball, ball.rest, ball.triangles, 0);
+      const samples = eyeball.depth.reduce((n, z) => n + (z > -Infinity ? 1 : 0), 0);
+      const look = (weights: Record<string, number>) => {
+        const front = raster(x0, x1, y0, y1, COVERAGE_GRID);
+        occluders.forEach((instance, k) => draw(front, Object.values(weights).some(Boolean) ? positions(instance, weights) : instance.rest, instance.triangles, k));
+        const visible: number[] = [];
+        for (let k = 0; k < eyeball.depth.length; k++) if (eyeball.depth[k] > -Infinity && eyeball.depth[k] > front.depth[k]) visible.push(k);
+        return visible;
+      };
+      const neutral = new Set(look({}));
+      const coverage: EyeCoverage = { samples, neutral: neutral.size, visible: {} };
+      for (const state of EYE_COVERAGE_STATES) {
+        const weights = Object.fromEntries((['blink', 'squint', 'wide'] as const).filter(k => state[k]).map(k => [names[k], state[k]]));
+        const label = Object.entries(weights).map(([name, w]) => `${name}=${w}`).join(' + ');
+        const visible = look(weights);
+        coverage.visible[label] = visible.length;
+        if (state.kind === 'closed' && visible.length) {
+          const heights = visible.map(k => (eyeball.y0 + Math.floor(k / eyeball.nx) * eyeball.step - center.y) / radius);
+          coverageProblems.push(`${label}: ${visible.length} of ${samples} front rays reach ${eyeLabel} (heights ${Math.min(...heights).toFixed(2)} to ${Math.max(...heights).toFixed(2)} eyeball radii about its center): a full blink must cover the whole eyeball, whatever squint and wide add (shutter_geometry and lid_geometry size the lids for this)`);
+        } else if (state.kind === 'narrow') {
+          const extra = visible.filter(k => !neutral.has(k)).length;
+          if (extra) coverageProblems.push(`${label}: ${extra} front rays see ${eyeLabel} where the neutral lid opening hides it (eyeball over a lid)`);
+        }
+      }
+      measurements.eyes[side]!.coverage = coverage;
+    }
+    check('eye-coverage', coverageProblems, `front rays across each eyeball: every full blink (alone, with squint 1, with wide 1) covers it, and blink .25/.5/.75 and squint show nothing outside the neutral opening`);
+  } else check('eye-coverage', [], '', 'the eyes were not found');
+
   // 11-12. extras
   const carriers = [...graph.world.keys()].filter(n => isRecord(nodes[n]?.extras) && isRecord((nodes[n].extras as Record<string, unknown>).arkitFace));
   const rootCarriers = carriers.filter(n => graph.roots.includes(n));
@@ -449,9 +538,29 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
         : extrasProblems ?? [];
   check('extras', extrasList, 'root extras.arkitFace matches the arkit-face/1 schema and the file');
   const teeth = face?.exposedTeeth;
+  const teethProblemsAtRest: string[] = [];
+  const toothParts = all.filter(i => upperTeeth(i.names) || lowerTeeth(i.names));
+  if (toothParts.length) {
+    // Front rays over the teeth rows at rest: a closed face shows no teeth unless exposedTeeth declares them.
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const part of toothParts) for (let v = 0; v < part.count; v++) { x0 = Math.min(x0, part.rest[v * 3]); x1 = Math.max(x1, part.rest[v * 3]); y0 = Math.min(y0, part.rest[v * 3 + 1]); y1 = Math.max(y1, part.rest[v * 3 + 1]); }
+    const scene = all.filter(i => !eyeballInstances.has(i)), front = raster(x0, x1, y0, y1, 96), mask = raster(x0, x1, y0, y1, 96);
+    scene.forEach((instance, k) => draw(front, instance.rest, instance.triangles, k));
+    for (const part of toothParts) draw(mask, part.rest, part.triangles, 0);
+    let samples = 0, visible = 0;
+    const shown = new Set<string>();
+    for (let k = 0; k < mask.depth.length; k++) {
+      if (mask.depth[k] === -Infinity) continue;
+      samples++;
+      const owner = front.owner[k] >= 0 ? scene[front.owner[k]] : undefined;
+      if (owner && toothParts.includes(owner)) { visible++; shown.add(owner.label); }
+    }
+    measurements.restTeeth = { samples, visible };
+    if (visible && Array.isArray(teeth) && teeth.length === 0) teethProblemsAtRest.push(`at rest ${visible} of ${samples} front rays over the teeth land on ${[...shown].join(', ')} before the lips or jaw plate, but extras.arkitFace.exposedTeeth is empty: tuck the teeth behind the closed mouth or declare them`);
+  }
   check('exposed-teeth', !face ? ['extras.arkitFace is missing, so exposedTeeth is undeclared']
-    : Array.isArray(teeth) && teeth.every(t => typeof t === 'string' && t) ? [] : ['extras.arkitFace.exposedTeeth must declare the teeth visible at rest as a list of names (empty when none show)'],
-  `exposedTeeth declared: ${Array.isArray(teeth) ? JSON.stringify(teeth) : 'none'}`);
+    : Array.isArray(teeth) && teeth.every(t => typeof t === 'string' && t) ? teethProblemsAtRest : ['extras.arkitFace.exposedTeeth must declare the teeth visible at rest as a list of names (empty when none show)'],
+  `exposedTeeth declared: ${Array.isArray(teeth) ? JSON.stringify(teeth) : 'none'}${measurements.restTeeth ? `; ${measurements.restTeeth.visible} of ${measurements.restTeeth.samples} front rays see teeth at rest` : ''}`);
 
   // 13. head binding: the skull, gums, upper teeth and every morph-bearing part ride `head`
   const bindingProblems: string[] = [];
@@ -537,6 +646,10 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
       const height = (bite + lowTop) / 2, middle = (left + right) / 2, span = (right - left) / 2;
       const xs = [middle, middle - span / 3, middle + span / 3];
       const scene = all.map(instance => ({ instance, points: positions(instance, { jawOpen: 1 }) }));
+      // The back of the teeth rows: skin hit behind it is the inside of the head seen through the mouth.
+      let teethBack = Infinity;
+      for (const { instance, points } of scene) if (upperTeeth(instance.names) || lowerTeeth(instance.names)) for (let v = 0; v < instance.count; v++) teethBack = Math.min(teethBack, points[v * 3 + 2]);
+      const depths: number[] = [];
       const hits = xs.map(x => {
         let best = -Infinity, hit: Instance | undefined;
         for (const { instance, points } of scene) {
@@ -546,12 +659,15 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
             if (z !== null && z > best) { best = z; hit = instance; }
           }
         }
+        depths.push(best);
         return hit;
       });
       measurements.mouthOpen = { height: round(height), xs: xs.map(x => round(x)), hits: hits.map(h => h?.label ?? '(nothing)') };
-      const problems = hits.flatMap((hit, k) => hit && mouthPart(hit.names) ? [] : [hit
-        ? `jawOpen=1 does not open the mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, hits ${hit.label} before any teeth, tongue or mouth cavity (skin such as the upper lip covers the opening)`
-        : `jawOpen=1 opens a see-through mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, hits nothing (add a dark mouth cavity behind the lips)`]);
+      const problems = hits.flatMap((hit, k) => hit && mouthPart(hit.names) ? [] : [!hit
+        ? `jawOpen=1 opens a see-through mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, hits nothing (add a dark mouth cavity behind the lips)`
+        : depths[k] < teethBack
+          ? `jawOpen=1 opens a see-through mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, passes the teeth and hits the inside of ${hit.label} ${mm(teethBack - depths[k])} behind them (add a dark mouth cavity behind the lips)`
+          : `jawOpen=1 does not open the mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, hits ${hit.label} before any teeth, tongue or mouth cavity (skin such as the upper lip covers the opening)`]);
       check('mouth-open', problems, `jawOpen=1 shows ${[...new Set(hits.map(h => h?.label ?? '(nothing)'))].join(', ')} between the lips`);
     }
   } else check('mouth-open', [], '', 'the upper or lower teeth were not found');
