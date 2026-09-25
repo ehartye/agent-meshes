@@ -9,7 +9,7 @@ Build: node scripts/agent-meshes.mjs build <a build.json whose blender.script is
 Blender coordinates: Z up, meters, the face looks down -Y, character left is +X.
 """
 from agent_meshes_author import (
-    JawHinge, add_jaw_open, attach_to_skin, build_eye, cut_faces, ellipsoid_geometry, exposed_teeth_geometry, eye_hole,
+    JawHinge, add_jaw_open, attach_to_skin, build_eye, cut_faces, ellipsoid_geometry, exposed_teeth_geometry, eye_holes,
     eye_hole_mask, face_contract, face_skeleton, front_surface, join_face_parts, join_geometry, material, mesh_from_geometry,
     mouth_cavity_geometry, nose_geometry, sculpt_lips, paint_vertices, recommended_gaze, shape_key, skin_brow_geometry, skin_tints, use_vertex_colors, slit_mouth, soft_offset,
     symmetric_offsets, teeth_row_geometry, tongue_geometry,
@@ -30,11 +30,9 @@ def build():
     rig = face_skeleton(head=(0, 0, .1), eye_left=EYE_L, eye_right=EYE_R, name='Face rig')
 
     blank = ellipsoid_geometry(HEAD_CENTER, HEAD_RADII, rings=56, segments=72)
-    vertices, faces = blank['vertices'], blank['faces']
-    holes = {}
-    for side, eye in (('L', EYE_L), ('R', EYE_R)):
-        holes[side] = eye_hole(vertices, faces, eye, EYE_RADIUS, opening=OPENING)
-        vertices, faces = holes[side]['vertices'], holes[side]['faces']
+    # Both eye holes as exact mirror images (two eye_hole calls in a row differ: the second cuts reshaped skin).
+    cut = eye_holes(blank['vertices'], blank['faces'], EYE_L, EYE_RADIUS, opening=OPENING)
+    vertices, faces, holes = cut['vertices'], cut['faces'], {'L': cut['L'], 'R': cut['R']}
     # Soft lips with a lip line: slit_mouth cuts along the crease between them.
     lips = sculpt_lips(vertices, faces, MOUTH_Z, MOUTH_HW)
     # A button nose fused into the skin: a smooth-union ball with nostril dimples (material index 1). Both refine only
@@ -121,7 +119,7 @@ def build():
                 material('eye_pupil', (.01, .01, .01), roughness=.2)]
     parts, eyeballs = [head, cavity, upper, lower, buck, tongue, freck, brow_obj, hair], []
     for side, center in (('L', EYE_L), ('R', EYE_R)):
-        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, style='lid', hole=holes[side], eye_materials=eye_mats)
+        eye = build_eye(rig, side, center, EYE_RADIUS, lid_material=skin, style='lid', hole=holes[side], eye_materials=eye_mats, lash=True)
         eyeballs.append(eye['eyeball'])
         parts.append(eye['lids'])
     face = join_face_parts(parts, 'face', rig=rig)

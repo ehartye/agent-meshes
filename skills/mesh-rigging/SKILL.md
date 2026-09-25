@@ -101,6 +101,8 @@ exposed fangs). The rules that are easy to get wrong:
   3/4 view whatever its radius. Robot shutter eyes take `shutter_hole` (a sealed tube back from
   the face plate, with the blades checked against it) and `build_eye(style='shutter', hole=...)`.
   Mask brow and cheek offsets near the eyes with `mask=eye_hole_mask(*holes)`.
+  On a symmetric head cut both with `eye_holes(vertices, faces, eye_left, radius, ...)` (exact
+  mirror images); give lids a lash line with `build_eye(..., lash=True)`.
 - Teeth that show at rest get their own material, `teeth_exposed`, listed in `exposed_teeth`.
 - Brows on a round skin face: `skin_brow_geometry(head, side, inner, outer, hole=holes[side])`
   with the head object after its shape keys: it lays the brow on the skin along its normal in

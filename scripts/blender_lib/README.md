@@ -262,8 +262,9 @@ blend=None, max_edge=None, socket=25, lining_gap=.0001, lining_rings=5,
 
 1. **Mound.** Skin nearer the eye center than the lids' outer surface plus
    `clearance` is pushed out along its direction from the center (blended over
-   `blend`, default 0.2 eyeball radii), so the lids never poke out of the skin and
-   their ends stay hidden. A skin that runs through the eye (the frog's) becomes a
+   `blend`, default 0.5 eyeball radii), so the lids never poke out of the skin and
+   their ends stay hidden. Round 5's 0.2-radius blend left a ring round every
+   mound that read, with the rim and the lid edge, as stacked eye bags. A skin that runs through the eye (the frog's) becomes a
    dome over it.
 2. **Socket dip.** Skin much farther out is drawn in over `socket` degrees around
    the window (fading out by 3.2 eyeball radii), so the rim hugs the lids instead
@@ -288,13 +289,27 @@ blend=None, max_edge=None, socket=25, lining_gap=.0001, lining_rings=5,
    each rim vertex half way between the skin's slope and the wall's, so the skin
    turns into the hole over two gentle folds; `join_face_parts` marks edges that turn
    by more than 60 degrees sharp, and round 4's right-angled rim read as a hard seam
-   round every eye (`bevel=0` gives it back).
+   round every eye (`bevel=0` gives it back). The bevel's direction is smoothed
+   along the rim (the skin's slope at each rim vertex comes from irregular clipped
+   triangles; unsmoothed, neighbours turned up to 52 degrees apart and the lower rim
+   showed facet ticks).
 
 Edges near the eye are split to `max_edge` (default 0.2 eyeball radii) first; each
 vertex costs a delta in every morph target that moves it (only those, since
 `export_glb` stores sparse morphs), so keep an eye on file size (E8: 3 MB).
 Call `eye_hole` once per eye on the blank, before `slit_mouth` and any shape keys,
-and pass the result to `build_eye(..., hole=...)`. It returns `{'vertices',
+and pass the result to `build_eye(..., hole=...)`. On a left-right symmetric head,
+`eye_holes(vertices, faces, eye_left, eye_radius, **options)` cuts both at once as
+exact mirror images and returns `{'vertices', 'faces', 'L', 'R'}`: two `eye_hole`
+calls in a row differ, because the second is cut into skin the first refined and
+reshaped (about 1,000 of 7,700 vertices had no mirror image with the eyes 52 mm
+apart). It cuts the left hole, keeps the half at x >= 0 and mirrors it.
+
+A crisp **lash line**: `build_eye(..., lash=True)` puts a near-black `lash`
+material (or pass your own material) on the lid faces along the upper edge
+(`lash_width` degrees deep at the middle, thinning toward the corners;
+`lash_side='both'` adds the lower lid). The faces are `lash_faces(lids, width,
+which)`; the line rides every blink, squint and wide with the lid. It returns `{'vertices',
 'faces', 'lids', 'window', 'rim', 'wall', 'pushed', 'rim_radius', 'lining',
 'mound', 'socket', 'bevel'}`: `mound` is the rim's radius where the skin was
 reshaped (where a brow ridge starts looking for the skin on a mounded eye).
@@ -662,6 +677,15 @@ vertex near a shape moves out along the skin's normal onto the union's surface,
 after the skin there is refined to edges of at most `max_edge` (a sixth of the
 smallest radius). Run it on the blank before `eye_hole`, `slit_mouth` and the
 shape keys.
+
+For a whole head shaped as a field, `sdf_blank(sdf, center, rings=56, segments=72,
+front=.68, band=.5)` samples its zero set into a closed blank: `sdf(point)` is
+negative inside (build it from `ellipsoid_sdf(p, center, radii)`, `smooth_min(a, b,
+k)` for cheeks, jowls and a chin, and `smooth_max(d, -other, k)` to carve), star
+shaped from `center`. The rays follow `ellipsoid_geometry`'s grid bent toward the
+face (`front` crowds the columns toward -Y, `band` the rings toward the middle), so
+the eyes, nose and mouth get most of the samples; with `segments` a multiple of 4
+the blank is left-right symmetric with a meridian on x = 0, as `eye_holes` needs.
 
 ### Skin paint: `skin_tints`, `paint_vertices`, `use_vertex_colors`
 

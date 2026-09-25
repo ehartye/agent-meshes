@@ -212,6 +212,21 @@ class LidTests(unittest.TestCase):
         middle = lids['edges']['upper'][len(lids['edges']['yaw']) // 2]
         self.assertGreater(middle['wide'] - middle['rest'], 5)
 
+    def test_lash_faces_run_along_the_upper_edge(self):
+        from agent_meshes_face import lash_faces
+        lids = lid_geometry(CENTER, RADIUS, opening=(45, 38, 30))
+        upper = lash_faces(lids)
+        both = lash_faces(lids, which='both')
+        self.assertTrue(upper and set(upper) < set(both))
+        half = len(lids['vertices']) // 2
+        self.assertTrue(all(all(i < half for i in lids['faces'][f]) for f in upper), 'upper lid faces only')
+        # A thin band: a small share of the lid, spread right across it.
+        upper_faces = [f for f in lids['faces'] if all(i < half for i in f)]
+        self.assertLess(len(upper), .45 * len(upper_faces))
+        xs = [sum(lids['vertices'][i][0] for i in lids['faces'][f]) / 4 for f in upper]
+        self.assertGreater(max(xs) - min(xs), 1.5 * RADIUS)
+        with self.assertRaises(ValueError): lash_faces(lids, which='middle')
+
     def test_rejects_bad_parameters(self):
         for options in (dict(opening=(0, 30, 30)), dict(opening=(40, 30)), dict(meet=50), dict(clearance=-1), dict(columns=2), dict(rows=0), dict(thickness=0)):
             with self.subTest(options=options), self.assertRaises(ValueError):
@@ -1064,6 +1079,49 @@ class EyeHoleTests(unittest.TestCase):
         self.assertEqual(mask((.03, -.07, .06)), 1.0, 'the face far from the eye (the cheek by the mouth) moves freely')
         self.assertTrue([v for v in vertices if 0 < mask(v) < 1], 'the mask fades in smoothly')
 
+    def test_eye_holes_are_exact_mirror_images(self):
+        from agent_meshes_face import eye_holes
+        # Eyes set close together: two eye_hole calls in a row leave about 1,000 of 7,700 vertices without a mirror image.
+        blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=48, segments=64)
+        cut = eye_holes(blank['vertices'], blank['faces'], (.026, -.07, .15), .017, opening=(46, 40, 30))
+        keys = {tuple(round(c, 9) for c in v) for v in cut['vertices']}
+        self.assertTrue(all((round(-x, 9), round(y, 9), round(z, 9)) in keys for x, y, z in cut['vertices']))
+        closed_and_consistent(self, cut['vertices'], cut['faces'])
+        left, right = cut['L'], cut['R']
+        self.assertEqual(len(left['rim']), len(right['rim']))
+        for i, j in zip(sorted(left['rim'], key=lambda i: cut['vertices'][i]), sorted(right['rim'], key=lambda i: mirror_x(cut['vertices'][i]))):
+            for k in range(3): self.assertAlmostEqual(cut['vertices'][i][k], mirror_x(cut['vertices'][j])[k], places=12)
+        self.assertEqual(tuple(right['lids']['center']), mirror_x(left['lids']['center']))
+        self.assertGreater(signed_volume(right['lids']['vertices'], right['lids']['faces']) * signed_volume(left['lids']['vertices'], left['lids']['faces']), 0)
+        # The right window, wall and mask are the left's reflection.
+        point = (.03, -.075, .165)
+        self.assertEqual(left['window']['level'](point), right['window']['level'](mirror_x(point)))
+        mask = eye_hole_mask(left, right)
+        self.assertAlmostEqual(mask(point), mask(mirror_x(point)), places=12)
+        self.assertEqual(len(left['wall']), len(right['wall']))
+        for index in right['wall']: self.assertTrue(all(cut['vertices'][i][0] < 0 for i in cut['faces'][index]))
+        with self.assertRaises(ValueError): eye_holes(blank['vertices'], blank['faces'], (-.026, -.07, .15), .017)
+        with self.assertRaisesRegex(ValueError, 'midline'): eye_holes(blank['vertices'], blank['faces'], (.018, -.07, .15), .017)
+
+    def test_the_bevel_turns_evenly_round_the_rim(self):
+        # Round 5: each rim vertex took its bevel from its own irregular clipped triangles, so neighbours' bevels turned
+        # up to 52 degrees apart and the lower rim showed facet ticks.
+        blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=56, segments=72)
+        hole = eye_hole(blank['vertices'], blank['faces'], (.034, -.066, .152), .017, opening=(46, 40, 30))
+        vertices, faces, bevel = hole['vertices'], hole['faces'], set(hole['bevel'])
+        way, edges = {}, []
+        for index in hole['wall']:
+            face = faces[index]
+            if len(face) == 4 and face[2] in bevel:
+                b, a, sa, sb = face
+                for rim, step in ((a, sa), (b, sb)):
+                    d = [vertices[step][k] - vertices[rim][k] for k in range(3)]
+                    way[rim] = [x / math.hypot(*d) for x in d]
+                edges.append((a, b))
+        self.assertGreater(len(edges), 40)
+        turns = [math.degrees(math.acos(max(-1, min(1, sum(x * y for x, y in zip(way[a], way[b])))))) for a, b in edges]
+        self.assertLess(max(turns), 20)
+
     def test_the_mask_band_does_not_depend_on_the_socket(self):
         # Round 5: the band followed `socket`, so a hole cut with socket=0 masked out every skin shape completely.
         hole = self.hole(socket=0)
@@ -1543,6 +1601,31 @@ class SkinPaintTests(unittest.TestCase):
             skin_tints([(0, 0, 0)], base='#808080', patches=[{'center': (0, 0, 0), 'radius': .01, 'color': '#ffffff'}])
         with self.assertRaises(ValueError): skin_tints([(0, 0, 0)], patches=[{'center': (0, 0, 0), 'radius': 0, 'color': '#000'}])
         with self.assertRaises(ValueError): skin_tints([(0, 0, 0)], mottle={'scale': 0, 'amount': .1})
+
+class SdfBlankTests(unittest.TestCase):
+    """sdf_blank samples a smooth-union head field into a closed blank, densest over the face."""
+
+    def field(self, p):
+        from agent_meshes_face import ellipsoid_sdf, smooth_min
+        head = ellipsoid_sdf(p, (0, 0, .13), (.088, .085, .11))
+        return smooth_min(head, ellipsoid_sdf(p, (0, -.08, .1), (.02, .02, .02)), .01)
+
+    def test_the_blank_lies_on_the_field_and_is_denser_at_the_front(self):
+        from agent_meshes_face import sdf_blank
+        blank = sdf_blank(self.field, (0, 0, .13), rings=40, segments=48)
+        closed_and_consistent(self, blank['vertices'], blank['faces'])
+        self.assertGreater(signed_volume(blank['vertices'], blank['faces']), 0)
+        self.assertLess(max(abs(self.field(v)) for v in blank['vertices']), 2e-5)
+        front = [v for v in blank['vertices'] if v[1] < -.06]
+        back = [v for v in blank['vertices'] if v[1] > .06]
+        self.assertGreater(len(front), 1.5 * len(back), 'more of the samples lie over the face')
+        # A meridian on x = 0 when segments is a multiple of 4, and left-right mirror symmetry.
+        keys = {tuple(round(c, 9) for c in v) for v in blank['vertices']}
+        self.assertTrue(all((round(-x, 9), round(y, 9), round(z, 9)) in keys for x, y, z in blank['vertices']))
+
+    def test_rejects_a_field_the_center_is_not_inside(self):
+        from agent_meshes_face import sdf_blank
+        with self.assertRaisesRegex(ValueError, 'inside'): sdf_blank(self.field, (0, 0, .5))
 
 if __name__ == '__main__':
     unittest.main()

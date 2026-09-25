@@ -17,9 +17,9 @@ import struct
 __all__ = [
     'ARKIT_REQUIRED', 'ARKIT_OPTIONAL', 'ARKIT_GAZE', 'ARKIT_NAMES', 'CANONICAL_EMOTIONS', 'DEFAULT_LID_FOLLOW',
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
-    'eye_window', 'eye_hole', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry',
+    'eye_window', 'lash_faces', 'eye_hole', 'eye_holes', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
-    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'skin_tints', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
+    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
@@ -351,6 +351,49 @@ def lid_geometry(center, eye_radius, opening=(45, 38, 30), meet=-8, overlap=6, c
         'opening': (width, upper, lower), 'wide': (wide_up, wide_down), 'lower_rise': rise,
         'center': center, 'eye_radius': eye_radius, 'meet': meet, 'anchors': (anchors['lower'], anchors['upper']),
     }
+
+
+def lash_faces(lids, width=5, which='upper'):
+    """Indices of the lid faces along a lid's edge, `width` degrees deep at the middle: the lash line (`build_eye(lash=...)`).
+
+    `lids` is a `lid_geometry` (or `eye_hole(...)['lids']`); `which` is 'upper',
+    'lower' or 'both'. The faces run along the edge the eye opens at, round its
+    rounded rim, so a dark material on them reads as a crisp lash line that rides
+    every blink, squint and wide with the lid.
+    """
+    if lids.get('style') != 'lid': raise ValueError('Lash lines belong to lid eyes (lid_geometry or eye_hole lids)')
+    width = _number(width, 'Lash width', 0, 45, low_open=True)
+    if which not in ('upper', 'lower', 'both'): raise ValueError("Lash side must be 'upper', 'lower' or 'both'")
+    center, vertices = lids['center'], lids['vertices']
+    yaws, half = lids['edges']['yaw'], len(vertices) // 2
+    keys = ('upper', 'lower') if which == 'both' else (which,)
+
+    def edge_at(key, yaw):
+        column = [e['rest'] for e in lids['edges'][key]]
+        if yaw <= yaws[0]: return column[0]
+        for j in range(len(yaws) - 1):
+            if yaw <= yaws[j + 1]:
+                t = (yaw - yaws[j]) / (yaws[j + 1] - yaws[j])
+                return column[j] + t * (column[j + 1] - column[j])
+        return column[-1]
+
+    anchors = dict(zip(('lower', 'upper'), lids['anchors']))
+    # `width` degrees at the middle of the lid, as a share of the middle column's anchor-to-edge span.
+    fraction = {key: min(1.0, width / max(1e-9, abs(edge_at(key, 0.0) - anchors[key]))) for key in keys}
+    result = []
+    for index, face in enumerate(lids['faces']):
+        key = 'upper' if all(i < half for i in face) else 'lower' if all(i >= half for i in face) else None
+        if key not in keys: continue
+        c = _sub(_mul(tuple(map(sum, zip(*(vertices[i] for i in face)))), 1 / len(face)), center)
+        yaw = math.degrees(math.atan2(c[0], -c[1]))
+        elevation = math.degrees(math.asin(max(-1.0, min(1.0, c[2] / math.hypot(*c)))))
+        # The share of the way from the lid's anchor to its edge: the lid's rows run at even shares, so a cut at one
+        # share follows a row (no notches) and the line thins toward the corners, where the lid is narrower.
+        anchor = anchors[key]
+        edge = edge_at(key, yaw)
+        share = (elevation - anchor) / (edge - anchor) if abs(edge - anchor) > 1e-9 else 1.0
+        if share > 1 - fraction[key] - 1e-9: result.append(index)
+    return result
 
 
 def _triangle_normals(vertices, faces):
@@ -922,8 +965,9 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     1. Socket: the skin around the eye is reshaped along each direction from the
        eye center so that, at the window's edge, it lies just outside the lids (at
        their outer radius plus `clearance`). Skin nearer the center is pushed out (a
-       mound, blended over `blend`, default 0.2 eyeball radii), so the lids never poke
-       out of the skin and their ends stay hidden; skin farther out is drawn in over
+       mound, blended over `blend`, default 0.5 eyeball radii: wide enough that it
+       flows into the face with no ring round it), so the lids never poke out of the
+       skin and their ends stay hidden; skin farther out is drawn in over
        `socket` degrees around the window (a socket dip, fading out by 3.2 eyeball
        radii from the center), so the hole's rim hugs the lids instead of opening a
        deep funnel where the face lies far in front of the eye (beside the nose).
@@ -968,7 +1012,7 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     window = eye_window(lids, margin, corner_margin)
     bevel = _number(bevel, 'Bevel', 0, 1)
     clearance = _number(clearance, 'Clearance', 0)
-    blend = .2 * eye_radius if blend is None else _number(blend, 'Mound blend', 0, low_open=True)
+    blend = .5 * eye_radius if blend is None else _number(blend, 'Mound blend', 0, low_open=True)
     max_edge = .2 * eye_radius if max_edge is None else _number(max_edge, 'Maximum edge', 0, low_open=True)
     socket = _number(socket, 'Socket band', 0, 90)
     outer = lids['upper_radius'] + lids['thickness']
@@ -1058,6 +1102,26 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
         along[b] = along.get(b, ()) + (a,)
     bevels = []
 
+    def raw_way(i):
+        """Half way between the skin's slope at rim vertex i and the wall's direction (straight at the eye center)."""
+        d = _sub(result[i], center)
+        d = _mul(d, 1 / math.hypot(*d))
+        slope = (0.0, 0.0, 0.0)
+        for j in (i,) + along.get(i, ()):
+            around = [result[k] for k in neighbours.get(j, ())]
+            if around:
+                step = _sub(result[j], _mul(tuple(map(sum, zip(*around))), 1 / len(around)))
+                slope = _add(slope, _mul(step, 1 / (math.hypot(*step) or 1)))
+        slope = _mul(slope, 1 / math.hypot(*slope)) if math.hypot(*slope) > 1e-12 else _mul(d, -1)
+        way = _sub(slope, d)
+        return _mul(way, 1 / (math.hypot(*way) or 1))
+
+    # The skin's slope comes from the rim's irregular triangles (clipped and tidied), so it jumps from vertex to vertex;
+    # smoothed along the rim, the bevel turns evenly instead of leaving facet ticks (round 5, the lower rim).
+    ways = {i: raw_way(i) for i in along}
+    for _ in range(6):
+        ways = {i: (lambda w: _mul(w, 1 / (math.hypot(*w) or 1)))(_add(_mul(ways[i], 2), tuple(map(sum, zip(*(ways[j] for j in along[i])))))) for i in ways}
+
     def ladder(i):
         """Rim vertex i's bevel, its wall end, then its lining rings toward the pole behind the eye."""
         if i not in ladders:
@@ -1067,15 +1131,7 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
             # The bevel rounds the rim into the wall: it leaves the rim half way between the skin's slope and the wall's
             # (straight at the eye center), so the skin turns into the wall over two gentle folds, not one right angle.
             size = bevel * min(max(0.0, r - outer), .12 * eye_radius)
-            slope = (0.0, 0.0, 0.0)
-            for j in (i,) + along.get(i, ()):
-                around = [result[k] for k in neighbours.get(j, ())]
-                if around:
-                    step = _sub(result[j], _mul(tuple(map(sum, zip(*around))), 1 / len(around)))
-                    slope = _add(slope, _mul(step, 1 / (math.hypot(*step) or 1)))
-            slope = _mul(slope, 1 / math.hypot(*slope)) if math.hypot(*slope) > 1e-12 else _mul(d, -1)
-            way = _sub(slope, d)
-            way = _mul(way, 1 / (math.hypot(*way) or 1))
+            way = ways.get(i) or raw_way(i)
             steps = []
             if size > 1e-9:
                 point = _add(result[i], _mul(way, size))
@@ -1104,6 +1160,82 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     return {'vertices': result, 'faces': kept, 'lids': lids, 'window': window, 'rim': sorted(rim), 'wall': wall,
             'pushed': pushed, 'rim_radius': (min(radii), max(radii)), 'lining': (lining['lower'], lining['upper']),
             'mound': push + blend / 4, 'socket': socket, 'bevel': bevels}
+
+
+def _mirror_lids(lids):
+    """A lid (or shutter) geometry mirrored across x = 0: the other eye's, vertex for vertex."""
+    mirrored = dict(lids)
+    mirrored['vertices'] = [mirror_x(v) for v in lids['vertices']]
+    mirrored['faces'] = [tuple(reversed(f)) for f in lids['faces']]
+    mirrored['morphs'] = {name: [mirror_x(v) for v in targets] for name, targets in lids['morphs'].items()}
+    mirrored['center'] = mirror_x(lids['center'])
+    if 'edges' in lids:
+        edges = lids['edges']
+        mirrored['edges'] = {'yaw': [-y for y in reversed(edges['yaw'])], **{key: list(reversed(edges[key])) for key in edges if key != 'yaw'}}
+    return mirrored
+
+
+def eye_holes(vertices, faces, eye_left, eye_radius, **options):
+    """Both eye holes of a left-right symmetric head, exact mirror images of each other.
+
+    Two `eye_hole` calls in a row are not mirror images: the second is cut into skin
+    the first already refined and reshaped (eyes set close together, or a blank that
+    is not sampled symmetrically near the nose, came out visibly different). This
+    cuts the left eye's hole (`eye_left`, the character's left, +X) with `options`
+    as for `eye_hole`, keeps the half of the skin at x >= 0 (clipped exactly on the
+    midline) and mirrors it, so the right half, its hole, lids, window and wall are
+    the left's reflection and the midline has one row of shared vertices. The blank
+    must be left-right symmetric. Returns {'vertices', 'faces', 'L': hole, 'R': hole},
+    each hole as `eye_hole` returns it (indices into the new mesh), ready for
+    `build_eye(..., hole=holes['L'])`, `eye_hole_mask` and the brow helpers.
+    """
+    eye_left = _vector(eye_left, 3, 'Left eye center')
+    if eye_left[0] <= 0: raise ValueError("eye_left is the character's left eye, at x > 0")
+    left = eye_hole(vertices, faces, eye_left, eye_radius, **options)
+    source_vertices, source_faces = left['vertices'], left['faces']
+    if min(source_vertices[i][0] for index in left['wall'] for i in source_faces[index]) <= 0:
+        raise ValueError('The eyes are so close that their holes meet at the midline: move them apart or make them smaller')
+    side = lambda i: 0 if abs(source_vertices[i][0]) < 1e-12 else 1 if source_vertices[i][0] > 0 else -1
+    if any({side(i) for i in f} >= {1, -1} for f in source_faces):
+        # No row of vertices on the midline (or the socket dip drew them off it): clip there exactly.
+        half = _clip(source_vertices, source_faces, lambda p: p[0], snap=1e-6)
+    else:
+        # A blank with a meridian on x = 0 (segments a multiple of 4): take the faces on the left, no new vertices.
+        chosen = [index for index, f in enumerate(source_faces) if all(side(i) >= 0 for i in f)]
+        used = sorted({i for index in chosen for i in source_faces[index]})
+        mapping = [None] * len(source_vertices)
+        for new, old in enumerate(used): mapping[old] = new
+        half = {'vertices': [source_vertices[i] for i in used], 'faces': [tuple(mapping[i] for i in source_faces[index]) for index in chosen],
+                'mapping': mapping, 'origin': chosen}
+    points = [((0.0,) + tuple(p[1:])) if abs(p[0]) < 1e-12 else tuple(p) for p in half['vertices']]
+    count = len(points)
+    mirror = []
+    for i in range(count):
+        if points[i][0] == 0.0: mirror.append(i)  # on the midline: shared by both halves
+        else:
+            mirror.append(len(points))
+            points.append(mirror_x(points[i]))
+    kept = list(half['faces'])
+    faces_out = kept + [tuple(reversed([mirror[i] for i in f])) for f in kept]
+    new_face = {old: new for new, old in enumerate(half['origin'])}
+    vertex = lambda old: half['mapping'][old]
+
+    def remap(hole, v, f):
+        result = dict(hole)
+        result['rim'] = sorted(v(vertex(i)) for i in hole['rim'] if vertex(i) is not None)
+        result['bevel'] = [v(vertex(i)) for i in hole['bevel'] if vertex(i) is not None]
+        result['wall'] = [f(new_face[i]) for i in hole['wall'] if i in new_face]
+        result.pop('vertices', None); result.pop('faces', None)
+        result['vertices'], result['faces'] = points, faces_out
+        return result
+
+    holes = {'L': remap(left, lambda i: i, lambda i: i)}
+    right = remap(left, lambda i: mirror[i], lambda i: len(kept) + i)
+    right['lids'] = _mirror_lids(left['lids'])
+    level, window = left['window']['level'], left['window']
+    right['window'] = dict(window, level=lambda p: level(mirror_x(p)), center=mirror_x(window['center']))
+    holes['R'] = right
+    return {'vertices': points, 'faces': faces_out, 'L': holes['L'], 'R': holes['R']}
 
 
 def shutter_hole(vertices, faces, center, eye_radius, hole_radius=None, max_edge=None, cap_rings=5, **shutter_options):
@@ -2064,6 +2196,76 @@ def ellipsoid_geometry(center, radii, rings=24, segments=32, exponent=2):
     faces += [(ring(k, j), ring(k + 1, j), ring(k + 1, j + 1), ring(k, j + 1)) for k in range(rings - 2) for j in range(segments)]
     last = len(vertices) - 1
     faces += [(ring(rings - 2, j), last, ring(rings - 2, j + 1)) for j in range(segments)]
+    return {'vertices': vertices, 'faces': _outward(vertices, faces)}
+
+
+def ellipsoid_sdf(point, center, radii):
+    """Approximate signed distance from a point to an ellipsoid (exact for a sphere; negative inside), for sdf_blank."""
+    return _ellipsoid_distance(_vector(point, 3, 'Point'), _vector(center, 3, 'Center'), _vector(radii, 3, 'Radii'))
+
+
+def smooth_min(a, b, k):
+    """The smooth union of two signed distances, rounded over about `k` meters (polynomial smooth minimum)."""
+    h = max(k - abs(a - b), 0.0) / k if k > 0 else 0.0
+    return min(a, b) - h * h * k / 4
+
+
+def smooth_max(a, b, k):
+    """The smooth intersection of two signed distances (carve with smooth_max(d, -other, k))."""
+    return -smooth_min(-a, -b, k)
+
+
+def sdf_blank(sdf, center, rings=56, segments=72, front=.68, band=.5, outer=.3):
+    """A closed head blank on the zero set of a signed-distance field, sampled densest over the face.
+
+    `sdf(point)` is negative inside the head (build it from `ellipsoid_sdf`,
+    `smooth_min` for cheeks, jowls and a chin, `smooth_max` to carve); it must be
+    star-shaped from `center`, which must lie inside. Each vertex sits where the
+    ray from `center` leaves the field (the outermost crossing within `outer`
+    meters, found by marching in and bisecting). The rays are an `ellipsoid_geometry`
+    grid bent toward the face: `front` (0..1) crowds the columns toward -Y and
+    `band` (0..1) crowds the rings toward the middle height, so the eyes, nose and
+    mouth get the samples and the back of the head few. Same indexing as
+    `ellipsoid_geometry` (poles on Z), so with `segments` a multiple of 4 there is a
+    meridian on x = 0 and the blank is left-right symmetric (`eye_holes` needs
+    that). Returns vertices and faces, triangles along each quad's shorter diagonal.
+    """
+    if not callable(sdf): raise ValueError('sdf must be a function of a point, negative inside the head')
+    center = _vector(center, 3, 'Blank center')
+    rings, segments = _count(rings, 'Blank rings', 3), _count(segments, 'Blank segments', 3)
+    front, band = _number(front, 'Front crowding', 0, 1), _number(band, 'Band crowding', 0, 1)
+    outer = _number(outer, 'Outer radius', 0, low_open=True)
+    if sdf(center) >= 0: raise ValueError('The blank center must lie inside the field (sdf(center) < 0)')
+    step = outer / 150
+
+    def surface(direction):
+        at = lambda r: _add(center, _mul(direction, r))
+        high = outer
+        while high > step and sdf(at(high - step)) > 0: high -= step
+        low = max(0.0, high - step)
+        for _ in range(40):
+            mid = (low + high) / 2
+            if sdf(at(mid)) < 0: low = mid
+            else: high = mid
+        return at((low + high) / 2)
+
+    directions = [(0.0, 0.0, 1.0)]
+    for k in range(1, rings):
+        t = k / rings
+        polar = math.pi * (t + band * math.sin(2 * math.pi * t) / (2 * math.pi))
+        for j in range(segments):
+            v = 2 * j / segments - 1
+            a = -math.pi / 2 + math.pi * ((1 - front) * v + front * v ** 3)
+            directions.append((math.sin(polar) * math.cos(a), math.sin(polar) * math.sin(a), math.cos(polar)))
+    directions.append((0.0, 0.0, -1.0))
+    vertices = [surface(d) for d in directions]
+    template = ellipsoid_geometry((0, 0, 0), (1, 1, 1), rings=rings, segments=segments)
+    faces = []
+    for f in template['faces']:
+        if len(f) == 4 and math.dist(vertices[f[1]], vertices[f[3]]) < math.dist(vertices[f[0]], vertices[f[2]]):
+            faces += [(f[0], f[1], f[3]), (f[1], f[2], f[3])]
+        elif len(f) == 4: faces += [(f[0], f[1], f[2]), (f[0], f[2], f[3])]
+        else: faces.append(tuple(f))
     return {'vertices': vertices, 'faces': _outward(vertices, faces)}
 
 
@@ -3145,7 +3347,8 @@ def mesh_from_geometry(name, geometry, materials, smooth=True):
 
 
 def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_material=None, eye_materials=None,
-              iris=26, pupil=12, socket=True, margin=6, hole=None, slit=None, split_borders=False, **options):
+              iris=26, pupil=12, socket=True, margin=6, hole=None, slit=None, split_borders=False, lash=None, lash_width=5,
+              lash_side='upper', **options):
     """Build one eye: an eyeball bound to `eye_L`/`eye_R`, lids (or shutters) with morphs, and a socket cup.
 
     `style='lid'` uses `lid_geometry`, `style='shutter'` uses `shutter_geometry`;
@@ -3162,6 +3365,9 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     keep those names exactly (the ID render and the verifier find eyeballs by them;
     a Blender-renamed `eye_white.001` is rejected). `slit` and `split_borders` go to
     `eyeball_geometry` (a slit pupil; iris vertices of its own for painted irises).
+    `lash` gives the lids a crisp lash line: `True` for a near-black `lash` material
+    or a material of your own, on the lid faces within `lash_width` degrees of the
+    `lash_side` ('upper', 'lower', 'both') edge (`lash_faces`).
     Returns a dict with the objects and the lid geometry report (radii, clearance,
     squint ratio).
     """
@@ -3200,7 +3406,14 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     eyeball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris, pupil, slit=slit, split_borders=split_borders), materials)
     bind_rigid(eyeball, rig, f'eye_{side}')
     lid_mat = _material(lid_material, 'lid', (.6, .36, .25), roughness=.55)
-    lid_obj = mesh_from_geometry(f'lids_{side}', lids, [lid_mat], smooth=style == 'lid')
+    if lash is not None:
+        if style != 'lid': raise ValueError('A lash line belongs to lid eyes')
+        lash_mat = lash if hasattr(lash, 'node_tree') else _material(None, 'lash', (.03, .02, .02), roughness=.7)
+        dark = set(lash_faces(lids, lash_width, lash_side))
+        lid_obj = mesh_from_geometry(f'lids_{side}', dict(lids, material_indices=[int(i in dark) for i in range(len(lids['faces']))]),
+                                     [lid_mat, lash_mat], smooth=True)
+    else:
+        lid_obj = mesh_from_geometry(f'lids_{side}', lids, [lid_mat], smooth=style == 'lid')
     for key, morph in (('blink', 'eyeBlink'), ('squint', 'eyeSquint'), ('wide', 'eyeWide')):
         shape_key(lid_obj, f'{morph}{suffix}', lids['morphs'][key])
     bind_rigid(lid_obj, rig, 'head')
