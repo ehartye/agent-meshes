@@ -97,7 +97,21 @@ export async function main(args = process.argv): Promise<void> {
     const output = resolve(file); await mkdir(dirname(output), { recursive: true }); await writeFile(output, bytes);
     process.stdout.write(`${JSON.stringify({ output, bytes: bytes.length })}\n`);
   });
-  program.command('verify <file>').description('Validate an exported GLB without a server').action(async file => {
+  program.command('verify <file>').description('Validate an exported GLB without a server; --contract arkit-face/1 also checks the face-rig contract')
+    .option('--contract <name>', 'Also check a rig contract (arkit-face/1)').action(async (file, options) => {
+    if (options.contract !== undefined) {
+      const { contractExpectations } = await import('./arkit-face.ts');
+      contractExpectations(String(options.contract));
+      const { verifyFaceContract } = await import('./face-contract.ts');
+      const report = await verifyFaceContract(await readFile(file));
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      if (!report.ok) {
+        const failed = report.checks.filter(check => !check.ok).length;
+        process.stderr.write(`${report.contract}: ${failed} check${failed === 1 ? '' : 's'} failed\n${report.failures.map(line => `FAIL ${line}`).join('\n')}\n`);
+        process.exitCode = 1;
+      }
+      return;
+    }
     const { verifyGLB } = await import('./export.ts');
     const result = await verifyGLB(await readFile(file)); process.stdout.write(`${JSON.stringify(result)}\n`);
     if (!result.ok) process.exitCode = 1;

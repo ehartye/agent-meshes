@@ -6,7 +6,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
-from agent_meshes_author import fuse_meshes, sweep_mesh, topology_report
+from agent_meshes_author import fuse_meshes, linear_color, material, sweep_mesh, topology_report
 
 
 class SweepGeometryTests(unittest.TestCase):
@@ -110,6 +110,50 @@ class TopologyTests(unittest.TestCase):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 fuse_meshes(**(dict(objects=[object()], name='Form', voxel_size=.1) | arguments))
 
+
+class ClosedSweepTests(unittest.TestCase):
+    def test_a_closed_loop_is_a_seamless_torus(self):
+        centers = [(math.cos(a), math.sin(a) * .6, .2 * math.sin(2 * a)) for a in [math.tau * i / 40 for i in range(40)]]
+        vertices, faces = sweep_mesh(centers, [(.1, .06)] * 40, 12, closed=True)
+        edges = {}
+        for face in faces:
+            for a, b in zip(face, face[1:] + face[:1]): edges.setdefault(tuple(sorted((a, b))), []).append((a, b))
+        self.assertTrue(all(len(e) == 2 and e[0] == e[1][::-1] for e in edges.values()), 'closed and consistently wound')
+        self.assertEqual(len(vertices) - len(edges) + len(faces), 0, 'a torus: no caps')
+        self.assertEqual(len(faces), 40 * 12)
+        # No twist jump at the join: the last ring meets the first as smoothly as any other neighbours do.
+        ring = lambda i: vertices[i * 12:(i + 1) * 12]
+        step = lambda a, b: max(math.dist(p, q) for p, q in zip(ring(a), ring(b)))
+        self.assertLess(step(39, 0), 1.5 * max(step(i, i + 1) for i in range(39)))
+        volume = 0
+        for face in faces:
+            a = vertices[face[0]]
+            for i in range(1, len(face) - 1):
+                b, c = vertices[face[i]], vertices[face[i + 1]]
+                volume += sum(a[k] * (b[(k + 1) % 3] * c[(k + 2) % 3] - b[(k + 2) % 3] * c[(k + 1) % 3]) for k in range(3)) / 6
+        self.assertGreater(volume, 0, 'outward')
+
+    def test_a_closed_loop_must_not_repeat_its_first_point(self):
+        centers = [(math.cos(a), math.sin(a), 0) for a in [math.tau * i / 8 for i in range(9)]]
+        with self.assertRaisesRegex(ValueError, 'first point'): sweep_mesh(centers, [(.1, .1)] * 9, 8, closed=True)
+        with self.assertRaises(ValueError): sweep_mesh(centers[:2], [(.1, .1)] * 2, 8, closed=True)
+
+class ColorTests(unittest.TestCase):
+    def test_srgb_hex_becomes_linear_and_tuples_stay_linear(self):
+        self.assertEqual(linear_color('#ffffff'), (1.0, 1.0, 1.0))
+        self.assertEqual(linear_color('#000'), (0.0, 0.0, 0.0))
+        r, g, b = linear_color('#808080')
+        self.assertAlmostEqual(r, .2158605, places=6)  # sRGB 128 is 21.6% linear
+        self.assertEqual((r, r), (g, b))
+        self.assertAlmostEqual(linear_color('#0a0B0c')[0], 10 / 255 / 12.92, places=9)  # the linear toe
+        self.assertEqual(linear_color((.2, .3, .4)), (.2, .3, .4))
+        self.assertEqual(linear_color('#fa0'), linear_color('#ffaa00'))
+
+    def test_bad_colors_are_rejected_before_blender(self):
+        for value in ('fff', '#ggg', '#12345', (1, 2), (1.5, 0, 0), ('a', 0, 0)):
+            with self.subTest(value=value), self.assertRaises(ValueError): linear_color(value)
+        for options in (dict(emission='#12'), dict(emission_strength=-1), dict(emission_strength=float('nan'))):
+            with self.subTest(options=options), self.assertRaises(ValueError): material('glass', '#88ccff', **options)
 
 if __name__ == '__main__':
     unittest.main()

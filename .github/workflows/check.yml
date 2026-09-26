@@ -21,6 +21,7 @@ jobs:
       - run: python tests/stylized_character.py
       - run: python tests/stylized_walk.py
       - run: node --test tests/botanical-kit.test.mjs
+      - run: python tests/blender_face_geometry.py
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
