@@ -18,6 +18,8 @@ jobs:
           python-version: '3.12'
       - run: python tests/blender_author_geometry.py
       - run: python tests/blender_author_skin.py
+      - run: python tests/stylized_character.py
+      - run: node --test tests/botanical-kit.test.mjs
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
