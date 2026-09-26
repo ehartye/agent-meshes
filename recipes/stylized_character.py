@@ -205,10 +205,10 @@ def anatomy_head(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,style,alien=False):
             points=[(cx,cy+ry*.1,cz-rz*.95),(cx+.025,cy-ry*.52,cz-rz*1.3),(cx+.04,cy-ry*1.17,cz-rz*1.35)]
             m.tube('tied-hair',points,[rx*.46,rx*.35,rx*.09],hair)
 
-def geometry(values=None):
-    p=parameters({} if values is None else values); m=Meshes()
-    h=p['height']; child=p['age']=='child'; alien=p['species']=='alien'; eva=p['vacuum']
-    scale=h/1.82; s=scale; skin=p['skin']; accent=p['accent']; navy='#263b51'; ivory='#dfdfcc'
+def landmarks(values=None):
+    """Shared body measurements for geometry, bindings and gait; metres, Y up."""
+    p=parameters({} if values is None else values)
+    h=p['height']; child=p['age']=='child'; alien=p['species']=='alien';s=h/1.82
     head_h=(.46 if child else .365)*s*(1.08 if alien else 1)
     rx=head_h*(.43 if alien else .405); ry=head_h/2; rz=head_h*.355
     head_y=h-ry-.014*s-(.04*s if alien else 0)
@@ -217,6 +217,13 @@ def geometry(values=None):
     if child: shoulder_w*=.94
     hip_w=(.35 if p['presentation']=='female' else .335)*s
     chest_y=mix(hip_y,shoulder_y,.72); waist_y=mix(hip_y,shoulder_y,.28)
+    return dict(h=h,s=s,child=child,alien=alien,rx=rx,ry=ry,rz=rz,head_y=head_y,shoulder_y=shoulder_y,hip_y=hip_y,shoulder_w=shoulder_w,hip_w=hip_w,chest_y=chest_y,waist_y=waist_y)
+
+def geometry(values=None):
+    p=parameters({} if values is None else values); m=Meshes(); dims=landmarks(p)
+    s=dims['s'];h=dims['h'];child=dims['child'];alien=dims['alien'];eva=p['vacuum']
+    rx,ry,rz,head_y,shoulder_y,hip_y,shoulder_w,hip_w,chest_y,waist_y=(dims[k] for k in ['rx','ry','rz','head_y','shoulder_y','hip_y','shoulder_w','hip_w','chest_y','waist_y'])
+    skin=p['skin'];accent=p['accent'];navy='#263b51';ivory='#dfdfcc'
     body=ivory if eva else accent; trouser=ivory if eva else navy
     m.rings('tailored-torso',[(hip_y+.026*s,0,0,hip_w*.47,.105*s),(hip_y+.04*s,0,0,hip_w*.5,.11*s),(waist_y,0,0,hip_w*.41,.096*s),(chest_y,0,.005*s,shoulder_w*.46,.115*s),(shoulder_y,0,0,shoulder_w*.50,.094*s),(shoulder_y+.065*s,0,0,.075*s,.065*s)],body)
     m.rings('neck',[(shoulder_y+.02*s,0,0,.053*s,.051*s),(head_y-ry*.55,0,0,.058*s,.053*s)],skin)

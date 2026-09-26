@@ -1,6 +1,6 @@
 {
   "name": "agent-meshes",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Named-part 3D authoring for coding agents: build rigged, animated GLB models from JSON operations (boxes, lathes, prisms, organic shells), creature recipes with gaits, isolated verified builds with renders and offline previews, an embeddable three.js viewer, and an optional Blender refine stage",
   "author": {
     "name": "ehartye"
