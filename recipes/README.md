@@ -50,7 +50,8 @@ meshes. Limbs taper through anatomical landmarks. Boots have a heel, instep,
 forefoot and tapered toe. Children change proportions, not just overall scale.
 Aliens add a third eye and sensory fronds. Suits use the same body plan.
 
-This is **static concept geometry**. It is not rigged, UV-unwrapped or designed
+The geometry builder produces a static base. The optional shared walk adapter
+below adds a skeletal animation study; neither path is UV-unwrapped or designed
 for facial deformation. The recipe removes only detached remesh chips with at
 most 12 vertices, under two voxel widths and under 0.1% of the main component.
 Larger disconnected pieces reject. The final union must be one closed component.
@@ -66,6 +67,50 @@ Run the pure geometry contract with `python tests/stylized_character.py`. Build
 representatives of every body plan through Blender and inspect the exported GLB;
 pure geometry checks do not test voxel fusion. Do not substitute a validator for
 front, side, face and foot visual review.
+
+## Shared character walk
+
+`stylized_walk.py` adds one body-plan-aware, in-place walking loop to these
+characters. Keep it beside `stylized_character.py`, or embed both modules into a
+single generated source before its `build()` entry point:
+
+```python
+from stylized_character import build_character, landmarks
+from stylized_walk import rig_character
+
+def build():
+    definition = {'height': 1.22, 'age': 'child', 'presentation': 'female'}
+    return rig_character(build_character(definition), landmarks(definition), duration=1.1)
+```
+
+`landmarks()` is shared by the anatomy and rig, so child proportions and alien
+heads do not need hand-placed joints. The rig has 16 bones prefixed `rig-` to
+avoid collisions with mesh names. Named garments use up to three normalized
+bone influences; heads, hands, footwear and attached equipment use rigid skin
+weights. Bindings are specific to the named output of this character recipe,
+not an automatic rigger for arbitrary imported characters.
+
+Pure helpers `rest_bones(layout)`, `walk_pose(layout, phase)` and
+`skin_weights(name, vertices, layout)` expose reproducible measurements. The gait
+uses two-link leg IK, a 60% stance fraction, compensated body dip, swing clearance
+and opposing arm movement. Stance feet move backward at constant speed while the
+character stays in place; translating the character by `stride / (.6 * duration)`
+produces stationary world contacts. Stride is 0.43 times the two-segment leg
+length. This is a walking study, with flat feet and no toe-roll or secondary
+hair animation.
+
+`rig_character` bakes a `walk` action at 60 Hz from frame zero with identical
+loop endpoints. Duration is 0.6–3 seconds and rounds to the nearest frame.
+Mesh objects retain Armature modifiers but are detached from the rig's object
+parent so glTF skins export as scene roots without parent-transform warnings.
+The returned list includes the rig; pass the complete list to the managed build.
+
+Run `python tests/stylized_walk.py` for reachability, loop closure, segment-length,
+stance height and weight checks. Exported skinning still needs browser verification:
+measure actual skinned outsole vertices at stance and compare both loop endpoints,
+then inspect side-view frames. Pure joint targets cannot prove the exported mesh
+follows them. The Space to Grow consumer keeps these checks in `scripts/check-walk.mjs`
+and tests playback controls in `scripts/check-walk-ui.mjs`.
 
 ## Botanical kit
 

@@ -139,8 +139,9 @@ Rendering requires the built workbench (`npm run build`) and Chromium (`npx play
 ## Optional Blender stage
 
 [Reusable concept recipes](recipes/README.md) provide parameterized stylized
-characters and a deterministic botanical kit. They exercise the existing authored
-asset and operations pipelines; they are static studies, not animation-ready rigs.
+characters, a shared skeletal walking study and a deterministic botanical kit.
+They exercise the existing authored asset and operations pipelines; facial
+deformation and production rig polish remain outside these examples.
 
 Blender-authored assets can use the same isolated build command with a Python source instead of a primitive project:
 
