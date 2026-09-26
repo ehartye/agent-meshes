@@ -6,6 +6,7 @@ import { ensureFileReader } from '../src/node-file-reader.ts';
 import { createPuppet } from '../src/render/puppet.ts';
 import { createStageScene } from '../src/render/stage.ts';
 import { parseQuality } from '../src/render/quality.ts';
+import { morphControls } from '../src/web/preview-morphs.ts';
 
 /** A small skinned head: a face skinned to head and jaw with two morphs, eyes on turned eye bones, a lid with a blink. */
 async function headGltf() {
@@ -258,18 +259,37 @@ async function multiPrimitiveGltf() {
   geometry.clearGroups(); geometry.addGroup(0, third, 0); geometry.addGroup(third, third, 1); geometry.addGroup(2 * third, third, 2);
   const face = new SkinnedMesh(geometry, ['skin', 'lid', 'teeth'].map(name => new MeshStandardMaterial({ name })));
   face.name = 'face'; root.add(face); face.bind(new Skeleton([head])); face.updateMorphTargets();
+  // An eyeball: three primitives (white, iris, pupil) and no morphs.
+  const ball = new SphereGeometry(0.02, 12, 8), third2 = ball.index!.count / 3;
+  ball.addGroup(0, third2, 0); ball.addGroup(third2, third2, 1); ball.addGroup(2 * third2, third2, 2);
+  const eyeball = new Mesh(ball, ['eye_white', 'eye_iris', 'eye_pupil'].map(name => new MeshStandardMaterial({ name })));
+  eyeball.name = 'eyeball_L'; eyeball.position.set(0.03, 0.02, 0.08); root.add(eyeball);
   ensureFileReader();
   const bytes = await new GLTFExporter().parseAsync(root, { binary: true }) as ArrayBuffer;
   return new GLTFLoader().parseAsync(bytes, '');
 }
 
 describe('multi-primitive glTF meshes', () => {
+  it('lists preview morph controls by mesh group and emotion presets from extras.arkitFace', async () => {
+    const gltf = await multiPrimitiveGltf();
+    gltf.scene.children[0].userData.arkitFace = { contract: 'arkit-face/1', emotions: { neutral: {}, happy: { jawOpen: 0.25, mouthSmileLeft: 0.9 }, sad: { eyeBlinkLeft: 0.25 } } };
+    const puppet = createPuppet(gltf);
+    const controls = morphControls(puppet);
+    // One control per target, driven through the group (not its three primitives); the eyeball has none.
+    expect(controls.targets).toEqual([{ target: 'jawOpen', owners: ['face'] }, { target: 'eyeBlinkLeft', owners: ['face'] }]);
+    // Presets keep only the targets this model has; neutral comes first.
+    expect(controls.presets).toEqual({ neutral: {}, happy: { jawOpen: 0.25 }, sad: { eyeBlinkLeft: 0.25 } });
+    expect(Object.keys(controls.presets)[0]).toBe('neutral');
+  });
+
   it('drives a morph by glTF mesh name across every primitive that has the target', async () => {
     const gltf = await multiPrimitiveGltf();
     const puppet = createPuppet(gltf);
     const primitives = (gltf.scene.getObjectByName('face')!.children as Mesh[]).filter(child => child instanceof Mesh);
     expect(primitives.length).toBe(3);
+    // Only multi-primitive meshes with morph targets are morph groups: the morph-free eyeball is left out.
     expect(puppet.morphGroups).toEqual(['face']);
+    expect(gltf.scene.getObjectByName('eyeball_L')!.children.length).toBe(3);
     expect(puppet.morphTargets('face')).toEqual(['jawOpen', 'eyeBlinkLeft']);
     expect(puppet.morphTargets(primitives[1].name)).toEqual(['jawOpen', 'eyeBlinkLeft']);
     const rest = puppet.bounds();

@@ -75,11 +75,12 @@ function buildPuppet(gltf: GltfSource, capture: boolean, groupNames: ReadonlyMap
       if (object.morphTargetInfluences) morphRest.set(object, [...object.morphTargetInfluences]);
     }
   });
-  // Multi-primitive glTF meshes, addressable by name wherever a morph takes a part (a part name wins).
+  // Multi-primitive glTF meshes with morph targets, addressable by name wherever a morph takes a part (a part name
+  // wins). A morph-free one (an eyeball's white, iris and pupil) is not a morph group.
   const meshGroups = new Map<string, Mesh[]>();
   for (const [name, members] of groupNames) {
     const meshes = members.map(member => parts.get(member)).filter((mesh): mesh is Mesh => !!mesh);
-    if (!parts.has(name) && meshes.length) meshGroups.set(name, meshes);
+    if (!parts.has(name) && meshes.some(mesh => mesh.morphTargetInfluences?.length)) meshGroups.set(name, meshes);
   }
   const clips = new Map(gltf.animations.map(clip => [clip.name, clip]));
   const bindings = new Map<string, BoundRest>();
@@ -212,7 +213,7 @@ function buildPuppet(gltf: GltfSource, capture: boolean, groupNames: ReadonlyMap
     },
     get bones(): string[] { return [...bones.keys()]; },
     get parts(): string[] { return [...parts.keys()]; },
-    /** Multi-primitive glTF meshes (a face whose skin, lids and teeth share morph names); each name drives all its primitives' morphs. */
+    /** Multi-primitive glTF meshes with morph targets (a face whose skin, lids and teeth share morph names); each name drives all its primitives' morphs. Morph-free ones (eyeballs) are left out. */
     get morphGroups(): string[] { return [...meshGroups.keys()]; },
     /** Morph target names of a part or a multi-primitive glTF mesh, in first-seen order. */
     morphTargets(name: string): string[] {
