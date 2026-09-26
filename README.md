@@ -139,7 +139,7 @@ Rendering requires the built workbench (`npm run build`) and Chromium (`npx play
 ## Optional Blender stage
 
 [Reusable concept recipes](recipes/README.md) provide parameterized stylized
-characters, a shared skeletal walking study and a deterministic botanical kit.
+characters, shared skeletal walk and light jog studies and a deterministic botanical kit.
 They exercise the existing authored asset and operations pipelines; facial
 deformation and production rig polish remain outside these examples.
 

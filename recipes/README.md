@@ -68,9 +68,9 @@ representatives of every body plan through Blender and inspect the exported GLB;
 pure geometry checks do not test voxel fusion. Do not substitute a validator for
 front, side, face and foot visual review.
 
-## Shared character walk
+## Shared character walk and light jog
 
-`stylized_walk.py` adds one body-plan-aware, in-place walking loop to these
+`stylized_walk.py` adds body-plan-aware, in-place walk and light jog loops to these
 characters. Keep it beside `stylized_character.py`, or embed both modules into a
 single generated source before its `build()` entry point:
 
@@ -80,36 +80,50 @@ from stylized_walk import rig_character
 
 def build():
     definition = {'height': 1.22, 'age': 'child', 'presentation': 'female'}
-    return rig_character(build_character(definition), landmarks(definition), duration=1.1)
+    return rig_character(build_character(definition), landmarks(definition),
+                         duration=1.1, jog_duration=.75)
 ```
 
 `landmarks()` is shared by the anatomy and rig, so child proportions and alien
 heads do not need hand-placed joints. The rig has 16 bones prefixed `rig-` to
-avoid collisions with mesh names. Named garments use up to three normalized
+avoid collisions with mesh names. Named garments use up to four normalized
 bone influences; heads, hands, footwear and attached equipment use rigid skin
 weights. Bindings are specific to the named output of this character recipe,
 not an automatic rigger for arbitrary imported characters.
 
-Pure helpers `rest_bones(layout)`, `walk_pose(layout, phase)` and
-`skin_weights(name, vertices, layout)` expose reproducible measurements. The gait
-uses two-link leg IK, a 60% stance fraction, compensated body dip, swing clearance
-and opposing arm movement. Stance feet move backward at constant speed while the
-character stays in place; translating the character by `stride / (.6 * duration)`
-produces stationary world contacts. Stride is 0.43 times the two-segment leg
-length. This is a walking study, with flat feet and no toe-roll or secondary
-hair animation.
+Pure helpers `rest_bones(layout)`, `gait_pose(layout, phase, gait)`, `walk_pose`,
+`jog_pose`, `gait_rotations` and `skin_weights` expose reproducible measurements.
+`gait_settings('walk'|'jog')` records dimensionless stride, stance and swing lift.
+Walking uses 60% stance and a stride of 0.43 times leg length; jogging uses 42%
+stance and a stride of 0.50 times leg length, with two short flight intervals.
+Translate the actor by `leg_length * stride / (stance * duration)` metres/second
+to hold world contacts still. Clips themselves stay in place.
 
-`rig_character` bakes a `walk` action at 60 Hz from frame zero with identical
-loop endpoints. Duration is 0.6–3 seconds and rounds to the nearest frame.
+Quintic swing trajectories match stance position, velocity and acceleration.
+Two-link IK preserves limb lengths. The pelvis shifts laterally and rotates
+against the chest; arms have elbow bend and phase-offset follow-through. The jog
+adds forward lean and stronger lift. Explicit torso frames preserve axial twist
+in Blender, which joint head/tail locations alone cannot represent. The shirt hem
+follows the pelvis while the chest follows the spine. Boots rock from heel-led
+landing through flat support to toe-off and recovery. `foot_target` compensates
+the ankle around pivots derived from the actual outsole mesh, preserving ground
+contact while the boot rotates. There are no separate toe joints, secondary hair
+motion or facial animation.
+
+`rig_character` bakes a `walk` action and, when `jog_duration` is provided, a `jog`
+action at 60 Hz from frame zero with identical loop endpoints. Omitting
+`jog_duration` preserves the single-clip API. Durations are 0.6–3 seconds and
+round to the nearest frame. Named NLA tracks retain both clips during GLB export.
 Mesh objects retain Armature modifiers but are detached from the rig's object
 parent so glTF skins export as scene roots without parent-transform warnings.
 The returned list includes the rig; pass the complete list to the managed build.
 
-Run `python tests/stylized_walk.py` for reachability, loop closure, segment-length,
-stance height and weight checks. Exported skinning still needs browser verification:
+Run `python tests/stylized_walk.py` for anatomy/height sweeps, contact position,
+velocity and acceleration continuity, loop closure, segment lengths, torso and
+elbow articulation, stance height and skin weights. Exported skinning still needs browser verification:
 measure actual skinned outsole vertices at stance and compare both loop endpoints,
 then inspect side-view frames. Pure joint targets cannot prove the exported mesh
-follows them. The Space to Grow consumer keeps these checks in `scripts/check-walk.mjs`
+follows them. The Space to Grow consumer keeps these checks in `scripts/check-motion.mjs`
 and tests playback controls in `scripts/check-walk-ui.mjs`.
 
 ## Botanical kit
