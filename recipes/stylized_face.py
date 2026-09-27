@@ -23,11 +23,11 @@ CANONICAL_CENTER = (0.0, 0.0, .13)
 PROPORTIONS = {
     'child': dict(eye=(.040, .122), eye_radius=.0215, eye_depth=.8, iris=40, pupil=17, opening=(46, 34, 30), mouth_z=.077,
                   mouth_half_width=.020, nose=(0, .094), nose_size=(.0085, .0078, .0072),
-                  cheek=((.046, -.046, .088), (.026, .024, .022)), face=((0, -.012, .104), (.086, .075, .058)),
+                  cheek=((.046, -.046, .088), (.026, .024, .022)), face=((0, -.012, .101), (.086, .075, .060)),
                   jaw=.08, lower=.6, brow_inner=(.013, .148), brow_outer=(.058, .151)),
     'adult': dict(eye=(.039, .124), eye_radius=.0192, eye_depth=.8, iris=38, pupil=16, opening=(45, 32, 28), mouth_z=.076,
                   mouth_half_width=.021, nose=(0, .095), nose_size=(.0090, .0095, .0088),
-                  cheek=((.045, -.044, .092), (.018, .018, .018)), face=((0, -.012, .103), (.084, .074, .060)),
+                  cheek=((.045, -.044, .092), (.018, .018, .018)), face=((0, -.012, .100), (.084, .074, .062)),
                   jaw=.22, lower=.6, brow_inner=(.012, .149), brow_outer=(.058, .152)),
 }
 PRESENTATION = {'female': dict(nose_scale=1.0, mouth_scale=1.0, brow_height=1.0, jaw_scale=1.0),
@@ -144,7 +144,9 @@ def add_face(objects, values=None):
     nostril = material('nostril', _hex(_mix(linear_color(skin_hex), (.05, .01, .01), .75)), roughness=.8)
 
     blank = sdf_blank(head_field(L), L['center'], rings=72, segments=96)
-    holes = eye_holes(blank['vertices'], blank['faces'], eye_left, radius, opening=L['opening'], max_edge=.15 * radius)
+    # No socket dip: the eyes are seated at the skin (face_layout), and a dip between close-set eyes troughs the bridge.
+    holes = eye_holes(blank['vertices'], blank['faces'], eye_left, radius, opening=L['opening'], max_edge=.15 * radius, socket=0,
+                      lash_width=8)
     lips = sculpt_lips(holes['vertices'], holes['faces'], mouth_z, half_width)
     nose = nose_geometry(lips['vertices'], lips['faces'], L['nose'], L['nose_size'])
     vertices, faces = nose['vertices'], nose['faces']
@@ -214,7 +216,7 @@ def add_face(objects, values=None):
 
     brow_mat = material('brow', hair_hex, roughness=.7)
     h = L['brow_height']
-    brows = [skin_brow_geometry(head, side, inner=(bx, bz), outer=(ox, oz), height=.004 * k * h, thickness=.0016 * k,
+    brows = [skin_brow_geometry(head, side, inner=(bx, bz), outer=(ox, oz), height=.0065 * k * h, thickness=.0022 * k,
                                 arch=.002 * k, down=.004 * k, inner_up=.004 * k, outer_up=.004 * k, pinch=.002 * k, hole=holes[side])
              for side in 'LR']
     bgeo = join_geometry(brows)
@@ -226,13 +228,13 @@ def add_face(objects, values=None):
     parts, eyeballs = [head, cavity, upper, lower, tongue, brow], []
     for side, center in (('L', eye_left), ('R', eye_right)):
         built = build_eye(rig, side, center, radius, lid_material=skin, hole=holes[side], eye_materials=eye_mats, lash=True, skin=head,
-                          iris=L['iris'], pupil=L['pupil'])
+                          iris=L['iris'], pupil=L['pupil'], lash_width=8)
         eyeballs.append(built['eyeball'])
         parts.append(built['lids'])
     # A warm resting face: the mouth corners turn up a little (the boards' portraits all smile). The lift is added to
     # the rest shape and every shape key alike, after the morphs were made on the neutral mouth, so every morph keeps
     # its motion and the jaw still parts the lips along the slit.
-    left, right = symmetric_offsets(rest, corner, .014 * k, (.0005 * k, .0002 * k, .0017 * k), mask=still)
+    left, right = symmetric_offsets(rest, corner, .016 * k, (.0007 * k, .0002 * k, .0026 * k), mask=still)
     lift = [tuple(a[i] + b[i] - 2 * r[i] for i in range(3)) for a, b, r in zip(left, right, rest)]
     for block in head.data.shape_keys.key_blocks:
         for point, delta in zip(block.data, lift): point.co = tuple(point.co[i] + delta[i] for i in range(3))
