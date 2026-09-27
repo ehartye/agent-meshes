@@ -158,6 +158,21 @@ class FaceShape(unittest.TestCase):
             self.assertLess(abs((L['eye_left'][1] - L['eye_radius']) - beside), .25 * L['eye_radius'], name)
 
 
+class MouthInside(unittest.TestCase):
+    def test_the_mouth_inside_stays_in_front_of_the_neck(self):
+        k, front = 1.6, -.12
+        free = face.mouth_depths(front, None, k)
+        self.assertAlmostEqual(free['cavity_depth'], .055 * k)
+        # The body's neck rises into the head behind the mouth: an open jaw must show the dark bag, not the neck, even
+        # as the head nods over the neck.
+        for behind in (-.03, -.053):
+            room = face.mouth_depths(front, behind, k)
+            self.assertLessEqual(front + room['cavity_depth'], behind - .012 * k + 1e-12)
+            self.assertLessEqual(room['tongue_y'] + room['tongue_length'] / 2, front + room['cavity_depth'] + 1e-12)
+            self.assertGreater(room['tongue_y'] - room['tongue_length'] / 2, front)
+            self.assertGreater(room['cavity_depth'], .02 * k)
+
+
 class FaceLayout(unittest.TestCase):
     def test_features_sit_on_the_front_of_the_head_in_order_and_mirror(self):
         for name, values in CAST.items():

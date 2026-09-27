@@ -207,6 +207,18 @@ def _front(sdf, x, z, depth):
     return high
 
 
+def mouth_depths(mouth_front, behind, k):
+    """How deep the mouth's dark bag reaches behind the lips, and the tongue's length and furthest-back center (y).
+
+    `behind` is the front of whatever body part stands behind the mouth inside the head (the neck rises to the nose),
+    or None: the bag and tongue stay `.012 k` in front of it (the head nods over the neck as the character walks), so
+    an open jaw shows the dark bag and a tongue-coloured tongue, never the neck's skin. Pure."""
+    depth = .055 * k
+    if behind is not None: depth = max(.02 * k, min(depth, behind - mouth_front - .012 * k))
+    length = min(.03 * k, .6 * depth)
+    return dict(cavity_depth=depth, tongue_length=length, tongue_y=mouth_front + depth - .004 * k - length / 2)
+
+
 def _mix(a, b, t): return tuple(x + (y - x) * t for x, y in zip(a, b))
 
 
@@ -248,7 +260,7 @@ def add_face(objects, values=None):
     nose = nose_geometry(lips['vertices'], lips['faces'], L['nose'], L['nose_size'])
     vertices, faces = nose['vertices'], nose['faces']
     front = front_surface(vertices, faces)
-    jaw = JawHinge.ear(vertices, mouth_z, half_width, band=.06 * k, lip_round=1.1)
+    jaw = JawHinge.ear(vertices, mouth_z, half_width, band=.06 * k, lip_round=.7)
     head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces, 'material_indices': nose['material_indices']},
                               [skin, nostril])
     slit_mouth(head, mouth_z, half_width)
@@ -271,14 +283,21 @@ def add_face(objects, values=None):
         left, right = symmetric_offsets(rest, center, reach, offset, mask=still)
         shape_key(head, f'{name}Left', left)
         shape_key(head, f'{name}Right', right)
-    # The smile: the corners draw up, out and back, and the cheek above each rises with them into the lower lid, so a
-    # smile rounds the cheeks instead of pinching the corners into a grimace.
+    # The smile: the corners draw up, out and back, the cheek above each rises and rounds forward into the lower lid,
+    # and the upper lip lifts off the lower one on its side, so a full smile is the boards' open grin with the upper
+    # teeth showing, not corners pinched into a grimace.
+    from agent_meshes_face import SEAM_ATTRIBUTE, SEAM_LOWER
+    seam = head.data.attributes.get(SEAM_ATTRIBUTE)
+    lower_seam = {i for i, item in enumerate(seam.data) if item.value == SEAM_LOWER} if seam is not None else set()
+    upper_lip = [0.0 if i in lower_seam or v[2] < mouth_z - 1e-6 else 1.0 for i, v in enumerate(rest)]
     for side, sx in (('Left', 1), ('Right', -1)):
         corner_side = (sx * corner[0], corner[1], corner[2])
         cheek_side = (sx * cheek[0], cheek[1], cheek[2])
-        up = soft_offset(rest, corner_side, .03 * k, (sx * .004 * k, .001 * k, .0065 * k), mask=still)
-        lift = soft_offset(rest, cheek_side, (.03 * k, .024 * k, .028 * k), (sx * .001 * k, -.0012 * k, .004 * k), mask=still)
-        shape_key(head, f'mouthSmile{side}', [tuple(a[i] + b[i] - r[i] for i in range(3)) for a, b, r in zip(up, lift, rest)])
+        up = soft_offset(rest, corner_side, .032 * k, (sx * .005 * k, .0015 * k, .0085 * k), mask=still)
+        lift = soft_offset(rest, cheek_side, (.032 * k, .026 * k, .03 * k), (sx * .0012 * k, -.0022 * k, .0058 * k), mask=still)
+        grin = soft_offset(rest, (sx * .45 * half_width, mouth_front, mouth_z + .002 * k), (1.05 * half_width, .014 * k, .007 * k),
+                           (0, -.0004 * k, .0026 * k), mask=upper_lip)
+        shape_key(head, f'mouthSmile{side}', [tuple(a[i] + b[i] + g[i] - 2 * r[i] for i in range(3)) for a, b, g, r in zip(up, lift, grin, rest)])
     left, right = symmetric_offsets(rest, *nose['sneer'])
     shape_key(head, 'noseSneerLeft', left); shape_key(head, 'noseSneerRight', right)
     shape_key(head, 'browInnerUp', soft_offset(rest, (0, front(0, bz), bz), (.03 * k, .02 * k, .016 * k), (0, 0, .004 * k), mask=still))
@@ -320,8 +339,12 @@ def add_face(objects, values=None):
     dark = material('mouth_cavity', '#1e0709', roughness=.9)
     dark.use_backface_culling = False
     # Its rim rides the skin's smile, frown and funnel (follow_skin): a still rim shows through the corners they draw back.
+    # The body's neck rises inside the head to the nose: the bag and tongue stop in front of it.
+    behind = [(obj.matrix_world @ v.co) for obj in objects if getattr(obj, 'type', None) == 'MESH' for v in obj.data.vertices]
+    behind = [v.y for v in behind if abs(v.x) < 1.3 * half_width and abs(v.z - mouth_z) < .025 * k and v.y > mouth_front]
+    room = mouth_depths(mouth_front, min(behind) if behind else None, k)
     bag = follow_skin(mouth_cavity_geometry((0, mouth_front, mouth_z - .002 * k), width=2 * half_width + .01 * k, height=.04 * k,
-                                            depth=.055 * k, surface=front, inset=.006 * k), head, reach=.03 * k, skip=['jawOpen'])
+                                            depth=room['cavity_depth'], surface=front, inset=.006 * k), head, reach=.03 * k, skip=['jawOpen'])
     cavity = mesh_from_geometry('mouth_cavity', bag, [dark])
     for name, targets in bag['morphs'].items(): shape_key(cavity, name, targets)
     add_jaw_open(cavity, jaw)
@@ -334,8 +357,8 @@ def add_face(objects, values=None):
     add_jaw_open(lower, jaw, rigid=True)
     tongue_hex = _hex(_mix(linear_color('#b24c55'), (base[0] * .5, base[1] * .2, base[2] * .2), .25))
     # The tongue lies on the mouth floor, its tip well behind the chin's skin (a short child's chin is close behind the lips).
-    tongue_z, tongue_length = mouth_z - .013 * k, .03 * k
-    tongue_y = max(mouth_front + .024 * k, front(0, tongue_z) + .006 * k + tongue_length / 2)
+    tongue_z, tongue_length = mouth_z - .013 * k, room['tongue_length']
+    tongue_y = min(room['tongue_y'], max(mouth_front + .024 * k, front(0, tongue_z) + .006 * k + tongue_length / 2))
     tongue = mesh_from_geometry('tongue', tongue_geometry((0, tongue_y, tongue_z), length=tongue_length, width=1.2 * half_width,
                                 thickness=.0075 * k), [material('tongue', tongue_hex, roughness=.45)])
     add_jaw_open(tongue, jaw, rigid=True)
@@ -398,7 +421,7 @@ def beard_weight(point, layout, front_y):
 
 def _beard_tints(rest, tints, layout, front, color, base):
     """Stubble (a fine, mottled shade) or a short beard (denser, darker) painted over the skin's tints."""
-    import math
+    from agent_meshes_face import _value_noise
     density = .55 if layout['beard'] == 'stubble' else .92
     tint = tuple(min(1.0, c / b) if b > 0 else 1.0 for c, b in zip(color, base))
     k = layout['scale']
@@ -406,9 +429,10 @@ def _beard_tints(rest, tints, layout, front, color, base):
     for v, t in zip(rest, tints):
         w = beard_weight(v, layout, front(v[0], v[2]))
         if w <= 0: out.append(t); continue
-        # A fine grain, so the beard reads as hair, not a painted patch.
-        grain = .5 + .5 * math.sin(v[0] * 700 / k + 1.7 * math.sin(v[2] * 900 / k)) * math.sin(v[2] * 800 / k + v[1] * 500 / k)
-        a = w * density * (.8 + .2 * grain)
+        # A soft mottle a few vertices across, so the beard reads as hair, not a painted patch. A grain finer than the
+        # skin's vertices aliased into a knitted zigzag.
+        grain = _value_noise(v, .006 * k, 7)
+        a = w * density * (.78 + .22 * grain)
         out.append(tuple(c + a * (c * m - c) for c, m in zip(t, tint)))
     return out
 
