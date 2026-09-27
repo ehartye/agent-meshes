@@ -60,13 +60,13 @@ GAITS={
                 lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
                 head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
                 yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0608),
-    'jog':dict(stance=.264,stride=.456,lift=[.021,.297,.323,.0638,.329,.0543,.347,.526],reach=[-.94,-1.7,-2.16,-1.56,-.82,-.467,-.176,-.275],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
-               heel=-.243,peak=1.21,heel_flat=.392,toe_from=.758,peak_at=.424,flat_at=.76,
-               base=-.0467,bob=.0672,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
+    'jog':dict(stance=.221,stride=.448,lift=[.0279,.196,.359,.263,.0686,.265,.16,.264,.501,.336],reach=[-.655,-1.42,-1.93,-2.05,-1.46,-.855,-.56,-.329,-.292,-.254],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
+               heel=-.202,swing_roll=[-.0362,-.00647,.0252,.0425,.0524,.0554,.0145,-.0458,-.0679,-.0765],peak=1.22,heel_flat=.411,toe_from=.729,peak_at=.401,flat_at=.745,
+               base=-.0553,bob=.0741,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
                roll=5.0,roll_shape=[(1,-.888,.473),(3,-.052,-.026)],
                lean=17.3,lumbar=.55,pitch=3.0,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
                head=.5,head_lean=4.0,head_shape=[(2,-.95,.273),(4,-.071,-.046)],
-               yaw=6.0,chest_yaw=8.0,yaw_phase=0,body_phase=.0387),
+               yaw=6.0,chest_yaw=8.0,yaw_phase=0,body_phase=-.00152),
 }
 TORSO=['root','pelvis','spine','chest','neck','head']
 
