@@ -206,15 +206,16 @@ def add_face(objects, values=None):
     teeth = '#eeeae0'
     # The upper gum line sits well above the lips (a real mouth's does), so the smiling corners stay below it.
     upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, mouth_front + .005 * k, mouth_z + .0045 * k), .8 * half_width,
-                               .011 * k, 6, .008 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
+                               .011 * k, 8, .008 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
     lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, mouth_front + .006 * k, mouth_z - .0015 * k), .76 * half_width,
-                               .011 * k, 6, .0045 * k, row='lower'), [material('teeth_lower', teeth, roughness=.3)])
+                               .011 * k, 8, .0045 * k, row='lower'), [material('teeth_lower', teeth, roughness=.3)])
     add_jaw_open(lower, jaw, rigid=True)
     tongue = mesh_from_geometry('tongue', tongue_geometry((0, mouth_front + .025 * k, mouth_z - .012 * k), length=.028 * k, width=1.1 * half_width,
                                 thickness=.007 * k), [material('tongue', '#9c3a44', roughness=.5)])
     add_jaw_open(tongue, jaw, rigid=True)
 
-    brow_mat = material('brow', hair_hex, roughness=.7)
+    # Brows a shade darker than the hair, so they read against the skin at lineup size whatever the two colors.
+    brow_mat = material('brow', _hex(_mix(linear_color(hair_hex), (.01, .008, .007), .75)), roughness=.7)
     h = L['brow_height']
     brows = [skin_brow_geometry(head, side, inner=(bx, bz), outer=(ox, oz), height=.0065 * k * h, thickness=.0022 * k,
                                 arch=.002 * k, down=.004 * k, inner_up=.004 * k, outer_up=.004 * k, pinch=.002 * k, hole=holes[side])
@@ -226,8 +227,9 @@ def add_face(objects, values=None):
     eye_mats = [material('eye_white', '#efece4', roughness=.2), material('eye_iris', L['eyes'], roughness=.25),
                 material('eye_pupil', '#0b0908', roughness=.15)]
     parts, eyeballs = [head, cavity, upper, lower, tongue, brow], []
+    lash = material('lash', '#0b0706', roughness=.85)
     for side, center in (('L', eye_left), ('R', eye_right)):
-        built = build_eye(rig, side, center, radius, lid_material=skin, hole=holes[side], eye_materials=eye_mats, lash=True, skin=head,
+        built = build_eye(rig, side, center, radius, lid_material=skin, hole=holes[side], eye_materials=eye_mats, lash=lash, skin=head,
                           iris=L['iris'], pupil=L['pupil'], lash_width=8)
         eyeballs.append(built['eyeball'])
         parts.append(built['lids'])
