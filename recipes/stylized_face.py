@@ -382,9 +382,10 @@ def beard_weight(point, layout, front_y):
     def ramp(e0, e1, v):
         t = min(1.0, max(0.0, (v - e0) / (e1 - e0)))
         return t * t * (3 - 2 * t)
-    # Down the face: from the cheekbones (below the nose's top) to under the chin; the cheek line rises toward the ears.
-    top = layout['nose'][1] - .004 * k + .25 * abs(x)
-    vertical = 1 - ramp(top - .006 * k, top + .004 * k, z)
+    # Down the face: from under the cheekbones (level with the nose's underside) to under the chin; the cheek line
+    # rises a little toward the ears, where the beard runs up into sideburns.
+    top = layout['nose'][1] - .008 * k + .1 * abs(x) + .5 * max(0.0, abs(x) - .07 * k)
+    vertical = 1 - ramp(top - .01 * k, top + .004 * k, z)
     # Round the head: the front and sides back to the ears, not the neck behind.
     around = 1 - ramp(center[1] - .01 * k, center[1] + .025 * k, y)
     # Bare lips: an ellipse round the mouth, the moustache kept above it.
@@ -406,7 +407,7 @@ def _beard_tints(rest, tints, layout, front, color, base):
         w = beard_weight(v, layout, front(v[0], v[2]))
         if w <= 0: out.append(t); continue
         # A fine grain, so the beard reads as hair, not a painted patch.
-        grain = .5 + .5 * math.sin(v[0] * 2900 / k) * math.sin(v[2] * 3100 / k + v[1] * 1700 / k)
+        grain = .5 + .5 * math.sin(v[0] * 700 / k + 1.7 * math.sin(v[2] * 900 / k)) * math.sin(v[2] * 800 / k + v[1] * 500 / k)
         a = w * density * (.8 + .2 * grain)
         out.append(tuple(c + a * (c * m - c) for c, m in zip(t, tint)))
     return out
