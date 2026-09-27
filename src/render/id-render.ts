@@ -1,10 +1,15 @@
 import { Color, LinearSRGBColorSpace, Mesh, MeshBasicMaterial } from 'three';
 import type { Material, Object3D } from 'three';
+import { isGlassMaterial } from './glass.ts';
 
 /**
  * ID rendering: every surface drawn in one exact, unlit color chosen by material name or by part
  * (and slot), so pixel checks can count what is visible. This module is renderer-free: it plans
  * and swaps materials; the web viewer renders the result into a non-multisampled target.
+ *
+ * Glass (a slot blended below full opacity, glTF alphaMode BLEND, or transmissive) is see-through: unless a `parts`
+ * or `materials` key names it, it is left out, so the pixels count what is seen through it (a face behind a visor).
+ * Named glass draws as an opaque occluder in its color, which counts the glass itself.
  */
 export interface IdRenderColors {
   /** Material name → `#rrggbb`. In a stage, `model/material` limits the key to one model. */
@@ -13,7 +18,7 @@ export interface IdRenderColors {
   parts?: Record<string, string>;
   /** The clear color behind everything. Default `#000000`. */
   background?: string;
-  /** Color for surfaces no key matches (default: the background color, so they still occlude), or `null` to hide them. */
+  /** Color for surfaces no key matches (default: the background color, so they still occlude), or `null` to hide them. Unnamed glass is always hidden. */
   other?: string | null;
 }
 export interface IdRenderOptions extends IdRenderColors {
@@ -25,7 +30,8 @@ export interface IdRenderOptions extends IdRenderColors {
 }
 /** Top-row-first RGBA pixels. */
 export interface IdImage { width: number; height: number; data: Uint8ClampedArray }
-export interface IdTarget { model: string | null; mesh: Mesh; part: string; slot: number; material: string }
+/** `glass`: the slot is see-through (blended below full opacity or transmissive), so only an explicit key draws it. */
+export interface IdTarget { model: string | null; mesh: Mesh; part: string; slot: number; material: string; glass?: boolean }
 
 const colorPattern = /^#[0-9a-f]{6}$/i;
 /** Parse an exact `#rrggbb` color into 0..255 channels; anything else throws naming `label`. */
@@ -41,7 +47,7 @@ export function collectIdTargets(roots: readonly { model: string | null; root: O
   for (const { model, root } of roots) root.traverse(object => {
     if (!(object instanceof Mesh) || object.userData.outline) return;
     const slots = Array.isArray(object.material) ? object.material : [object.material];
-    slots.forEach((material: Material, slot) => targets.push({ model, mesh: object, part: object.name, slot, material: material.name }));
+    slots.forEach((material: Material, slot) => targets.push({ model, mesh: object, part: object.name, slot, material: material.name, glass: isGlassMaterial(material) }));
   });
   return targets;
 }
@@ -71,7 +77,7 @@ export function resolveIdColors(targets: readonly IdTarget[], options: IdRenderC
     for (const key of keys.parts) if (parts.has(key)) used.add(`p:${key}`);
     for (const key of keys.materials) if (materials.has(key)) used.add(`m:${key}`);
     const part = keys.parts.find(key => parts.has(key)), material = keys.materials.find(key => materials.has(key));
-    result.set(target, part !== undefined ? parts.get(part)! : material !== undefined ? materials.get(material)! : other);
+    result.set(target, part !== undefined ? parts.get(part)! : material !== undefined ? materials.get(material)! : target.glass ? null : other);
   }
   const known = (values: Iterable<string>) => [...new Set(values)].filter(Boolean).sort().join(', ');
   for (const key of materials.keys()) if (!used.has(`m:${key}`)) throw new Error(`Unknown material "${key}" in idRender; materials: ${known(targets.map(t => t.material))}`);

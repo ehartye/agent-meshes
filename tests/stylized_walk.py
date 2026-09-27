@@ -136,6 +136,25 @@ class WalkContract(unittest.TestCase):
         # The hem follows the same pelvis as the belt and trouser yoke.
         self.assertEqual(walk.skin_weights('flight-jacket',[(.17,layout['hip_y']+.04,0)],layout),[{'pelvis':1}])
 
+    def test_suit_parts_ride_their_bones_and_the_helmet_rides_the_head(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        values={'vacuum':True};layout=character.landmarks(values)
+        parts={p['name']:p for p in character.geometry(values)}
+        expected={'backpack':'spine','backpack-panel':'spine','left-chest-strap':'spine','belt-pouch-left':'pelvis',
+                  'left-shoulder-pad':'left-upper-arm','right-elbow-pad':'right-forearm','left-thigh-pouch':'left-thigh'}
+        for name,bone in expected.items():
+            self.assertEqual({b for row in walk.skin_weights(name,parts[name]['vertices'],layout) for b in row},{bone},name)
+        # Head, hair and every helmet part share one rigid head binding, so the glass cannot touch the face in any clip.
+        for name,part in parts.items():
+            if part.get('head') or (name.startswith('helmet') and name!='helmet-neck-seal') or 'helmet-lamp' in name:
+                self.assertEqual({b for row in walk.skin_weights(name,part['vertices'][:50],layout) for b in row},{'head'},name)
+        # The neck seal flexes from the chest to the helmet ring.
+        seal=walk.skin_weights('helmet-neck-seal',parts['helmet-neck-seal']['vertices'],layout)
+        self.assertEqual(set().union(*seal),{'spine','head'})
+        low=min(range(len(seal)),key=lambda i:parts['helmet-neck-seal']['vertices'][i][1])
+        self.assertGreater(seal[low].get('spine',0),.9)
+
     def test_articulation_and_attached_torso(self):
         import stylized_character as character
         import stylized_walk as walk

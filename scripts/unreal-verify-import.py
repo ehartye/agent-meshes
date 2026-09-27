@@ -8,6 +8,7 @@ the AGENT_MESHES_IMPORT_BEGIN and AGENT_MESHES_IMPORT_END markers.
 """
 import json
 import os
+import re
 import traceback
 
 import unreal
@@ -56,21 +57,55 @@ def skeletal_mesh_facts(mesh):
     return facts
 
 
+def effective_surface(material):
+    """The blend mode and two-sidedness a material renders with: the first instance in the parent chain that
+    overrides them (MaterialInstanceBasePropertyOverrides), else the base UMaterial's own settings. Interchange
+    makes glTF glass (alphaMode BLEND) an instance of MI_Default_Blend, whose override is BLEND_TRANSLUCENT."""
+    blend = two_sided = None
+    current = material
+    for _ in range(16):
+        if current is None: break
+        if isinstance(current, unreal.MaterialInstance):
+            overrides = current.get_editor_property('base_property_overrides')
+            if blend is None and overrides.get_editor_property('override_blend_mode'):
+                blend = overrides.get_editor_property('blend_mode')
+            if two_sided is None and overrides.get_editor_property('override_two_sided'):
+                two_sided = overrides.get_editor_property('two_sided')
+            current = current.get_editor_property('parent')
+            continue
+        if blend is None: blend = current.get_editor_property('blend_mode')
+        if two_sided is None: two_sided = current.get_editor_property('two_sided')
+        break
+    # unreal enums print as '<BlendMode.BLEND_TRANSLUCENT: 2>'.
+    name = None if blend is None else (re.search(r'BLEND_[A-Z_]+', str(blend)) or re.search(r'\w+', str(blend))).group(0)
+    return {'blendMode': name, 'twoSided': None if two_sided is None else bool(two_sided)}
+
+
 def material_facts(material):
-    """A material slot's material and the base material it instances (Interchange's glTF M_Default multiplies the
-    base color by the mesh's vertex colors, COLOR_0, through its MF_BaseColor function)."""
+    """A material slot's material, the base material it instances (Interchange's glTF M_Default multiplies the
+    base color by the mesh's vertex colors, COLOR_0, through its MF_BaseColor function), and its effective blend
+    mode and two-sidedness (glass must import translucent)."""
     if material is None: return None
     facts = {'name': material.get_name()}
     try:
         facts['base'] = material.get_base_material().get_path_name().split('.')[0]
     except Exception:
         facts['error'] = traceback.format_exc()
+    try:
+        facts.update(effective_surface(material))
+    except Exception:
+        facts['surfaceError'] = traceback.format_exc()
     return facts
 
 
 def static_mesh_facts(mesh):
     lods = mesh.get_num_lods()
-    return {'path': mesh.get_path_name().split('.')[0], 'lods': lods, 'vertices': [mesh.get_num_vertices(lod) for lod in range(lods)]}
+    facts = {'path': mesh.get_path_name().split('.')[0], 'lods': lods, 'vertices': [mesh.get_num_vertices(lod) for lod in range(lods)]}
+    try:
+        facts['materials'] = [material_facts(slot.get_editor_property('material_interface')) for slot in mesh.get_editor_property('static_materials')]
+    except Exception:
+        facts['materialsError'] = traceback.format_exc()
+    return facts
 
 
 def main():

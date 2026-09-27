@@ -15,7 +15,7 @@ Fills the container and follows its size. Options:
 | `orbit` | Mouse/touch orbit controls (default true) |
 | `floor` | Draw a ground disc with the shadow |
 | `view` | `front`, `back`, `left`, `right` (`side` is its alias), `top`, `bottom`, `perspective`, or `{position:[x,y,z], target:[x,y,z]}` |
-| `outline`, `outlineColor` | Ink outline thickness in meters behind every part, and its color |
+| `outline`, `outlineColor` | Ink outline thickness in meters behind every opaque part (glass gets none: its hull would show through), and its color |
 | `quality` | `'high'` (default), `'fast'`, or `{preset?, antialias?, pixelRatio?, shadows?, environment?}` |
 
 The scene has a procedural room environment plus key and fill lights with soft shadows. Shells
@@ -104,6 +104,10 @@ Normal materials, visibility, background and camera aspect are restored before i
 | `models` | Stage only: render just these models |
 
 Precedence is `part#slot`, then `part`, then material, and a `model/` key beats an unscoped one.
+**Glass** (a slot blended below full opacity, glTF `alphaMode: BLEND`, or transmissive) is left out
+unless a `parts` or `materials` key names it, even when `other` has a color, so the pixels count
+what is seen through it: a face behind a helmet visor counts as the face. Name the glass to count
+the glass itself; it then draws as an opaque occluder in its color.
 Colors must be `#rrggbb`. A key that matches nothing throws, listing the names that exist, so a
 typo cannot silently count zero pixels. Outline hulls and the floor are not drawn.
 `screenshot({id: options})` returns the same render as a PNG data URL, and

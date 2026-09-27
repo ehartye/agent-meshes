@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { ARKIT_FACE_CONTRACT, ARKIT_FACE_REQUIRED_BONES, ARKIT_FACE_REQUIRED_MORPHS, contractExpectations } from '../src/arkit-face.ts';
 import {
   acquireProjectLock, buildUnrealReport, checkUnrealReport, findUnreal, parseNameList, parseUnrealLog, reviewUnrealReport,
-  scratchProject, unrealCommandLine, unrealImportName, type ParsedUnrealLog, type UnrealRawReport,
+  scratchProject, unrealCommandLine, unrealImportName, type ParsedUnrealLog, type UnrealRawReport, type UnrealSkeletalMeshFacts,
 } from '../src/unreal.ts';
 import { auditMorphNames } from '../src/gltf-morphs.ts';
 import { auditSkins } from '../src/gltf-skins.ts';
@@ -477,5 +477,47 @@ describe('reviewUnrealReport: geometry Unreal dropped, the bone hierarchy and ex
     expect(review.failures).toEqual([]);
     expect(review.warnings).toEqual([expect.stringMatching(/^pre-flight: the GLB binds its meshes to 2 skins \(skin 0 "HeadRig": joints "head", "eye_L", "eye_R", used by "Eyeball_L", "Eyeball_R"; skin 1 "FaceOnly": joints "head", used by "Head"\)\. Unreal merged them into one SkeletalMesh here, but the arkit-face\/1 contract asks for a single skin/)]);
     expect(checkUnrealReport(build(imported('A_two_skins', 3360), 'A-two-skins.glb'), contract)).toEqual([]);
+  });
+});
+
+describe('checkUnrealReport: glass keeps its translucency', () => {
+  const clean: ParsedUnrealLog = { importErrors: [], importWarnings: [], otherErrors: [], interchangeCompleted: true, windowFound: true };
+  const glass = [
+    { material: 0, name: 'visor-glass', alphaMode: 'BLEND' as const, opacity: 0.2, transmission: 0, ior: null, doubleSided: true },
+    { material: 2, name: 'lens-glass', alphaMode: 'OPAQUE' as const, opacity: 1, transmission: 1, ior: 1.45, doubleSided: true },
+  ];
+  const withMaterials = (materials: UnrealSkeletalMeshFacts['materials']) => { const raw = structuredClone(RAW); raw.skeletalMeshes[0].materials = materials; return raw; };
+  const build = (raw: UnrealRawReport) => buildUnrealReport(raw, clean, { input: 'glass.glb', editor: 'e', version: '5.7.3', exitCode: 0, logFile: 'l', elapsedMs: 1, preflight: { glass } });
+  const expectations = { morphs: [], bones: [], requireSkeletalMesh: false };
+  const imported = [
+    { name: 'visor-glass', base: '/InterchangeAssets/gltf/M_Default', blendMode: 'BLEND_TRANSLUCENT', twoSided: true },
+    { name: 'skin', base: '/InterchangeAssets/gltf/M_Default', blendMode: 'BLEND_OPAQUE', twoSided: true },
+    { name: 'lens-glass', base: '/InterchangeAssets/gltf/M_Transmission', blendMode: 'BLEND_TRANSLUCENT', twoSided: true },
+  ];
+
+  it('passes when every glass material imports translucent, and lists them in the report', () => {
+    const report = build(withMaterials(imported));
+    expect(checkUnrealReport(report, expectations)).toEqual([]);
+    expect(report.glass).toEqual([
+      { material: 'visor-glass', gltf: 'alphaMode BLEND, opacity 0.2', unreal: 'visor-glass', blendMode: 'BLEND_TRANSLUCENT', twoSided: true, ok: true },
+      { material: 'lens-glass', gltf: 'KHR_materials_transmission 1', unreal: 'lens-glass', blendMode: 'BLEND_TRANSLUCENT', twoSided: true, ok: true },
+    ]);
+  });
+
+  it('fails when a glass material imports opaque or goes missing', () => {
+    const opaque = imported.map(m => m.name === 'visor-glass' ? { ...m, blendMode: 'BLEND_OPAQUE' } : m).filter(m => m.name !== 'lens-glass');
+    const failures = checkUnrealReport(build(withMaterials(opaque)), expectations);
+    expect(failures).toEqual([
+      'glass material "visor-glass" (alphaMode BLEND, opacity 0.2) imported opaque: Unreal material "visor-glass" has blend mode BLEND_OPAQUE, so the surface behind it would be hidden',
+      'glass material "lens-glass" (KHR_materials_transmission 1) has no imported Unreal material of that name (materials: skin, visor-glass)',
+    ]);
+  });
+
+  it('checks static mesh materials too, and warns when the blend mode could not be read', () => {
+    const raw = structuredClone(RAW); raw.skeletalMeshes[0].materials = [imported[1]];
+    raw.staticMeshes = [{ path: '/Game/Verify/pip/bubble', lods: 1, vertices: [10], materials: [{ name: 'visor-glass', base: 'x' }, imported[2]] }];
+    const review = reviewUnrealReport(build(raw), expectations);
+    expect(review.failures).toEqual([]);
+    expect(review.warnings).toContain('glass material "visor-glass": Unreal did not report a blend mode, so its translucency is unchecked');
   });
 });

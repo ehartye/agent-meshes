@@ -195,6 +195,19 @@ def skin_weights(name,vertices,d):
             rows.append({bone:value for bone,value in row.items() if value>0})
         return rows
     if name in ['chest-terminal','chest-readout','front-fastener','collar','neck','air-hose'] or name.startswith(('air-tank','tank-band')):return rigid('spine')
+    # Fieldwork suit kit rides the bone under it; the helmet's neck seal flexes from the chest to the helmet ring.
+    if name.startswith('backpack') or name.endswith('-chest-strap'):return rigid('spine')
+    if name.startswith('belt-pouch'):return rigid('pelvis')
+    if name.endswith('-shoulder-pad'):return rigid(side+'-upper-arm')
+    if name.endswith('-elbow-pad'):return rigid(side+'-forearm')
+    if name.endswith('-thigh-pouch'):return rigid(side+'-thigh')
+    if name=='helmet-neck-seal':
+        ys=[v[1] for v in vertices];low,high=min(ys),max(ys)
+        rows=[]
+        for y in ys:
+            t=w_smooth(low+(high-low)*.35,high,y)
+            rows.append({bone:value for bone,value in {'spine':1-t,'head':t}.items() if value>0})
+        return rows
     return rigid('head')
 
 def rig_character(objects,layout,duration=1.2,jog_duration=None):

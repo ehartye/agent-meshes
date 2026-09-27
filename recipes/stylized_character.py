@@ -46,8 +46,10 @@ def interpolate(rows, subdivisions=4):
 
 class Meshes:
     def __init__(self): self.parts=[]
-    def mesh(self,name,vertices,faces,color,roughness=.65):
-        self.parts.append(dict(name=name,vertices=vertices,faces=faces,color=color,roughness=roughness))
+    def mesh(self,name,vertices,faces,color,roughness=.65,material=None):
+        part=dict(name=name,vertices=vertices,faces=faces,color=color,roughness=roughness)
+        if material:part['material']=material  # glass: opacity, ior, double_sided
+        self.parts.append(part)
     def rings(self,name,rows,color,axis='y',segments=32,smooth=4):
         # rows: axial coordinate, center U, center V, radius U, radius V
         rows=interpolate(rows,smooth); verts=[]
@@ -205,6 +207,219 @@ def anatomy_head(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,style,alien=False):
             points=[(cx,cy+ry*.1,cz-rz*.95),(cx+.025,cy-ry*.52,cz-rz*1.3),(cx+.04,cy-ry*1.17,cz-rz*1.35)]
             m.tube('tied-hair',points,[rx*.46,rx*.35,rx*.09],hair)
 
+# Clear-glass vacuum helmet. The bubble is fitted to the head it holds (face, eyes, hair, ears, fronds), not
+# scaled from height, so a child's helmet is smaller than an adult's and an alien's follows its own head.
+HELMET_CLEARANCE=.022   # metres from face/hair to the glass inner surface (the fit's minimum)
+HELMET_GLASS=dict(opacity=.16,ior=1.5,double_sided=True)
+
+def ellipsoid_clearance(point,center,radii):
+    """Signed distance from a point to an axis-aligned ellipsoid surface: positive inside, negative outside.
+
+    Bisection on the Lagrange parameter of the closest-point problem (Eberly, "Distance from a Point to an
+    Ellipse, an Ellipsoid, or a Hyperellipsoid"); exact to about 1e-7 m and robust inside and outside.
+    """
+    y=[max(abs(point[k]-center[k]),1e-9) for k in range(3)];e=radii
+    inside=sum((y[k]/e[k])**2 for k in range(3))<=1
+    def g(t):return sum((e[k]*y[k]/(t+e[k]*e[k]))**2 for k in range(3))-1
+    lo=-min(e)**2+1e-15;hi=max(0.0,max(e)*math.hypot(*y))
+    if g(hi)>0:hi=max(e)**2*4+math.hypot(*y)*max(e)*4
+    for _ in range(90):
+        mid=(lo+hi)/2
+        if g(mid)>0:lo=mid
+        else:hi=mid
+    t=(lo+hi)/2;closest=[e[k]*e[k]*y[k]/(t+e[k]*e[k]) for k in range(3)]
+    distance=math.dist(closest,y)
+    return distance if inside else -distance
+
+def helmet_fit(points,neck_radius,clearance=HELMET_CLEARANCE,max_aspect=1.3):
+    """Fit a round glass bubble around a head's points (metres, Y up, facing +Z, symmetric in X).
+
+    The bubble is the smallest axis-aligned ellipsoid (by coordinate descent on its side, top, bottom, front and
+    back extents) that keeps every point at least `clearance` inside it, stays round (longest radius at most
+    `max_aspect` times the shortest) and leaves a neck opening wider than `neck_radius`, cut just below the
+    lowest point. So the helmet follows the head it holds: a child's is smaller, an alien's follows its own
+    head. Returns center, radii, cut_y (the opening's plane), opening_radius and the achieved clearance.
+    """
+    points=list({tuple(round(c/.003)*.003 for c in v) for v in points})
+    if len(points)<4:raise ValueError('helmet_fit needs the head points')
+    lo=[min(v[k] for v in points) for k in range(3)];hi=[max(v[k] for v in points) for k in range(3)]
+    cut_y=lo[1]-.004
+    def shape(x):
+        side,top,bottom,front,back=x
+        return (0.0,(top+bottom)/2,(front+back)/2),(side,(top-bottom)/2,(front-back)/2)
+    def opening(center,radii):
+        u=(cut_y-center[1])/radii[1]
+        return 0 if abs(u)>=1 else min(radii[0],radii[2])*math.sqrt(1-u*u)
+    def approx_ok(center,radii,margin):
+        # First-order (Sampson) distance -f/|grad f| to the surface, positive inside; exact enough near it.
+        # The last failing point is tried first, so most rejected trials cost one point.
+        ia,ib,ic=(1/r**2 for r in radii);cy,cz=center[1],center[2]
+        for index,(x,y,z) in enumerate(candidates):
+            y-=cy;z-=cz;f=x*x*ia+y*y*ib+z*z*ic-1;gx,gy,gz=x*ia,y*ib,z*ic
+            if -f<margin*2*math.sqrt(gx*gx+gy*gy+gz*gz):
+                if index:candidates.insert(0,candidates.pop(index))
+                return False
+        return True
+    width=max(abs(lo[0]),abs(hi[0]))
+    # Points deep inside the bounds' ellipsoid never decide the fit.
+    norm=lambda v:(v[0]/width)**2+((v[1]-(lo[1]+hi[1])/2)/((hi[1]-lo[1])/2))**2+((v[2]-(lo[2]+hi[2])/2)/((hi[2]-lo[2])/2))**2
+    candidates=[v for v in points if norm(v)>.45]
+    def near_surface(center,radii):
+        # Points the first-order distance puts within 1 cm of the clearance; the rest cannot decide an exact check.
+        ia,ib,ic=(1/r**2 for r in radii);cy,cz=center[1],center[2];out=[]
+        for v in candidates:
+            x,y,z=v[0],v[1]-cy,v[2]-cz;f=x*x*ia+y*y*ib+z*z*ic-1;g=2*math.sqrt((x*ia)**2+(y*ib)**2+(z*ic)**2)
+            if -f/g<clearance+.01:out.append(v)
+        return out
+    def fits(x,exact=False):
+        center,radii=shape(x)
+        if min(radii)<=0 or max(radii)>max_aspect*min(radii) or opening(center,radii)<neck_radius:return False
+        if not exact:return approx_ok(center,radii,clearance)
+        return all(ellipsoid_clearance(v,center,radii)>=clearance for v in near_surface(center,radii))
+    grow=3*clearance;x=[width+grow,hi[1]+grow,lo[1]-grow,hi[2]+grow,lo[2]-grow]
+    while not fits(x):
+        c=(x[3]+x[4])/2;y=(x[1]+x[2])/2
+        x=[x[0]*1.1,y+(x[1]-y)*1.1,y+(x[2]-y)*1.1,c+(x[3]-c)*1.1,c+(x[4]-c)*1.1]
+    # Tighten each extent toward the points in turn; later rounds let earlier extents benefit.
+    tight=[width,hi[1],lo[1],hi[2],lo[2]]
+    for _ in range(3):
+        for k in range(5):
+            a,b=tight[k],x[k]
+            for _ in range(16):
+                trial=list(x);trial[k]=(a+b)/2
+                if fits(trial):b=trial[k]
+                else:a=trial[k]
+            x[k]=b
+    # The search used the first-order distance; confirm exactly and let out any slack it missed.
+    while not fits(x,exact=True):
+        c=(x[3]+x[4])/2;y=(x[1]+x[2])/2
+        x=[x[0]*1.002,y+(x[1]-y)*1.002,y+(x[2]-y)*1.002,c+(x[3]-c)*1.002,c+(x[4]-c)*1.002]
+    center,radii=shape(x)
+    return dict(center=center,radii=radii,cut_y=cut_y,opening_radius=opening(center,radii),
+                clearance=min(ellipsoid_clearance(v,center,radii) for v in near_surface(center,radii)))
+
+def vacuum_helmet(m,fit,s,colors,segments=96,rings=48):
+    """Hollow bubble helmet on a fitted ellipsoid: a clear glass window over the face, a cream crown-and-back shell
+    with thickness, a gold rim around the window and the neck opening, a neck seal down to the suit, and lamps.
+
+    One latitude-longitude bubble (neck cut to crown) is split by the window plane, which leans back from the
+    chin to the crown: glass in front of it (the face, and the profile from the side), shell behind (crown and
+    back). Triangles are clipped exactly at the plane, so glass and shell share their edge vertices. The glass is
+    the bubble surface itself, so the fit's clearance is the distance from the face to the glass.
+    """
+    (cx,cy,cz),radii=fit['center'],fit['radii'];thick=.009*s
+    lean=math.radians(12);f=(0,-math.sin(lean),math.cos(lean));k=-.06  # window plane: d.f=k, d on the unit bubble
+    lat_cut=math.asin(max(-1,min(1,(fit['cut_y']-cy)/radii[1])))
+    def world(d,grow=0):return tuple(c+(r+grow)*v for c,r,v in zip((cx,cy,cz),radii,d))
+    def unit(p):return tuple((p[i]-(cx,cy,cz)[i])/radii[i] for i in range(3))
+    def side(d):return d[1]*f[1]+d[2]*f[2]-k
+    # The whole bubble as triangles: rings from the neck cut to a crown vertex.
+    dirs=[];tris=[]
+    for r in range(rings):
+        lat=mix(lat_cut,math.pi/2,r/rings)
+        for j in range(segments):
+            lon=j*math.tau/segments;dirs.append((math.cos(lat)*math.sin(lon),math.sin(lat),math.cos(lat)*math.cos(lon)))
+    dirs.append((0,1,0));crown=len(dirs)-1
+    for r in range(rings):
+        for j in range(segments):
+            a=r*segments+j;b=r*segments+(j+1)%segments
+            if r==rings-1:tris.append((a,b,crown));continue
+            tris+=[(a,b,b+segments),(a,b+segments,a+segments)]
+    points=[world(d) for d in dirs];value=[side(d) for d in dirs]
+    split={}
+    def cut(i,j):
+        key=(min(i,j),max(i,j))
+        if key not in split:
+            t=value[i]/(value[i]-value[j]);split[key]=len(points)
+            points.append(tuple(a+(b-a)*t for a,b in zip(points[i],points[j])));value.append(0.0)
+        return split[key]
+    glass,shell=[],[]
+    for tri in tris:
+        for keep,out in [(lambda v:v>=0,glass),(lambda v:v<=0,shell)]:
+            poly=[]
+            for q in range(3):
+                i,j=tri[q],tri[(q+1)%3]
+                if keep(value[i]):poly.append(i)
+                if (value[i]>0)!=(value[j]>0) and value[i]!=0 and value[j]!=0:poly.append(cut(i,j))
+            poly=[v for q,v in enumerate(poly) if v!=poly[q-1]]
+            if len(poly)>=3 and not all(value[v]==0 for v in poly):out.append(tuple(poly))
+    def compact(faces,grow=0):
+        used=sorted({v for face in faces for v in face});remap={v:q for q,v in enumerate(used)}
+        verts=[points[v] if not grow else world(unit(points[v]),grow) for v in used]
+        return verts,[tuple(remap[v] for v in face) for face in faces],remap
+    gv,gf,_=compact(glass)
+    m.mesh('helmet-glass',gv,gf,colors['glass'],roughness=.04,material=dict(HELMET_GLASS))
+    m.parts[-1]['fit']=dict(fit)
+    # Shell: inner surface on the bubble, outer `thick` beyond, closed along the window edge and the neck.
+    inner,faces,remap=compact(shell);outer=[world(unit(p),thick) for p in inner];count=len(inner)
+    edges={}
+    for face in faces:
+        for q in range(len(face)):
+            a,b=face[q],face[(q+1)%len(face)];edges[(a,b)]=edges.get((a,b),0)+1
+    sf=[tuple(reversed(face)) for face in faces]+[tuple(v+count for v in face) for face in faces]
+    sf+=[(a,b,b+count,a+count) for (a,b) in edges if (b,a) not in edges]
+    m.mesh('helmet-shell',inner+outer,sf,colors['shell'],roughness=.45)
+    # Gold rims: along the window edge (an exact planar ellipse) and around the neck opening, outside the shell.
+    rim=.006*s;radius=math.sqrt(1-k*k);e2=(0,f[2],-f[1])
+    def edge_dir(theta):return tuple(k*f[q]+radius*(math.cos(theta)*(1,0,0)[q]+math.sin(theta)*e2[q]) for q in range(3))
+    above=lambda theta:edge_dir(theta)[1]-math.sin(lat_cut)
+    # The edge runs over the crown (theta=pi/2 points up) between its two crossings of the neck cut.
+    lo,hi=math.pi/2,math.pi/2+math.pi
+    if above(hi)>0:thetas=[math.pi/2+math.tau*q/160 for q in range(161)]
+    else:
+        for _ in range(60):
+            mid=(lo+hi)/2
+            if above(mid)>0:lo=mid
+            else:hi=mid
+        end=lo;thetas=[math.pi-end+(2*end-math.pi)*q/120 for q in range(121)]
+    rim_points=[world(edge_dir(t),thick*.5) for t in thetas]
+    m.tube('helmet-rim',rim_points,[rim]*len(rim_points),colors['rim'])
+    ring=[world((math.cos(lat_cut)*math.sin(lon),math.sin(lat_cut),math.cos(lat_cut)*math.cos(lon)),thick*.5) for lon in [j*math.tau/48 for j in range(49)]]
+    m.tube('helmet-neck-ring',ring,[rim*1.5]*len(ring),colors['rim'])
+    # A glint arc on the glass, upper left, reads as a reflection in flat light.
+    def surface(lat,lon,grow):return world((math.cos(lat)*math.sin(lon),math.sin(lat),math.cos(lat)*math.cos(lon)),grow)
+    glint=[surface(math.radians(30+7*math.sin(math.pi*q/8)),math.radians(-46+4.5*q),.002) for q in range(9)]
+    m.tube('helmet-glint',glint,[.0028*s*math.sin(math.pi*(q+.5)/9.5) for q in range(9)],'#f4fbff')
+    # Lamps sit on the rim at its widest point on each side.
+    for sign,label in [(-1,'left'),(1,'right')]:
+        d=edge_dir(0 if sign>0 else math.pi);lamp=world(d,thick+.012*s)
+        m.ellipsoid(label+'-helmet-lamp',lamp,(.016*s,.034*s,.030*s),colors['lamp'])
+        m.ellipsoid(label+'-helmet-lamp-lens',(lamp[0]+sign*.013*s,lamp[1],lamp[2]),(.005*s,.022*s,.019*s),colors['rim'])
+    return fit
+
+def fieldwork_suit(m,dims,colors):
+    """Direction A "Fieldwork" suit language over the shared suit body: teal shoulder and elbow pads, olive belt
+    and thigh pouches, chest harness straps and a life-support backpack. Parts are rigid to the bone they ride."""
+    s=dims['s'];hip=dims['hip_y'];shoulder=dims['shoulder_y'];chest=dims['chest_y'];sx=dims['shoulder_w']*.49
+    wrist=hip+.095*s;elbow=mix(wrist,shoulder,.49);wx=sx+.092*s;knee=hip*.53
+    for side,label in [(-1,'left'),(1,'right')]:
+        m.ellipsoid(label+'-shoulder-pad',(side*(sx+.004*s),shoulder+.012*s,0),(.068*s,.036*s,.074*s),colors['pad'])
+        m.ellipsoid(label+'-elbow-pad',(side*(wx-.013*s),elbow,-.004*s),(.05*s,.052*s,.05*s),colors['pad'])
+        m.rings(label+'-thigh-pouch',[(hip-.20*s,side*.172*s,.004*s,.022*s,.042*s),(hip-.185*s,side*.176*s,.004*s,.03*s,.052*s),
+            (hip-.10*s,side*.178*s,.004*s,.032*s,.055*s),(hip-.085*s,side*.174*s,.004*s,.024*s,.046*s)],colors['pouch'])
+        m.rings('belt-pouch-'+label,[(hip-.02*s,side*.12*s,.098*s,.034*s,.018*s),(hip-.01*s,side*.12*s,.102*s,.04*s,.024*s),
+            (hip+.05*s,side*.12*s,.103*s,.04*s,.025*s),(hip+.06*s,side*.12*s,.1*s,.032*s,.019*s)],colors['pouch'])
+        m.tube(label+'-chest-strap',[(side*.1*s,shoulder+.03*s,-.02*s),(side*.11*s,shoulder-.02*s,.1*s),(side*.085*s,chest,.125*s),(side*.07*s,hip+.08*s,.112*s)],[.009*s]*4,colors['strap'])
+    m.rings('backpack',[(chest-.23*s,0,-.15*s,.14*s,.05*s),(chest-.21*s,0,-.16*s,.155*s,.07*s),(chest+.07*s,0,-.165*s,.16*s,.075*s),
+        (chest+.1*s,0,-.16*s,.15*s,.066*s),(chest+.115*s,0,-.15*s,.12*s,.045*s)],colors['pack'],axis='y')
+    m.ellipsoid('backpack-panel',(0,chest-.06*s,-.232*s),(.092*s,.1*s,.012*s),colors['pad'])
+    m.ellipsoid('backpack-emblem',(0,chest-.05*s,-.243*s),(.03*s,.03*s,.004*s),colors['rim'])
+
+FIELDWORK=dict(suit='#e4d8bc',shell='#ece2c8',pad='#2f7f7a',pouch='#6d7043',strap='#2d3440',rim='#d6a23e',
+               boot='#5d573c',sole='#2b2c2e',glove='#2d6763',pack='#ddd0b0',glass='#eaf6ff')
+
+def fieldwork_colors(parts):
+    """Recolor the shared suit body in direction A's palette: cream suit, teal pads and gloves, olive boots."""
+    for part in parts:
+        name=part['name']
+        if part.get('head') or name.startswith('helmet') or 'helmet-lamp' in name:continue
+        if 'outsole' in name:part['color']=FIELDWORK['sole']
+        elif 'boot' in name or name.endswith('-ankle'):part['color']=FIELDWORK['boot']
+        elif any(t in name for t in ['-palm','-finger','-thumb']):part['color']=FIELDWORK['glove']
+        elif 'knee-panel' in name:part['color']=FIELDWORK['pad']
+        elif name in ['waist-belt','collar','front-fastener'] or 'wrist-seal' in name:part['color']=FIELDWORK['strap']
+        elif part['color'].lower()=='#dfdfcc':part['color']=FIELDWORK['suit']
+
 def landmarks(values=None):
     """Shared body measurements for geometry, bindings and gait; metres, Y up."""
     p=parameters({} if values is None else values)
@@ -256,20 +471,21 @@ def geometry(values=None):
             fx=side*(wx+(-1.5+finger)*.020*s); length=[.051,.067,.062,.045][finger]*s
             m.tube(label+'-finger-'+str(finger),[(fx,wrist_y-.063*s,.067*s),(fx,wrist_y-.093*s-length*.45,.081*s),(fx,wrist_y-.086*s-length,.084*s)],[.010*s,.009*s,.006*s],hand_color)
         m.tube(label+'-thumb',[(side*(wx-.022*s),wrist_y-.035*s,.068*s),(side*(wx-.057*s),wrist_y-.053*s,.09*s),(side*(wx-.055*s),wrist_y-.083*s,.103*s)],[.019*s,.013*s,.008*s],hand_color)
-    if not eva:
-        anatomy_head(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['eyes'],p['presentation'],alien)
-    else:
-        # Pressure shell and visor are fitted over the same head envelope.
-        m.ellipsoid('helmet-shell',(0,head_y,0),(rx*1.24,ry*1.13,rz*1.3),ivory)
-        m.ellipsoid('visor-gasket',(0,head_y,rz*.79),(rx*1.09,ry*.77,rz*.60),navy)
-        m.ellipsoid('visor',(0,head_y+.006*s,rz*.95),(rx*.98,ry*.65,rz*.51),'#34576a')
-        m.tube('visor-highlight',[(-rx*.65,head_y+ry*.42,rz*1.31),(-rx*.28,head_y+ry*.48,rz*1.40),(rx*.11,head_y+ry*.46,rz*1.43)],[.004*s]*3,'#a5ded6')
-        m.rings('helmet-collar',[(head_y-ry*1.0,0,0,rx*.89,rz*.92),(head_y-ry*.87,0,0,rx*.92,rz*.98)],accent)
-        for side in [-1,1]:
-            m.ellipsoid('helmet-radio-'+str(side),(side*rx*1.16,head_y,0),(.025*s,.055*s,.049*s),accent)
-            m.ellipsoid('air-tank-'+str(side),(side*.081*s,chest_y-.035*s,-.167*s),(.065*s,.208*s,.07*s),ivory)
-            m.rings('tank-band-'+str(side),[(chest_y-.08*s,side*.081*s,-.167*s,.067*s,.072*s),(chest_y-.052*s,side*.081*s,-.167*s,.067*s,.072*s)],navy)
-        m.tube('air-hose',[(.08*s,chest_y-.17*s,-.17*s),(.24*s,chest_y-.2*s,-.1*s),(.235*s,chest_y-.23*s,.09*s),(.12*s,chest_y-.16*s,.14*s)],[.014*s]*4,'#d9b66c')
+    head_start=len(m.parts)
+    anatomy_head(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['eyes'],p['presentation'],alien)
+    for part in m.parts[head_start:]:part['head']=True  # what a helmet must hold
+    if eva:
+        # The bubble is fitted to this head's face, eyes, hair and ears, with room for the jaw to open.
+        points=[v for part in m.parts[head_start:] for v in part['vertices']]
+        chin=[(x,y-.12*ry,z) for part in m.parts[head_start:] if part['name']=='face' for x,y,z in part['vertices'] if y<head_y-.3*ry and z>0]
+        fit=helmet_fit(points+chin,neck_radius=.075*s)
+        colors=dict(FIELDWORK,lamp=accent)
+        vacuum_helmet(m,fit,s,colors)
+        cut=fit['cut_y'];opening=fit['opening_radius']
+        m.rings('helmet-neck-seal',[(shoulder_y+.035*s,0,0,opening*1.02,opening*.92),(mix(shoulder_y,cut,.5),0,0,opening*.98,opening*.9),(cut-.002*s,0,fit['center'][2]*.5,opening*.97,opening*.9)],FIELDWORK['strap'])
+        fieldwork_suit(m,dims,colors)
+        m.tube('air-hose',[(.1*s,chest_y-.02*s,-.2*s),(.2*s,chest_y-.12*s,-.12*s),(.2*s,chest_y-.16*s,.06*s),(.1*s,chest_y-.1*s,.13*s)],[.011*s]*4,FIELDWORK['strap'])
+        fieldwork_colors(m.parts)
     return m.parts
 
 def build_character(values=None):
@@ -279,11 +495,12 @@ def build_character(values=None):
     import bpy
     result=[]; materials={}
     for part in geometry(values):
-        color=part['color']; key=(color,part['roughness'])
+        color=part['color']; glass=part.get('material') or {}; key=(color,part['roughness'],tuple(sorted(glass.items())))
         if key not in materials:
             srgb=[int(color[i:i+2],16)/255 for i in (1,3,5)]
             linear=[v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4 for v in srgb]
-            materials[key]=material('finish-'+color[1:],linear,roughness=part['roughness'])
+            # Glass (opacity, ior, double_sided) exports as glTF alphaMode BLEND; see agent_meshes_author.material.
+            materials[key]=material(('glass-' if glass else 'finish-')+color[1:],linear,roughness=part['roughness'],**glass)
         obj=make_mesh(part['name'],[(x,-z,y) for x,y,z in part['vertices']],part['faces'],materials[key])
         bm=bmesh.new(); bm.from_mesh(obj.data)
         bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces)); bm.to_mesh(obj.data); bm.free()

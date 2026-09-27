@@ -40,6 +40,16 @@ glow, such as a robot's lens glass or antenna bulb; glTF exports it as
 above 1. `linear_color(value)` does the hex conversion on its own. `make_mesh(name, vertices, faces, material=None)`
 creates a named mesh with smooth side faces and flat caps.
 
+Glass: `material(name, color, ..., opacity=1, transmission=0, ior=None, double_sided=None)`.
+`opacity` below 1 sets the Principled BSDF alpha and the blended render method, which Blender's
+glTF exporter writes as `alphaMode: BLEND` with the opacity in the base color alpha;
+`transmission` sets Transmission Weight (`KHR_materials_transmission`) and `ior` the IOR
+(`KHR_materials_ior`). Glass is double-sided unless `double_sided=False`; an opaque material keeps
+Blender's default. `glass_settings(...)` validates the same arguments without Blender. A clear
+visor is `material('visor', '#eaf6ff', roughness=.04, opacity=.16, ior=1.5)`;
+`tests/fixtures/glass/glass_helmet.py` builds one and `tests/glass-blender.test.ts` checks its
+export and, when Unreal is installed, that Interchange imports it translucent.
+
 `shape_key(obj, name, vertices)` creates a named 0..1 morph at an explicit zero
 rest weight. It checks finite coordinates and equal vertex count; authors must
 also preserve vertex order and topology. Duplicate names and `Basis` are rejected.

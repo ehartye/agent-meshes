@@ -61,7 +61,36 @@ and closed edges. This bounds the cost of a multi-character review lineup.
 Voxel fusion checks connectivity and closed edges; it
 does not prove good animation topology. Eye and hair surfaces intentionally have
 open boundaries. Fine fingers require a close camera; assess game-camera
-readability before choosing a production mesh budget. Helmets use opaque visors.
+readability before choosing a production mesh budget.
+
+## Vacuum suit and glass helmet
+
+`vacuum: True` keeps the same living head (face, eyes, lids, mouth, hair; every head part is
+flagged `head: True`) and seats it in a hollow bubble helmet fitted to that head:
+
+- `helmet_fit(points, neck_radius)` takes the head's points (plus the chin lowered by 12% of the
+  head's half height, room for `jawOpen`) and finds the smallest round ellipsoid (longest radius at
+  most 1.3 times the shortest) that keeps every point 2.2 cm (`HELMET_CLEARANCE`) inside it, with a
+  neck opening cut just below the lowest point. The size therefore follows the head, not the
+  height: a child's larger-for-its-size head gives a smaller helmet than an adult's, and an alien's
+  wide, fronded head gives its own shape. `ellipsoid_clearance` is the exact point-to-surface
+  distance it checks with.
+- `vacuum_helmet(m, fit, s, colors)` builds `helmet-glass` (the bubble surface over the face: a
+  window in front of a plane tilted 8 degrees up, 80 degrees around; a glass `material` of opacity
+  0.16, IOR 1.5, double-sided, which exports as glTF `alphaMode: BLEND`), `helmet-shell` (the crown
+  and back, 9 mm thick, on the same ellipsoid so glass and shell share their edge), gold
+  `helmet-rim` and `helmet-neck-ring` tubes, a `helmet-glint` reflection arc, lamps in the
+  character's accent, and `helmet-neck-seal` down to the suit. The glass part carries its `fit`
+  (center, radii, cut, opening, achieved clearance).
+- `fieldwork_suit(m, dims, colors)` and `fieldwork_colors(parts)` give the suit pressure-suit
+  direction A, Fieldwork: cream suit, teal shoulder, elbow and knee pads and gloves, olive belt and
+  thigh pouches, dark chest straps, a life-support backpack and olive-brown boots (`FIELDWORK`).
+
+The helmet, head and hair all bind rigidly to the head bone (`stylized_walk.skin_weights`), so no
+clip phase moves the face toward the glass; the neck seal blends from the chest to the head. Suit
+kit rides the bone under it. The tests check 1.5 to 4 cm between face or hair and the actual glass
+triangles for the whole reference cast. A face rig that adds geometry outside `geometry()` should
+pass its points to `helmet_fit` too.
 
 Run the pure geometry contract with `python tests/stylized_character.py`. Build
 representatives of every body plan through Blender and inspect the exported GLB;

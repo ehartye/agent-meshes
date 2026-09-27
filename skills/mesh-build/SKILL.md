@@ -24,6 +24,21 @@ Zero errors and warnings is the bar; `UNUSED_OBJECT` infos about `TEXCOORD_0` ar
 every part (the primitives carry UVs that no material samples). `view` renders
 front, side and perspective PNGs plus one contact sheet per clip into a directory; look at them.
 
+**Glass survives every stage.** A part (or Blender `material(..., opacity=.16)`) with opacity below
+1 exports as `alphaMode: BLEND` with the opacity in the base color alpha, `transmission` as
+`KHR_materials_transmission`, `ior` as `KHR_materials_ior`, `doubleSided` as `doubleSided`; the
+validator passes all of them with no warnings. three.js's GLTFLoader (the viewer, a stage, or a
+plain three.js page) loads BLEND as transparent without depth writes, so the face behind a visor
+still draws; the viewer and stage also stop glass casting shadows and skip its outline hull
+(`userData.glass` marks it). The workbench's fixed-view renders use the same finish. In an ID
+render, glass is left out unless a `parts` or `materials` key names it, so the pixels count what is
+seen through it; named glass draws as an opaque occluder. `verify-unreal` lists every glass
+material in `report.glass` and fails if Interchange imported one opaque (glTF BLEND becomes an
+`MI_Default_Blend` instance, transmission `M_Transmission`, both `BLEND_TRANSLUCENT`; checked with
+UE 5.7.3). `node scripts/check-glass-browser.mjs [model.glb]` proves the viewer, stage, a plain
+three.js page, the ID-render rule and the workbench renders in Chromium, and with a GLB counts the
+face pixels seen through its glass from the front, side and three-quarter views.
+
 ## Repeatable build
 
 Keep a `build.json` beside the source in the project:
