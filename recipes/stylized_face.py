@@ -24,11 +24,11 @@ CANONICAL_CENTER = (0.0, 0.0, .13)
 # eyes set wide, a small nose, the mouth well below the eyes (1.3-1.9 times the eyes' half spacing) and a soft, narrowing
 # jaw. Children's eyes are larger and their lower face short and round; adults' lower face is longer, the chin lower.
 PROPORTIONS = {
-    'child': dict(eye=(.043, .124), eye_radius=.0212, eye_depth=1.2, iris=40, pupil=17, opening=(46, 34, 30), mouth_z=.070,
+    'child': dict(eye=(.043, .124), eye_radius=.0212, eye_depth=1.05, iris=40, pupil=17, opening=(46, 34, 30), mouth_z=.070,
                   mouth_half_width=.019, nose=(0, .092), nose_size=(.0068, .0062, .0060), lip_fullness=.0019,
                   cheek=((.05, -.046, .094), (.024, .022, .02)), face=((0, -.012, .099), (.086, .075, .060)),
                   jaw=.12, chin=1.0, lower=.6, brow_inner=(.013, .152), brow_outer=(.061, .153), brow_height=.0068, bridge=.0015),
-    'adult': dict(eye=(.043, .126), eye_radius=.0185, eye_depth=1.2, iris=38, pupil=16, opening=(45, 31, 27), mouth_z=.064,
+    'adult': dict(eye=(.043, .126), eye_radius=.0185, eye_depth=1.05, iris=38, pupil=16, opening=(45, 31, 27), mouth_z=.064,
                   mouth_half_width=.0205, nose=(0, .089), nose_size=(.0070, .0080, .0072), lip_fullness=.0019,
                   cheek=((.049, -.044, .093), (.02, .019, .019)), face=((0, -.014, .093), (.083, .074, .066)),
                   jaw=.2, chin=1.12, lower=.6, brow_inner=(.012, .151), brow_outer=(.061, .153), brow_height=.0068, bridge=.003),
@@ -400,7 +400,7 @@ def add_face(objects, values=None):
     dark.use_backface_culling = False
     # Its rim rides the skin's smile, frown and funnel (follow_skin): a still rim shows through the corners they draw back.
     # The body's neck rises inside the head to the nose: the bag and tongue stop in front of it.
-    behind = [(obj.matrix_world @ v.co) for obj in objects if getattr(obj, 'type', None) == 'MESH' for v in obj.data.vertices]
+    behind = [(obj.matrix_world @ v.co) for obj in objects if getattr(obj, 'type', None) == 'MESH' and obj.name == 'neck' for v in obj.data.vertices]
     behind = [v.y for v in behind if abs(v.x) < 1.3 * half_width and abs(v.z - mouth_z) < .025 * k and v.y > mouth_front]
     room = mouth_depths(mouth_front, min(behind) if behind else None, k)
     bag = follow_skin(mouth_cavity_geometry((0, mouth_front, mouth_z - .002 * k), width=2 * half_width + .01 * k, height=.04 * k,
