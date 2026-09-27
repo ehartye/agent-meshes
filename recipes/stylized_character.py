@@ -388,6 +388,7 @@ def vacuum_helmet(m,fit,s,colors,show=(),segments=96,rings=48):
     def surface(lat,lon,grow):return world((math.cos(lat)*math.sin(lon),math.sin(lat),math.cos(lat)*math.cos(lon)),grow)
     glint=[surface(math.radians(34+6*math.sin(math.pi*q/6)),math.radians(-34+3.8*q),.002) for q in range(7)]
     m.tube('helmet-glint',glint,[.0032*s*math.sin(math.pi*(q+.5)/7.5) for q in range(7)],'#f4fbff')
+    m.parts[-1]['material']=dict(opacity=.55)  # a translucent streak on the glass: no outline hull, no shadow
     # Radio pods (direction A): teal discs with gold caps on the shell, at ear height, a little behind the rim.
     ear_lat=math.asin(max(-.6,min(.6,sum(p[1]-cy for p in show)/max(len(show),1)/radii[1]))) if show else 0
     lon=math.acos(max(-1,min(1,(k-.22-math.sin(ear_lat)*f[1])/(math.cos(ear_lat)*f[2]))))
