@@ -130,6 +130,11 @@ def face_layout(values=None):
     ex, ez = xz(base['eye'])
     ex = max(ex * shape['eye_spacing'], 1.35 * layout['eye_radius'])
     layout['eye_x'], layout['eye_z'] = ex, ez
+    # The brows sit clear of the upper lid's reach, which grows with the eye: skin a blink moves must not slide under
+    # a brow (a big-eyed child's brow at its age's height sat on the lid).
+    lift = max(0.0, ez + 1.45 * layout['eye_radius'] - layout['brow_inner'][1])
+    layout['brow_inner'] = (layout['brow_inner'][0], layout['brow_inner'][1] + lift)
+    layout['brow_outer'] = (layout['brow_outer'][0], layout['brow_outer'][1] + lift)
     # Each eyeball's center sits `eye_depth` of its radius behind the face's surface, so the eye fills its socket and
     # the lids wrap it close to the skin: an eye standing proud of the skin raises a mound of lid round it, and two
     # mounds either side of the bridge read as a V-shaped ridge.
@@ -258,7 +263,7 @@ def add_face(objects, values=None):
     pairs = {
         'browDown': ((bx * 2.5, front(bx * 2.5, bz), bz), .018 * k, (0, -.001 * k, -.004 * k)),
         'browOuterUp': ((ox, front(ox, oz), oz), .016 * k, (0, 0, .004 * k)),
-        'cheekSquint': (cheek, .024 * k, (0, -.002 * k, .006 * k)),
+        'cheekSquint': (cheek, .03 * k, (0, -.0015 * k, .0045 * k)),
         'mouthFrown': (corner, .018 * k, (-.0005 * k, -.0005 * k, -.006 * k)),
         'mouthStretch': (corner, .026 * k, (.005 * k, .001 * k, -.0015 * k)),
     }
@@ -272,7 +277,7 @@ def add_face(objects, values=None):
         corner_side = (sx * corner[0], corner[1], corner[2])
         cheek_side = (sx * cheek[0], cheek[1], cheek[2])
         up = soft_offset(rest, corner_side, .03 * k, (sx * .004 * k, .001 * k, .0065 * k), mask=still)
-        lift = soft_offset(rest, cheek_side, (.024 * k, .02 * k, .02 * k), (sx * .001 * k, -.0015 * k, .005 * k), mask=still)
+        lift = soft_offset(rest, cheek_side, (.03 * k, .024 * k, .028 * k), (sx * .001 * k, -.0012 * k, .004 * k), mask=still)
         shape_key(head, f'mouthSmile{side}', [tuple(a[i] + b[i] - r[i] for i in range(3)) for a, b, r in zip(up, lift, rest)])
     left, right = symmetric_offsets(rest, *nose['sneer'])
     shape_key(head, 'noseSneerLeft', left); shape_key(head, 'noseSneerRight', right)
@@ -280,12 +285,14 @@ def add_face(objects, values=None):
     shape_key(head, 'mouthFunnel', soft_offset(rest, (0, mouth_front, mouth_z), (.026 * k, .02 * k, .016 * k), (0, -.004 * k, 0)))
     add_jaw_open(head, jaw, min_chin_drop=.1)
 
-    # A warm resting face: the mouth corners turn up (the boards' portraits all smile), by `smile` of the face shape.
+    # A warm resting face: the mouth corners turn up (the boards' portraits all smile), by `smile` of the face shape,
+    # at most to just under the upper gum line (the lower lip's corners open with the jaw; above the gum they would
+    # drag the upper lip).
     # The lift is added to the rest shape and every shape key alike, after the morphs were made on the neutral mouth,
     # so every morph keeps its motion and the jaw still parts the lips along the slit.
     warm = L['resting_smile']
     if warm > 0:
-        left, right = symmetric_offsets(rest, corner, .028 * k, (.0012 * k * warm, 0, .0055 * k * warm), mask=still)
+        left, right = symmetric_offsets(rest, corner, .028 * k, (.001 * k * warm, 0, .004 * k * warm), mask=still)
         lift = [tuple(a[i] + b[i] - 2 * r[i] for i in range(3)) for a, b, r in zip(left, right, rest)]
         for block in head.data.shape_keys.key_blocks:
             for point, delta in zip(block.data, lift): point.co = tuple(point.co[i] + delta[i] for i in range(3))
@@ -333,6 +340,15 @@ def add_face(objects, values=None):
                                 thickness=.0075 * k), [material('tongue', tongue_hex, roughness=.45)])
     add_jaw_open(tongue, jaw, rigid=True)
 
+    eye_mats = [material('eye_white', '#efece4', roughness=.2), material('eye_iris', L['eyes'], roughness=.25),
+                material('eye_pupil', '#0b0908', roughness=.15)]
+    parts, eyeballs = [head, cavity, upper, lower, tongue], []
+    lash = material('lash', '#0b0706', roughness=.85)
+    for side, center in (('L', eye_left), ('R', eye_right)):
+        built = build_eye(rig, side, center, radius, lid_material=skin, hole=holes[side], eye_materials=eye_mats, lash=lash, skin=head,
+                          iris=L['iris'], pupil=L['pupil'], lash_width=8)
+        eyeballs.append(built['eyeball'])
+        parts.append(built['lids'])
     # Brows a shade darker than the hair, so they read against the skin at lineup size whatever the two colors.
     brow_mat = material('brow', _hex(_mix(linear_color(hair_hex), (.01, .008, .007), .75)), roughness=.7)
     h = L['brow_height']
@@ -342,16 +358,8 @@ def add_face(objects, values=None):
     bgeo = join_geometry(brows)
     brow = mesh_from_geometry('brows', bgeo, [brow_mat])
     for name, targets in bgeo['morphs'].items(): shape_key(brow, name, targets)
+    parts.append(brow)
 
-    eye_mats = [material('eye_white', '#efece4', roughness=.2), material('eye_iris', L['eyes'], roughness=.25),
-                material('eye_pupil', '#0b0908', roughness=.15)]
-    parts, eyeballs = [head, cavity, upper, lower, tongue, brow], []
-    lash = material('lash', '#0b0706', roughness=.85)
-    for side, center in (('L', eye_left), ('R', eye_right)):
-        built = build_eye(rig, side, center, radius, lid_material=skin, hole=holes[side], eye_materials=eye_mats, lash=lash, skin=head,
-                          iris=L['iris'], pupil=L['pupil'], lash_width=8)
-        eyeballs.append(built['eyeball'])
-        parts.append(built['lids'])
     face = join_face_parts(parts, 'face', rig=rig, area_normals=True)
     new = [face] + eyeballs
     for obj in new:

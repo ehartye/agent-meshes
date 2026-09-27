@@ -124,6 +124,10 @@ class FaceShape(unittest.TestCase):
         full, flat = (face.head_field(shaped(cheeks=c)) for c in (2, .3))
         cx, _, cz = base['cheek'][0]
         self.assertLess(surface_y(full, cx, cz), surface_y(flat, cx, cz) - .003 * k)
+        # Bigger eyes push the brows up, clear of the upper lid's reach.
+        big = face.face_layout(dict(CAST['girl'], face='arkit', face_shape={'eye_size': 1.2}))
+        for brow in (big['brow_inner'], big['brow_outer']):
+            self.assertGreaterEqual(brow[1], big['eye_left'][2] + 1.45 * big['eye_radius'] - 1e-9)
         # A longer chin reaches lower.
         self.assertLess(shaped(chin=1.3)['chin_z'], base['chin_z'] - .005 * k)
 
