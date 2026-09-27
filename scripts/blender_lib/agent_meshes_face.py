@@ -5311,21 +5311,27 @@ def _sharp_edges(vertices, faces, angle):
 PAINT_LAYER = 'tint'
 
 
-def smooth_skin(obj, weights, iterations=6):
+def smooth_skin(obj, weights, iterations=6, keep=()):
     """Smooth a skin mesh's rest shape and every shape key alike with `smooth_surface` (Blender).
 
     `weights` is one 0..1 value per vertex or a callable of the rest position; 0 holds a vertex still. The smoothing is
-    linear, so the morphs blend as before; a key that moves nothing near the weighted vertices keeps its motion
-    exactly. Run it after the shape keys are made, before `join_face_parts`.
+    linear, so the morphs blend as before. The keys named in `keep` keep their motion exactly as made, carried on the
+    smoothed rest (a `jawOpen` whose motion must not spread above the mouth). Run it after the shape keys are made,
+    before `join_face_parts`.
     """
     mesh = obj.data
     rest = [tuple(v.co) for v in mesh.vertices]
     weights = [weights(v) for v in rest] if callable(weights) else list(weights)
     faces = [tuple(p.vertices) for p in mesh.polygons]
     blocks = list(mesh.shape_keys.key_blocks) if mesh.shape_keys else []
-    states = _smooth_states([rest] + [[tuple(point.co) for point in block.data] for block in blocks], faces, weights, iterations)
-    for block, targets in zip(blocks, states[1:]):
+    smoothed = [block for block in blocks if block.name not in keep]
+    states = _smooth_states([rest] + [[tuple(point.co) for point in block.data] for block in smoothed], faces, weights, iterations)
+    for block, targets in zip(smoothed, states[1:]):
         for point, target in zip(block.data, targets): point.co = target
+    for block in blocks:
+        if block.name not in keep: continue
+        for point, before, after in zip(block.data, rest, states[0]):
+            point.co = tuple(point.co[k] + after[k] - before[k] for k in range(3))
     for vertex, target in zip(mesh.vertices, states[0]): vertex.co = target
     mesh.update()
     return obj

@@ -234,12 +234,12 @@ def face_smoothing(layout, holes, mouth_front):
         if moving is not None:
             # The lid rows near the margin roll over the eye and hold; the rows toward the anchor, which barely move and
             # made the closed lid's rim, are smoothed.
-            w *= 1 - ramp(.25, .6, moving)
+            w *= 1 - ramp(.02, .12, moving)
         else:
             for center, lid, r in eyes: w *= ramp(lid, lid + .12 * r, math.dist(v, center))
         # The mouth, lips and chin in front of the teeth and tongue, which sit a few millimetres behind the skin there.
         if v[1] < mouth_front + .03 * k:
-            w *= ramp(1.0, 1.7, math.hypot(v[0] / (1.5 * half_width), (v[2] - mouth_z + .004 * k) / (.022 * k)))
+            w *= ramp(1.0, 1.8, math.hypot(v[0] / (1.5 * half_width), (v[2] - mouth_z) / (.026 * k)))
         w *= ramp(.9, 1.5, math.hypot(v[0], v[2] - nose[1]) / (1.6 * max(nose_size)))
         return w
     return weight
@@ -318,7 +318,7 @@ def add_face(objects, values=None):
     nose = nose_geometry(lips['vertices'], lips['faces'], L['nose'], L['nose_size'])
     vertices, faces = nose['vertices'], nose['faces']
     front = front_surface(vertices, faces)
-    jaw = JawHinge.ear(vertices, mouth_z, half_width, band=.065 * k, lip_round=.85)
+    jaw = JawHinge.ear(vertices, mouth_z, half_width, band=.06 * k, lip_round=1.1)
     head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces, 'material_indices': nose['material_indices']},
                               [skin, nostril])
     slit_mouth(head, mouth_z, half_width)
@@ -354,8 +354,8 @@ def add_face(objects, values=None):
         # The lower lip's middle stays over the lower teeth; only toward the corners does it rise with them.
         up = soft_offset(rest, corner_side, .032 * k, (sx * .005 * k, .0015 * k, .0085 * k),
                          mask=[still(v) * (1.0 if u else min(1.0, (v[0] / half_width) ** 2)) for v, u in zip(rest, upper_lip)])
-        lift = soft_offset(rest, cheek_side, (.032 * k, .026 * k, .03 * k), (sx * .0012 * k, -.0022 * k, .0058 * k), mask=still)
-        grin = soft_offset(rest, (sx * .45 * half_width, mouth_front, mouth_z + .002 * k), (1.05 * half_width, .014 * k, .007 * k),
+        lift = soft_offset(rest, cheek_side, (.03 * k, .024 * k, .028 * k), (sx * .0012 * k, -.0016 * k, .0048 * k), mask=still)
+        grin = soft_offset(rest, (sx * .4 * half_width, mouth_front, mouth_z + .002 * k), (.8 * half_width, .014 * k, .007 * k),
                            (0, -.0004 * k, .0026 * k), mask=upper_lip)
         shape_key(head, f'mouthSmile{side}', [tuple(a[i] + b[i] + g[i] - 2 * r[i] for i in range(3)) for a, b, g, r in zip(up, lift, grin, rest)])
     left, right = symmetric_offsets(rest, *nose['sneer'])
@@ -371,7 +371,7 @@ def add_face(objects, values=None):
     # so every morph keeps its motion and the jaw still parts the lips along the slit.
     warm = L['resting_smile']
     if warm > 0:
-        left, right = symmetric_offsets(rest, corner, .028 * k, (.001 * k * warm, 0, .0052 * k * warm), mask=still)
+        left, right = symmetric_offsets(rest, corner, .028 * k, (.001 * k * warm, 0, .004 * k * warm), mask=still)
         lift = [tuple(a[i] + b[i] - 2 * r[i] for i in range(3)) for a, b, r in zip(left, right, rest)]
         for block in head.data.shape_keys.key_blocks:
             for point, delta in zip(block.data, lift): point.co = tuple(point.co[i] + delta[i] for i in range(3))
@@ -447,8 +447,9 @@ def add_face(objects, values=None):
     # Smooth the face (rest and every morph alike, the blinks included): the lid patches' rims, the bridge between the
     # eyes and the cheeks' smile motion left creases that read as crumpled folds round the sockets, a V between the
     # brows and a pointed lens round each closed lid. The lid margins, the eye holes, the lips' seam and the nostrils
-    # hold still. Before the brows, which sit on the smoothed skin.
-    smooth_skin(head, face_smoothing(L, holes, mouth_front), iterations=30)
+    # hold still, and the jaw keeps its motion as made (smoothed, it spread above the upper gum line). Before the brows,
+    # which sit on the smoothed skin.
+    smooth_skin(head, face_smoothing(L, holes, mouth_front), iterations=30, keep=['jawOpen'])
     # Brows a shade darker than the hair, so they read against the skin at lineup size whatever the two colors.
     brow_mat = material('brow', _hex(_mix(linear_color(hair_hex), (.01, .008, .007), .75)), roughness=.7)
     h = L['brow_height']

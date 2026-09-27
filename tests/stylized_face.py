@@ -181,7 +181,7 @@ class FaceSmoothing(unittest.TestCase):
         # Two lid rows: the margin, which a blink carries furthest, and a row by the anchor that barely moves.
         margin = (ex, L['eye_left'][1] - 1.2 * r, ez + .3 * r)
         anchor = (ex, L['eye_left'][1] - 1.1 * r, ez + .9 * r)
-        motion = [(margin, {'blink': (margin[0], margin[1], ez - .5 * r)}), (anchor, {'blink': (anchor[0], anchor[1], anchor[2] - .05 * r)})]
+        motion = [(margin, {'blink': (margin[0], margin[1], ez - .5 * r)}), (anchor, {'blink': (anchor[0], anchor[1], anchor[2] - .01 * r)})]
         hole = lambda c, m: {'lids': {'center': c, 'upper_radius': 1.1 * r, 'thickness': .1 * r, 'eye_radius': r}, 'motion': m}
         holes = {'L': hole(L['eye_left'], motion), 'R': hole(L['eye_right'], [])}
         field = face.head_field(L)

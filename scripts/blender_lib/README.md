@@ -681,7 +681,9 @@ holds it still. It is linear in the positions, so `smooth_skin(obj, weights,
 iterations)` smooths a skin's rest shape and every shape key alike and the morphs
 still blend: run it after the shape keys, before `join_face_parts`, with weights 0
 on the lid margins, the eye holes and the mouth's seam, to soften the creases a
-construction leaves (a lid patch's rim, the bridge between two eye holes). `ellipsoid_geometry(center, radii)` is a closed head blank, and
+construction leaves (a lid patch's rim, the bridge between two eye holes).
+`keep=['jawOpen']` carries the named keys' motion unsmoothed on the smoothed rest
+(a jaw whose motion, smoothed, would spread above the upper gum line). `ellipsoid_geometry(center, radii)` is a closed head blank, and
 `cut_faces(vertices, faces, remove)` drops the faces whose centroid
 `remove(centroid)` accepts (a hair cap's front, a chin plate) and reindexes the
 rest. **It returns a 3-tuple** `(vertices, faces, mapping)`, where `mapping[old]`
