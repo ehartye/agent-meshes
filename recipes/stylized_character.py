@@ -556,8 +556,8 @@ def dress(m,costume,d):
             points.append(surface_point(((0,sh-.02*s,0),(math.cos(t)*.8,.6-.15*back,math.sin(t)*.8)),.02*s*back+.006*s))
         m.tube('layer-hood',points,[s*(.012+.03*math.sin(math.pi*k/16)**1.5) for k in range(17)],hoodie['color'])
         # The lowered hood lies folded on the upper back, rounded at its point.
-        hood=lambda y: min(sw*.2*math.sqrt(max(.06,smooth01(sh-.13*s,sh-.05*s,y))),body.section(torso(y),y)[3]*.85)
-        front_patch('layer-hood-back',shade(hoodie['color'],.93),sh-.13*s,sh+.03*s,lambda y:-hood(y),hood,.03,back=True,lift=.004*s,rim=.35)
+        hood=lambda y: min(sw*.27*max(.12,smooth01(sh-.145*s,sh-.02*s,y))**.7,body.section(torso(y),y)[3]*.9)
+        front_patch('layer-hood-back',shade(hoodie['color'],.86),sh-.145*s,sh+.03*s,lambda y:-hood(y),hood,.032,back=True,lift=.004*s,rim=.3)
         zip_points=[surface_point(facing(mix(hip+.03*s,sh+.03*s,k/7),0),.0015*s) for k in range(8)]
         m.tube('layer-hoodie-zip',zip_points,[.004*s]*8,shade(hoodie['color'],.55))
         for side,label in [(-1,'left'),(1,'right')]:
@@ -596,7 +596,7 @@ def dress(m,costume,d):
         for side,label in [(-1,'left'),(1,'right')]:
             over_shoulder('layer-pack-strap-'+label,pack['straps'],side*sw*.2,side*sw*.25,side*sw*.17,mix(hip,sh,.42),mix(hip,sh,.6),sw*.075,.007,.012)
         # A pack rides below a lowered hood so the hood still reads from behind.
-        y0,y1=mix(hip,sh,.22),min(mix(hip,sh,.92),sh-.09*s if hoodie else 9); back=surface_point(facing(mix(y0,y1,.5),0,back=True))[2]
+        y0,y1=mix(hip,sh,.22),min(mix(hip,sh,.92),sh-.1*s if hoodie else 9); back=surface_point(facing(mix(y0,y1,.5),0,back=True))[2]
         width=sw*.3; depth=.11*s; c=back-depth*.5+.012*s
         m.rings('layer-backpack',[(y0,0,c+.01*s,width*.72,depth*.38),(y0+.035*s,0,c,width,depth*.5),(y1-.05*s,0,c,width*.97,depth*.5),(y1,0,c+.012*s,width*.7,depth*.34)],pack['color'])
         m.ellipsoid('layer-backpack-pocket',(0,mix(y0,y1,.32),c-depth*.5+.004*s),(width*.62,(y1-y0)*.2,.02*s),shade(pack['color'],.85))
