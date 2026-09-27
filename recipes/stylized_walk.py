@@ -217,6 +217,11 @@ def rest_bones(d):
         add(name+'-hand',(side*wx,wrist,.055*s),(side*wx,wrist-.12*s,.084*s),name+'-forearm')
     return bones
 
+def hand_frames(d):
+    """Rest palm normal and thumb direction of each rigid hand (Y up, +Z forward):
+    palms face the thighs and thumbs point forward, as stylized_character authors them."""
+    return {name+'-hand':{'palm':(-side,0,0),'thumb':(0,0,1)} for side,name in [(-1,'left'),(1,'right')]}
+
 def _knee(hip,ankle,l1,l2):
     delta=w_sub(ankle,hip);distance=math.hypot(*delta)
     if not abs(l1-l2)+1e-6<distance<l1+l2-1e-6:raise ValueError('Walk target is outside the leg reach')
@@ -245,18 +250,30 @@ def gait_pose(d,phase,gait='walk',settings=None):
         knee=_knee(hip,ankle,l1,l2)
         pose[name+'-thigh']=(hip,knee);pose[name+'-shin']=(knee,ankle)
         pose[name+'-foot']=(ankle,w_add(ankle,w_rotate_x(w_sub(rest[name+'-foot']['tail'],rest[name+'-foot']['head']),foot_angle)))
-        # Arms counterswing their own leg: back at that foot's touchdown.
-        swing=math.tau*(p-settings['arm_phase']);angle=settings['arm']*math.cos(swing);frame=rotations['chest']
+        frame=rotations['chest'];turn=arm_rotations(phase,gait,settings,rotations)
         shoulder=w_add(pose['chest'][0],_body_rotate(w_sub(rest[name+'-upper-arm']['head'],rest['chest']['head']),frame))
-        upper=w_sub(rest[name+'-upper-arm']['tail'],rest[name+'-upper-arm']['head'])
-        elbow=w_add(shoulder,_body_rotate(w_rotate_x(upper,angle),frame))
-        lower=w_sub(rest[name+'-forearm']['tail'],rest[name+'-forearm']['head'])
-        bend=settings['bend']+.09*math.sin(swing-.5)
-        wrist=w_add(elbow,_body_rotate(w_rotate_x(lower,angle-bend),frame))
-        hand=w_sub(rest[name+'-hand']['tail'],rest[name+'-hand']['head'])
+        elbow=w_add(shoulder,turn[name+'-upper-arm'](w_sub(rest[name+'-upper-arm']['tail'],rest[name+'-upper-arm']['head'])))
+        wrist=w_add(elbow,turn[name+'-forearm'](w_sub(rest[name+'-forearm']['tail'],rest[name+'-forearm']['head'])))
         pose[name+'-upper-arm']=(shoulder,elbow);pose[name+'-forearm']=(elbow,wrist)
-        pose[name+'-hand']=(wrist,w_add(wrist,_body_rotate(w_rotate_x(hand,angle-bend),frame)))
+        pose[name+'-hand']=(wrist,w_add(wrist,turn[name+'-hand'](w_sub(rest[name+'-hand']['tail'],rest[name+'-hand']['head']))))
     return pose
+
+def arm_rotations(phase,gait='walk',settings=None,rotations=None):
+    """World rotation of each arm bone as a function of a rest vector.
+
+    Arms counterswing their own leg (back at that foot's touchdown) about the
+    chest's lateral axis, and the forearm and hand add the elbow bend. The
+    chest frame carries each bone whole, so the hand keeps its rest twist:
+    palms toward the thighs, thumbs forward.
+    """
+    settings=settings or gait_settings(gait);rotations=rotations or gait_rotations(phase,gait,settings)
+    frame=rotations['chest'];out={}
+    for name,offset in [('left',0),('right',.5)]:
+        swing=math.tau*((phase+offset)%1-settings['arm_phase']);angle=settings['arm']*math.cos(swing)
+        bend=settings['bend']+.09*math.sin(swing-.5)
+        out[name+'-upper-arm']=lambda v,a=angle:_body_rotate(w_rotate_x(v,a),frame)
+        out[name+'-forearm']=out[name+'-hand']=lambda v,a=angle-bend:_body_rotate(w_rotate_x(v,a),frame)
+    return out
 
 def walk_pose(d,phase):return gait_pose(d,phase,'walk')
 def jog_pose(d,phase):return gait_pose(d,phase,'jog')
@@ -309,7 +326,8 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
 
     Named NLA tracks preserve both clips through the authored glTF exporter.
     Durations are rounded to the nearest frame at 60 Hz. The rig carries
-    `agent-meshes/gait/1` extras: height, stance, contact phases and travel speed.
+    `agent-meshes/gait/1` extras: height, stance, contact phases, travel speed
+    and each hand's rest palm and thumb directions.
     """
     for value in [duration]+([] if jog_duration is None else [jog_duration]):
         if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not .6<=value<=3:
@@ -346,12 +364,15 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
                         'contactPhase':{bone_name('left-foot'):0,bone_name('right-foot'):.5}}
         for frame in range(frames+1):
             phase=frame/frames;pose=gait_pose(layout,phase,gait);rotations=gait_rotations(phase,gait);matrices={}
+            turns={name:(lambda v,r=r:_body_rotate(v,r)) for name,r in rotations.items()}
+            turns.update(arm_rotations(phase,gait,rotations=rotations))
             for name,bone in bones.items():
                 start,end=map(convert,pose[name]);rest_dir=convert(bone['tail'])-convert(bone['head'])
-                if name in rotations:
+                if name in turns:
                     # Coordinate conjugation maps Y-up anatomical frames into
-                    # Blender's Z-up frame, preserving real axial torso yaw.
-                    axes=[convert(_body_rotate(v,rotations[name])) for v in [(1,0,0),(0,0,-1),(0,1,0)]]
+                    # Blender's Z-up frame, preserving real axial torso yaw and
+                    # the arms' twist, so each palm keeps facing its thigh.
+                    axes=[convert(turns[name](v)) for v in [(1,0,0),(0,0,-1),(0,1,0)]]
                     delta=Matrix(axes).transposed().to_quaternion()
                 else:delta=rest_dir.rotation_difference(end-start)
                 rotation=delta @ data.bones[bone_name(name)].matrix_local.to_quaternion()
@@ -370,7 +391,8 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
             track=rig.animation_data.nla_tracks.new();track.name=action.name
             track.strips.new(action.name,0,action)
     extras=json.loads(rig.get(EXTRAS_PROPERTY,'{}'))
-    extras['gait']={'format':'agent-meshes/gait/1','version':WALK_VERSION,'height':layout['h'],'clips':declared}
+    hands={bone_name(name):{k:list(v) for k,v in frame.items()} for name,frame in hand_frames(layout).items()}
+    extras['gait']={'format':'agent-meshes/gait/1','version':WALK_VERSION,'height':layout['h'],'clips':declared,'hands':hands}
     rig[EXTRAS_PROPERTY]=json.dumps(extras)
     scene.frame_set(0)
     return objects+[rig]

@@ -116,6 +116,26 @@ describe('analyzeGait on a synthetic walker', () => {
     expect(anonymous.curves.footHeightLeft).toEqual(named.curves.footHeightLeft);
   }, 30000);
 
+  it('measures declared palms and thumbs from the hand bones, at rest and through the clip', async () => {
+    const natural = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' }).metrics.hands!;
+    // Palms face the thighs and thumbs point forward; the arm swing leaves the hand's twist alone.
+    expect(natural.rest.palmDeg.left).toBeCloseTo(0, 3);
+    expect(natural.rest.palmDeg.right).toBeCloseTo(0, 3);
+    expect(natural.rest.thumbForward).toBeCloseTo(1, 3);
+    expect(Math.abs(natural.palmDeg.min)).toBeLessThan(1);
+    expect(Math.abs(natural.palmDeg.max)).toBeLessThan(1);
+    expect(natural.thumbForward).toBeGreaterThan(0.99);
+    // A forearm that turns the palm forward (toward palm up) by 70 degrees mid-clip shows as a negative palm angle.
+    const twisted = analyzeGait(await loadGait(await walkerGLB({ handTwist: 70 })), { clip: 'walk' }).metrics.hands!;
+    expect(twisted.rest.palmDeg.left).toBeCloseTo(0, 3);
+    expect(twisted.palmDeg.min).toBeCloseTo(-70, 0);
+    // Backward hands: palms forward, thumbs toward the body.
+    const backward = analyzeGait(await loadGait(await walkerGLB({ palms: 'backward' })), { clip: 'walk' }).metrics.hands!;
+    expect(backward.rest.palmDeg.left).toBeCloseTo(-90, 3);
+    expect(backward.rest.thumbForward).toBeCloseTo(0, 3);
+    expect(analyzeGait(await loadGait(await walkerGLB({ palms: 'none' })), { clip: 'walk' }).metrics.hands).toBeNull();
+  }, 30000);
+
   it('compares curves against a reference after phase alignment', async () => {
     const reference = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' });
     const other = analyzeGait(await loadGait(await walkerGLB({ bob: 0.03, roll: 4 })), { clip: 'walk', references: [reference] });
@@ -133,7 +153,7 @@ describe('evaluateGait', () => {
     const report = analyzeGait(await loadGait(await walkerGLB({ bob: 0.022 })), { clip: 'walk', references: [reference] });
     const walk = evaluateGait(report, 'walk');
     expect(walk.checks.map(c => c.id)).toEqual(['groundError', 'stanceSpeed', 'skate', 'seam', 'contactPop', 'kneeHyperextension', 'kneePop', 'flight',
-      'armCounterswing', 'headBob', 'headBobCount', 'headPitchRatio', 'torsoLean', 'spineFlex', 'counterRotation', 'pelvisDrop', 'curveCorrelation']);
+      'armCounterswing', 'handOrientation', 'headBob', 'headBobCount', 'headPitchRatio', 'torsoLean', 'spineFlex', 'counterRotation', 'pelvisDrop', 'curveCorrelation']);
     expect(walk.checks.filter(c => !c.pass)).toEqual([]);
     expect(walk.ok).toBe(true);
     const jog = evaluateGait(report, 'jog');
@@ -146,6 +166,14 @@ describe('evaluateGait', () => {
     const report = analyzeGait(await loadGait(await walkerGLB({ arm: -20, roll: -5 })), { clip: 'walk', references: [reference] });
     const failed = evaluateGait(report, 'walk').checks.filter(c => !c.pass).map(c => c.id);
     expect(failed).toEqual(expect.arrayContaining(['armCounterswing', 'pelvisDrop', 'curveCorrelation']));
+    // Palms turned forward mid-clip, backward hands, and undeclared hands all fail the hand check.
+    for (const options of [{ handTwist: 70 }, { palms: 'backward' as const }, { palms: 'none' as const }]) {
+      const hands = evaluateGait(analyzeGait(await loadGait(await walkerGLB(options)), { clip: 'walk' }), 'walk').checks.find(c => c.id === 'handOrientation')!;
+      expect(hands.pass).toBe(false);
+    }
+    // A palm turned slightly back still hangs naturally.
+    const back = evaluateGait(analyzeGait(await loadGait(await walkerGLB({ handTwist: -30 })), { clip: 'walk' }), 'walk');
+    expect(back.checks.find(c => c.id === 'handOrientation')!.pass).toBe(true);
     // A reference compared for information is scored but does not fail the check.
     const hiked = analyzeGait(await loadGait(await walkerGLB({ roll: -5 })), { clip: 'walk' });
     const informed = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk', references: [reference, hiked], referenceRequired: [true, false] });

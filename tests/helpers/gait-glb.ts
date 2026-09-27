@@ -29,6 +29,13 @@ export interface WalkerOptions {
   footMeshes?: [string, string];
   /** Declared gait extras; false omits them. */
   declare?: boolean;
+  /**
+   * Declared rest palm normal and thumb direction of each rigid hand: 'natural' has the palms facing the thighs
+   * and the thumbs forward, 'backward' the palms forward and the thumbs toward the body; 'none' declares no hands.
+   */
+  palms?: 'natural' | 'backward' | 'none';
+  /** Twist of each forearm about its own axis during the clip (deg), peaking mid-clip; positive turns the palms forward. */
+  handTwist?: number;
   fps?: number;
 }
 
@@ -36,7 +43,7 @@ const deg = Math.PI / 180;
 const q = (axis: [number, number, number], degrees: number) => new Quaternion().setFromAxisAngle(new Vector3(...axis), degrees * deg);
 
 export function walkerDefaults(options: WalkerOptions = {}) {
-  return { duration: 1.2, stance: 0.6, stride: 0.6, lift: 0.1, bob: 0.02, yaw: 4, roll: 5, lean: 6, chestPitch: 3, arm: 20, seamError: 0, smoothLiftoff: true, footMeshes: ['left-outsole', 'right-outsole'] as [string, string], declare: true, fps: 60, ...options };
+  return { duration: 1.2, stance: 0.6, stride: 0.6, lift: 0.1, bob: 0.02, yaw: 4, roll: 5, lean: 6, chestPitch: 3, arm: 20, seamError: 0, smoothLiftoff: true, footMeshes: ['left-outsole', 'right-outsole'] as [string, string], declare: true, palms: 'natural' as 'natural' | 'backward' | 'none', handTwist: 0, fps: 60, ...options };
 }
 
 export function footPath(phase: number, o: ReturnType<typeof walkerDefaults>): { z: number; y: number } {
@@ -62,15 +69,16 @@ export async function walkerGLB(options: WalkerOptions = {}): Promise<Uint8Array
   const head = bone('head', neck, [0, 0.1, 0]);
   const bones = [root, pelvis, spine, chest, neck, head];
   const legs: Record<'l' | 'r', { thigh: Bone; calf: Bone; foot: Bone; offset: number; x: number }> = {} as never;
-  const arms: Record<'l' | 'r', Bone> = {} as never;
+  const arms: Record<'l' | 'r', Bone> = {} as never, forearms: Record<'l' | 'r', Bone> = {} as never;
   for (const [side, x, offset] of [['l', 0.1, 0], ['r', -0.1, 0.5]] as const) {
     const thigh = bone(`thigh_${side}`, pelvis, [x, 0, 0]);
     const calf = bone(`calf_${side}`, root, [x, 0.5, 0]);
     const foot = bone(`foot_${side}`, root, [x, 0.08, 0]);
     const upper = bone(`upperarm_${side}`, chest, [x * 2, 0.22, 0]);
     const lower = bone(`lowerarm_${side}`, upper, [0, -0.28, 0]);
-    legs[side] = { thigh, calf, foot, offset, x }; arms[side] = upper;
-    bones.push(thigh, calf, foot, upper, lower);
+    const hand = bone(`hand_${side}`, lower, [0, -0.26, 0]);
+    legs[side] = { thigh, calf, foot, offset, x }; arms[side] = upper; forearms[side] = lower;
+    bones.push(thigh, calf, foot, upper, lower, hand);
   }
   const frames = Math.round(o.duration * o.fps), times: number[] = [];
   const values = new Map<string, number[]>();
@@ -101,6 +109,8 @@ export async function walkerGLB(options: WalkerOptions = {}): Promise<Uint8Array
       push(`foot_${side}.position`, ...ankle.toArray());
       const swing = (side === 'l' ? 1 : -1) * o.arm * Math.cos(tau);
       push(`upperarm_${side}.quaternion`, ...q([1, 0, 0], swing).toArray());
+      // Positive twist turns the palm forward: about +Y for the left (+X) forearm, -Y for the right.
+      push(`lowerarm_${side}.quaternion`, ...q([0, side === 'l' ? 1 : -1, 0], o.handTwist * Math.sin(Math.PI * phase) ** 2).toArray());
     }
   }
   // Reset to the rest pose before binding the skin.
@@ -112,9 +122,13 @@ export async function walkerGLB(options: WalkerOptions = {}): Promise<Uint8Array
   const clip = new AnimationClip('walk', o.duration, tracks);
 
   const scene = new Scene(), rig = new Group(); rig.name = 'walker-rig'; scene.add(rig); rig.add(root);
+  const hands = o.palms === 'none' ? undefined : Object.fromEntries((['l', 'r'] as const).map(side => {
+    const medial = side === 'l' ? -1 : 1;
+    return [`hand_${side}`, o.palms === 'natural' ? { palm: [medial, 0, 0], thumb: [0, 0, 1] } : { palm: [0, 0, 1], thumb: [medial, 0, 0] }];
+  }));
   if (o.declare) rig.userData = { gait: { format: 'agent-meshes/gait/1', height: 1.75, clips: { walk: {
     stance: o.stance, travelSpeed: o.stride / (o.stance * o.duration), contactPhase: { foot_l: 0, foot_r: 0.5 },
-  } } } };
+  } }, ...(hands ? { hands } : {}) } };
   root.updateMatrixWorld(true);
   const skeleton = new Skeleton(bones);
   const material = new MeshStandardMaterial();

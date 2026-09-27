@@ -22,14 +22,16 @@ export const GAIT_EXTRAS_FORMAT = 'agent-meshes/gait/1';
 export const SCORED_CURVES = ['pelvisHeight', 'pelvisRoll', 'chestPitch', 'headPitch', 'kneeLeft', 'kneeRight', 'ankleLeft', 'ankleRight', 'footHeightLeft', 'footHeightRight'] as const;
 
 interface Leg { thigh: string; calf: string; foot: string; toe?: string }
-interface Arm { upper: string; lower: string }
+interface Arm { upper: string; lower: string; hand?: string }
 export interface GaitBones {
   pelvis: string; spine: string[]; neck: string | null; head: string;
   /** `a` is the leg or arm named left, `b` the one named right; anatomy is decided later by geometry. */
   legs: { a: Leg; b: Leg }; arms: { a: Arm; b: Arm };
 }
 export interface DeclaredClip { stance?: number; travelSpeed?: number; contactPhase?: Record<string, number> }
-export interface DeclaredGait { format: string; height?: number; clips?: Record<string, DeclaredClip> }
+/** Rest-pose palm normal and thumb direction of a rigid hand bone, in model (glTF, Y-up) space. */
+export interface DeclaredHand { palm: Vec3; thumb: Vec3 }
+export interface DeclaredGait { format: string; height?: number; clips?: Record<string, DeclaredClip>; hands?: Record<string, DeclaredHand> }
 interface Rest { position: Vector3; quaternion: Quaternion; scale: Vector3 }
 export interface GaitSource { scene: Object3D; clips: AnimationClip[]; declared: DeclaredGait | null; rest: Map<Object3D, Rest> }
 
@@ -61,8 +63,17 @@ export interface GaitMetrics {
   counterRotationDeg: number; counterRotationCorrelation: number;
   pelvisDropDeg: number; pelvisDropBySideDeg: { left: number; right: number };
   armCounterswing: number;
+  /** Declared hand orientation at rest and through the clip; null when the rig declares no hands. */
+  hands: HandMetrics | null;
   pelvisBob: number;
 }
+/**
+ * Palm angle about the forearm axis, per hand: 0 faces the thigh, positive turns the palm backward, negative
+ * forward (toward palm up with the forearm raised). thumbForward is the cosine between the thumb and the
+ * anterior side of the forearm (forward when it hangs, up when it points forward), smallest of both hands.
+ */
+export interface HandPose { palmDeg: { left: number; right: number }; thumbForward: number }
+export interface HandMetrics { rest: HandPose; palmDeg: { min: number; max: number }; thumbForward: number }
 export interface CurveScore { shift: number; r: Record<string, number>; minR: number; meanR: number }
 /** Raw scores against the reference, and `symmetric` scores of the mirrored-gait parts of both. */
 export interface GaitComparison extends CurveScore { reference: string; clip: string; required: boolean; symmetric: CurveScore }
@@ -149,7 +160,8 @@ export function resolveGaitBones(names: string[], parentOf: (name: string) => st
     const toe = list.find(name => /(ball|toe|toebase|toes)$/.test(baseOf(name)));
     const lower = find(list, /(forearm|lowerarm)$/, 'forearm');
     const upper = find(list.filter(n => n !== lower), /(upperarm|arm)$/, 'upper arm');
-    return { leg: { thigh, calf, foot, ...(toe ? { toe } : {}) }, arm: { upper, lower } };
+    const hand = list.find(name => /(hand|wrist)$/.test(baseOf(name)));
+    return { leg: { thigh, calf, foot, ...(toe ? { toe } : {}) }, arm: { upper, lower, ...(hand ? { hand } : {}) } };
   };
   const a = side('a'), b = side('b');
   return { pelvis, spine, neck, head, legs: { a: a.leg, b: b.leg }, arms: { a: a.arm, b: b.arm } };
@@ -298,7 +310,8 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
     height = top - Math.min(0, bottom);
   }
   const restWorld = new Map<string, Quaternion>();
-  for (const name of [bones.pelvis, ...bones.spine, bones.head, ...(bones.neck ? [bones.neck] : []), bones.legs.a.calf, bones.legs.b.calf, bones.legs.a.foot, bones.legs.b.foot]) restWorld.set(name, node(name).getWorldQuaternion(new Quaternion()));
+  for (const name of [bones.pelvis, ...bones.spine, bones.head, ...(bones.neck ? [bones.neck] : []), bones.legs.a.calf, bones.legs.b.calf, bones.legs.a.foot, bones.legs.b.foot,
+    ...(['a', 'b'] as const).flatMap(s => bones.arms[s].hand ? [bones.arms[s].hand!] : [])]) restWorld.set(name, node(name).getWorldQuaternion(new Quaternion()));
   const bound = bindClip(source, clip);
   const frames = Math.max(2, Math.round(duration * fps));
   const legOf = { a: bones.legs.a, b: bones.legs.b };
@@ -324,7 +337,8 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
     return out;
   };
   const tracked = [bones.pelvis, ...bones.spine, ...(bones.neck ? [bones.neck] : []), bones.head,
-    ...(['a', 'b'] as const).flatMap(s => [legOf[s].thigh, legOf[s].calf, legOf[s].foot, ...(legOf[s].toe ? [legOf[s].toe!] : []), bones.arms[s].upper, bones.arms[s].lower])];
+    ...(['a', 'b'] as const).flatMap(s => [legOf[s].thigh, legOf[s].calf, legOf[s].foot, ...(legOf[s].toe ? [legOf[s].toe!] : []), bones.arms[s].upper, bones.arms[s].lower,
+      ...(bones.arms[s].hand ? [bones.arms[s].hand!] : [])])];
   const footState = (side: 'left' | 'right'): FootState => {
     const sole = soles?.[side];
     if (sole) {
@@ -476,6 +490,34 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
   });
   const drops = [drop.left, drop.right].filter(Number.isFinite);
 
+  // Hands: the declared rest palm normal and thumb, carried by each hand bone's world rotation and read in the
+  // plane across the forearm. The body's left is the chest's, which the arms hang from. Anterior is forearm x
+  // left: forward when the arm hangs, up when it points forward; the thumb belongs there and the palm faces the
+  // body's midline.
+  const declaredHands = source.declared?.hands;
+  const handBones = sides.map(side => armFor(side).hand);
+  const hands = declaredHands && handBones.every(name => name && declaredHands[name]) ? (() => {
+    const handPose = (world: (name: string) => Quaternion, position: (name: string) => Vector3): HandPose => {
+      const left = lateral.clone().applyQuaternion(world(chest).clone().multiply(restWorld.get(chest)!.clone().invert()));
+      const palmDeg = { left: 0, right: 0 }; let thumbForward = Infinity;
+      for (const side of sides) {
+        const arm = armFor(side), declared = declaredHands[arm.hand!], turn = world(arm.hand!).clone().multiply(restWorld.get(arm.hand!)!.clone().invert());
+        const along = position(arm.hand!).clone().sub(position(arm.lower)).normalize();
+        const across = (v: Vector3) => v.clone().addScaledVector(along, -v.dot(along)).normalize();
+        const anterior = across(along.clone().cross(left)), medial = across(left.clone().multiplyScalar(side === 'left' ? -1 : 1));
+        const palm = across(new Vector3(...declared.palm).applyQuaternion(turn)), thumb = across(new Vector3(...declared.thumb).applyQuaternion(turn));
+        palmDeg[side] = Math.atan2(-palm.dot(anterior), palm.dot(medial)) * DEG;
+        thumbForward = Math.min(thumbForward, thumb.dot(anterior));
+      }
+      return { palmDeg, thumbForward };
+    };
+    const posed = shots.slice(0, frames).map(s => handPose(name => s.world.get(name)!, name => s.position.get(name)!));
+    restore(source);
+    const rest = handPose(name => node(name).getWorldQuaternion(new Quaternion()), at);
+    const angles = posed.flatMap(p => [p.palmDeg.left, p.palmDeg.right]);
+    return { rest, palmDeg: { min: Math.min(...angles), max: Math.max(...angles) }, thumbForward: Math.min(...posed.map(p => p.thumbForward)) };
+  })() : null;
+
   // Phase zero: the anatomical-left touchdown.
   let touchdown = planted.left.findIndex((p, k) => p && !planted.left[(k + frames - 1) % frames]);
   if (touchdown < 0) touchdown = 0;
@@ -509,7 +551,7 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
     counterRotationDeg: range(relYaw), counterRotationCorrelation: pearson(column('shoulderYaw'), column('pelvisYaw')),
     pelvisDropDeg: drops.length ? mean(drops) : NaN, pelvisDropBySideDeg: { left: drop.left, right: drop.right },
     armCounterswing: Math.max(pearson(column('armSwingLeft'), column('legSwingLeft')), pearson(column('armSwingRight'), column('legSwingRight'))),
-    pelvisBob: range(column('pelvisHeight')) * scale,
+    hands, pelvisBob: range(column('pelvisHeight')) * scale,
   };
   restore(source);
   const report: GaitReport = {
@@ -537,7 +579,7 @@ export interface GaitEvaluation { gait: GaitKind; ok: boolean; checks: GaitCheck
 /** Natural human locomotion ranges; bob is scaled to a 1.75 m body, angles are degrees. */
 export const NATURAL_GAIT = {
   groundError: 0.005, stanceSpeedTolerance: 0.1, seam: 0.002, contactPopRatio: 0.5, kneeMaxInteriorDeg: 180, kneePopDeg: 25,
-  armCounterswing: -0.5, headPitchRatio: [0.3, 0.7], pelvisDropDeg: [3, 7], minCurveR: 0.8,
+  armCounterswing: -0.5, palmDeg: [-20, 45], thumbForward: 0.5, headPitchRatio: [0.3, 0.7], pelvisDropDeg: [3, 7], minCurveR: 0.8,
   walk: { headBob: [0.025, 0.06], torsoLeanDeg: [3, 8], spineJointDeg: 2, counterRotationDeg: 8 },
   jog: { headBob: [0.05, 0.10], torsoLeanDeg: [8, 15], spineJointDeg: 4, counterRotationDeg: 12 },
 } as const;
@@ -563,6 +605,11 @@ export function evaluateGait(report: GaitReport, gait: GaitKind, options: { curv
   check('kneePop', 'largest knee change per frame (deg)', round(m.kneePopDeg, 2), `<= ${n.kneePopDeg} at ${Math.round(report.fps)} fps`, m.kneePopDeg <= n.kneePopDeg);
   check('flight', 'fraction of the cycle with both feet off the ground', round(m.flightFraction), gait === 'jog' ? '> 0' : '= 0', gait === 'jog' ? m.flightFraction > 0 : m.flightFraction === 0);
   check('armCounterswing', 'arm swing vs same-side leg swing correlation', round(m.armCounterswing), `<= ${n.armCounterswing}`, m.armCounterswing <= n.armCounterswing);
+  const h = m.hands, palms = h ? [h.rest.palmDeg.left, h.rest.palmDeg.right, h.palmDeg.min, h.palmDeg.max] : [];
+  check('handOrientation', 'palm angle from facing the thigh (deg, + back) and thumb-forward cosine, at rest and through the clip',
+    h ? { restPalm: { left: round(h.rest.palmDeg.left, 2), right: round(h.rest.palmDeg.right, 2) }, palm: { min: round(h.palmDeg.min, 2), max: round(h.palmDeg.max, 2) },
+      thumbForward: round(Math.min(h.rest.thumbForward, h.thumbForward)) } : null,
+    `palm ${n.palmDeg[0]}..${n.palmDeg[1]}, thumb >= ${n.thumbForward}`, !!h && palms.every(v => within(v, n.palmDeg)) && Math.min(h.rest.thumbForward, h.thumbForward) >= n.thumbForward);
   check('headBob', 'head vertical travel scaled to 1.75 m (m)', round(m.headBob), `${g.headBob[0]}..${g.headBob[1]}`, within(m.headBob, g.headBob));
   check('headBobCount', 'head bobs per cycle', m.headBobPeaks, '= 2', m.headBobPeaks === 2);
   check('headPitchRatio', 'head pitch range / chest pitch range', round(m.headPitchRatio), `${n.headPitchRatio[0]}..${n.headPitchRatio[1]}`, within(m.headPitchRatio, n.headPitchRatio));

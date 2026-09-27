@@ -177,6 +177,34 @@ class WalkContract(unittest.TestCase):
             self.assertGreater(max(bends)-min(bends),.1)
             if gait=='jog':self.assertGreater(min(bends),.8)
 
+class Hands(unittest.TestCase):
+    def test_declared_hand_frames_match_the_authored_hands(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        for values in [{},{'age':'child','height':1.1},{'vacuum':True}]:
+            d=character.landmarks(values);parts={p['name']:p['vertices'] for p in character.geometry(values)}
+            frames=walk.hand_frames(d)
+            for side,label in [(-1,'left'),(1,'right')]:
+                palm,thumb=frames[label+'-hand']['palm'],frames[label+'-hand']['thumb']
+                # Palms face the thigh and thumbs point forward at rest.
+                self.assertEqual(palm,(-side,0,0));self.assertEqual(thumb,(0,0,1))
+                def centroid(points):return tuple(sum(v[k] for v in points)/len(points) for k in range(3))
+                def extent(points,k):return max(v[k] for v in points)-min(v[k] for v in points)
+                hand=parts[label+'-palm'];center=centroid(hand)
+                # The palm is thin across the palm normal and broad front to back.
+                self.assertLess(extent(hand,0),extent(hand,2)*.7)
+                # The thumb sits forward of the palm, and toward the palm side.
+                offset=walk.w_sub(centroid(parts[label+'-thumb']),center)
+                self.assertGreater(walk.w_dot(offset,thumb),.02*d['s'])
+                self.assertGreater(walk.w_dot(offset,palm),0)
+                # Fingers stand in a row front to back, index forward, and curl toward the palm.
+                knuckles=[parts[label+'-finger-'+str(i)][:12] for i in range(4)]
+                tips=[parts[label+'-finger-'+str(i)][-12:] for i in range(4)]
+                rows=[walk.w_dot(centroid(k),thumb) for k in knuckles]
+                self.assertEqual(rows,sorted(rows,reverse=True))
+                for knuckle,tip in zip(knuckles,tips):
+                    self.assertGreater(walk.w_dot(walk.w_sub(centroid(tip),centroid(knuckle)),palm),.008*d['s'])
+
 def _gait_measures(walk,d,gait,n=120):
     """Body measures as agent-meshes' gait command takes them from the exported bones."""
     settings=walk.gait_settings(gait);rows=[];deg=180/math.pi;scale=1.75/d['h']
