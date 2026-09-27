@@ -2358,6 +2358,22 @@ class SmoothSurface(unittest.TestCase):
         self.assertGreater(min(radii), .0195)
         self.assertLess(max(radii), .0205)
 
+    def test_smoothing_without_numpy_matches(self):
+        import builtins
+        from unittest.mock import patch
+        vertices, faces = grid(6)
+        bumpy = [(x, .002 * math.sin(40 * x) * math.cos(50 * z), z) for x, _, z in vertices]
+        weights = [.5 + .5 * math.cos(20 * v[0]) for v in bumpy]
+        fast = smooth_surface(bumpy, faces, weights, iterations=4)
+        real = builtins.__import__
+        def no_numpy(name, *args, **kwargs):
+            if name == 'numpy': raise ImportError(name)
+            return real(name, *args, **kwargs)
+        with patch('builtins.__import__', side_effect=no_numpy):
+            slow = smooth_surface(bumpy, faces, weights, iterations=4)
+        for a, b in zip(fast, slow):
+            for k in range(3): self.assertAlmostEqual(a[k], b[k], places=12)
+
     def test_smoothing_rejects_bad_weights(self):
         vertices, faces = grid(2)
         for bad in ([1.0], [2.0] * len(vertices), [-.1] * len(vertices)):

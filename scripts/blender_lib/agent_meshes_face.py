@@ -2868,27 +2868,51 @@ def smooth_surface(vertices, faces, weights, iterations=6, shrink=.5, inflate=-.
     left in a skin (a lid patch's rim, the bridge between two eye holes) without moving what the weights hold.
     """
     vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    return _smooth_states([vertices], faces, weights, iterations, shrink, inflate)[0]
+
+
+def _smooth_states(states, faces, weights, iterations, shrink=.5, inflate=-.53):
+    """`smooth_surface` on several vertex lists of one topology at once (numpy when it is there)."""
+    count = len(states[0])
     weights = list(weights)
-    if len(weights) != len(vertices): raise ValueError('Smoothing needs one weight per vertex')
+    if len(weights) != count: raise ValueError('Smoothing needs one weight per vertex')
     weights = [_number(w, 'Smoothing weight', 0, 1) for w in weights]
     iterations = _count(iterations, 'Smoothing iterations', 0)
-    neighbours = [set() for _ in vertices]
+    neighbours = [set() for _ in range(count)]
     for face in faces:
-        for a, b in zip(face, face[1:] + face[:1]):
+        for a, b in zip(face, tuple(face[1:]) + tuple(face[:1])):
             neighbours[a].add(b); neighbours[b].add(a)
     moving = [i for i, w in enumerate(weights) if w > 0 and neighbours[i]]
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    if np is not None and moving:
+        rows = [(i, j) for i in moving for j in neighbours[i]]
+        index = np.array(moving)
+        owner = np.searchsorted(index, np.array([i for i, _ in rows]))
+        other = np.array([j for _, j in rows])
+        degree = np.bincount(owner, minlength=len(moving)).astype(float)[None, :, None]
+        w = np.array([weights[i] for i in moving])[None, :, None]
+        points = np.array(states, dtype=float)
+        for _ in range(iterations):
+            for factor in (shrink, inflate):
+                total = np.zeros((points.shape[0], len(moving), 3))
+                np.add.at(total, (slice(None), owner), points[:, other])
+                points[:, index] += factor * w * (total / degree - points[:, index])
+        return [[tuple(p) for p in state] for state in points.tolist()]
     rings = {i: tuple(neighbours[i]) for i in moving}
-    points = [list(v) for v in vertices]
-    for _ in range(iterations):
-        for factor in (shrink, inflate):
-            means = {}
-            for i in moving:
-                ring = rings[i]
-                means[i] = [sum(points[j][k] for j in ring) / len(ring) for k in range(3)]
-            for i in moving:
-                w, p, m = factor * weights[i], points[i], means[i]
-                for k in range(3): p[k] += w * (m[k] - p[k])
-    return [tuple(p) for p in points]
+    result = []
+    for state in states:
+        points = [list(v) for v in state]
+        for _ in range(iterations):
+            for factor in (shrink, inflate):
+                means = {i: [sum(points[j][k] for j in rings[i]) / len(rings[i]) for k in range(3)] for i in moving}
+                for i in moving:
+                    f, p, m = factor * weights[i], points[i], means[i]
+                    for k in range(3): p[k] += f * (m[k] - p[k])
+        result.append([tuple(p) for p in points])
+    return result
 
 
 def symmetric_offsets(vertices, center, radius, offset, mask=None):
@@ -5298,20 +5322,11 @@ def smooth_skin(obj, weights, iterations=6):
     rest = [tuple(v.co) for v in mesh.vertices]
     weights = [weights(v) for v in rest] if callable(weights) else list(weights)
     faces = [tuple(p.vertices) for p in mesh.polygons]
-    smoothed = smooth_surface(rest, faces, weights, iterations)
-    reach = {i for i, w in enumerate(weights) if w > 0}
-    for face in faces:
-        if any(i in reach for i in face): reach.update(face)
-    keys = mesh.shape_keys
-    if keys:
-        for block in keys.key_blocks:
-            points = [tuple(point.co) for point in block.data]
-            if all(points[i] == rest[i] for i in reach):
-                targets = [tuple(p[k] + s[k] - r[k] for k in range(3)) for p, s, r in zip(points, smoothed, rest)]
-            else:
-                targets = smooth_surface(points, faces, weights, iterations)
-            for point, target in zip(block.data, targets): point.co = target
-    for vertex, target in zip(mesh.vertices, smoothed): vertex.co = target
+    blocks = list(mesh.shape_keys.key_blocks) if mesh.shape_keys else []
+    states = _smooth_states([rest] + [[tuple(point.co) for point in block.data] for block in blocks], faces, weights, iterations)
+    for block, targets in zip(blocks, states[1:]):
+        for point, target in zip(block.data, targets): point.co = target
+    for vertex, target in zip(mesh.vertices, states[0]): vertex.co = target
     mesh.update()
     return obj
 
