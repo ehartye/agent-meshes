@@ -34,9 +34,9 @@ def _body_rotate(p,angles):
 #   lift: swing clearance (fractions of leg length), B-spline control points
 #   over swing progress; reach: the same, added to the fore-aft swing path
 #   (fractions of stride).
-#   heel/toe/peak: sole roll in radians (positive points the toe down) at
-#   heel strike, toe-off and in early swing; heel_flat/toe_from end the heel
-#   rocker and start the toe rocker within stance; peak_at/flat_at time swing.
+#   heel/peak: sole roll in radians (positive points the toe down) at heel
+#   strike and at the top of the toe roll; heel_flat/toe_from end the heel
+#   rocker and start the toe roll within stance; peak_at/flat_at time swing.
 #   arm, arm_phase, bend: shoulder swing (rad), its lag, and elbow bend.
 #
 # Body curves follow the symmetric part of Mesh2Motion's CC0 Walk_Loop and
@@ -51,17 +51,17 @@ def _body_rotate(p,angles):
 #   yaw, chest_yaw: pelvis turn with the forward leg; chest turn against it.
 #   body_phase: delay of the body curves relative to the feet.
 GAITS={
-    'walk':dict(stance=.591,stride=.478,sway=.018,arm=.32,arm_phase=-.1,bend=.25,
-                lift=[.0674,.102,.116,.0941,.107,.146,.101,.0369],
-                reach=[-.0475,.0785,-.131,-.256,.0454,.31,.0485,.052],
-                heel=-.0605,toe=.83,peak=1.07,heel_flat=.159,toe_from=.683,peak_at=.291,flat_at=.756,
-                base=-.0329,bob=.0239,bob_shape=[(2,-.636,-.772)],
+    'walk':dict(stance=.573,stride=.445,sway=.018,arm=.32,arm_phase=-.1,bend=.25,
+                lift=[.0605,.126,.108,.076,.0686,.133,.0775,.00507],
+                reach=[.0321,.147,-.0543,-.238,.0355,.247,-.0911,-.115],
+                heel=-.112,peak=1.14,heel_flat=.16,toe_from=.715,peak_at=.356,flat_at=.745,
+                base=-.032,bob=.0234,bob_shape=[(2,-.636,-.772)],
                 roll=4.5,roll_shape=[(1,.992,.126)],
                 lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
                 head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
-                yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0587),
+                yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0608),
     'jog':dict(stance=.42,stride=.50,lift=[.1,.2,.25,.25,.2,.1],reach=[],sway=.012,arm=.48,arm_phase=0,bend=.95,
-               heel=-.23,toe=.52,peak=.70,heel_flat=.23,toe_from=.60,peak_at=.22,flat_at=.72,
+               heel=-.23,peak=.70,heel_flat=.23,toe_from=.60,peak_at=.22,flat_at=.72,
                base=-.06,bob=.022,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
                roll=5.0,roll_shape=[(1,-.888,.473),(3,-.052,-.026)],
                lean=12.0,lumbar=.55,pitch=3.0,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
@@ -105,6 +105,8 @@ def gait_rotations(phase,gait='walk',settings=None):
             'neck':(chest_yaw*.5,(chest+head)*.5,0),
             'head':(0,head,0)}
 
+PROFILE_PAD=3
+
 def _foot_path(phase,settings,length):
     stance=settings['stance'];stride=length*settings['stride']
     if phase<stance:return (0,stride*(.5-phase/stance))
@@ -118,11 +120,12 @@ def _foot_path(phase,settings,length):
     z+=stride*_profile(u,settings['reach'])
     return length*_profile(u,settings['lift']),z
 
-def _profile(u,points):
+def _profile(u,points,pad=PROFILE_PAD):
     """Uniform cubic B-spline over swing progress u through `points`, padded with
-    four zero control points at each end (the first and last spans vanish)."""
+    zero control points at each end: three zero the value, velocity and
+    acceleration at toe-off and touchdown; four also the jerk."""
     if not points:return 0.0
-    p=[0]*4+list(points)+[0]*4;spans=len(p)-3;x=max(0,min(1,u))*spans;k=min(int(x),spans-1);t=x-k
+    p=[0]*pad+list(points)+[0]*pad;spans=len(p)-3;x=max(0,min(1,u))*spans;k=min(int(x),spans-1);t=x-k
     w=((1-t)**3,3*t**3-6*t*t+4,-3*t**3+3*t*t+3*t+1,t**3)
     return sum(a*b for a,b in zip(w,p[k:k+4]))/6
 
@@ -132,18 +135,23 @@ def _ease(t):
     t=max(0,min(1,t));return t**4*(35+t*(-84+t*(70-20*t)))
 
 def _foot_roll(phase,settings):
-    """Heel-led contact, flat support, toe-off, then ankle recovery (X angle)."""
-    stance=settings['stance'];heel=settings['heel'];toe=settings['toe'];peak=settings['peak']
-    if phase<stance:
-        u=phase/stance;flat=settings['heel_flat'];start=settings['toe_from']
-        if u<flat:return heel*(1-_ease(u/flat))
-        return toe*_ease((u-start)/(1-start))
-    u=(phase-stance)/(1-stance);at=settings['peak_at'];level=settings['flat_at']
-    if u<at:return toe+(peak-toe)*_ease(u/at)
+    """Sole roll (X angle): heel-led contact rolling flat, then one toe roll from late
+    stance straight through toe-off to its swing peak, recovery to flat, and the
+    heel lead into the next contact.
+
+    The toe roll never pauses at toe-off: easing to a stop exactly where the sole
+    leaves the ground would concentrate its jerk at the contact change.
+    """
+    stance=settings['stance'];heel=settings['heel'];peak=settings['peak']
+    flat=stance*settings['heel_flat'];start=stance*settings['toe_from']
+    top=stance+(1-stance)*settings['peak_at'];level=stance+(1-stance)*settings['flat_at']
+    if phase<flat:return heel*(1-_ease(phase/flat))
+    if phase<start:return 0.0
+    if phase<top:return peak*_ease((phase-start)/(top-start))
     # Pause angular velocity at flat so changing the compensation pivot is C2,
     # including in the air; a linear crossing would kink the ankle trajectory.
-    if u<level:return peak*(1-_ease((u-at)/(level-at)))
-    return heel*_ease((u-level)/(1-level))
+    if phase<level:return peak*(1-_ease((phase-top)/(level-top)))
+    return heel*_ease((phase-level)/(1-level))
 
 @lru_cache(maxsize=1)
 def _sole_pivots():
