@@ -736,6 +736,10 @@ FACE_UNITS = ('eyeBlinkLeft', 'eyeBlinkRight', 'eyeSquintLeft', 'eyeSquintRight'
               'mouthFunnel', 'mouthPucker', 'browDownLeft', 'browDownRight', 'browInnerUp', 'browOuterUpLeft', 'browOuterUpRight',
               'cheekSquintLeft', 'cheekSquintRight', 'cheekPuff', 'noseSneerLeft', 'noseSneerRight')
 LID_CLEARANCE = .0008
+# Lid shapes character_face tries, in order (see lid_morphs): the first that folds no face and hides the eyeball when
+# closed wins.
+LID_CANDIDATES = tuple({'corner': .15, 'inner_corner': i, 'reach': r, 'overlap': o} for r in (1.35, 1.3, 1.4, 1.25, 1.5, 1.7)
+                       for o in (.18, .26, .34) for i in (.25, .15, .35))
 
 
 def _elevation(points, center):
@@ -754,7 +758,7 @@ def _turn(points, center, angles):
     return np.stack([d[:, 0], y, z], axis=1) + center
 
 
-def lid_morphs(rest, center, radius, margin, overlap=.18, clearance=LID_CLEARANCE, crease=.55, cheek=.4, wide=.22, reach=1.7, corner=.15, edges=None, almond=0.0):
+def lid_morphs(rest, center, radius, margin, overlap=.18, clearance=LID_CLEARANCE, crease=.55, cheek=.4, wide=.22, reach=1.7, corner=.15, edges=None, almond=0.0, inner_corner=None):
     """Blink, squint and wide for one eye, as rolling curtains round its lid margins, and the rest-shape push that keeps
     the lids clear of the eyeball.
 
@@ -813,7 +817,10 @@ def lid_morphs(rest, center, radius, margin, overlap=.18, clearance=LID_CLEARANC
     # Toward each corner the motion fades out over the last `corner` of the half-width, so the canthus stays put and
     # nothing at the corner shears against its neighbour.
     mid_yaw, half_yaw = (lo_yaw + hi_yaw) / 2, (hi_yaw - lo_yaw) / 2
-    t = np.clip((half_yaw - np.abs(yaw - mid_yaw)) / (corner * half_yaw), 0, 1)
+    # (the inner corner, by the nose, may taper over a longer stretch: its pocket is deeper)
+    toward_inner = np.sign(yaw - mid_yaw) == np.sign(inner[0] - mid_yaw)
+    span = np.where(toward_inner, corner if inner_corner is None else inner_corner, corner)
+    t = np.clip((half_yaw - np.abs(yaw - mid_yaw)) / (span * half_yaw), 0, 1)
     if almond:
         toward = np.where(upper_side, meet - e_up, meet - e_low)
         return _turn(rest, center, np.where(upper_side, up_share, low_share) * near * ease * almond * across ** 4 * toward)
@@ -893,7 +900,7 @@ class RigidJaw:
 
 
 def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z=None, neck=None, races=None, units=FACE_UNITS,
-                   almond=.6):
+                   almond=.6, eye_scale=.95):
     """A stylized character's living face on the hm08 head in Blender's frame: the head fitted to the envelope
     (center, radii (x, y, z)) and cropped at `neck_z`, with its face-unit morphs (lids refitted to the stylized eyes).
 
@@ -937,6 +944,7 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         d = np.linalg.norm(P[skin_ids] - c, axis=1)
         near = d < 1.6 * r
         if near.any(): r = min(r, float(d[near].min()) - LID_CLEARANCE)
+        r *= eye_scale
         eyes.append((c, r))
 
     # Lids refitted to the stylized openings.
@@ -970,16 +978,19 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         # Faces the lids turn over (alone and mixed as the contract mixes them) and eyeball the closed lids show.
         m = {k[:-4] if k.endswith('Left') else k: v for k, v in lids.items() if k.endswith('Left')}
         pose = lambda weights: pushed + sum(w * (m[n] - pushed) for n, w in weights.items())
-        mixes = [{'eyeBlink': w} for w in (.25, .5, .75, 1)] + [{'eyeBlink': w, 'eyeSquint': 1} for w in (.25, .5, .75, 1)]
-        mixes += [{'eyeSquint': 1}, {'eyeWide': 1}, {'eyeBlink': 1, 'eyeWide': 1}, {'eyeBlink': 1, 'eyeSquint': 1, 'eyeWide': 1}]
-        folds = sum(len(flipped(pushed, pose(mix), faces)) for mix in mixes)
-        shows = sum(eyeball_shows(pose(mix), faces, c, r) for mix in mixes if mix.get('eyeBlink') == 1)
+        # The mixes the contract turns faces over in (each morph at half and full, the emotion presets' lid parts) and
+        # the closed ones it looks for eyeball through.
+        mixes = [{n: w} for n in ('eyeBlink', 'eyeSquint', 'eyeWide') for w in (.5, 1)]
+        mixes += [{'eyeBlink': .35}, {'eyeSquint': .2}, {'eyeSquint': .45}, {'eyeBlink': .25, 'eyeSquint': .45}]
+        closed = [{'eyeBlink': 1}, {'eyeBlink': 1, 'eyeSquint': 1}, {'eyeBlink': 1, 'eyeWide': 1}, {'eyeBlink': 1, 'eyeSquint': 1, 'eyeWide': 1}]
+        tris = flat_triangles(pushed, faces)[0]   # the triangles the GLB will carry
+        folds = sum(len(flipped(pushed, pose(mix), tris)) for mix in mixes)
+        shows = sum(eyeball_shows(pose(mix), faces, c, r) for mix in closed)
         return folds, shows
     # A few lid shapes, gentlest first: the first that folds nothing and hides the eyeball when closed wins (a round
     # stylized eye needs its corners tapered just so); failing that, the one that does least harm.
     best = None
-    for params in ({'corner': .15}, {'corner': .1}, {'corner': .2}, {'corner': .15, 'crease': .7}, {'corner': .25},
-                   {'corner': .1, 'crease': .7}, {'corner': .3}, {'corner': .2, 'crease': .8}):
+    for params in LID_CANDIDATES:
         pushed, lids = build_lids(params)
         folds, shows = lid_trouble(pushed, lids)
         score = (shows > 0, folds + shows)
@@ -1074,6 +1085,21 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         mixes += [{f'eyeBlink{side}': 1.0, f'eyeWide{side}': 1.0}, {f'eyeBlink{side}': 1.0, f'eyeSquint{side}': 1.0, f'eyeWide{side}': 1.0}]
     lids = [n for n in morphs if n.startswith(('eyeBlink', 'eyeSquint', 'eyeWide'))]
     morphs, _ = unfold_morphs(V, faces, morphs, mixes, keep=lids + ['jawOpen'])
+    # Lids that still turn a face over (a twist in the inner corner's pocket) relax there, their margins pinned: the
+    # first pin that leaves nothing turned over and the closed eye covered wins.
+    if any(len(flipped(V, morphs[n], faces)) for n in lids):
+        for threshold in (.8, .6, .4, .25):
+            pinned = np.zeros(len(V), dtype=bool)
+            for side in ('Left', 'Right'):
+                m = np.linalg.norm(morphs[f'eyeBlink{side}'] - V, axis=1)
+                pinned |= m > threshold * m.max()
+            trial, _ = unfold_morphs(V, faces, {n: morphs[n] for n in lids}, [{n: .5} for n in lids], pinned=pinned, calm=False, iterations=60)
+            closed_ok = all(eyeball_shows(V + sum(trial[f'{n}{side}'] - V for n in combo), faces, eye_c, eye_r) == 0
+                            for side, (eye_c, eye_r) in (('Left', eyes[0]), ('Right', eyes[1]))
+                            for combo in (('eyeBlink',), ('eyeBlink', 'eyeWide'), ('eyeBlink', 'eyeSquint', 'eyeWide')))
+            if closed_ok and not any(len(flipped(V, trial[n], faces)) for n in lids):
+                morphs.update(trial)
+                break
     # The jaw unfolds too, but only by relaxing its edges: the lips and chin (half its motion or more) keep theirs.
     jaw_move = np.linalg.norm(morphs['jawOpen'] - V, axis=1)
     unfolded, _ = unfold_morphs(V, faces, {'jawOpen': morphs['jawOpen']}, pinned=jaw_move > .85 * jaw_move.max(), calm=False, iterations=80,
