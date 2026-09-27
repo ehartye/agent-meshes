@@ -386,8 +386,8 @@ def vacuum_helmet(m,fit,s,colors,show=(),segments=96,rings=48):
     m.tube('helmet-neck-ring',ring,[rim*1.5]*len(ring),colors['rim'])
     # A glint arc on the glass, upper left, reads as a reflection in flat light.
     def surface(lat,lon,grow):return world((math.cos(lat)*math.sin(lon),math.sin(lat),math.cos(lat)*math.cos(lon)),grow)
-    glint=[surface(math.radians(30+7*math.sin(math.pi*q/8)),math.radians(-46+4.5*q),.002) for q in range(9)]
-    m.tube('helmet-glint',glint,[.0028*s*math.sin(math.pi*(q+.5)/9.5) for q in range(9)],'#f4fbff')
+    glint=[surface(math.radians(34+6*math.sin(math.pi*q/6)),math.radians(-34+3.8*q),.002) for q in range(7)]
+    m.tube('helmet-glint',glint,[.0032*s*math.sin(math.pi*(q+.5)/7.5) for q in range(7)],'#f4fbff')
     # Radio pods (direction A): teal discs with gold caps on the shell, at ear height, a little behind the rim.
     ear_lat=math.asin(max(-.6,min(.6,sum(p[1]-cy for p in show)/max(len(show),1)/radii[1]))) if show else 0
     lon=math.acos(max(-1,min(1,(k-.22-math.sin(ear_lat)*f[1])/(math.cos(ear_lat)*f[2]))))
@@ -500,8 +500,7 @@ def geometry(values=None):
         # The build's enclosure check poses every clip and morph and fails if any of these comes within 1.5 cm of
         # the bubble (glass or shell), or if the bubble is more than 4 cm from all of them.
         glass=next(part for part in m.parts if part['name']=='helmet-glass')
-        glass['extras']=dict(encloses=dict(parts=[part['name'] for part in held],with_=None,clearance=.015,maxClearance=.04))
-        glass['extras']['encloses']['with']=['helmet-shell'];del glass['extras']['encloses']['with_']
+        glass['extras']={'encloses':{'parts':[part['name'] for part in held],'with':['helmet-shell'],'clearance':.015,'maxClearance':.04}}
         cut=fit['cut_y'];opening=fit['opening_radius']
         m.rings('helmet-neck-seal',[(shoulder_y+.035*s,0,0,opening*1.02,opening*.92),(mix(shoulder_y,cut,.5),0,0,opening*.98,opening*.9),(cut-.002*s,0,fit['center'][2]*.5,opening*.97,opening*.9)],FIELDWORK['strap'])
         fieldwork_suit(m,dims,colors)

@@ -39,6 +39,17 @@ UE 5.7.3). `node scripts/check-glass-browser.mjs [model.glb]` proves the viewer,
 three.js page, the ID-render rule and the workbench renders in Chromium, and with a GLB counts the
 face pixels seen through its glass from the front, side and three-quarter views.
 
+**Enclosures hold what they declare at every pose.** A node whose glTF extras say
+`"encloses": {"parts": [...], "clearance": 0.015, "maxClearance": 0.04, "with": ["helmet-shell"]}`
+(from Blender: `obj['agent_meshes_extras'] = json.dumps({...})`) is checked by `build` and by
+`verify <glb>`: every vertex of every named part, posed as three.js poses it (skin and morphs) at
+rest, at each keyframe and 24 phases of every clip and with each morph target at full weight, must
+stay `clearance` metres inside the node's surface plus the `with` meshes; `maxClearance` also fails
+an enclosure far bigger than what it holds. Failures name the part, the pose and the millimetres
+(`helmet-glass: left-ear pokes 3.2 mm outside the glass at clip walk @ 0.45 s`), and
+`verification.json` keeps the report. Inside is judged from the enclosure's centroid (it must be
+star-shaped, as bubbles and domes are); an open neck is not glass.
+
 ## Repeatable build
 
 Keep a `build.json` beside the source in the project:
