@@ -31,9 +31,9 @@ def _body_rotate(p,angles):
 # Leg timing, fractions of the cycle or of leg length:
 #   stance: duty factor. A jog below .5 has two flight intervals.
 #   stride: rearward contact travel during stance.
-#   lift: swing clearance, a sum of bumps (height, a, b), each h u^a(1-u)^b
-#   over swing progress u and peaking at h.
-#   reach: bumps added to the fore-aft swing path, fractions of stride.
+#   lift: swing clearance (fractions of leg length), B-spline control points
+#   over swing progress; reach: the same, added to the fore-aft swing path
+#   (fractions of stride).
 #   heel/toe/peak: sole roll in radians (positive points the toe down) at
 #   heel strike, toe-off and in early swing; heel_flat/toe_from end the heel
 #   rocker and start the toe rocker within stance; peak_at/flat_at time swing.
@@ -51,16 +51,16 @@ def _body_rotate(p,angles):
 #   yaw, chest_yaw: pelvis turn with the forward leg; chest turn against it.
 #   body_phase: delay of the body curves relative to the feet.
 GAITS={
-    'walk':dict(stance=.599,stride=.428,sway=.018,arm=.32,arm_phase=-.1,bend=.25,
-                lift=[(.0351,3,9),(.0537,4,8),(-.00805,5,7),(.033,6,6),(.0653,7,5),(-.0324,8,4),(.0451,9,3)],
-                reach=[(-.1,3,9),(-.107,4,8),(-.0987,5,7),(-.0348,6,6),(.019,7,5),(.0299,8,4),(-.0116,9,3)],
-                heel=-.0778,toe=.884,peak=1.17,heel_flat=.179,toe_from=.691,peak_at=.326,flat_at=.806,
-                base=-.0328,bob=.0237,bob_shape=[(2,-.636,-.772)],
+    'walk':dict(stance=.591,stride=.478,sway=.018,arm=.32,arm_phase=-.1,bend=.25,
+                lift=[.0674,.102,.116,.0941,.107,.146,.101,.0369],
+                reach=[-.0475,.0785,-.131,-.256,.0454,.31,.0485,.052],
+                heel=-.0605,toe=.83,peak=1.07,heel_flat=.159,toe_from=.683,peak_at=.291,flat_at=.756,
+                base=-.0329,bob=.0239,bob_shape=[(2,-.636,-.772)],
                 roll=4.5,roll_shape=[(1,.992,.126)],
                 lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
                 head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
-                yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.058),
-    'jog':dict(stance=.42,stride=.50,lift=[(.23,3,3)],reach=[],sway=.012,arm=.48,arm_phase=0,bend=.95,
+                yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0587),
+    'jog':dict(stance=.42,stride=.50,lift=[.1,.2,.25,.25,.2,.1],reach=[],sway=.012,arm=.48,arm_phase=0,bend=.95,
                heel=-.23,toe=.52,peak=.70,heel_flat=.23,toe_from=.60,peak_at=.22,flat_at=.72,
                base=-.06,bob=.022,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
                roll=5.0,roll_shape=[(1,-.888,.473),(3,-.052,-.026)],
@@ -109,21 +109,27 @@ def _foot_path(phase,settings,length):
     stance=settings['stance'];stride=length*settings['stride']
     if phase<stance:return (0,stride*(.5-phase/stance))
     u=(phase-stance)/(1-stance)
-    # Quintic Hermite interpolation matches stance velocity AND acceleration
-    # at toe-off and next contact; unlike smoothstep it never stops at contact.
-    smooth=u**3*(10+u*(-15+6*u));travel=stride*(1-stance)/stance
-    z=-stride*.5-travel*u+(stride+travel)*smooth
-    # Exponents of at least 2 keep the added velocity zero where the sole
-    # leaves and meets the ground, so contact stays continuous.
-    z+=stride*sum(h*_bump(u,a,b) for h,a,b in settings['reach'])
-    return length*sum(h*_bump(u,a,b) for h,a,b in settings['lift']),z
+    # Continuing the stance travel and adding a septic smoothstep matches stance
+    # velocity, acceleration and jerk at toe-off and at the next contact.
+    travel=stride*(1-stance)/stance
+    z=-stride*.5-travel*u+(stride+travel)*_ease(u)
+    # Both profiles are exactly zero near toe-off and touchdown, so they add no
+    # velocity, acceleration or jerk where the sole leaves or meets the ground.
+    z+=stride*_profile(u,settings['reach'])
+    return length*_profile(u,settings['lift']),z
 
-def _bump(u,a,b):
-    """u^a(1-u)^b scaled to peak at 1."""
-    return u**a*(1-u)**b/((a/(a+b))**a*(b/(a+b))**b)
+def _profile(u,points):
+    """Uniform cubic B-spline over swing progress u through `points`, padded with
+    four zero control points at each end (the first and last spans vanish)."""
+    if not points:return 0.0
+    p=[0]*4+list(points)+[0]*4;spans=len(p)-3;x=max(0,min(1,u))*spans;k=min(int(x),spans-1);t=x-k
+    w=((1-t)**3,3*t**3-6*t*t+4,-3*t**3+3*t*t+3*t+1,t**3)
+    return sum(a*b for a,b in zip(w,p[k:k+4]))/6
 
 def _ease(t):
-    t=max(0,min(1,t));return t**3*(10+t*(-15+6*t))
+    """Septic smoothstep: zero velocity, acceleration and jerk at both ends, so a
+    sole roll that starts or ends at a contact change adds no velocity pop."""
+    t=max(0,min(1,t));return t**4*(35+t*(-84+t*(70-20*t)))
 
 def _foot_roll(phase,settings):
     """Heel-led contact, flat support, toe-off, then ankle recovery (X angle)."""
