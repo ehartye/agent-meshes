@@ -258,7 +258,7 @@ def geometry(values=None):
         m.rings(label+'-palm',[(wrist_y-.086*s,side*(wx-.004*s),.058*s,.02*s,.038*s),(wrist_y-.052*s,side*(wx-.005*s),.058*s,.025*s,.043*s),(wrist_y+.007*s,side*wx,.055*s,.024*s,.027*s)],hand_color)
         for finger in range(4):
             fwd=(1.5-finger)*.020*s; length=[.051,.067,.062,.045][finger]*s
-            m.tube(label+'-finger-'+str(finger),[hand(fwd,wrist_y-.063*s,.005*s),hand(fwd,wrist_y-.093*s-length*.45,.019*s),hand(fwd,wrist_y-.086*s-length,.022*s)],[.010*s,.009*s,.006*s],hand_color)
+            m.tube(label+'-finger-'+str(finger),[hand(fwd,wrist_y-.063*s,.005*s),hand(fwd,wrist_y-.09*s-length*.45,.021*s),hand(fwd,wrist_y-.08*s-length,.033*s)],[.010*s,.009*s,.006*s],hand_color)
         m.tube(label+'-thumb',[hand(.024*s,wrist_y-.035*s,.006*s),hand(.052*s,wrist_y-.053*s,.018*s),hand(.056*s,wrist_y-.083*s,.026*s)],[.019*s,.013*s,.008*s],hand_color)
     if not eva:
         anatomy_head(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['eyes'],p['presentation'],alien)
