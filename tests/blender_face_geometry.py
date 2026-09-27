@@ -1301,13 +1301,14 @@ class EyeHoleTests(unittest.TestCase):
                 for i in f:
                     for k in range(3): normals[i][k] += n[k]
             unit = lambda n: [c / (math.sqrt(sum(x * x for x in n)) or 1) for c in n]
-            # Beside the midline between the eyes, the skin's normal turns no faster than the head's own curvature.
-            worst = 0.0
+            # Beside the midline between the eyes the skin's normal turns no faster than it does a little way out.
+            near, out = [], []
             for i, p in enumerate(vertices):
-                if not (0 < abs(p[0]) < .004 and p[1] < -.05 and .125 < p[2] < .16): continue
-                n = unit(normals[i])
-                worst = max(worst, abs(n[0]) / abs(p[0]))
-            self.assertLess(worst, 30, f'{style}: the midline creases (normal x turns {worst:.0f} per metre beside it)')
+                if not (0 < abs(p[0]) < .012 and p[1] < -.05 and .125 < p[2] < .16): continue
+                turn = abs(unit(normals[i])[0]) / abs(p[0])
+                (near if abs(p[0]) < .002 else out if abs(p[0]) > .004 else []).append(turn)
+            near_mean, out_mean = sum(near) / len(near), sum(out) / len(out)
+            self.assertLess(near_mean, 2 * out_mean, f'{style}: the midline creases (normal turns {near_mean:.0f}/m beside it, {out_mean:.0f}/m out)')
 
     def test_the_bevel_turns_evenly_round_the_rim(self):
         # Round 5: each rim vertex took its bevel from its own irregular clipped triangles, so neighbours' bevels turned

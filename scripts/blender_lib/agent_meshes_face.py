@@ -1126,10 +1126,18 @@ CONTINUOUS_OPTIONS = ('opening', 'meet', 'overlap', 'squint', 'squint_upper_shar
 
 
 def _twin_shaped(shaped, point):
-    """`point` moved by one eye's skin shaping (`shaped`) plus the mirrored eye's (the same shaping, reflected)."""
-    own = shaped(point)
+    """`point` moved by one eye's skin shaping (`shaped`) blended with the mirrored eye's (the same shaping, reflected).
+
+    Each displacement is weighted by its squared length, so near either eye that eye's shaping acts alone, and on the
+    midline the two are averaged: the result is left-right symmetric there and as smooth as either shaping. (Adding
+    them instead would dig the bridge between close-set eyes twice as deep.)
+    """
+    own = _sub(shaped(point), point)
     reflected = mirror_x(point)
-    return _add(own, mirror_x(_sub(shaped(reflected), reflected)))
+    other = mirror_x(_sub(shaped(reflected), reflected))
+    a, b = _dot(own, own), _dot(other, other)
+    if a + b == 0: return point
+    return _add(point, _add(_mul(own, a / (a + b)), _mul(other, b / (a + b))))
 
 
 def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25, lining_gap=.0001,
@@ -1137,8 +1145,8 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     """Make a lid eye in a skin: by default the skin itself becomes the lids (`style='continuous'`).
 
     `twin=True` also shapes the skin by the mirrored eye's socket (at the reflected
-    center), adding the two eyes' displacements, so where a socket dip reaches past
-    the midline the dips of both eyes meet there smoothly. `eye_holes` sets it: it
+    center), blending the two eyes' displacements, so where a socket dip reaches
+    past the midline the dips of both eyes meet there smoothly. `eye_holes` sets it: it
     keeps one half of this skin and mirrors it, and a half shaped by one eye alone
     meets its reflection in a crease down the brow and nose.
 
@@ -1421,7 +1429,7 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
     """
     eye_left = _vector(eye_left, 3, 'Left eye center')
     if eye_left[0] <= 0: raise ValueError("eye_left is the character's left eye, at x > 0")
-    # Each eye's socket dip is added to the other's, so where a dip reaches the midline the halves meet smoothly.
+    # Each eye's socket dip is blended with the other's, so where a dip reaches the midline the halves meet smoothly.
     left = eye_hole(vertices, faces, eye_left, eye_radius, twin=True, **options)
     # Points within a micron of the midline lie on it (smooth refinement leaves some a few nanometres off, and a clip
     # there would add near-duplicate points).
