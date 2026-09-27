@@ -36,6 +36,8 @@ export interface GaitSource { scene: Object3D; clips: AnimationClip[]; declared:
 export interface GaitOptions {
   clip: string; samples?: number; fps?: number; height?: number; travelSpeed?: number; forward?: Vec3;
   references?: GaitReport[]; referenceLabels?: string[];
+  /** Per reference: false scores it for information only; evaluateGait ignores it. Default true. */
+  referenceRequired?: boolean[];
 }
 export interface GaitMetrics {
   /** Largest |lowest foot vertex height| over planted frames, meters; null for a rig without skinned feet. */
@@ -63,7 +65,7 @@ export interface GaitMetrics {
 }
 export interface CurveScore { shift: number; r: Record<string, number>; minR: number; meanR: number }
 /** Raw scores against the reference, and `symmetric` scores of the mirrored-gait parts of both. */
-export interface GaitComparison extends CurveScore { reference: string; clip: string; symmetric: CurveScore }
+export interface GaitComparison extends CurveScore { reference: string; clip: string; required: boolean; symmetric: CurveScore }
 export interface GaitReport {
   format: string; clip: string; duration: number; samples: number; fps: number; height: number; travelSpeed: number;
   forward: Vec3; contactSource: 'declared' | 'auto'; phaseZero: number;
@@ -523,7 +525,7 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
       return { shift: aligned.shift, r: aligned.r, minR: Math.min(...Object.values(aligned.r)), meanR: aligned.mean };
     };
     const n = curves.pelvisHeight.length, resampled = Object.fromEntries(Object.entries(reference.curves).map(([key, values]) => [key, resample(values, n)]));
-    return { reference: options.referenceLabels?.[i] ?? reference.clip, clip: reference.clip, ...score(scored, reference.curves),
+    return { reference: options.referenceLabels?.[i] ?? reference.clip, clip: reference.clip, required: options.referenceRequired?.[i] ?? true, ...score(scored, reference.curves),
       symmetric: score(symmetrizeCurves(scored), symmetrizeCurves(resampled)) };
   });
   return report;
@@ -542,7 +544,7 @@ export const NATURAL_GAIT = {
 
 /**
  * Score a gait report against natural-gait ranges. `curveScore` picks raw or symmetric reference
- * scores; every scored curve must reach `minCurveR` against every reference in the report.
+ * scores; every scored curve must reach `minCurveR` against every required reference in the report.
  */
 export function evaluateGait(report: GaitReport, gait: GaitKind, options: { curveScore?: 'raw' | 'symmetric' } = {}): GaitEvaluation {
   const m = report.metrics, n = NATURAL_GAIT, g = n[gait];
@@ -571,8 +573,9 @@ export function evaluateGait(report: GaitReport, gait: GaitKind, options: { curv
     `>= ${g.counterRotationDeg}, correlation < 0`, m.counterRotationDeg >= g.counterRotationDeg && m.counterRotationCorrelation < 0);
   const drops = [m.pelvisDropBySideDeg.left, m.pelvisDropBySideDeg.right];
   check('pelvisDrop', 'swing-side pelvis drop per side (deg)', { left: round(drops[0], 2), right: round(drops[1], 2) }, `${n.pelvisDropDeg[0]}..${n.pelvisDropDeg[1]}`, drops.every(v => within(v, n.pelvisDropDeg)));
-  if (report.comparisons?.length) {
-    const scores = report.comparisons.map(c => ({ reference: c.reference, ...(options.curveScore === 'symmetric' ? c.symmetric : c) }));
+  const required = report.comparisons?.filter(c => c.required !== false) ?? [];
+  if (required.length) {
+    const scores = required.map(c => ({ reference: c.reference, ...(options.curveScore === 'symmetric' ? c.symmetric : c) }));
     check('curveCorrelation', `${options.curveScore ?? 'raw'} curve correlation per reference`,
       Object.fromEntries(scores.map(s => [s.reference, Object.fromEntries(Object.entries(s.r).map(([k, v]) => [k, round(v, 3)]))])),
       `every curve >= ${n.minCurveR}`, scores.every(s => Object.values(s.r).every(v => v >= n.minCurveR)));

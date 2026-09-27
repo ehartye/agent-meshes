@@ -145,6 +145,7 @@ export async function main(args = process.argv): Promise<void> {
     .option('--travel-speed <mps>', 'Speed the in-place loop travels at (default: declared gait extras, else planted-foot median)')
     .option('--forward <x,y,z>', 'Travel direction (default: detected from planted feet)')
     .option('--reference <file>', 'Reference curves JSON to score against; repeatable', (value: string, list: string[]) => [...list, value], [] as string[])
+    .option('--compare <file>', 'Reference curves JSON scored for information only; --gait does not require them; repeatable', (value: string, list: string[]) => [...list, value], [] as string[])
     .option('--out <file>', 'Write the curves JSON here and print only a summary')
     .option('--gait <kind>', 'Check the report against natural walk or jog ranges; exits 1 on a failed check')
     .option('--curve-score <kind>', 'Reference scores the --gait check uses: raw or symmetric', 'raw')
@@ -162,13 +163,15 @@ export async function main(args = process.argv): Promise<void> {
     };
     const forward = options.forward ? String(options.forward).split(',').map(Number) : undefined;
     if (forward && (forward.length !== 3 || forward.some(v => !Number.isFinite(v)))) throw Object.assign(new Error('--forward must be x,y,z'), { code: 'CLI_ARGUMENT_ERROR' });
-    const references = await Promise.all((options.reference as string[]).map(async path => JSON.parse(await readFile(path, 'utf8'))));
+    const referencePaths = [...options.reference as string[], ...options.compare as string[]];
+    const references = await Promise.all(referencePaths.map(async path => JSON.parse(await readFile(path, 'utf8'))));
     const bytes = await readFile(file);
     const report = analyzeGait(await loadGait(bytes), {
       clip: String(options.clip), samples: Math.round(number(options.samples, '--samples')!),
       height: number(options.height, '--height'), travelSpeed: number(options.travelSpeed, '--travel-speed'),
       ...(forward ? { forward: forward as [number, number, number] } : {}),
-      references, referenceLabels: (options.reference as string[]).map(path => basename(path)),
+      references, referenceLabels: referencePaths.map(path => basename(path)),
+      referenceRequired: referencePaths.map((_, i) => i < (options.reference as string[]).length),
     });
     report.source = { file: basename(file), sha256: createHash('sha256').update(bytes).digest('hex'),
       ...(options.commit ? { commit: String(options.commit) } : {}), ...(options.license ? { license: String(options.license) } : {}), ...(options.sourceUrl ? { url: String(options.sourceUrl) } : {}) };

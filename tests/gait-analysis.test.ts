@@ -140,6 +140,12 @@ describe('evaluateGait', () => {
     const report = analyzeGait(await loadGait(await walkerGLB({ arm: -20, roll: -5 })), { clip: 'walk', references: [reference] });
     const failed = evaluateGait(report, 'walk').checks.filter(c => !c.pass).map(c => c.id);
     expect(failed).toEqual(expect.arrayContaining(['armCounterswing', 'pelvisDrop', 'curveCorrelation']));
+    // A reference compared for information is scored but does not fail the check.
+    const hiked = analyzeGait(await loadGait(await walkerGLB({ roll: -5 })), { clip: 'walk' });
+    const informed = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk', references: [reference, hiked], referenceRequired: [true, false] });
+    expect(informed.comparisons!.map(c => c.required)).toEqual([true, false]);
+    expect(informed.comparisons![1].minR).toBeLessThan(0.8);
+    expect(evaluateGait(informed, 'walk').checks.find(c => c.id === 'curveCorrelation')!.pass).toBe(true);
     // Without references the correlation check is absent, not passed.
     const bare = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' });
     expect(evaluateGait(bare, 'walk').checks.map(c => c.id)).not.toContain('curveCorrelation');
@@ -159,8 +165,8 @@ describe('gait CLI', () => {
     const scored = JSON.parse((await cli('gait', glb, '--clip', 'walk', '--reference', curves)).stdout);
     expect(scored.comparisons[0]).toMatchObject({ reference: 'walker-curves.json', clip: 'walk', shift: 0 });
     expect(scored.comparisons[0].minR).toBeGreaterThan(0.999);
-    const checked = await cli('gait', glb, '--clip', 'walk', '--reference', curves, '--gait', 'walk');
-    expect(JSON.parse(checked.stdout)).toMatchObject({ evaluation: { gait: 'walk', ok: true } });
+    const checked = await cli('gait', glb, '--clip', 'walk', '--reference', curves, '--compare', curves, '--gait', 'walk');
+    expect(JSON.parse(checked.stdout)).toMatchObject({ evaluation: { gait: 'walk', ok: true }, comparisons: [{ required: true }, { required: false }] });
     await expect(cli('gait', glb, '--clip', 'walk', '--gait', 'jog')).rejects.toMatchObject({ code: 1 });
     await expect(cli('gait', glb, '--clip', 'nope')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('No clip named nope') });
   }, 90000);
