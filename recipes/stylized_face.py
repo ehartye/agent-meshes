@@ -112,7 +112,7 @@ def head_spec(values=None):
         years=shape['years'], gender=1.0 if p['presentation'] == 'male' else 0.0,
         center=(0.0, 0.0, d['head_y']), radii=(d['rx'], d['rz'], d['ry']),
         shape={k: shape[k] for k in HEAD_FEATURES if shape[k] != NEUTRAL.get(k, 1.0)},
-        stylize=shape['stylize'], neck_z=neck_z, neck=neck,
+        stylize=shape['stylize'], neck_z='chin', neck=neck,
     )
 
 
