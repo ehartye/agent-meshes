@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blende
 import agent_meshes_author
 from agent_meshes_face import _clip, _quality, _refine, _sharp_edges
 from agent_meshes_face import (
-    DEFAULT_LID_FOLLOW, ATTACH_TOLERANCE, lash_geometry, attach_to_skin, nose_geometry, prune_glb_morphs, sculpt_lips, sculpt_skin, skin_tints, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
+    DEFAULT_LID_FOLLOW, ATTACH_TOLERANCE, lash_geometry, attach_to_skin, follow_skin, nose_geometry, prune_glb_morphs, sculpt_lips, sculpt_skin, skin_tints, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
     ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
     eye_coverage, eye_coverage_problems, brow_plate_geometry, split_plates, rubber_mouth_geometry,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
@@ -783,6 +783,26 @@ class AttachTests(unittest.TestCase):
         # Morphs that do not reach the part add nothing to it.
         far = attach_to_skin(self.nostril(center), dict(skin, morphs={'browInnerUp': soft_offset(skin['vertices'], (0, -.08, .2), .02, (0, 0, .004))}))
         self.assertEqual(far['morphs'], {})
+
+    def test_follow_skin_carries_a_tucked_part_with_the_skin_fading_out_behind_it(self):
+        skin, center = self.skin()
+        # A bag behind the skin: its rim 3 mm behind the swelling skin, its back 40 mm deep.
+        bag = mouth_cavity_geometry((center[0], center[1] + .003, center[2]), .02, .012, .04)
+        skin = dict(skin, morphs=dict(skin['morphs'], jawOpen=soft_offset(skin['vertices'], center, .03, (0, 0, -.01))))
+        followed = follow_skin(bag, skin, reach=.02, skip=['jawOpen'])
+        self.assertEqual(sorted(followed['morphs']), ['noseSneerLeft'])
+        rest, target = followed['vertices'], followed['morphs']['noseSneerLeft']
+        rim = [target[i][1] - rest[i][1] for i in bag['rim']]
+        back = target[-1][1] - rest[-1][1]
+        # The rim rides the skin's swell almost fully; the deep back of the bag stays put.
+        self.assertLess(min(rim), -.0015)
+        self.assertAlmostEqual(back, 0, delta=1e-9)
+        self.assertEqual(followed['faces'], bag['faces'])
+        # A part with its own morph of a name keeps it and adds the skin's delta on top.
+        own = follow_skin(dict(bag, morphs={'noseSneerLeft': [(x, y, z + .001) for x, y, z in bag['vertices']]}), skin, reach=.02)
+        self.assertAlmostEqual(own['morphs']['noseSneerLeft'][-1][2] - bag['vertices'][-1][2], .001)
+        self.assertIn('jawOpen', own['morphs'])
+        with self.assertRaises(ValueError): follow_skin(bag, skin, reach=0)
 
     def test_skin_contact_measures_a_floating_part(self):
         skin, center = self.skin()

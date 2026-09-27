@@ -19,7 +19,7 @@ __all__ = [
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
     'eye_window', 'lash_faces', 'lash_geometry', 'eye_hole', 'eye_holes', 'continuous_lid_edges', 'CONTINUOUS_OPTIONS', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry', 'dome_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
-    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
+    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'follow_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'add_eye_bones', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
@@ -2790,6 +2790,45 @@ def attach_to_skin(part, skin, depth=None, tolerance=ATTACH_TOLERANCE):
     result = dict(part, vertices=vertices, morphs=morphs)
     result['contact'] = skin_contact(result, skin, tolerance)
     return result
+
+
+def follow_skin(part, skin, reach, skip=()):
+    """Make a part tucked behind the skin ride the skin's morphs near it, fading to none `reach` meters behind it.
+
+    For inner parts whose front edge sits just behind a moving skin: a mouth cavity's
+    rim behind the lips, a gum. A skin morph that draws the skin back (a smile pulls the
+    corners back and up) otherwise pushes the skin through the part's still rim, a
+    dark line on the face. Each vertex takes the skin point nearest it at rest and moves
+    by the skin's delta there, weighted 1 within a quarter of `reach` of the skin and
+    fading smoothly to 0 at `reach` (the deep back of the bag stays put); vertices
+    farther than `reach` from the skin take no delta. Names in `skip` (the jawOpen a
+    `JawHinge` already gives the part) are left alone. The part's own morphs are kept,
+    the skin's deltas added on top. Unlike `attach_to_skin` it neither moves the part
+    nor needs it to touch the skin. Returns a new geometry dict with `morphs`.
+    """
+    reach = _number(reach, 'Follow reach', 0, low_open=True)
+    vertices = [_vector(v, 3, 'Part vertex') for v in part['vertices']]
+    if not vertices: raise ValueError('The part has no vertices')
+    own = {name: [_vector(v, 3, 'Morph vertex') for v in targets] for name, targets in (part.get('morphs') or {}).items()}
+    skin_vertices, skin_faces, skin_morphs = _skin_data(skin)
+    index = _SkinIndex(skin_vertices, skin_faces, near=_near_box(vertices, reach))
+    feet = []
+    for v in vertices:
+        hit = index.nearest(v, limit=reach)
+        if hit is None: feet.append(None); continue
+        weight = 1 - _smoothstep(.25 * reach, reach, abs(hit[0]))
+        feet.append((index.triangles[hit[2]], hit[3], weight) if weight > 0 else None)
+    morphs = dict(own)
+    skip = set(skip)
+    for name, targets in skin_morphs.items():
+        if name in skip: continue
+        deltas = [(0.0, 0.0, 0.0) if foot is None else
+                  tuple(foot[2] * sum(w * (targets[i][k] - skin_vertices[i][k]) for i, w in zip(foot[0], foot[1])) for k in range(3))
+                  for foot in feet]
+        if max(math.hypot(*d) for d in deltas) < 1e-6: continue
+        base = own.get(name, vertices)
+        morphs[name] = [_add(p, d) for p, d in zip(base, deltas)]
+    return dict(part, vertices=vertices, morphs=morphs)
 
 
 # ---------------------------------------------------------------- skin regions

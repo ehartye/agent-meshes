@@ -890,6 +890,14 @@ for name, targets in join_geometry(beads)['morphs'].items(): shape_key(nose, nam
 parts.append(nose)                             # then join_face_parts as usual
 ```
 
+`follow_skin(part, skin, reach, skip=())` is its counterpart for parts tucked
+*behind* the skin, such as a mouth cavity's rim behind the lips: each vertex within
+`reach` of the skin takes the skin's delta at its nearest point, fully near the skin
+and fading to none at `reach`, so the deep back of the bag stays put. A smile that
+draws the mouth corners back no longer pushes the skin through a still cavity rim
+(a dark line round the corners). Skip the `jawOpen` a `JawHinge` already gives it:
+`follow_skin(mouth_cavity_geometry(...), head, reach=.03, skip=['jawOpen'])`.
+
 A chin wart rides `jawOpen` the same way. A part can sit on another attached part:
 `attach_to_skin(bead, ball)` seats a nostril on a nose ball that was itself
 attached to the head (`ball` is the ball's geometry dict with its morphs), and the
