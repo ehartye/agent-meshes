@@ -52,6 +52,12 @@ describe('curve helpers', () => {
       name => ({ head: 'neck_01', neck_01: 'spine_03', spine_03: 'spine_02', spine_02: 'spine_01', spine_01: 'pelvis' } as Record<string, string>)[name] ?? null);
     expect(ue).toMatchObject({ pelvis: 'pelvis', spine: ['spine_01', 'spine_02', 'spine_03'], neck: 'neck_01', head: 'head' });
     expect(ue.legs.a).toMatchObject({ thigh: 'thigh_l', calf: 'calf_l', foot: 'foot_l', toe: 'ball_l' });
+    const m = (n: string) => `mixamorig:${n}`;
+    const mixamo = resolveGaitBones(['Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head', 'HeadTop_End', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'LeftToeBase', 'RightUpLeg', 'RightLeg', 'RightFoot', 'RightToeBase', 'LeftShoulder', 'LeftArm', 'LeftForeArm', 'RightShoulder', 'RightArm', 'RightForeArm'].map(m),
+      name => ({ [m('Head')]: m('Neck'), [m('Neck')]: m('Spine2'), [m('Spine2')]: m('Spine1'), [m('Spine1')]: m('Spine'), [m('Spine')]: m('Hips') } as Record<string, string>)[name] ?? null);
+    expect(mixamo).toMatchObject({ pelvis: m('Hips'), spine: [m('Spine'), m('Spine1'), m('Spine2')], neck: m('Neck'), head: m('Head') });
+    expect(mixamo.legs.b).toMatchObject({ thigh: m('RightUpLeg'), calf: m('RightLeg'), foot: m('RightFoot'), toe: m('RightToeBase') });
+    expect(mixamo.arms.a).toMatchObject({ upper: m('LeftArm'), lower: m('LeftForeArm') });
   });
 });
 

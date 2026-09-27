@@ -190,6 +190,23 @@ Unreal is found from `AGENT_MESHES_UNREAL` (the engine directory, such as `C:/Pr
 
 `tests/unreal-integration.test.ts` runs the real import whenever Unreal is installed (set `AGENT_MESHES_SKIP_UNREAL=1` to skip it). CI has no Unreal and runs only the report, log-parsing and contract unit tests.
 
+## Gait analysis
+
+`gait` samples one clip of a skinned, animated biped GLB into per-phase body curves and locomotion metrics, without a browser or GPU. It poses the skin as three.js does, from the clip's keyframe tracks:
+
+```powershell
+node scripts/agent-meshes.mjs gait model.glb --clip walk --gait walk --reference Walk_Loop.json --compare Walk_Female.json
+node scripts/agent-meshes.mjs gait human-base-animations.glb --clip Walk --out Walk_Loop.json --commit <sha> --license CC0-1.0 --source-url <url>
+```
+
+Bones are found by name: the stylized `rig-*` rig, UE-mannequin names (Mesh2Motion, `thigh_l`, `spine_01`) and Mixamo-style `LeftUpLeg` all resolve. The spine is every joint between the pelvis and the head except the neck. Left and right are decided by geometry at rest (anatomical left is up × forward), not by name, so mirrored naming compares cleanly. Forward is detected from planted feet sliding backward in an in-place loop, or given with `--forward x,y,z`. Each foot is every skinned vertex whose strongest influence is the foot bone or a bone below it, so the check works whatever the boot meshes are called.
+
+A rig can declare its gait in node extras, `{"gait": {"format": "agent-meshes/gait/1", "height": 1.82, "clips": {"walk": {"stance": 0.6, "travelSpeed": 0.9, "contactPhase": {"rig-left-foot": 0, "rig-right-foot": 0.5}}}}}` (the stylized walk recipe writes it). Declared contacts replace auto-detection, which takes a foot as planted when its lowest vertex is within 10% of its lift range of its 10th-percentile height. Without a declared height, height is the skinned mesh's bounds; without a declared travel speed, it is the median backward speed of planted contact points.
+
+The report has `curves` (64 samples per cycle from `--samples`, phase 0 at the anatomical-left touchdown): pelvis and head height (centered, scaled to a 1.75 m body), pelvis roll and yaw, shoulder yaw, trunk, chest and head pitch, knee flexion and ankle angle per leg, and each foot's lowest-vertex height. `metrics` are measured at 60 fps over the whole loop: stance ground error, planted contact speed against travel speed, skating, loop seam over every skinned vertex, foot velocity jumps near contact changes, flight fraction, knee interior angles and per-frame knee change, head bob and bob count, head/chest pitch ranges, mean trunk lean, each spine joint's rotation range, shoulder–pelvis counter-rotation, swing-side pelvis drop per side, and arm counterswing (correlation of each arm's swing with its own leg's).
+
+`--reference <curves.json>` scores the clip's pelvis height and roll, chest and head pitch, knees, ankles and foot heights against reference curves after one circular phase shift shared by all curves; `--compare` does the same for information only. Each comparison also has `symmetric` scores of the mirror-symmetric parts of both (even harmonics of body curves, odd harmonics of lateral ones, each leg averaged with the other half a cycle later), for scoring a symmetric gait against a reference that limps. `--gait walk|jog` adds an `evaluation` of the natural-gait ranges in `NATURAL_GAIT` and exits 1 when any fails: ground error < 5 mm, planted speed within ±10% of travel, seam < 2 mm, no contact velocity jump of half the travel speed, no knee past 180° or changing more than 25° a frame, flight only in the jog, arms counterswinging (r ≤ −0.5), head bob 2.5–6 cm walking and 5–10 cm jogging with two bobs a cycle, head pitch range 30–70% of the chest's, trunk lean 3–8° and 8–15°, at least two spine joints moving 2° and 4°, counter-rotation of 8° and 12° with shoulders against the pelvis, swing-side pelvis drop of 3–7°, and every scored curve at r ≥ 0.8 against every `--reference` (`--curve-score symmetric` uses the symmetric scores). `--out` writes the full report and prints a summary; `--commit`, `--license` and `--source-url` record provenance in `source` beside the file's SHA-256. `analyzeGait`, `evaluateGait` and the curve helpers are exported from `src/gait-analysis.ts`.
+
 ## Embedding a model in your own page
 
 `node scripts/agent-meshes.mjs viewer lib/mesh-viewer.js` writes the standalone viewer runtime: one script, no build step, no network. It defines `window.MeshViewer`. `preview.html` is built on the same runtime.
