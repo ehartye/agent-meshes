@@ -188,7 +188,7 @@ def head_field(layout):
     # Carve the midline back: an ellipsoid whose back reaches `target`, as wide as the bridge between the eyes.
     ry = .03 * k
     carve_center, carve_radii = (0.0, target - ry, ez + .004 * k), (.72 * ex, ry, .03 * k)
-    blend = .014 * k
+    blend = .028 * k
 
     def sdf(p):
         return smooth_max(base(p), -ellipsoid_sdf(p, carve_center, carve_radii), blend)
@@ -236,7 +236,7 @@ def face_smoothing(layout, holes, mouth_front):
             # made the closed lid's rim, are smoothed.
             w *= 1 - ramp(.25, .6, moving)
         else:
-            for center, lid, r in eyes: w *= ramp(lid - .05 * r, lid + .3 * r, math.dist(v, center))
+            for center, lid, r in eyes: w *= ramp(lid, lid + .12 * r, math.dist(v, center))
         # The mouth, lips and chin in front of the teeth and tongue, which sit a few millimetres behind the skin there.
         if v[1] < mouth_front + .03 * k:
             w *= ramp(1.0, 1.7, math.hypot(v[0] / (1.5 * half_width), (v[2] - mouth_z + .004 * k) / (.022 * k)))
@@ -371,7 +371,7 @@ def add_face(objects, values=None):
     # so every morph keeps its motion and the jaw still parts the lips along the slit.
     warm = L['resting_smile']
     if warm > 0:
-        left, right = symmetric_offsets(rest, corner, .028 * k, (.001 * k * warm, 0, .004 * k * warm), mask=still)
+        left, right = symmetric_offsets(rest, corner, .028 * k, (.001 * k * warm, 0, .0052 * k * warm), mask=still)
         lift = [tuple(a[i] + b[i] - 2 * r[i] for i in range(3)) for a, b, r in zip(left, right, rest)]
         for block in head.data.shape_keys.key_blocks:
             for point, delta in zip(block.data, lift): point.co = tuple(point.co[i] + delta[i] for i in range(3))
@@ -381,7 +381,7 @@ def add_face(objects, values=None):
     blush = (base[0] * .92, base[1] * .62, base[2] * .6)
     lip = (base[0] * .72, base[1] * .42, base[2] * .42)
     patches = [{'center': (sx * cheek_x, front(sx * cheek_x, cheek_z), cheek_z), 'radius': (.017 * k, .012 * k, .011 * k),
-                'color': blush, 'strength': .5} for sx in (1, -1)]
+                'color': blush, 'strength': .65} for sx in (1, -1)]
     patches.append({'center': (0, mouth_front, mouth_z - .002 * k), 'radius': (half_width * 1.05, .01 * k, .006 * k), 'color': lip, 'strength': .7})
     patches.append({'center': (0, mouth_front, mouth_z + .0015 * k), 'radius': (half_width, .01 * k, .004 * k), 'color': lip, 'strength': .5})
     # The lip line: a thin dark crease, as the boards draw a closed smiling mouth.
@@ -419,7 +419,7 @@ def add_face(objects, values=None):
     # The upper gum line sits well above the lips (a real mouth's does), so the smiling corners stay below it.
     upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, mouth_front + .005 * k, mouth_z + .0045 * k), .8 * half_width,
                                .011 * k, 8, .008 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
-    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, mouth_front + .006 * k, mouth_z - .0015 * k), .76 * half_width,
+    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, mouth_front + .008 * k, mouth_z - .0015 * k), .62 * half_width,
                                .011 * k, 8, .0045 * k, row='lower'), [material('teeth_lower', teeth, roughness=.3)])
     add_jaw_open(lower, jaw, rigid=True)
     tongue_hex = _hex(_mix(linear_color('#b24c55'), (base[0] * .5, base[1] * .2, base[2] * .2), .25))
