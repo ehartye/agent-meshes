@@ -1430,6 +1430,10 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
     """
     eye_left = _vector(eye_left, 3, 'Left eye center')
     if eye_left[0] <= 0: raise ValueError("eye_left is the character's left eye, at x > 0")
+    # An eyeball within a fifth of its radius of reaching the midline has a hole that crosses it (checked exactly below,
+    # once the hole is cut); caught first, since the twin shaping would then fold the reflected eye's lids into this one.
+    if eye_left[0] < 1.2 * _number(eye_radius, 'Eyeball radius', 0, low_open=True):
+        raise ValueError('The eyes are so close that their holes meet at the midline: move them apart or make them smaller')
     # Each eye's socket dip is blended with the other's, so where a dip reaches the midline the halves meet smoothly.
     left = eye_hole(vertices, faces, eye_left, eye_radius, twin=True, **options)
     # Points within a micron of the midline lie on it (smooth refinement leaves some a few nanometres off, and a clip
