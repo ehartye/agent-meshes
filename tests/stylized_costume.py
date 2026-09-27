@@ -149,6 +149,18 @@ class GarmentRig(unittest.TestCase):
                     self.assertFalse(any('head' in row for row in rows))
                     self.assertTrue(all(abs(sum(row.values())-1)<1e-6 for row in rows))
 
+    def test_eased_top_keeps_its_side_seam_on_the_torso(self):
+        """A roomy jacket or hoodie must not pull its side panel along with a swinging arm (armpit fold)."""
+        def side_arm_weight(config):
+            d=character.landmarks(config);s=d['s'];torso=parts(config)['tailored-torso']['vertices']
+            side=[v for v in torso if d['chest_y']-.1*s<v[1]<d['shoulder_y']-.04*s]
+            rows=walk.skin_weights('layer-top',side,d)
+            return max(sum(w for bone,w in row.items() if 'arm' in bone) for row in rows)
+        for name in ['mara','oren','kit']:
+            config=CAST[name];plain={k:v for k,v in config.items() if k!='costume'}
+            with self.subTest(name=name):
+                self.assertLessEqual(side_arm_weight(config),side_arm_weight(plain)+.05)
+
     def test_boot_shaft_follows_the_shin_and_sole_the_foot(self):
         d=character.landmarks(MARA);by_name=parts(MARA)
         sole=walk.skin_weights('left-outsole',by_name['left-outsole']['vertices'],d)

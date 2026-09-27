@@ -621,9 +621,11 @@ def geometry(values=None,meshes=None):
     # Outer garments add ease over the body: a jacket or hoodie is roomier than a
     # fitted shirt, and work trousers hang looser below the knee than a flight suit.
     loose_top=bool(costume and (costume.get('jacket') or costume.get('hoodie')))
-    def ease(rows,k,add,below=9,above=-9):
-        return [(a,u,v,ru*k+add*s,rv*k+add*s) if above<=a<below else (a,u,v,ru,rv) for a,u,v,ru,rv in rows]
-    top_ease=(lambda rows: ease(rows,1.04,.008,below=shoulder_y+.03*s)) if loose_top else (lambda rows: rows)
+    def ease(rows,k,add,below=9,above=-9,side_below=9):
+        return [(a,u,v,ru*k+add*s if a<side_below else ru,rv*k+add*s) if above<=a<below else (a,u,v,ru,rv) for a,u,v,ru,rv in rows]
+    # Across the chest the top gains depth, not width, so its side seam stays under
+    # the armpit and off the swinging arm.
+    top_ease=(lambda rows: ease(rows,1.04,.008,below=shoulder_y+.03*s,side_below=chest_y-.01*s)) if loose_top else (lambda rows: rows)
     leg_ease=(lambda rows: ease(rows,1.07,.006,above=.26*s)) if costume else (lambda rows: rows)
     m.rings('tailored-torso',top_ease([(hip_y+.026*s,0,0,hip_w*.47,.105*s),(hip_y+.04*s,0,0,hip_w*.5,.11*s),(waist_y,0,0,hip_w*.41,.096*s),(chest_y,0,.005*s,shoulder_w*.46,.115*s),(shoulder_y,0,0,shoulder_w*.50,.094*s),(shoulder_y+.065*s,0,0,.075*s,.065*s)]),body)
     m.rings('neck',[(shoulder_y+.02*s,0,0,.053*s,.051*s),(head_y-ry*.55,0,0,.058*s,.053*s)],skin)
