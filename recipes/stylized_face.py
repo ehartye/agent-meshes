@@ -21,14 +21,14 @@ CANONICAL_CENTER = (0.0, 0.0, .13)
 # Proportions in the canonical frame (meters on a 0.224 m tall head), by age; presentation adjusts a few. The concept
 # boards' portraits: big dark eyes set wide at mid-face, a small nose, a short upper lip and a soft, narrowing jaw.
 PROPORTIONS = {
-    'child': dict(eye=(.040, -.050, .124), eye_radius=.0215, iris=40, pupil=17, opening=(46, 34, 30), mouth_z=.087,
-                  mouth_half_width=.0175, nose=(0, .1045), nose_size=(.0085, .0078, .0072),
-                  cheek=((.042, -.050, .098), (.028, .026, .024)), chin=((0, -.052, .066), (.032, .028, .022)),
-                  jaw=.12, lower=.84, brow_inner=(.013, .157), brow_outer=(.056, .160)),
-    'adult': dict(eye=(.039, -.051, .127), eye_radius=.0192, iris=38, pupil=16, opening=(45, 32, 28), mouth_z=.086,
-                  mouth_half_width=.0185, nose=(0, .1045), nose_size=(.0090, .0095, .0088),
-                  cheek=((.042, -.046, .104), (.018, .018, .018)), chin=((0, -.050, .064), (.030, .028, .024)),
-                  jaw=.15, lower=.87, brow_inner=(.012, .158), brow_outer=(.056, .161)),
+    'child': dict(eye=(.040, .122), eye_radius=.0215, eye_depth=.8, iris=40, pupil=17, opening=(46, 34, 30), mouth_z=.077,
+                  mouth_half_width=.020, nose=(0, .094), nose_size=(.0085, .0078, .0072),
+                  cheek=((.046, -.046, .088), (.026, .024, .022)), face=((0, -.012, .104), (.086, .075, .058)),
+                  jaw=.08, lower=.6, brow_inner=(.013, .148), brow_outer=(.058, .151)),
+    'adult': dict(eye=(.039, .124), eye_radius=.0192, eye_depth=.8, iris=38, pupil=16, opening=(45, 32, 28), mouth_z=.076,
+                  mouth_half_width=.021, nose=(0, .095), nose_size=(.0090, .0095, .0088),
+                  cheek=((.045, -.044, .092), (.018, .018, .018)), face=((0, -.012, .103), (.084, .074, .060)),
+                  jaw=.22, lower=.6, brow_inner=(.012, .149), brow_outer=(.058, .152)),
 }
 PRESENTATION = {'female': dict(nose_scale=1.0, mouth_scale=1.0, brow_height=1.0, jaw_scale=1.0),
                 'male': dict(nose_scale=1.12, mouth_scale=1.05, brow_height=1.35, jaw_scale=.7)}
@@ -58,41 +58,58 @@ def face_layout(values=None):
         x, z = point
         return (axes[0] * x, center[2] + axes[2] * (z - CANONICAL_CENTER[2]))
 
-    eye = at(base['eye'])
     nose_scale, mouth_scale = look['nose_scale'], look['mouth_scale']
-    return dict(
+    layout = dict(
         center=center, scale=k, axes=axes, radii=(d['rx'], d['rz'], d['ry']),
-        eye_left=eye, eye_right=(-eye[0], eye[1], eye[2]), eye_radius=k * base['eye_radius'], opening=base['opening'],
+        eye_radius=k * base['eye_radius'], opening=base['opening'],
         mouth_z=xz((0, base['mouth_z']))[1], mouth_half_width=axes[0] * base['mouth_half_width'] * mouth_scale,
         nose=xz(base['nose']), nose_size=tuple(k * nose_scale * v for v in base['nose_size']),
         cheek=(at(base['cheek'][0]), tuple(a * r for a, r in zip(axes, base['cheek'][1]))),
-        chin=(at(base['chin'][0]), tuple(a * r for a, r in zip(axes, base['chin'][1]))),
+        face=(at(base['face'][0]), tuple(a * r for a, r in zip(axes, base['face'][1]))),
         brow_inner=xz(base['brow_inner']), brow_outer=xz(base['brow_outer']), brow_height=look['brow_height'],
         iris=base['iris'], pupil=base['pupil'], jaw=base['jaw'] * look['jaw_scale'], lower=base['lower'],
         skin=p['skin'], hair=p['hair'], eyes=p['eyes'], age=p['age'], presentation=p['presentation'],
     )
+    # Each eyeball's center sits `eye_depth` of its radius behind the face's surface, so the eye fills its socket and
+    # the lids wrap it close to the skin. An eye set deeper needs a deep funnel of lid and socket skin round it, which
+    # reads as a pinched brow and a trough across the bridge.
+    ex, ez = xz(base['eye'])
+    sdf, front = head_field(layout), 0.0
+    while sdf((ex, front, ez)) < 0: front -= .001
+    low, high = front, front + .001
+    for _ in range(40):
+        mid = (low + high) / 2
+        if sdf((ex, mid, ez)) < 0: high = mid
+        else: low = mid
+    eye = (ex, high + base['eye_depth'] * layout['eye_radius'], ez)
+    layout.update(eye_left=eye, eye_right=(-eye[0], eye[1], eye[2]))
+    return layout
 
 
 def head_field(layout):
-    """The head's signed-distance field: the character's head envelope (the cranium the hair is fitted to), its jaw
-    narrowing toward the chin, with cheeks and a chin smooth-unioned onto its front."""
+    """The head's signed-distance field: the character's head envelope (the cranium the hair is fitted to) above, and a
+    rounded face mass below the eyes that makes the cheeks, jaw and chin in one piece, with soft cheeks on its front.
+
+    The cranium's lower half is squashed to `lower` of its height so the face mass, not the cranium, is the jaw and
+    chin: one smooth ellipsoid gives a round face with a small soft chin (the boards' portraits), where a chin ball
+    added to a narrowed cranium read as a knob on a melted jaw. `jaw` narrows the face mass toward the chin."""
     from agent_meshes_face import ellipsoid_sdf, smooth_min
     k, center, radii, jaw, lower = layout['scale'], layout['center'], layout['radii'], layout['jaw'], layout['lower']
     cheek_center, cheek_radii = layout['cheek']
-    chin_center, chin_radii = layout['chin']
+    face_center, face_radii = layout['face']
 
     def sdf(p):
-        # Below the cheekbones the head narrows by up to `jaw` of its width at the chin (the cranium above is untouched).
-        t = min(1.0, max(0.0, (center[2] - .1 * radii[2] - p[2]) / (.9 * radii[2])))
-        narrow = 1 - jaw * t * t * (3 - 2 * t)
-        # The face below the eyes is shorter than the cranium above them (`lower` of its half height): a rounder face.
-        # The squash eases in over the upper cheeks, so no crease runs round the head at eye level.
-        below = min(1.0, max(0.0, (center[2] - p[2]) / (.6 * radii[2])))
+        # The cranium: squashed below its middle, easing in over its lower half so no crease runs round the head.
+        below = min(1.0, max(0.0, (center[2] - p[2]) / radii[2]))
         z = center[2] + (p[2] - center[2]) * (1 + (1 / lower - 1) * below * below * (3 - 2 * below))
-        d = ellipsoid_sdf((p[0] / narrow, p[1], z), center, radii)
+        d = ellipsoid_sdf((p[0], p[1], z), center, radii)
+        # The face mass narrows by up to `jaw` of its width from its middle to the chin.
+        t = min(1.0, max(0.0, (face_center[2] - p[2]) / face_radii[2]))
+        narrow = 1 - jaw * t * t * (3 - 2 * t)
+        d = smooth_min(d, ellipsoid_sdf((p[0] / narrow, p[1], p[2]), face_center, face_radii), .015 * k)
         for sx in (1, -1):
             d = smooth_min(d, ellipsoid_sdf(p, (sx * cheek_center[0], cheek_center[1], cheek_center[2]), cheek_radii), .018 * k)
-        return smooth_min(d, ellipsoid_sdf(p, chin_center, chin_radii), .02 * k)
+        return d
     return sdf
 
 

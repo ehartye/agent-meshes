@@ -1125,28 +1125,29 @@ CONTINUOUS_OPTIONS = ('opening', 'meet', 'overlap', 'squint', 'squint_upper_shar
                       'lash_width', 'lower_lash_width', 'column_step')
 
 
-def _twin_shaped(shaped, point):
-    """`point` moved by one eye's skin shaping (`shaped`) blended with the mirrored eye's (the same shaping, reflected).
+def _twin_shaped(shaped, point, width):
+    """`point` moved by one eye's skin shaping (`shaped`), evened out with the mirrored eye's toward the midline.
 
-    Each displacement is weighted by its squared length, so near either eye that eye's shaping acts alone, and on the
-    midline the two are averaged: the result is left-right symmetric there and as smooth as either shaping. (Adding
-    them instead would dig the bridge between close-set eyes twice as deep.)
+    Within `width` of the midline the displacement eases from the eye's own to the mean of it and its reflection's
+    (the same shaping, mirrored), on a smoothstep that is flat at x = 0: there the shaping is left-right symmetric, so
+    a half and its mirror image meet with no crease, and farther out each eye's shaping acts alone. (Adding the two dug
+    the bridge between close-set eyes twice as deep; weighting them by size rippled where their sizes crossed.)
     """
     own = _sub(shaped(point), point)
+    s = 1 - _smoothstep(0, width, abs(point[0]))
+    if s <= 0: return _add(point, own)
     reflected = mirror_x(point)
     other = mirror_x(_sub(shaped(reflected), reflected))
-    a, b = _dot(own, own), _dot(other, other)
-    if a + b == 0: return point
-    return _add(point, _add(_mul(own, a / (a + b)), _mul(other, b / (a + b))))
+    return _add(point, _add(_mul(own, 1 - s / 2), _mul(other, s / 2)))
 
 
 def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25, lining_gap=.0001,
              lining_rings=5, corner_margin=2, bevel=.5, style='continuous', twin=False, **lid_options):
     """Make a lid eye in a skin: by default the skin itself becomes the lids (`style='continuous'`).
 
-    `twin=True` also shapes the skin by the mirrored eye's socket (at the reflected
-    center), blending the two eyes' displacements, so where a socket dip reaches
-    past the midline the dips of both eyes meet there smoothly. `eye_holes` sets it: it
+    `twin=True` evens the skin's shaping out toward the midline with the mirrored
+    eye's (at the reflected center), over half the eye's distance from it, so
+    where a socket dip reaches past the midline both eyes' dips meet there smoothly. `eye_holes` sets it: it
     keeps one half of this skin and mirrors it, and a half shaped by one eye alone
     meets its reflection in a crease down the brow and nose.
 
@@ -1268,7 +1269,7 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
         return point if target == r else _add(center, _mul(d, target / r))
     pushed = 0
     for i, point in enumerate(points):
-        moved = _twin_shaped(shape_skin, point) if twin else shape_skin(point)
+        moved = _twin_shaped(shape_skin, point, .5 * abs(center[0])) if twin else shape_skin(point)
         if moved != point:
             points[i] = moved
             pushed += 1
@@ -1758,7 +1759,7 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
         return point if target == rad else _add(center, _mul(u, target))
     pushed = 0
     for i, point in enumerate(points):
-        moved = _twin_shaped(shape_skin, point) if twin else shape_skin(point)
+        moved = _twin_shaped(shape_skin, point, .5 * abs(center[0])) if twin else shape_skin(point)
         if moved != point:
             points[i] = moved
             pushed += 1
