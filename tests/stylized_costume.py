@@ -68,6 +68,18 @@ class GarmentLayers(unittest.TestCase):
         self.assertNotIn('layer-strap-left',parts({**OREN}))
         self.assertNotIn('left-hand-glove',parts(TESS))
 
+    def test_hood_and_tool_pouches_read_at_lineup_size(self):
+        """A hoodie's hood lies on the upper back above the pack; tool pouches hang onto the thigh."""
+        d=character.landmarks(KIT);s=d['s'];sh=d['shoulder_y'];by_name=parts(KIT);body=character.body_surface(KIT)
+        hood=by_name['layer-hood-back']['vertices']
+        self.assertLess(min(v[1] for v in hood),sh-.09*s)
+        self.assertLess(min(v[2] for v in hood),min(v[2] for v in by_name['tailored-torso']['vertices'] if v[1]>sh-.09*s)-.015*s)
+        self.assertLessEqual(max(v[1] for v in by_name['layer-backpack']['vertices']),sh-.085*s)
+        self.assertGreater(max(body.value(v) for v in hood),0)
+        d=character.landmarks(MARA);s=d['s'];by_name=parts(MARA)
+        pouch=by_name['layer-pouch-0']['vertices']
+        self.assertLess(min(v[1] for v in pouch),d['hip_y']-.045*s)
+
     def test_every_layer_is_seated_on_the_body(self):
         """Each slab's inner face is embedded and its outer face stands proud: nothing floats."""
         for name,config in CAST.items():
