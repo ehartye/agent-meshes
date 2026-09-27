@@ -293,6 +293,17 @@ def relax_field(values, weights, edges, count, strength=.6, iterations=400):
     return field
 
 
+def smooth_deltas(deltas, edges, iterations=10, amount=.5):
+    """Per-vertex deltas averaged with their mesh neighbours' `iterations` times (each step moves `amount` of the way)."""
+    d = np.asarray(deltas, dtype=np.float64).copy()
+    degree = np.maximum(np.bincount(edges.ravel(), minlength=len(d)), 1).astype(np.float64)[:, None]
+    for _ in range(iterations):
+        around = np.zeros_like(d)
+        np.add.at(around, edges[:, 0], d[edges[:, 1]]); np.add.at(around, edges[:, 1], d[edges[:, 0]])
+        d += amount * (around / degree - d)
+    return d
+
+
 # ---------------------------------------------------------------- landmarks (Blender frame: Z up, the face looks down -Y)
 
 def eye_landmarks(vertices, faces, eyes, pixel=.00025):
@@ -437,3 +448,93 @@ def hm08_eyes(head, shape):
         lo, hi = P.min(0), P.max(0)
         out.append(((lo + hi) / 2, float((hi - lo)[0] / 2), shape, head.kind_faces(kind)))
     return out
+
+
+# ---------------------------------------------------------------- a character's head
+
+# Shape controls -> (target stem, scale): a control's value v adds `-incr` at (v - neutral) * scale when positive and
+# `-decr` at its size when negative. `l-`/`r-` stems apply to both sides.
+FEATURES = {
+    'eye_size': (('eyes/{s}-eye-scale', 4.0),),
+    'eye_spacing': (('eyes/{s}-eye-trans', None),),   # handled below: in/out, not incr/decr
+    'eye_tilt': (('eyes/{s}-eye-corner1', None),),
+    'nose': (('nose/nose-scale-horiz', 1.2), ('nose/nose-scale-vert', 1.2), ('nose/nose-scale-depth', 1.2)),
+    'nose_length': (('nose/nose-scale-vert', 2.0),),
+    'nose_width': (('nose/nose-scale-horiz', 2.0), ('nose/nose-flaring', 1.0)),
+    'nose_bridge': (('nose/nose-scale-depth', 2.0), ('nose/nose-hump', .6)),
+    'mouth_width': (('mouth/mouth-scale-horiz', 2.5),),
+    'lips': (('mouth/mouth-upperlip-volume', .6), ('mouth/mouth-lowerlip-volume', .6)),
+    'jaw_width': (('chin/chin-bones', 2.5),),
+    'chin': (('chin/chin-height', 2.5),),
+    'chin_width': (('chin/chin-width', 2.5),),
+    'cheeks': (('cheek/{s}-cheek-volume', .8), ('head/head-fat', .4)),
+    'brow': (('eyebrows/eyebrows-trans-forward', .5),),
+    'smile': (('mouth/mouth-angles', None),),
+}
+
+
+def feature_weights(shape, head=None):
+    """Target weights for a character's shape controls: factors round 1 (eye_size, nose, mouth_width, lips, jaw_width,
+    chin, chin_width, cheeks, brow, nose_length, nose_width, nose_bridge), eye_spacing (factor), eye_tilt (-1..1,
+    up at the outer corner) and smile (0..1, the corners turned up)."""
+    head = head or load_head()
+    weights = {}
+
+    def add(name, w):
+        if name not in head.targets: raise ValueError(f'hm08 has no target {name}')
+        weights[name] = weights.get(name, 0.0) + w
+
+    def signed(stem, v):
+        for s in ('l', 'r') if '{s}' in stem else (None,):
+            base = stem.format(s=s) if s else stem
+            if v > 0: add(base + '-incr', min(1.0, v))
+            elif v < 0: add(base + '-decr', min(1.0, -v))
+    for key, value in shape.items():
+        if key not in FEATURES: raise ValueError(f'Unknown head shape control {key}')
+        if key == 'eye_spacing':
+            v = (value - 1) / .15
+            for s in 'lr': add(f'eyes/{s}-eye-trans-{"out" if v > 0 else "in"}', min(1.0, abs(v)))
+        elif key == 'eye_tilt':
+            for s in 'lr': add(f'eyes/{s}-eye-corner1-{"up" if value > 0 else "down"}', min(1.0, abs(value)))
+        elif key == 'smile':
+            if value > 0: add('mouth/mouth-angles-up', min(1.0, value))
+        else:
+            for stem, scale in FEATURES[key]: signed(stem, (value - 1) * scale)
+    return {k: v for k, v in weights.items() if v}
+
+
+def head_shape(years, gender, stylize=1.0, shape=None, races=None, head=None):
+    """The hm08 head (MakeHuman units) for an age, gender (0 female, 1 male), stylize weight and shape controls."""
+    head = head or load_head()
+    weights = macro_weights(years, gender, races)
+    weights.update(feature_weights(shape or {}, head))
+    out = head.compose(weights)
+    if stylize:
+        index, delta = stylize_target(head)
+        out[index] += stylize * delta
+    return out
+
+
+@lru_cache(maxsize=1)
+def _stylize(path):
+    return read_target(path)
+
+
+def stylize_target(head=None):
+    return _stylize(str(DATA / 'stylize01.target'))
+
+
+def fit_to_envelope(points, marks, center, radii, eye_drop=.036):
+    """Scale and move a head (Blender frame) so its cranium fills an ellipsoid envelope (center, radii (x, y, z)):
+    crown to eye level fills the envelope's top down to `eye_drop` of its height below its center, the temples its
+    width and the occiput-to-nasion depth its depth. Returns (points, scale (3,), offset (3,))."""
+    rx, ry, rz = radii
+    eye_z = (marks['eye_center_L'][2] + marks['eye_center_R'][2]) / 2
+    sz = (rz * (1 + eye_drop) * .97) / (marks['crown'][2] - eye_z)
+    sx = rx * .92 / max(marks['temple_L'][0], -marks['temple_R'][0])
+    sy = 2 * ry * .9 / (marks['occiput'][1] - marks['nasion'][1])
+    scale = np.array([sx, sy, sz])
+    target_eye = center[2] - eye_drop * rz
+    mid_y = (marks['occiput'][1] + marks['nasion'][1]) / 2
+    offset = np.array([center[0], center[1] - sy * mid_y + .08 * ry, target_eye - sz * eye_z])
+    return np.asarray(points) * scale + offset, scale, offset

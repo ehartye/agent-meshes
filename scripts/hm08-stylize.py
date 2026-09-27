@@ -99,7 +99,9 @@ def derive(stylized):
     hm_eyes = hm.hm08_eyes(head, base)
     A = hm.face_landmarks(base, skin_faces, hm_eyes)
     B = hm.face_landmarks(S, SF, sty_eyes)
-    keys = [k for k in A if k in B]
+    # Outline extremes (temples, cheeks, jaw, occiput) land on different surface spots on differently shaped heads;
+    # as warp anchors they pull spikes. The projection fits the outline instead.
+    keys = [k for k in A if k in B and not k.startswith(('temple', 'cheek', 'jaw', 'occiput'))]
     P, Q = np.array([A[k] for k in keys]), np.array([B[k] for k in keys])
     s, t = hm.similarity(P, Q)
     warped = hm.tps_apply(hm.tps_fit(s * P + t, Q), s * base + t)
@@ -114,9 +116,15 @@ def derive(stylized):
     weight = np.clip((reach - dist) / (.4 * reach), 0, 1) * np.clip((agree - .4) / .3, 0, 1) * body
     for center, r, _, _ in sty_eyes:
         weight *= np.clip((np.linalg.norm(warped - center, axis=1) - 1.35 * r) / (.55 * r), 0, 1)
+    # The nostrils: their insides project onto the stylized nose's outside and fold over; the nose follows the warp.
+    iod = B['eye_center_L'][0] - B['eye_center_R'][0]
+    nostrils = (B['nose_tip'] + B['subnasale']) / 2
+    weight *= np.clip((np.linalg.norm(warped - nostrils, axis=1) - .3 * iod) / (.15 * iod), 0, 1)
     field = hm.relax_field(q - warped, weight, hm.edges_of(head.faces), len(base))
     result = (warped + field - t) / s
-    deltas = hm.from_blender(result) - head.rest
+    # Smooth the stylize deltas (not the shape): the warp's local strain folded thin fins where the nose's wings meet
+    # the cheeks; the base's own detail (lids, lips, wings) is kept.
+    deltas = hm.smooth_deltas(hm.from_blender(result) - head.rest, hm.edges_of(head.faces), iterations=12)
     report = {'landmarks': keys, 'scale': float(s), 'projected': int((weight > .5).sum()), 'skin': int(body.sum())}
     return deltas, report, {k: [A[k].tolist(), B[k].tolist()] for k in keys}
 
