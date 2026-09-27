@@ -101,7 +101,7 @@ def derive(stylized):
     B = hm.face_landmarks(S, SF, sty_eyes)
     # Outline extremes (temples, cheeks, jaw, occiput) land on different surface spots on differently shaped heads;
     # as warp anchors they pull spikes. The projection fits the outline instead.
-    keys = [k for k in A if k in B and not k.startswith(('temple', 'cheek', 'jaw', 'occiput'))]
+    keys = [k for k in A if k in B and np.shape(A[k]) == (3,) and not k.startswith(('temple', 'cheek', 'jaw', 'occiput'))]
     P, Q = np.array([A[k] for k in keys]), np.array([B[k] for k in keys])
     s, t = hm.similarity(P, Q)
     warped = hm.tps_apply(hm.tps_fit(s * P + t, Q), s * base + t)
@@ -120,6 +120,11 @@ def derive(stylized):
     iod = B['eye_center_L'][0] - B['eye_center_R'][0]
     nostrils = (B['nose_tip'] + B['subnasale']) / 2
     weight *= np.clip((np.linalg.norm(warped - nostrils, axis=1) - .3 * iod) / (.15 * iod), 0, 1)
+    # The lips: projected, the upper lip's lower rows land on the stylized lower lip (an overbite that the jaw cannot
+    # open); they follow the warp, whose landmarks put hm08's lip line on the stylized one.
+    mouth = np.array([(B['mouth_corner_L'][0] - B['mouth_corner_R'][0]) / 2, 1.0, 1.0])
+    lips = np.linalg.norm((warped - B['stomion']) / [max(mouth[0], 1e-6), .6 * iod, .35 * iod], axis=1)
+    weight *= np.clip((lips - 1.0) / .5, 0, 1)
     field = hm.relax_field(q - warped, weight, hm.edges_of(head.faces), len(base))
     result = (warped + field - t) / s
     # Smooth the stylize deltas (not the shape): the warp's local strain folded thin fins where the nose's wings meet

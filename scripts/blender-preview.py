@@ -31,7 +31,7 @@ LIB = Path(__file__).resolve().parent / 'blender_lib'
 VIEWS = {
     'front': (0, 0, 1.0, 'head'), 'q34': (35, 5, 1.0, 'head'), 'side': (90, 0, 1.0, 'head'), 'below': (0, -30, 1.0, 'head'),
     'above': (0, 30, 1.0, 'head'), 'close': (0, 0, .55, 'head'), 'back': (180, 0, 1.0, 'head'),
-    'eyes': (0, 0, .4, 'head', -.05), 'mouth': (0, 0, .4, 'head', -.55), 'mouth-q34': (35, -10, .45, 'head', -.55),
+    'eyes': (0, 0, .4, 'head', -.25), 'mouth': (0, 0, .4, 'head', -.75), 'mouth-q34': (35, -10, .45, 'head', -.75),
     'body-front': (0, 0, 1.0, 'body'), 'body-q34': (35, 5, 1.0, 'body'), 'body-side': (90, 0, 1.0, 'body'), 'body-back': (180, 0, 1.0, 'body'),
 }
 SHADINGS = ('matcap', 'wire', 'cavity', 'zebra', 'color')

@@ -289,9 +289,9 @@ def add_face(objects, values=None):
     parts = [head]
     # Teeth behind the lips and a tongue on the mouth's floor; the lower row and the tongue ride the jaw.
     teeth = '#eeeae0'
-    upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, front + .007 * k, mz + .008 * k), .72 * hw,
+    upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, front + .007 * k, mz + .0085 * k), .72 * hw,
                                .01 * k, 8, .0075 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
-    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, front + .009 * k, mz - .0045 * k), .6 * hw,
+    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, front + .011 * k, mz - .0075 * k), .6 * hw,
                                .01 * k, 8, .005 * k, row='lower'), [material('teeth_lower', teeth, roughness=.3)])
     jaw = face['jaw']
     add_jaw_open(lower, jaw, rigid=True)

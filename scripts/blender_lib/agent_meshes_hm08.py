@@ -304,6 +304,111 @@ def smooth_deltas(deltas, edges, iterations=10, amount=.5):
     return d
 
 
+def _corner_triangles(faces):
+    """Every triangle a quad can split into (both diagonals), so a check holds whichever way an exporter splits it."""
+    f = np.asarray(faces)
+    tris = [f[:, [0, 1, 2]]]
+    quads = f[f[:, 3] >= 0] if f.shape[1] > 3 else f[:0]
+    if len(quads): tris += [quads[:, [0, 2, 3]], quads[:, [0, 1, 3]], quads[:, [1, 2, 3]]]
+    return np.concatenate(tris)
+
+
+def flat_triangles(vertices, faces):
+    """Quads (-1 padded) split into triangles along the diagonal that leaves the two halves flatter (the smaller
+    turn between them). Returns (triangles padded to four columns, each triangle's source face)."""
+    V, f = np.asarray(vertices), np.asarray(faces)
+    out, source = [], []
+    for k, face in enumerate(f):
+        if face[3] < 0:
+            out.append([face[0], face[1], face[2], -1]); source.append(k); continue
+        a, b, c, d = (int(i) for i in face)
+
+        def turn(t1, t2):
+            n1 = np.cross(V[t1[1]] - V[t1[0]], V[t1[2]] - V[t1[0]]); n2 = np.cross(V[t2[1]] - V[t2[0]], V[t2[2]] - V[t2[0]])
+            return (n1 @ n2) / max(np.linalg.norm(n1) * np.linalg.norm(n2), 1e-30)
+        split = ((a, b, c), (a, c, d)) if turn((a, b, c), (a, c, d)) >= turn((a, b, d), (b, c, d)) else ((a, b, d), (b, c, d))
+        for t in split: out.append(list(t) + [-1]); source.append(k)
+    return np.array(out, dtype=np.int64), np.array(source, dtype=np.int64)
+
+
+def flipped(rest, moved, faces, triangles_=None):
+    """Triangles (of both splits of every quad) that turn over, or collapse, between rest and moved positions."""
+    T = _corner_triangles(faces) if triangles_ is None else triangles_
+    n0 = np.cross(rest[T[:, 1]] - rest[T[:, 0]], rest[T[:, 2]] - rest[T[:, 0]])
+    n1 = np.cross(moved[T[:, 1]] - moved[T[:, 0]], moved[T[:, 2]] - moved[T[:, 0]])
+    a0 = np.linalg.norm(n0, axis=1)
+    ok = a0 > 1e-14
+    dot = (n0 * n1).sum(1)
+    bad = ok & ((dot <= 0) | (np.linalg.norm(n1, axis=1) < .02 * a0))
+    return T[bad]
+
+
+def unfold_morphs(rest, faces, morphs, mixes=(), iterations=200, amount=.7, keep=(), pinned=None):
+    """Relax each morph's motion where it turns faces over: the flipped faces' vertices (and their neighbours) take
+    their neighbours' mean motion and give up 3% of it, step by step, until nothing flips, alone and in each weighted
+    mix of `mixes` ({morph: weight} dicts). Returns the morphs (new arrays) and how many of them and of the mixes still
+    turn a face over. Morphs named in `keep` are left as they are, and vertices in `pinned` (a boolean mask: the lid
+    margins, whose closure the contract checks) keep their motion."""
+    rest = np.asarray(rest, dtype=np.float64)
+    T = _corner_triangles(faces)
+    edges = edges_of(faces)
+    count = len(rest)
+    degree = np.maximum(np.bincount(edges.ravel(), minlength=count), 1).astype(np.float64)[:, None]
+    free = np.ones(count, dtype=bool) if pinned is None else ~np.asarray(pinned, dtype=bool)
+    neighbours = [[] for _ in range(count)]
+    for a, b in edges: neighbours[a].append(b); neighbours[b].append(a)
+    out = {name: np.asarray(t, dtype=np.float64).copy() for name, t in morphs.items() if name not in keep}
+    kept = {name: np.asarray(t, dtype=np.float64) for name, t in morphs.items() if name in keep}
+    mixes = [{n: w for n, w in mix.items() if n in out} for mix in mixes]
+    mixes = [mix for mix in mixes if mix]
+
+    def relax(names, bad):
+        verts = set(bad.ravel().tolist())
+        verts |= {n for v in list(verts) for n in neighbours[v]}
+        idx = np.array(sorted(v for v in verts if free[v]), dtype=np.int64)
+        if not len(idx): return
+        for name in names:
+            d = out[name] - rest
+            around = np.zeros_like(d)
+            np.add.at(around, edges[:, 0], d[edges[:, 1]]); np.add.at(around, edges[:, 1], d[edges[:, 0]])
+            d[idx] += amount * (around[idx] / degree[idx] - d[idx])
+            # A neighbourhood that turns over as one (a lip corner rolling past a right angle) is not a fold the mean
+            # undoes: it moves a little less each step.
+            d[idx] *= .97
+            out[name] = rest + d
+    def settle(names, weights):
+        for _ in range(iterations):
+            moved = rest + sum(w * (out[n] - rest) for n, w in zip(names, weights))
+            bad = flipped(rest, moved, faces, T)
+            if not len(bad): return True
+            relax(names, bad)
+        return False
+    # Rounds: settling a mix can turn one of its morphs alone over again.
+    for _ in range(3):
+        clean = all([settle([name], [1.0]) for name in out])
+        for mix in mixes:
+            names = [n for n in mix if n in out]
+            clean = settle(names, [mix[n] for n in names]) and clean
+        if clean: break
+    # Whatever still turns over, anywhere: calm every morph there together (halve their motion) until nothing does.
+    checks = [({n: 1.0}) for n in out] + [{n: w for n, w in mix.items() if n in out} for mix in mixes]
+    for _ in range(30):
+        bad = [flipped(rest, rest + sum(w * (out[n] - rest) for n, w in mix.items()), faces, T) for mix in checks]
+        involved = {n for mix, b in zip(checks, bad) if len(b) for n in mix}
+        if not involved: break
+        verts = {int(v) for b in bad for v in b.ravel()}
+        verts |= {n for v in list(verts) for n in neighbours[v]}
+        idx = np.array(sorted(v for v in verts if free[v]), dtype=np.int64)
+        if not len(idx): break
+        for n in involved:
+            d = out[n] - rest
+            d[idx] *= .5
+            out[n] = rest + d
+    left = sum(bool(len(flipped(rest, out[n], faces, T))) for n in out)
+    left += sum(bool(len(flipped(rest, rest + sum(w * (out[n] - rest) for n, w in mix.items() if n in out), faces, T))) for mix in mixes)
+    return {**out, **kept}, left
+
+
 # ---------------------------------------------------------------- landmarks (Blender frame: Z up, the face looks down -Y)
 
 def eye_landmarks(vertices, faces, eyes, pixel=.00025):
@@ -330,10 +435,19 @@ def eye_landmarks(vertices, faces, eyes, pixel=.00025):
             column = np.abs(xs - cx) < 1.5 * pixel
             points['upper' + (f'_{label}' if label else '')] = (cx, zs[column].max())
             points['lower' + (f'_{label}' if label else '')] = (cx, zs[column].min())
-        for name, (x, z) in points.items():
+        # And the whole margin: the opening's top and bottom in 24 columns across (the landmarks' own resolution).
+        contour = []
+        for frac in np.linspace(.02, .98, 24):
+            cx = xs[b] + frac * (xs[a] - xs[b])
+            column = np.abs(xs - cx) < 1.5 * pixel
+            if column.any(): contour.append((cx, zs[column].max(), zs[column].min()))
+
+        def on_skin(x, z):
             j, i = int((z - box[2]) / pixel), int((x - box[0]) / pixel)
             patch = skin[max(0, j - 3):j + 4, max(0, i - 3):i + 4]
-            out[f'eye_{name}_{side}'] = np.array([x, patch[np.isfinite(patch)].min(), z])
+            return np.array([x, patch[np.isfinite(patch)].min(), z])
+        for name, (x, z) in points.items(): out[f'eye_{name}_{side}'] = on_skin(x, z)
+        out[f'eye_margin_{side}'] = np.array([[on_skin(x, top), on_skin(x, bottom)] for x, top, bottom in contour])
         out[f'eye_center_{side}'] = np.asarray(E, dtype=np.float64)
     return out
 
@@ -573,44 +687,116 @@ def _turn(points, center, angles):
     return np.stack([d[:, 0], y, z], axis=1) + center
 
 
-def lid_morphs(rest, deltas, center, upper, lower, base_gap, overlap=.06):
-    """Blink, squint and wide for one eye, rebuilt from the face units' patterns to fit the eye's opening.
+def lid_morphs(rest, center, radius, margin, overlap=.12, clearance=LID_CLEARANCE, crease=.55, cheek=.4, wide=.22, reach=1.7, corner=.2, edges=None):
+    """Blink, squint and wide for one eye, as rolling curtains round its lid margins, and the rest-shape push that keeps
+    the lids clear of the eyeball.
 
-    `deltas` maps 'blink', 'squint' and 'wide' to per-vertex face-unit deltas (authored on a realistic eye whose
-    opening spans `base_gap` radians); `upper` and `lower` index the lid margin's middle vertices. Each vertex turns
-    about the eye's horizontal axis by its face unit's angle, scaled per lid, keeping its distance from the eye
-    center (no lid dips into the eyeball): blink brings the upper margin down past the lower one (by `overlap` of the
-    opening) and the lower lid up a fifth of it; squint raises the lower margin a third of the opening and drops the
-    upper a sixth; wide lifts the upper lid by the face unit's share of the opening. Returns {name: targets}."""
+    `margin` holds the lid margin (Blender frame): its `inner` and `outer` corners and its `contour`, pairs of points on
+    the upper and lower margin across the opening (the landmarks' `eye_margin`). From the eye center they give the
+    upper and lower margins' elevation at each yaw, and the corners where they meet. Every vertex within `reach` eyeball radii of the
+    center, in front of it and between the corners, belongs to the upper lid (above the meet line, three tenths up
+    the opening) or the lower. It turns about the eye's horizontal axis by its margin's angle at its yaw times its
+    share: 1 on the margin and inside it (the lid's rim and inner surface), easing to 0 at the crease, `crease` of the
+    opening above the upper margin (the lower lid: `cheek` of it below). Each column's angle comes from its own margin:
+    - blink: the upper margin down to `overlap` of the opening below the meet line, the lower lid up behind it by the
+      wide lift less half the overlap (so blink + wide still closes);
+    - squint: the upper margin down a sixth of the opening, the lower up a third;
+    - wide: the upper margin up `wide` of the opening.
+    At the corners the opening, and so every motion, is nothing. A morph moves a vertex on a straight chord, which dips
+    toward the center by R (1 - cos(sweep / 2)), so each moving lid vertex is pushed out to at least
+    (radius + clearance) / cos(sweep / 2) for its widest sweep, and the push is spread over the lid so it stays smooth.
+    Returns ({'blink', 'squint', 'wide': targets}, push); the targets include the push."""
     rest = np.asarray(rest)
-    e0 = _elevation(rest, center)
-    gap = e0[upper] - e0[lower]
-    if gap <= 0: raise ValueError('The upper lid margin is not above the lower one')
-    out = {}
-    for name, down, up in (('blink', gap * (.8 + overlap), gap * .2), ('squint', gap * .17, gap * .33), ('wide', None, None)):
-        moved = np.linalg.norm(deltas[name], axis=1) > 1e-7
-        de = np.where(moved, _elevation(rest + deltas[name], center) - e0, 0.0)
-        if name == 'wide':
-            angle = de * min(gap / max(base_gap, 1e-6), 3.0)
-        else:
-            du, dl = de[upper], de[lower]
-            k_up = down / -du if du < -1e-6 else 0.0
-            k_low = up / dl if dl > 1e-6 else 0.0
-            angle = np.where(de < 0, de * k_up, de * k_low)
-        out[name] = _turn(rest, center, angle)
-    return out
+    d = rest - center
+    dist = np.linalg.norm(d, axis=1)
+    yaw = np.arctan2(d[:, 0], -d[:, 1])
+    elev = _elevation(rest, center)
+    angles = lambda p: (math.atan2(p[0] - center[0], -(p[1] - center[1])), float(_elevation(np.asarray(p)[None], center)[0]))
+    inner, outer = angles(margin['inner']), angles(margin['outer'])
+    ups = sorted([inner, outer] + [angles(p) for p in margin['contour'][:, 0]])
+    lows = sorted([inner, outer] + [angles(p) for p in margin['contour'][:, 1]])
+    lo_yaw, hi_yaw = min(inner[0], outer[0]), max(inner[0], outer[0])
+    y = np.clip(yaw, lo_yaw, hi_yaw)
+    e_up = np.interp(y, [a for a, _ in ups], [b for _, b in ups])
+    e_low = np.interp(y, [a for a, _ in lows], [b for _, b in lows])
+    gap = np.maximum(e_up - e_low, 0.0)
+    # Past the corners the lids still ease out over a few degrees, so nothing tears at the canthus.
+    beyond = np.maximum(lo_yaw - yaw, yaw - hi_yaw).clip(0)
+    ease = np.clip(1 - beyond / math.radians(8), 0, 1)
+    # The lids meet three tenths up the opening in its middle and halfway toward the corners, so near the corners
+    # (where a round stylized eye is still tall) each lid travels half the way and neither shears against the corner.
+    across = np.clip((yaw - (lo_yaw + hi_yaw) / 2) / max((hi_yaw - lo_yaw) / 2, 1e-6), -1, 1)
+    meet = e_low + (.3 + .2 * across ** 2) * gap
+    # Near the eye, fading out smoothly toward `reach` radii (a hard edge shears the skin round the corners).
+    u = np.clip(((reach + .6) * radius - dist) / (.6 * radius), 0, 1)
+    near = u * u * (3 - 2 * u) * (d[:, 1] < .15 * radius)
+    upper_side = elev >= meet
+    wide_lift = wide * gap
+    # The falloffs span a share of the opening's full height (not the local one, which shrinks to nothing at the
+    # corners and would crowd the whole curtain into a sliver there).
+    tall = float(gap.max())
+    up_share = np.where(elev <= e_up, 1.0, np.clip(1 - (elev - e_up) / max(crease * tall, 1e-6), 0, 1))
+    low_share = np.where(elev >= e_low, 1.0, np.clip(1 - (e_low - elev) / max(cheek * tall, 1e-6), 0, 1))
+    up_share = up_share * up_share * (3 - 2 * up_share)
+    low_share = low_share * low_share * (3 - 2 * low_share)
+    # Toward each corner the motion fades out over the last `corner` of the half-width, so the canthus stays put and
+    # nothing at the corner shears against its neighbour.
+    mid_yaw, half_yaw = (lo_yaw + hi_yaw) / 2, (hi_yaw - lo_yaw) / 2
+    t = np.clip((half_yaw - np.abs(yaw - mid_yaw)) / (corner * half_yaw), 0, 1)
+    share = np.where(upper_side, up_share, low_share) * near * ease * (t * t * (3 - 2 * t))
+    blink_up = -(e_up - (meet - overlap * gap))
+    blink_low = meet + wide_lift - overlap * gap / 2 - e_low
+    blink = share * np.where(upper_side, blink_up, blink_low)
+    squint = share * np.where(upper_side, -gap / 6, gap / 3)
+    lift = share * np.where(upper_side, wide_lift, 0.0)
+    if edges is not None:
+        # Spread each turn onto its neighbours (never less than a vertex's own turn), so no two neighbours turn so
+        # differently that the face between them folds over; the margins keep their full closure.
+        def spread(a):
+            pos, neg = np.maximum(a, 0), np.minimum(a, 0)
+            pos = np.maximum(pos, smooth_deltas(pos[:, None], edges, iterations=10)[:, 0])
+            neg = np.minimum(neg, smooth_deltas(neg[:, None], edges, iterations=10)[:, 0])
+            return np.where(np.abs(pos) >= np.abs(neg), pos, neg)
+        blink, squint, lift = spread(blink), spread(squint), spread(lift)
+    sweep = np.abs(blink) + np.abs(squint) + np.abs(lift)
+    need = (radius + clearance) / np.cos(np.minimum(sweep, 2.5) / 2) + .04 * radius * share * upper_side
+    grow = np.where(sweep > 1e-6, np.maximum(need - dist, 0.0), 0.0)
+    # Spread the push over the moving lid and a little past it, so the pushed lids blend into the skin.
+    grow_near = grow.copy()
+    ids = np.nonzero(grow > 0)[0]
+    if len(ids):
+        far, spread = np.full(len(rest), np.inf), np.zeros(len(rest))
+        for i in ids:
+            dd = np.linalg.norm(rest - rest[i], axis=1)
+            closer = dd < far
+            far, spread = np.where(closer, dd, far), np.where(closer, grow[i], spread)
+        t = np.clip(1 - far / (.45 * radius), 0, 1)
+        grow_near = np.maximum(grow, spread * t * t * (3 - 2 * t) * (d[:, 1] < 0))
+    push = d / np.maximum(dist, 1e-12)[:, None] * grow_near[:, None]
+    pushed = rest + push
+    return {'blink': _turn(pushed, center, blink), 'squint': _turn(pushed, center, squint), 'wide': _turn(pushed, center, lift)}, push
 
 
 class RigidJaw:
     """jawOpen's motion for rigid mouth parts (lower teeth, tongue, the mouth's lower bag): the rigid transform that
     best fits the chin's face-unit motion. Duck-types `JawHinge` for `add_jaw_open`."""
 
-    def __init__(self, rest, moved):
+    def __init__(self, rest, moved, gain=1.0):
         P, Q = np.asarray(rest), np.asarray(moved)
         cp, cq = P.mean(0), Q.mean(0)
         U, _, Vt = np.linalg.svd((P - cp).T @ (Q - cq))
         D = np.diag([1, 1, np.sign(np.linalg.det(Vt.T @ U.T))])
-        self.rotation = Vt.T @ D @ U.T
+        R = Vt.T @ D @ U.T
+        if gain != 1.0:
+            # The same turn about the same axis, `gain` times as far, about the rest points' middle.
+            angle = math.acos(max(-1.0, min(1.0, (np.trace(R) - 1) / 2)))
+            if angle > 1e-9:
+                axis = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]) / (2 * math.sin(angle))
+                K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+                a = gain * angle
+                R = np.eye(3) + math.sin(a) * K + (1 - math.cos(a)) * K @ K
+            cq = cp + gain * (cq - cp)
+        self.rotation = R
         self.translation = cq - self.rotation @ cp
 
     def move(self, point, weight=1.0, rigid=False):
@@ -664,34 +850,31 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
 
     # Lids refitted to the stylized openings.
     morphs = {}
-    base_rest = fit(head_shape(years, gender, 0, shape, races, head)) + shift
-    for side, suffix, (c, r) in (('L', 'Left', eyes[0]), ('R', 'Right', eyes[1])):
-        up = int(skin_ids[np.argmin(np.linalg.norm(P[skin_ids] - marks[f'eye_upper_{side}'], axis=1))])
-        low = int(skin_ids[np.argmin(np.linalg.norm(P[skin_ids] - marks[f'eye_lower_{side}'], axis=1))])
-        base_gap = float(_elevation(base_rest[up], c) - _elevation(base_rest[low], c))
-        lid = {'blink': deltas[f'eyeBlink{suffix}'], 'squint': deltas[f'eyeSquint{suffix}'], 'wide': deltas[f'eyeWide{suffix}']}
-        for name, targets in lid_morphs(P, lid, c, up, low, base_gap).items():
-            morphs[f'eye{name.capitalize()}{suffix}'] = targets
+    skin_edges = edges_of(faces)
+    # Twice: the first pass pushes each eye's lids clear of its eyeball; the second builds the morphs on the pushed lids.
+    for rebuild in (False, True):
+        pushes = np.zeros_like(P)
+        for side, suffix, (c, r) in (('L', 'Left', eyes[0]), ('R', 'Right', eyes[1])):
+            margin = {'inner': marks[f'eye_inner_{side}'], 'outer': marks[f'eye_outer_{side}'], 'contour': marks[f'eye_margin_{side}']}
+            targets, push = lid_morphs(P, c, r, margin, edges=skin_edges)
+            pushes += push
+            if rebuild:
+                for name, t in targets.items(): morphs[f'eye{name.capitalize()}{suffix}'] = t
+        if not rebuild: P = P + pushes
     for unit in units:
         if unit not in morphs: morphs[unit] = P + deltas[unit]
 
-    # jawOpen: the jaw turns as one piece (the face unit's best rigid fit on the chin), each vertex following it by
-    # the face unit's own share (its motion against the chin's), so the lower lip's inside, the mouth's floor and the
-    # chin swing together instead of the lip stretching into a slab. The upper lip and everything above the mouth
-    # line stay put.
+    # jawOpen: the face unit's own jaw (it knows which rows are the lower lip), opened a fifth further (a puppet's chin
+    # drops a tenth of the face), with the upper lip and everything above the mouth line held still. The rigid mouth
+    # parts (lower teeth, tongue) follow its best rigid fit on the chin.
     mouth_z = marks['stomion'][2]
-    jaw = morphs['jawOpen'] - P
+    jaw = 1.2 * (morphs['jawOpen'] - P)
+    hold = np.clip((P[:, 2] - mouth_z - .002 * scale[2]) / (.004 * scale[2]), 0, 1)
+    jaw *= (1 - hold)[:, None]
+    morphs['jawOpen'] = P + jaw
     move = np.linalg.norm(jaw, axis=1)
     chin = (move > .7 * move.max()) & (P[:, 2] < mouth_z)
     rigid = RigidJaw(P[chin], morphs['jawOpen'][chin])
-    share = np.clip(move / np.percentile(move[chin], 50), 0, 1)
-    hold = np.clip((P[:, 2] - (mouth_z - .002 * scale[2])) / (.004 * scale[2]), 0, 1)
-    upper_lip = (P[:, 2] > mouth_z) & (np.abs(P[:, 0]) < abs(marks['mouth_corner_L'][0]) * 1.2)
-    share = np.where(upper_lip, 0.0, share * (1 - hold))
-    share = smooth_deltas(share[:, None], edges_of(faces), iterations=4)[:, 0]
-    share = np.where(upper_lip, 0.0, share)
-    swung = np.array([rigid.move(p) for p in P])
-    morphs['jawOpen'] = P + share[:, None] * (swung - P)
 
     # Crop at the neck, keeping the mouth's bag (it hangs down inside the neck).
     if neck_z is not None:
@@ -730,6 +913,29 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     gap = region & (np.abs(cen_open[:, 0]) < cx) & (cen_open[:, 2] < mouth_z - .001 * scale[2]) & (cen_open[:, 2] > floor + .001 * scale[2])
     inside |= gap
 
+    # Inside the mouth, the expressions' motion is smoothed and halved: the face units crumple the mouth's inner corners.
+    inner = np.unique(faces[inside][faces[inside] >= 0])
+    edges = edges_of(faces)
+    for name in morphs:
+        if name == 'jawOpen' or name.startswith('eye'): continue
+        d = morphs[name] - V
+        d[inner] = .5 * smooth_deltas(d, edges, iterations=8)[inner]
+        morphs[name] = V + d
+
+    # Triangles, split along each quad's flatter diagonal: the morph checks below hold for exactly the triangles the
+    # GLB carries (an exporter's own split of a folded quad at the lips' corners can turn over).
+    faces, source = flat_triangles(V, faces)
+    inside = inside[source]
+    # No morph, alone or in an emotion preset, may turn a face over.
+    from agent_meshes_face import CANONICAL_EMOTIONS
+    mixes = [dict(p) for p in CANONICAL_EMOTIONS.values() if p] + [dict(p, jawOpen=1.0) for p in CANONICAL_EMOTIONS.values() if p]
+    for side in ('Left', 'Right'):
+        mixes += [{f'eyeBlink{side}': w} for w in (.25, .5, .75)] + [{f'eyeBlink{side}': w, f'eyeSquint{side}': 1.0} for w in (.25, .5, .75, 1.0)]
+        mixes += [{f'eyeBlink{side}': 1.0, f'eyeWide{side}': 1.0}, {f'eyeBlink{side}': 1.0, f'eyeSquint{side}': 1.0, f'eyeWide{side}': 1.0}]
+    lids = [n for n in morphs if n.startswith(('eyeBlink', 'eyeSquint', 'eyeWide'))]
+    morphs, _ = unfold_morphs(V, faces, morphs, mixes, keep=lids + ['jawOpen'])
+
+
     # The lash line: the upper lid's margin rows (the vertices blink moves at least 85% as far as its margin).
     lash = set()
     for suffix, (c, r) in (('Left', eyes[0]), ('Right', eyes[1])):
@@ -737,7 +943,7 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         lash |= set(np.nonzero((m > .85 * m.max()) & (V[:, 1] < c[1]) & (np.linalg.norm(V - c, axis=1) < 1.6 * r))[0].tolist())
     inner = np.unique(faces[inside][faces[inside] >= 0])
     box = (V[inner].min(0), V[inner].max(0)) if len(inner) else None
-    return {'vertices': V, 'faces': faces, 'morphs': morphs, 'eyes': eyes, 'landmarks': marks, 'mouth_inside': inside,
+    return {'vertices': V, 'faces': faces, 'morphs': morphs, 'eyes': eyes, 'landmarks': marks, 'mouth_inside': inside, 'source': used,
             'mouth_box': box, 'lash': sorted(lash), 'jaw': rigid, 'scale': scale}
 
 
