@@ -1,58 +1,54 @@
-"""A living arkit-face/1 face for the stylized character recipe: blinking lids, gaze, a puppet jaw and expressions.
+"""A living arkit-face/1 face for the stylized character recipe, on the MakeHuman hm08 head: blinking lids, gaze, a
+puppet jaw and expressions.
 
-The character recipe (`stylized_character.py`, with `face='arkit'`) leaves the face's features out, and the shared
-walk (`stylized_walk.rig_character`) builds the body skeleton whose `head` bone the clips turn. `add_face` then hangs
-`eye_L`/`eye_R` under that head bone (`add_eye_bones`) and builds one continuous head skin with the face-rig helpers
-(`agent_meshes_face`): eye holes whose lids are the skin, soft lips over a toothed mouth, a button nose, skin brows and
-paint, with the 21 required ARKit morphs, all bound to `head`. The face rides the head in every clip; the morphs are
-glTF morph targets on the skinned face mesh, so they survive skinning and play over the walk and jog.
+The character recipe (`stylized_character.py`, with `face='arkit'`) leaves the face out, and the shared walk
+(`stylized_walk.rig_character`) builds the body skeleton whose `head` bone the clips turn. `add_face` then builds the
+head from CC0 hm08 data (`agent_meshes_hm08`): the head and upper neck of one fixed quad topology, shaped by hm08's own
+age, gender and feature targets and by our stylize target, fitted to the character's head envelope (the cranium the
+hair is fitted to) and cropped where the neck rides the head. Its ARKit morphs are hm08's faceunits01 face units, with
+the lids refitted to the stylized eyes. Eyeballs on `eye_L`/`eye_R`, teeth, a tongue, brows and paint join it, all
+bound to `head`, so the face rides the head in every clip.
 
-`face_shape_values(values)`, `face_layout(values)`, `head_field(layout)` and `beard_weight` are pure (standard library
-plus the pure face helpers). The layout is drawn on a canonical head and mapped onto the character's head envelope, with
-proportions set by age (children's eyes are larger and their lower face short; adults' lower face and chin longer) and
-the character's `face_shape`: eye size and spacing, nose, mouth width, lips, jaw width, chin, cheeks, brow weight, the
-resting smile and a painted beard or stubble, so each character wears its own face.
+`face_shape_values(values)`, `head_spec(values)`, `face_layout(values)` and `beard_weight` are pure (numpy plus the pure
+helpers). The character's `face_shape` sets the face: age in years, eye size, spacing and tilt, nose size, length,
+width and bridge, mouth width, lips, jaw and chin width, chin length, cheek fullness, brow weight, the resting smile
+and a sculpted beard.
 Blender coordinates: Z up, meters, the face looks down -Y, the character's left is +X.
 """
 import math
 
-FACE_VERSION = 1
-# The canonical head the layout is drawn on (the helper fixture's kid): an ellipsoid of these half sizes round CENTER.
-CANONICAL_HALF_WIDTH, CANONICAL_HALF_DEPTH, CANONICAL_HALF_HEIGHT = .088, .085, .112
-CANONICAL_CENTER = (0.0, 0.0, .13)
-# Proportions in the canonical frame (meters on a 0.224 m tall head), by age. The concept boards' portraits: big dark
-# eyes set wide, a small nose, the mouth well below the eyes (1.3-1.9 times the eyes' half spacing) and a soft, narrowing
-# jaw. Children's eyes are larger and their lower face short and round; adults' lower face is longer, the chin lower.
-PROPORTIONS = {
-    'child': dict(eye=(.043, .124), eye_radius=.0212, eye_depth=1.05, iris=40, pupil=17, opening=(46, 34, 30), mouth_z=.070,
-                  mouth_half_width=.019, nose=(0, .092), nose_size=(.0068, .0062, .0060), lip_fullness=.0019,
-                  cheek=((.05, -.046, .094), (.024, .022, .02)), face=((0, -.012, .099), (.086, .075, .060)),
-                  jaw=.12, chin=1.0, lower=.6, brow_inner=(.013, .152), brow_outer=(.061, .153), brow_height=.0068, bridge=.0015),
-    'adult': dict(eye=(.043, .126), eye_radius=.0185, eye_depth=1.05, iris=38, pupil=16, opening=(45, 31, 27), mouth_z=.064,
-                  mouth_half_width=.0205, nose=(0, .089), nose_size=(.0070, .0080, .0072), lip_fullness=.0019,
-                  cheek=((.049, -.044, .093), (.02, .019, .019)), face=((0, -.014, .093), (.083, .074, .066)),
-                  jaw=.2, chin=1.12, lower=.6, brow_inner=(.012, .151), brow_outer=(.061, .153), brow_height=.0068, bridge=.003),
-}
-# Shape values a character may set (face_shape), each a factor on its age's proportions unless noted, with its range.
+FACE_VERSION = 2
+# Shape values a character may set (face_shape), each a factor round 1 unless noted, with its range.
 SHAPE_RANGES = {
-    'eye_size': (.8, 1.25),      # eyeball radius
-    'eye_spacing': (.85, 1.15),  # the eyes' distance from the midline
-    'nose': (.5, 1.8),           # nose size
+    'years': (3.0, 70.0),       # age in years (children default to 7, adults to 30)
+    'stylize': (0.0, 1.2),      # how far the head takes the stylized proportions (big eyes, soft nose, small chin)
+    'eye_size': (.8, 1.25),
+    'eye_spacing': (.85, 1.15),
+    'eye_tilt': (-1.0, 1.0),    # the outer corners up (+) or down (-)
+    'nose': (.5, 1.8),          # nose size
+    'nose_length': (.6, 1.5),
+    'nose_width': (.6, 1.5),
+    'nose_bridge': (.5, 1.6),   # how far the bridge stands out
     'mouth_width': (.7, 1.35),
-    'lips': (.3, 2.5),           # lip fullness
-    'jaw_width': (.7, 1.4),      # the lower face's width at the jaw
-    'chin': (.75, 1.4),          # how far the face reaches below its middle
-    'cheeks': (0.0, 2.5),        # how full and round the lower face is
-    'brow': (.5, 2.5),           # brow weight (height)
-    'smile': (0.0, 1.0),         # how far the resting mouth turns up (0: straight)
+    'lips': (.3, 2.5),          # lip fullness
+    'jaw_width': (.7, 1.4),
+    'chin': (.75, 1.4),         # chin length
+    'chin_width': (.6, 1.5),
+    'cheeks': (0.0, 2.5),       # how full and round the cheeks are
+    'brow': (.5, 2.5),          # brow weight
+    'smile': (0.0, 1.0),        # how far the resting mouth turns up (0: straight)
 }
 BEARDS = ('none', 'stubble', 'beard')
 DEFAULT_SHAPE = {
-    ('child', 'female'): dict(cheeks=1.2, smile=.5),
-    ('child', 'male'): dict(cheeks=1.0, smile=.45, brow=1.15),
-    ('adult', 'female'): dict(cheeks=1.0, smile=.45),
-    ('adult', 'male'): dict(cheeks=.7, smile=.35, brow=1.4, jaw_width=1.1, nose=1.15, mouth_width=1.05, lips=.8),
+    ('child', 'female'): dict(years=7, cheeks=1.2, smile=.5),
+    ('child', 'male'): dict(years=9, cheeks=1.0, smile=.45, brow=1.15),
+    ('adult', 'female'): dict(years=30, cheeks=1.0, smile=.45),
+    ('adult', 'male'): dict(years=32, cheeks=.7, smile=.35, brow=1.4, jaw_width=1.1, nose=1.15, mouth_width=1.05, lips=.8),
 }
+# face_shape keys that shape the hm08 head (agent_meshes_hm08.FEATURES); the rest set age, stylize and paint.
+HEAD_FEATURES = ('eye_size', 'eye_spacing', 'eye_tilt', 'nose', 'nose_length', 'nose_width', 'nose_bridge', 'mouth_width', 'lips',
+                 'jaw_width', 'chin', 'chin_width', 'cheeks', 'brow', 'smile')
+NEUTRAL = {'eye_tilt': 0.0, 'smile': 0.0}
 
 
 def _character():
@@ -65,14 +61,14 @@ def _character():
 def face_shape_values(values=None):
     """The living face's shape values for a character: its `face_shape` over the defaults for its age and presentation.
 
-    Every SHAPE_RANGES key is a number in its range (1 is the age's own proportion; `smile` 0
-    rests straight), `beard` one of BEARDS ('stubble' shades the jaw, chin and upper lip; 'beard' paints a short full
-    beard and moustache) and `beard_color` a hex color (default: the hair's, darkened)."""
+    Every SHAPE_RANGES key is a number in its range, `beard` one of BEARDS ('stubble' shades the jaw, chin and upper
+    lip; 'beard' adds a sculpted short beard and moustache) and `beard_color` a hex color (default: the hair's,
+    darkened)."""
     p = _character()['parameters']({} if values is None else values)
     given = p['face_shape']
     unknown = set(given) - set(SHAPE_RANGES) - {'beard', 'beard_color'}
     if unknown: raise ValueError(f'Unknown face_shape keys: {sorted(unknown)}')
-    shape = {key: 1.0 for key in SHAPE_RANGES}
+    shape = {key: NEUTRAL.get(key, 1.0) for key in SHAPE_RANGES}
     shape.update(DEFAULT_SHAPE[(p['age'], p['presentation'])])
     for key, (low, high) in SHAPE_RANGES.items():
         if key not in given: continue
@@ -90,58 +86,57 @@ def face_shape_values(values=None):
     return shape
 
 
-def face_layout(values=None):
-    """Where the face's features go on this character's head (Blender coordinates), and its scale from the canonical head."""
+def neck_head_share(z, d):
+    """How much of a neck vertex at height `z` rides the head bone rather than the spine (0 at the shoulders, 1 from
+    below the chin up), for the character's landmarks `d`. The walk leans the spine under an upright head, and a neck
+    riding the spine alone swings its top, which rises inside the head to the mouth, forward into the open mouth. Pure."""
+    bottom, top = d['shoulder_y'] + .02 * d['s'], d['head_y'] - .55 * d['ry']
+    t = min(1.0, max(0.0, (z - bottom) / (.6 * (top - bottom))))
+    return t * t * (3 - 2 * t)
+
+
+def head_spec(values=None):
+    """What `agent_meshes_hm08.character_face` needs for this character: age in years, gender (0 female, 1 male), the
+    envelope (center, radii (x, y, z)), the head's shape controls, the stylize weight and the neck height where the
+    head is cropped (where the neck rides the head alone, so the crop never parts from the body's neck)."""
     recipe = _character()
     p = recipe['parameters']({} if values is None else values)
     d = recipe['landmarks'](p)
-    base, shape = PROPORTIONS[p['age']], face_shape_values(p)
-    axes = (d['rx'] / CANONICAL_HALF_WIDTH, d['rz'] / CANONICAL_HALF_DEPTH, d['ry'] / CANONICAL_HALF_HEIGHT)
-    k = axes[2]
-    center = (0.0, 0.0, d['head_y'])
-
-    def at(point):
-        return tuple(center[i] + axes[i] * (point[i] - CANONICAL_CENTER[i]) for i in range(3))
-
-    def xz(point):
-        x, z = point
-        return (axes[0] * x, center[2] + axes[2] * (z - CANONICAL_CENTER[2]))
-
-    (cheek_center, cheek_radii), (face_center, face_radii) = base['cheek'], base['face']
-    chin, fullness = base['chin'] * shape['chin'], shape['cheeks']
-    layout = dict(
-        center=center, scale=k, axes=axes, radii=(d['rx'], d['rz'], d['ry']),
-        eye_radius=k * base['eye_radius'] * shape['eye_size'], opening=base['opening'],
-        mouth_z=xz((0, base['mouth_z']))[1], mouth_half_width=axes[0] * base['mouth_half_width'] * shape['mouth_width'],
-        nose=xz(base['nose']), nose_size=tuple(k * shape['nose'] * v for v in base['nose_size']),
-        lip_fullness=k * base['lip_fullness'] * shape['lips'],
-        # Full cheeks round the whole lower face out: a wider, fuller face mass that narrows less toward the chin. Cheek
-        # balls added to the face stood out as pads with a ledge under them at the mouth. `cheek` is where the cheeks'
-        # blush, squint and smile lift go.
-        cheek=(at(cheek_center), tuple(a * r for a, r in zip(axes, cheek_radii))), cheek_fullness=fullness,
-        face=(at(face_center), tuple(a * r * (1 + (.08, .05, .02)[i] * (fullness - 1)) for i, (a, r) in enumerate(zip(axes, face_radii)))),
-        chin=chin, chin_z=center[2] + axes[2] * (face_center[2] - chin * face_radii[2] - CANONICAL_CENTER[2]),
-        brow_inner=xz(base['brow_inner']), brow_outer=xz(base['brow_outer']), brow_height=k * base['brow_height'] * shape['brow'],
-        iris=base['iris'], pupil=base['pupil'], jaw=max(0.0, base['jaw'] * (1 - .3 * (fullness - 1))), jaw_width=shape['jaw_width'], lower=base['lower'],
-        bridge=k * base['bridge'], resting_smile=shape['smile'], beard=shape['beard'],
-        beard_color=shape['beard_color'] or _hex(_mix(linear_color_of(p['hair']), (.01, .008, .007), .35)),
-        skin=p['skin'], hair=p['hair'], eyes=p['eyes'], age=p['age'], presentation=p['presentation'],
+    shape = face_shape_values(p)
+    bottom, top = d['shoulder_y'] + .02 * d['s'], d['head_y'] - .55 * d['ry']
+    neck_z = bottom + .62 * (top - bottom)
+    # The body's neck (stylized_character): a tube from .053 x .051 at the shoulders to .058 x .053 under the head.
+    t = (neck_z - bottom) / (top - bottom)
+    neck = (d['s'] * (.053 + .005 * t), d['s'] * (.051 + .002 * t))
+    return dict(
+        years=shape['years'], gender=1.0 if p['presentation'] == 'male' else 0.0,
+        center=(0.0, 0.0, d['head_y']), radii=(d['rx'], d['rz'], d['ry']),
+        shape={k: shape[k] for k in HEAD_FEATURES if shape[k] != NEUTRAL.get(k, 1.0)},
+        stylize=shape['stylize'], neck_z=neck_z, neck=neck,
     )
-    ex, ez = xz(base['eye'])
-    ex = max(ex * shape['eye_spacing'], 1.35 * layout['eye_radius'])
-    layout['eye_x'], layout['eye_z'] = ex, ez
-    # The brows sit clear of the upper lid's reach, which grows with the eye: skin a blink moves must not slide under
-    # a brow (a big-eyed child's brow at its age's height sat on the lid).
-    lift = max(0.0, ez + 1.45 * layout['eye_radius'] - layout['brow_inner'][1])
-    layout['brow_inner'] = (layout['brow_inner'][0], layout['brow_inner'][1] + lift)
-    layout['brow_outer'] = (layout['brow_outer'][0], layout['brow_outer'][1] + lift)
-    # Each eyeball's center sits `eye_depth` of its radius behind the face's surface, so the eye fills its socket and
-    # the lids wrap it close to the skin: an eye standing proud of the skin raises a mound of lid round it, and two
-    # mounds either side of the bridge read as a V-shaped ridge.
-    front = _front(head_field(layout), ex, ez, d['rz'])
-    eye = (ex, front + base['eye_depth'] * layout['eye_radius'], ez)
-    layout.update(eye_left=eye, eye_right=(-eye[0], eye[1], eye[2]))
-    return layout
+
+
+_FACES = {}
+
+
+def face_layout(values=None):
+    """The character's face (`agent_meshes_hm08.character_face`, cached) and where its features are: `eye_left`,
+    `eye_right`, `eye_radius`, `mouth_z`, `mouth_front`, `mouth_half_width`, `center`, `radii`, `scale` (the head's
+    size against a realistic one) and the landmarks."""
+    import json
+    from agent_meshes_hm08 import character_face
+    spec = head_spec(values)
+    key = json.dumps(spec, sort_keys=True)
+    if key not in _FACES:
+        _FACES[key] = character_face(spec['years'], spec['gender'], spec['center'], spec['radii'], shape=spec['shape'],
+                                     stylize=spec['stylize'], neck_z=spec['neck_z'], neck=spec['neck'])
+    face = _FACES[key]
+    marks = face['landmarks']
+    (left, r), (right, _) = face['eyes']
+    return dict(face=face, landmarks=marks, center=spec['center'], radii=spec['radii'], scale=float(face['scale'][2]),
+                eye_left=tuple(float(v) for v in left), eye_right=tuple(float(v) for v in right), eye_radius=float(r),
+                mouth_z=float(marks['stomion'][2]), mouth_front=float(marks['stomion'][1]),
+                mouth_half_width=float(abs(marks['mouth_corner_L'][0])), spec=spec)
 
 
 def linear_color_of(hex_color):
@@ -152,135 +147,82 @@ def linear_color_of(hex_color):
     return tuple(channel(int(hex_color[i:i + 2], 16)) for i in (1, 3, 5))
 
 
-def head_field(layout):
-    """The head's signed-distance field: the character's head envelope (the cranium the hair is fitted to) above, and a
-    rounded face mass below the eyes that makes the cheeks, jaw and chin in one piece.
-
-    The cranium's lower half is squashed to `lower` of its height so the face mass, not the cranium, is the jaw and
-    chin: one smooth ellipsoid gives a round face with a small soft chin (the boards' portraits), where a chin ball
-    added to a narrowed cranium read as a knob on a melted jaw. `jaw` narrows the face mass toward the chin,
-    `jaw_width` widens (or narrows) it over the same span and `chin` stretches its lower half. Once the eyes are placed
-    (`eye_x`), the face is flattened across them so the bridge stands only `bridge` in front of the skin over the eyes:
-    a round cranium puts the midline a centimetre in front of them, a ridge down the nose between two troughs."""
-    from agent_meshes_face import ellipsoid_sdf, smooth_max, smooth_min
-    k, center, radii, jaw, lower = layout['scale'], layout['center'], layout['radii'], layout['jaw'], layout['lower']
-    face_center, face_radii = layout['face']
-    chin, jaw_width = layout['chin'], layout['jaw_width']
-
-    def base(p):
-        # The cranium: squashed below its middle, easing in over its lower half so no crease runs round the head.
-        below = min(1.0, max(0.0, (center[2] - p[2]) / radii[2]))
-        z = center[2] + (p[2] - center[2]) * (1 + (1 / lower - 1) * below * below * (3 - 2 * below))
-        d = ellipsoid_sdf((p[0], p[1], z), center, radii)
-        # The face mass, its lower half stretched by `chin`, narrowing toward the chin.
-        fz = p[2] if p[2] >= face_center[2] else face_center[2] + (p[2] - face_center[2]) / chin
-        t = min(1.0, max(0.0, (face_center[2] - fz) / face_radii[2]))
-        # `jaw_width` eases in over the same span as the narrowing: a change that starts at the mouth leaves a ledge.
-        s = t * t * (3 - 2 * t)
-        narrow = (1 - jaw * s) * (1 + (jaw_width - 1) * s)
-        d = smooth_min(d, ellipsoid_sdf((p[0] / narrow, p[1], fz), face_center, face_radii), .03 * k)
-        return d
-
-    if 'eye_x' not in layout: return base
-    ex, ez = layout['eye_x'], layout['eye_z']
-    target = _front(base, ex, ez, radii[1]) - layout['bridge']
-    if _front(base, 0.0, ez, radii[1]) >= target: return base
-    # Carve the midline back: an ellipsoid whose back reaches `target`, as wide as the bridge between the eyes.
-    ry = .03 * k
-    carve_center, carve_radii = (0.0, target - ry, ez + .004 * k), (.72 * ex, ry, .03 * k)
-    blend = .028 * k
-
-    def sdf(p):
-        return smooth_max(base(p), -ellipsoid_sdf(p, carve_center, carve_radii), blend)
-    return sdf
-
-
-def _front(sdf, x, z, depth):
-    """The field's front surface y at (x, z), marching back from `2 depth` in front of the head's middle."""
-    step, y = depth / 200, -2 * depth
-    while sdf((x, y, z)) > 0 and y < 0: y += step
-    low, high = y - step, y
-    for _ in range(40):
-        mid = (low + high) / 2
-        if sdf((x, mid, z)) < 0: high = mid
-        else: low = mid
-    return high
-
-
-def face_smoothing(layout, holes, mouth_front):
-    """The face's smoothing weight (0..1) at a rest point: 1 over the front of the face, 0 on each eye's lids and hole
-    (within its upper lid's outer radius and a little more), on the lips' seam and on the nostrils, and 0 behind the
-    face. Pure given the holes' `lids` (their eye center, `upper_radius` and `thickness`)."""
-    k, mouth_z, half_width = layout['scale'], layout['mouth_z'], layout['mouth_half_width']
-    nose, nose_size = layout['nose'], layout['nose_size']
-    eyes = [(hole['lids']['center'], hole['lids']['upper_radius'] + hole['lids']['thickness'], hole['lids']['eye_radius'])
-            for hole in (holes['L'], holes['R'])]
-    # A continuous eye's lid rows by rest position, with how far a blink carries each (the margin furthest).
-    cell = 1e-6
-    travel = {}
-    for hole in (holes['L'], holes['R']):
-        moves = [(rest, max(math.dist(rest, target) for target in moved.values())) for rest, moved in hole.get('motion', ())]
-        most = max((t for _, t in moves), default=0.0)
-        for rest, t in moves: travel[tuple(round(c / cell) for c in rest)] = t / most if most > 0 else 0.0
+def beard_weight(point, marks, k):
+    """How much beard (0..1) covers a skin point: the jaw, chin, lower cheeks and a moustache over the upper lip, on
+    the front half of the head, leaving the lips, the nostrils and the neck under the jaw bare. `marks` are the face's
+    landmarks and `k` its scale against a realistic head. Pure."""
+    x, y, z = point
+    mouth_z, hw = marks['stomion'][2], abs(marks['mouth_corner_L'][0])
+    nose_z = marks['subnasale'][2]
 
     def ramp(e0, e1, v):
         t = min(1.0, max(0.0, (v - e0) / (e1 - e0)))
         return t * t * (3 - 2 * t)
-
-    def weight(v):
-        if v[1] > layout['center'][1]: return 0.0
-        w = 1.0
-        moving = travel.get(tuple(round(c / cell) for c in v))
-        if moving is not None:
-            # The lid rows near the margin roll over the eye and hold; the rows toward the anchor, which barely move and
-            # made the closed lid's rim, are smoothed.
-            w *= 1 - ramp(.02, .12, moving)
-        else:
-            for center, lid, r in eyes: w *= ramp(lid, lid + .12 * r, math.dist(v, center))
-        # The mouth, lips and chin in front of the teeth and tongue, which sit a few millimetres behind the skin there.
-        if v[1] < mouth_front + .03 * k:
-            w *= ramp(1.0, 1.8, math.hypot(v[0] / (1.5 * half_width), (v[2] - mouth_z) / (.026 * k)))
-        w *= ramp(.9, 1.5, math.hypot(v[0], v[2] - nose[1]) / (1.6 * max(nose_size)))
-        return w
-    return weight
+    # Down the face from under the cheekbones (a little above the nose's base, rising toward the ears into sideburns).
+    top = nose_z + .004 * k + .25 * max(0.0, abs(x) - 1.2 * hw)
+    vertical = 1 - ramp(top - .006 * k, top + .004 * k, z)
+    # Round the head: the front and sides back to the ears, not the nape.
+    around = 1 - ramp(marks['occiput'][1] - .09 * k, marks['occiput'][1] - .05 * k, y)
+    # Under the jaw it thins out toward the throat.
+    under = ramp(marks['menton'][2] - .03 * k, marks['menton'][2] - .005 * k, z)
+    # Bare lips: an ellipse round the mouth; the moustache stays above it.
+    lips = ((x / (1.1 * hw)) ** 2 + ((z - mouth_z + .001 * k) / (.009 * k)) ** 2) ** .5
+    bare = 1 - ramp(.85, 1.15, lips)
+    nostrils = 1 - ramp(nose_z - .006 * k, nose_z - .002 * k, z) if abs(x) < .6 * hw else 1.0
+    return max(0.0, min(1.0, vertical * around * under * (1 - bare) * nostrils))
 
 
-def neck_head_share(z, d):
-    """How much of a neck vertex at height `z` rides the head bone rather than the spine (0 at the shoulders, 1 from
-    below the chin up), for the character's landmarks `d`. The walk leans the spine under an upright head, and a neck
-    riding the spine alone swings its top, which rises inside the head to the mouth, forward into the open mouth. Pure."""
-    bottom, top = d['shoulder_y'] + .02 * d['s'], d['head_y'] - .55 * d['ry']
-    t = min(1.0, max(0.0, (z - bottom) / (.6 * (top - bottom))))
-    return t * t * (3 - 2 * t)
-
-
-def mouth_depths(mouth_front, behind, k):
-    """How deep the mouth's dark bag reaches behind the lips, and the tongue's length and furthest-back center (y).
-
-    `behind` is the front of whatever body part stands behind the mouth inside the head (the neck rises to the nose),
-    or None: the bag and tongue stay `.012 k` in front of it (the head nods over the neck as the character walks), so
-    an open jaw shows the dark bag and a tongue-coloured tongue, never the neck's skin. Pure."""
-    depth = .055 * k
-    if behind is not None: depth = max(.02 * k, min(depth, behind - mouth_front - .012 * k))
-    length = min(.03 * k, .6 * depth)
-    return dict(cavity_depth=depth, tongue_length=length, tongue_y=mouth_front + depth - .004 * k - length / 2)
+def beard_shell(face, k, thickness=.006, weight=beard_weight):
+    """A sculpted beard: the skin's beard region lifted into a shell `thickness` (times the head's scale) proud of the
+    skin, thickest on the chin and jaw, its rim tucked just under the skin so it meets it in a clean line. Carries
+    every morph of the skin (the shell rides the jaw and the smile). Returns vertices, faces and morphs. Pure (numpy)."""
+    import numpy as np
+    from agent_meshes_hm08 import vertex_normals
+    V, F, marks = face['vertices'], face['faces'], face['landmarks']
+    w = np.array([weight(v, marks, k) for v in V])
+    chosen = [f for f in F if min(w[i] for i in f if i >= 0) > .02]
+    if not chosen: return None
+    used = sorted({int(i) for f in chosen for i in f if i >= 0})
+    remap = {old: new for new, old in enumerate(used)}
+    normals = vertex_normals(V, F)[used]
+    ww = w[used]
+    # Fuller on the chin, thinning up the cheeks; the rim sinks 0.6 mm (scaled) under the skin.
+    fullness = np.clip(1.4 - (V[used, 2] - marks['menton'][2]) / (marks['subnasale'][2] - marks['menton'][2]), .55, 1.0)
+    lift = (thickness * k * fullness * ww ** .6 - .0006 * k * (1 - ww))[:, None]
+    shell = V[used] + normals * lift
+    faces = [[remap[int(i)] for i in f if i >= 0] for f in chosen]
+    morphs = {}
+    for name, targets in face['morphs'].items():
+        moved = targets[used]
+        if np.abs(moved - V[used]).max() < 1e-7: continue
+        morphs[name] = moved + vertex_normals(targets, F)[used] * lift
+    return {'vertices': shell, 'faces': faces, 'morphs': morphs, 'weights': ww}
 
 
 def _mix(a, b, t): return tuple(x + (y - x) * t for x, y in zip(a, b))
 
 
+def _hex(linear):
+    """An sRGB hex string for a linear RGB triple."""
+    def channel(v):
+        v = max(0.0, min(1.0, v))
+        return round(255 * (12.92 * v if v <= .0031308 else 1.055 * v ** (1 / 2.4) - .055))
+    return '#' + ''.join(f'{channel(v):02x}' for v in linear)
+
+
 def add_face(objects, values=None):
     """Give a rigged stylized character (`rig_character`'s objects) a living arkit-face/1 face on its `head` bone.
 
-    Returns the objects plus the face mesh and the two eyeballs. The rig's extras declare the face contract with
-    `skeleton='body'`. The character must have been built with `face='arkit'`; its `face_shape` sets the features.
+    Returns the objects (less the recipe's simple ears: the hm08 head has its own) plus the face mesh and the two
+    eyeballs. The rig's extras declare the face contract with `skeleton='body'`. The character must have been built
+    with `face='arkit'`; its `face_shape` sets the features.
     """
+    import bpy
+    import numpy as np
     from agent_meshes_author import (
-        JawHinge, add_eye_bones, add_jaw_open, build_eye, eye_hole_mask, eye_holes, face_contract, follow_skin, front_surface,
-        join_face_parts, linear_color, material, mesh_from_geometry, mouth_cavity_geometry, nose_geometry,
-        paint_vertices, recommended_gaze, sculpt_lips, sdf_blank, shape_key, skin_brow_geometry, skin_tints,
-        slit_mouth, smooth_skin, soft_offset, symmetric_offsets, teeth_row_geometry, tongue_geometry, use_vertex_colors,
-        join_geometry,
+        add_eye_bones, add_jaw_open, bind_rigid, eyeball_geometry, face_contract, join_face_parts, linear_color, material,
+        mesh_from_geometry, paint_vertices, shape_key, skin_brow_geometry, skin_tints, teeth_row_geometry, tongue_geometry,
+        use_vertex_colors,
     )
     p = _character()['parameters']({} if values is None else values)
     if p['face'] != 'arkit': raise ValueError("add_face needs a character built with face='arkit' (its static face would double up)")
@@ -288,11 +230,20 @@ def add_face(objects, values=None):
     if len(rigs) != 1: raise ValueError(f'add_face needs exactly one armature among the objects (found {len(rigs)}): run rig_character first')
     rig = rigs[0]
     L = face_layout(p)
-    k, eye_left, eye_right, radius = L['scale'], L['eye_left'], L['eye_right'], L['eye_radius']
-    mouth_z, half_width = L['mouth_z'], L['mouth_half_width']
+    face, marks, k = L['face'], L['landmarks'], L['scale']
+    shape = face_shape_values(p)
+    eye_left, eye_right, radius = L['eye_left'], L['eye_right'], L['eye_radius']
     add_eye_bones(rig, eye_left, eye_right)
-    # The neck rises inside the head to the mouth: its upper part rides the head (neck_head_share), so the walk's lean
-    # does not swing it into the open mouth.
+
+    # The recipe's ears give way to the head's own.
+    kept = []
+    for obj in objects:
+        if getattr(obj, 'type', None) == 'MESH' and '-ear' in obj.name:
+            bpy.data.objects.remove(obj, do_unlink=True)
+            continue
+        kept.append(obj)
+    objects = kept
+    # The neck rises inside the head: its upper part rides the head (neck_head_share), like the head's own neck.
     d = _character()['landmarks'](p)
     for obj in objects:
         if getattr(obj, 'type', None) != 'MESH' or obj.name != 'neck' or 'rig-spine' not in obj.vertex_groups: continue
@@ -303,224 +254,91 @@ def add_face(objects, values=None):
             spine.add([v.index], 1 - share, 'REPLACE')
             head_group.add([v.index], share, 'REPLACE')
 
-    skin_hex, hair_hex = L['skin'], L['hair']
+    skin_hex, hair_hex = p['skin'], p['hair']
     skin = material('skin', skin_hex, roughness=.55)
-    nostril = material('nostril', _hex(_mix(linear_color(skin_hex), (.05, .01, .01), .75)), roughness=.8)
+    dark = material('mouth_cavity', '#1e0709', roughness=1.0)
+    dark.use_backface_culling = False
+    V, F = face['vertices'], face['faces']
+    lash_set = set(face['lash'])
+    indices = [1 if inside else 0 for inside in face['mouth_inside']]
+    head = mesh_from_geometry('head_skin', {'vertices': [tuple(v) for v in V], 'faces': [[int(i) for i in f if i >= 0] for f in F],
+                                            'material_indices': indices}, [skin, dark])
+    for name, targets in face['morphs'].items(): shape_key(head, name, [tuple(v) for v in targets])
 
-    blank = sdf_blank(head_field(L), L['center'], rings=72, segments=96)
-    eye_options = dict(opening=L['opening'], meet=2, overlap=10, squint=.3, squint_upper_share=.5,
-                       wide=(12, 4))
-    holes = eye_holes(blank['vertices'], blank['faces'], eye_left, radius, max_edge=.25 * radius,
-                      socket=0, crease=0,
-                      blend=.5 * radius, lash_width=8, **eye_options)
-    lips = sculpt_lips(holes['vertices'], holes['faces'], mouth_z, half_width, fullness=L['lip_fullness'],
-                       height=.5 * half_width)
-    nose = nose_geometry(lips['vertices'], lips['faces'], L['nose'], L['nose_size'])
-    vertices, faces = nose['vertices'], nose['faces']
-    front = front_surface(vertices, faces)
-    jaw = JawHinge.ear(vertices, mouth_z, half_width, band=.06 * k, lip_round=1.1)
-    head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces, 'material_indices': nose['material_indices']},
-                              [skin, nostril])
-    slit_mouth(head, mouth_z, half_width)
-    rest = [tuple(v.co) for v in head.data.vertices]
-    corner = (half_width, front(half_width, mouth_z), mouth_z)
-    still = eye_hole_mask(holes['L'], holes['R'])
-    # The cheeks' motions fade out toward the lids over a wider band: at the default one a smile's lifted cheek met the
-    # still lower lid in a crease.
-    soft = eye_hole_mask(holes['L'], holes['R'], band=45)
-
-    mouth_front = front(0, mouth_z)
-    (bx, bz), (ox, oz) = L['brow_inner'], L['brow_outer']
-    cheek_x, cheek_z = L['cheek'][0][0], L['cheek'][0][2]
-    cheek = (cheek_x, front(cheek_x, cheek_z), cheek_z)
-    pairs = {
-        'browDown': ((bx * 2.5, front(bx * 2.5, bz), bz), .018 * k, (0, -.001 * k, -.004 * k)),
-        'browOuterUp': ((ox, front(ox, oz), oz), .016 * k, (0, 0, .004 * k)),
-        'cheekSquint': (cheek, .03 * k, (0, -.0015 * k, .0045 * k)),
-        'mouthFrown': (corner, .018 * k, (-.0005 * k, -.0005 * k, -.006 * k)),
-        'mouthStretch': (corner, .026 * k, (.005 * k, .001 * k, -.0015 * k)),
-    }
-    for name, (center, reach, offset) in pairs.items():
-        left, right = symmetric_offsets(rest, center, reach, offset, mask=soft if name == 'cheekSquint' else still)
-        shape_key(head, f'{name}Left', left)
-        shape_key(head, f'{name}Right', right)
-    # The smile: the corners draw up, out and back, the cheek above each rises and rounds forward into the lower lid,
-    # and the upper lip lifts off the lower one on its side, so a full smile is the boards' open grin with the upper
-    # teeth showing, not corners pinched into a grimace.
-    from agent_meshes_face import SEAM_ATTRIBUTE, SEAM_LOWER
-    seam = head.data.attributes.get(SEAM_ATTRIBUTE)
-    lower_seam = {i for i, item in enumerate(seam.data) if item.value == SEAM_LOWER} if seam is not None else set()
-    upper_lip = [0.0 if i in lower_seam or v[2] < mouth_z - 1e-6 else 1.0 for i, v in enumerate(rest)]
-    for side, sx in (('Left', 1), ('Right', -1)):
-        corner_side = (sx * corner[0], corner[1], corner[2])
-        cheek_side = (sx * cheek[0], cheek[1], cheek[2])
-        # The lower lip's middle stays over the lower teeth; only toward the corners does it rise with them.
-        up = soft_offset(rest, corner_side, .032 * k, (sx * .005 * k, .0015 * k, .0085 * k),
-                         mask=[still(v) * (1.0 if u else min(1.0, (v[0] / half_width) ** 2)) for v, u in zip(rest, upper_lip)])
-        lift = soft_offset(rest, cheek_side, (.03 * k, .024 * k, .028 * k), (sx * .0012 * k, -.0016 * k, .0048 * k), mask=soft)
-        grin = soft_offset(rest, (sx * .4 * half_width, mouth_front, mouth_z + .002 * k), (.8 * half_width, .014 * k, .007 * k),
-                           (0, -.0004 * k, .0026 * k), mask=upper_lip)
-        shape_key(head, f'mouthSmile{side}', [tuple(a[i] + b[i] + g[i] - 2 * r[i] for i in range(3)) for a, b, g, r in zip(up, lift, grin, rest)])
-    left, right = symmetric_offsets(rest, *nose['sneer'])
-    shape_key(head, 'noseSneerLeft', left); shape_key(head, 'noseSneerRight', right)
-    shape_key(head, 'browInnerUp', soft_offset(rest, (0, front(0, bz), bz), (.03 * k, .02 * k, .016 * k), (0, 0, .004 * k), mask=still))
-    shape_key(head, 'mouthFunnel', soft_offset(rest, (0, mouth_front, mouth_z), (.026 * k, .02 * k, .016 * k), (0, -.004 * k, 0)))
-    add_jaw_open(head, jaw, min_chin_drop=.1)
-
-    # A warm resting face: the mouth corners turn up (the boards' portraits all smile), by `smile` of the face shape,
-    # at most to just under the upper gum line (the lower lip's corners open with the jaw; above the gum they would
-    # drag the upper lip).
-    # The lift is added to the rest shape and every shape key alike, after the morphs were made on the neutral mouth,
-    # so every morph keeps its motion and the jaw still parts the lips along the slit.
-    warm = L['resting_smile']
-    if warm > 0:
-        left, right = symmetric_offsets(rest, corner, .028 * k, (.001 * k * warm, 0, .004 * k * warm), mask=still)
-        lift = [tuple(a[i] + b[i] - 2 * r[i] for i in range(3)) for a, b, r in zip(left, right, rest)]
-        for block in head.data.shape_keys.key_blocks:
-            for point, delta in zip(block.data, lift): point.co = tuple(point.co[i] + delta[i] for i in range(3))
-        for vertex, delta in zip(head.data.vertices, lift): vertex.co = tuple(vertex.co[i] + delta[i] for i in range(3))
-    # Paint: warm cheeks, tinted lips, a little shade in each socket, and stubble or a beard.
+    # Paint: warm cheeks, tinted lips and a darker lash line.
     base = linear_color(skin_hex)
     blush = (base[0] * .92, base[1] * .62, base[2] * .6)
     lip = (base[0] * .72, base[1] * .42, base[2] * .42)
-    patches = [{'center': (sx * cheek_x, front(sx * cheek_x, cheek_z), cheek_z), 'radius': (.017 * k, .012 * k, .011 * k),
-                'color': blush, 'strength': .65} for sx in (1, -1)]
-    patches.append({'center': (0, mouth_front, mouth_z - .002 * k), 'radius': (half_width * 1.05, .01 * k, .006 * k), 'color': lip, 'strength': .7})
-    patches.append({'center': (0, mouth_front, mouth_z + .0015 * k), 'radius': (half_width, .01 * k, .004 * k), 'color': lip, 'strength': .5})
-    # The lip line: a thin dark crease, as the boards draw a closed smiling mouth.
-    ink = tuple(c * .45 for c in lip)
-    patches.append({'center': (0, mouth_front, mouth_z), 'radius': (half_width * 1.02, .01 * k, .0011 * k), 'color': ink, 'strength': .5})
-    for eye in (eye_left, eye_right):
-        patches.append({'center': eye, 'radius': radius * 1.9, 'color': tuple(c * .9 for c in base), 'strength': .2})
-    tints = skin_tints(rest, base=skin_hex, patches=patches)
-    if L['beard'] != 'none':
-        tints = _beard_tints(rest, tints, L, front, linear_color(L['beard_color']), base)
+    hw, mz, front = L['mouth_half_width'], L['mouth_z'], L['mouth_front']
+    lip_h = abs(marks['upper_lip'][2] - marks['lower_lip'][2])
+    patches = []
+    for sx in (1, -1):
+        cheek = np.array(marks['eye_lower_L']) * [sx, 1, 1] + [sx * .15 * hw, 0, -1.1 * lip_h * 2]
+        patches.append({'center': tuple(cheek), 'radius': (.9 * hw, .02 * k, .7 * hw), 'color': blush, 'strength': .55})
+    patches.append({'center': (0, front, mz), 'radius': (hw * 1.05, .02 * k, lip_h * 1.4), 'color': lip, 'strength': .75})
+    tints = skin_tints([tuple(v) for v in V], base=skin_hex, patches=patches)
+    lash_tint = tuple(.3 for _ in range(3))
+    tints = [lash_tint if i in lash_set else t for i, t in enumerate(tints)]
+    if shape['beard'] == 'stubble':
+        color = linear_color(shape['beard_color'] or _hex(_mix(linear_color(hair_hex), (.01, .008, .007), .35)))
+        tint = tuple(min(1.0, c / b) if b > 0 else 1.0 for c, b in zip(color, base))
+        tints = [tuple(c + .55 * beard_weight(v, marks, k) * (c * m - c) for c, m in zip(t, tint)) for v, t in zip(V, tints)]
     paint_vertices(head, tints)
     use_vertex_colors(skin)
 
-    # The mouth: a dark bag wider and taller than the open lips, so no view past the corners finds the inside of the head.
-    dark = material('mouth_cavity', '#1e0709', roughness=.9)
-    dark.use_backface_culling = False
-    # Its rim rides the skin's smile, frown and funnel (follow_skin): a still rim shows through the corners they draw back.
-    # The body's neck rises inside the head to the nose: the bag and tongue stop in front of it.
-    behind = [(obj.matrix_world @ v.co) for obj in objects if getattr(obj, 'type', None) == 'MESH' and obj.name == 'neck' for v in obj.data.vertices]
-    behind = [v.y for v in behind if abs(v.x) < 1.3 * half_width and abs(v.z - mouth_z) < .025 * k and v.y > mouth_front]
-    room = mouth_depths(mouth_front, min(behind) if behind else None, k)
-    bag = follow_skin(mouth_cavity_geometry((0, mouth_front, mouth_z - .002 * k), width=2 * half_width + .01 * k, height=.04 * k,
-                                            depth=room['cavity_depth'], rings=12, surface=front, inset=.006 * k), head, reach=.03 * k, skip=['jawOpen'])
-    cavity = mesh_from_geometry('mouth_cavity', bag, [dark])
-    for name, targets in bag['morphs'].items(): shape_key(cavity, name, targets)
-    # The bag's lower half swings with the jaw by a smooth weight that never runs ahead of the lower lip's (so no part
-    # of it drops through the chin) and has no kink at the mouth's corners, where the lip's own shape folded a shallow
-    # bag (one with a neck close behind the mouth). It eases in below the mouth line: the bag has no slit.
-    def bag_weight(v):
-        u = min(1.0, max(0.0, (mouth_z + .001 * k - v[2]) / (.012 * k)))
-        c = min(1.0, abs(v[0]) / half_width)
-        return u * u * (3 - 2 * u) * (1 - c * c * (3 - 2 * c))
-    add_jaw_open(cavity, jaw, weight=bag_weight)
+    parts = [head]
+    # Teeth behind the lips and a tongue on the mouth's floor; the lower row and the tongue ride the jaw.
     teeth = '#eeeae0'
-    # The upper gum line sits well above the lips (a real mouth's does), so the smiling corners stay below it.
-    upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, mouth_front + .005 * k, mouth_z + .0045 * k), .8 * half_width,
-                               .011 * k, 8, .008 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
-    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, mouth_front + .008 * k, mouth_z - .0015 * k), .62 * half_width,
-                               .011 * k, 8, .0045 * k, row='lower'), [material('teeth_lower', teeth, roughness=.3)])
+    upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, front + .007 * k, mz + .008 * k), .72 * hw,
+                               .01 * k, 8, .0075 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
+    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, front + .009 * k, mz - .0045 * k), .6 * hw,
+                               .01 * k, 8, .005 * k, row='lower'), [material('teeth_lower', teeth, roughness=.3)])
+    jaw = face['jaw']
     add_jaw_open(lower, jaw, rigid=True)
     tongue_hex = _hex(_mix(linear_color('#b24c55'), (base[0] * .5, base[1] * .2, base[2] * .2), .25))
-    # The tongue lies on the mouth floor, its tip well behind the chin's skin (a short child's chin is close behind the lips).
-    # Its front stays behind the chin's skin and its back in front of the neck (mouth_depths): a short child's chin and
-    # a neck close behind the mouth leave a shorter tongue.
-    tongue_z = mouth_z - .013 * k
-    tongue_front = max(mouth_front + .009 * k, front(0, tongue_z) + .006 * k)
-    tongue_back = room['tongue_y'] + room['tongue_length'] / 2
-    tongue_length = max(.008 * k, min(room['tongue_length'], tongue_back - tongue_front))
-    tongue_y = tongue_front + tongue_length / 2
-    tongue = mesh_from_geometry('tongue', tongue_geometry((0, tongue_y, tongue_z), length=tongue_length, width=1.2 * half_width,
-                                thickness=.0075 * k), [material('tongue', tongue_hex, roughness=.45)])
+    # The tongue lies on the floor of the head's own mouth, behind the lower teeth.
+    t_len = .024 * k
+    tongue = mesh_from_geometry('tongue', tongue_geometry((0, front + .02 * k + t_len / 2, mz - .014 * k), length=t_len,
+                                width=.8 * hw, thickness=.0045 * k), [material('tongue', tongue_hex, roughness=.45)])
     add_jaw_open(tongue, jaw, rigid=True)
+    parts += [upper, lower, tongue]
 
-    eye_mats = [material('eye_white', '#efece4', roughness=.2), material('eye_iris', L['eyes'], roughness=.25),
+    if shape['beard'] == 'beard':
+        shell = beard_shell(face, k)
+        if shell is not None:
+            color = shape['beard_color'] or _hex(_mix(linear_color(hair_hex), (.01, .008, .007), .35))
+            beard = mesh_from_geometry('beard', {'vertices': [tuple(v) for v in shell['vertices']], 'faces': shell['faces']},
+                                       [material('beard', color, roughness=.9)])
+            for name, targets in shell['morphs'].items(): shape_key(beard, name, [tuple(v) for v in targets])
+            parts.append(beard)
+
+    # Eyeballs on the eye bones.
+    eye_mats = [material('eye_white', '#efece4', roughness=.2), material('eye_iris', p['eyes'], roughness=.25),
                 material('eye_pupil', '#0b0908', roughness=.15)]
-    parts, eyeballs = [head, cavity, upper, lower, tongue], []
-    lash = material('lash', '#0b0706', roughness=.85)
+    eyeballs = []
     for side, center in (('L', eye_left), ('R', eye_right)):
-        built = build_eye(rig, side, center, radius, lid_material=skin, hole=holes[side], eye_materials=eye_mats, lash=lash, skin=head,
-                          iris=L['iris'], pupil=L['pupil'], lash_width=8)
-        eyeballs.append(built['eyeball'])
-        parts.append(built['lids'])
-    # Smooth the face (rest and every morph alike, the blinks included): the lid patches' rims, the bridge between the
-    # eyes and the cheeks' smile motion left creases that read as crumpled folds round the sockets, a V between the
-    # brows and a pointed lens round each closed lid. The lid margins, the eye holes, the lips' seam and the nostrils
-    # hold still, and the jaw keeps its motion as made (smoothed, it spread above the upper gum line). Before the brows,
-    # which sit on the smoothed skin.
-    smooth_skin(head, face_smoothing(L, holes, mouth_front), iterations=30, keep=['jawOpen'])
-    # Brows a shade darker than the hair, so they read against the skin at lineup size whatever the two colors.
+        ball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris=38, pupil=17), eye_mats)
+        bind_rigid(ball, rig, f'eye_{side}')
+        eyeballs.append(ball)
+
+    # Brows a shade darker than the hair, laid on the skin above each eye.
     brow_mat = material('brow', _hex(_mix(linear_color(hair_hex), (.01, .008, .007), .75)), roughness=.7)
-    h = L['brow_height']
-    brows = [skin_brow_geometry(head, side, inner=(bx, bz), outer=(ox, oz), height=h, thickness=.0022 * k,
-                                arch=.0015 * k, down=.004 * k, inner_up=.004 * k, outer_up=.004 * k, pinch=.002 * k, hole=holes[side])
-             for side in 'LR']
+    w = abs(marks['eye_outer_L'][0] - marks['eye_inner_L'][0])
+    top = marks['eye_upper_L'][2]
+    inner, outer = (marks['eye_inner_L'][0] + .02 * w, top + .42 * w), (marks['eye_outer_L'][0] + .08 * w, top + .3 * w)
+    h = .11 * w * shape['brow'] ** .5
+    brows = [skin_brow_geometry(head, side, inner=inner, outer=outer, height=h, thickness=.2 * h, arch=.15 * h,
+                                down=.25 * h, inner_up=.3 * h, outer_up=.3 * h, pinch=.12 * h) for side in 'LR']
+    from agent_meshes_author import join_geometry
     bgeo = join_geometry(brows)
     brow = mesh_from_geometry('brows', bgeo, [brow_mat])
     for name, targets in bgeo['morphs'].items(): shape_key(brow, name, targets)
     parts.append(brow)
 
-    face = join_face_parts(parts, 'face', rig=rig, area_normals=True)
-    new = [face] + eyeballs
+    face_obj = join_face_parts(parts, 'face', rig=rig, area_normals=True)
+    new = [face_obj] + eyeballs
     for obj in new:
         # Like the body's skins, export at the scene root (rig_character does the same).
         world = obj.matrix_world.copy(); obj.parent = None; obj.matrix_world = world
-    gaze = recommended_gaze(L['opening'], iris=L['iris'])
-    face_contract(rig, list(objects) + new, yaw_max=gaze['yawMax'], pitch_max=gaze['pitchMax'], skeleton='body')
+    face_contract(rig, list(objects) + new, yaw_max=25, pitch_max=18, skeleton='body')
     return list(objects) + new
-
-
-def beard_weight(point, layout, front_y):
-    """How much beard (0..1) covers a skin point: the jaw, chin, cheeks below the cheekbones and a moustache over the
-    upper lip, only on the front half of the head, leaving the lips themselves bare. `front_y` is the skin's front y at
-    the point's (x, z) (None off the face). Pure."""
-    x, y, z = point
-    k, mouth_z, half_width = layout['scale'], layout['mouth_z'], layout['mouth_half_width']
-    center = layout['center']
-    if front_y is None: return 0.0
-
-    def ramp(e0, e1, v):
-        t = min(1.0, max(0.0, (v - e0) / (e1 - e0)))
-        return t * t * (3 - 2 * t)
-    # Down the face: from under the cheekbones (level with the nose's underside) to under the chin; the cheek line
-    # rises a little toward the ears, where the beard runs up into sideburns.
-    top = layout['nose'][1] - .008 * k + .1 * abs(x) + .5 * max(0.0, abs(x) - .07 * k)
-    vertical = 1 - ramp(top - .01 * k, top + .004 * k, z)
-    # Round the head: the front and sides back to the ears, not the neck behind.
-    around = 1 - ramp(center[1] - .01 * k, center[1] + .025 * k, y)
-    # Bare lips: an ellipse round the mouth, the moustache kept above it.
-    lips = ((x / (1.1 * half_width)) ** 2 + ((z - mouth_z + .0015 * k) / (.0068 * k)) ** 2) ** .5
-    bare = 1 - ramp(.8, 1.15, lips)
-    # Under the nose the moustache stops short of the nostrils.
-    nostril = 1 - ramp(layout['nose'][1] - .006 * k, layout['nose'][1] - .002 * k, z) if abs(x) < 1.4 * layout['nose_size'][0] else 1.0
-    return max(0.0, min(1.0, vertical * around * (1 - bare) * nostril))
-
-
-def _beard_tints(rest, tints, layout, front, color, base):
-    """Stubble (a fine, mottled shade) or a short beard (denser, darker) painted over the skin's tints."""
-    from agent_meshes_face import _value_noise
-    density = .55 if layout['beard'] == 'stubble' else .92
-    tint = tuple(min(1.0, c / b) if b > 0 else 1.0 for c, b in zip(color, base))
-    k = layout['scale']
-    out = []
-    for v, t in zip(rest, tints):
-        w = beard_weight(v, layout, front(v[0], v[2]))
-        if w <= 0: out.append(t); continue
-        # A soft mottle a few vertices across, so the beard reads as hair, not a painted patch. A grain finer than the
-        # skin's vertices aliased into a knitted zigzag.
-        grain = _value_noise(v, .006 * k, 7)
-        a = w * density * (.78 + .22 * grain)
-        out.append(tuple(c + a * (c * m - c) for c, m in zip(t, tint)))
-    return out
-
-
-def _hex(linear):
-    """An sRGB hex string for a linear RGB triple."""
-    def channel(v):
-        v = max(0.0, min(1.0, v))
-        return round(255 * (12.92 * v if v <= .0031308 else 1.055 * v ** (1 / 2.4) - .055))
-    return '#' + ''.join(f'{channel(v):02x}' for v in linear)

@@ -25,11 +25,13 @@ import bpy
 from mathutils import Vector
 
 LIB = Path(__file__).resolve().parent / 'blender_lib'
-# Camera presets: (yaw degrees round Z from the front toward the character's left, pitch degrees up, zoom, framing).
-# The front camera stands on -Y looking +Y at the face. `close` frames the middle of the face (eyes to mouth).
+# Camera presets: (yaw degrees round Z from the front toward the character's left, pitch degrees up, zoom, framing, and
+# optionally the aim's height offset in framing radii). The front camera stands on -Y looking +Y at the face. `close`
+# frames the middle of the face (eyes to mouth); `eyes` and `mouth` frame those closer.
 VIEWS = {
     'front': (0, 0, 1.0, 'head'), 'q34': (35, 5, 1.0, 'head'), 'side': (90, 0, 1.0, 'head'), 'below': (0, -30, 1.0, 'head'),
     'above': (0, 30, 1.0, 'head'), 'close': (0, 0, .55, 'head'), 'back': (180, 0, 1.0, 'head'),
+    'eyes': (0, 0, .4, 'head', -.05), 'mouth': (0, 0, .4, 'head', -.55), 'mouth-q34': (35, -10, .45, 'head', -.55),
     'body-front': (0, 0, 1.0, 'body'), 'body-q34': (35, 5, 1.0, 'body'), 'body-side': (90, 0, 1.0, 'body'), 'body-back': (180, 0, 1.0, 'body'),
 }
 SHADINGS = ('matcap', 'wire', 'cavity', 'zebra', 'color')
@@ -238,8 +240,9 @@ def run_job(job):
         set_pose(meshes, pose.get('shapes', {}))
         bpy.context.view_layer.update()
         for view in views:
-            yaw, pitch, zoom, which = VIEWS[view]
+            yaw, pitch, zoom, which, *shift = VIEWS[view]
             center, radius = frames[which]
+            if shift: center = center + Vector((0, 0, shift[0] * radius))
             place_camera(camera, center, radius, yaw, pitch, zoom)
             for shading in shadings:
                 set_shading(scene, shading, wires)

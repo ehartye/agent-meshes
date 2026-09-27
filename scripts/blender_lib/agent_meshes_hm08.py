@@ -371,6 +371,9 @@ def profile_landmarks(vertices, faces, eye_left, eye_right, pixel=.0003):
         raise ValueError(f'The profile below the nose does not read as lips and chin: {[(round(float(zs[down[k]]), 4), s) for k, s in extremes]}')
     for name, (k, _) in zip(names, extremes):
         out[name] = np.array([0, band[down[k]], zs[down[k]]])
+    # Parted lips show the mouth's inside through the slit: the stomion is on the lips' line, not deep in the mouth.
+    lips = max(out['upper_lip'][1], out['lower_lip'][1])
+    out['stomion'][1] = min(out['stomion'][1], lips + .06 * iod)
     pog = down[extremes[5][0]]
     below = [j for j in range(pog, -1, -1) if ok[j]]
     menton = next((j for j in below if band[j] > band[pog] + .12 * iod), below[-1])
@@ -468,7 +471,7 @@ FEATURES = {
     'chin': (('chin/chin-height', 2.5),),
     'chin_width': (('chin/chin-width', 2.5),),
     'cheeks': (('cheek/{s}-cheek-volume', .8), ('head/head-fat', .4)),
-    'brow': (('eyebrows/eyebrows-trans-forward', .5),),
+    'brow': (('eyebrows/eyebrows-trans', None),),   # forward/backward, not incr/decr
     'smile': (('mouth/mouth-angles', None),),
 }
 
@@ -496,6 +499,9 @@ def feature_weights(shape, head=None):
             for s in 'lr': add(f'eyes/{s}-eye-trans-{"out" if v > 0 else "in"}', min(1.0, abs(v)))
         elif key == 'eye_tilt':
             for s in 'lr': add(f'eyes/{s}-eye-corner1-{"up" if value > 0 else "down"}', min(1.0, abs(value)))
+        elif key == 'brow':
+            v = (value - 1) * .5
+            if v: add(f'eyebrows/eyebrows-trans-{"forward" if v > 0 else "backward"}', min(1.0, abs(v)))
         elif key == 'smile':
             if value > 0: add('mouth/mouth-angles-up', min(1.0, value))
         else:
@@ -532,9 +538,231 @@ def fit_to_envelope(points, marks, center, radii, eye_drop=.036):
     eye_z = (marks['eye_center_L'][2] + marks['eye_center_R'][2]) / 2
     sz = (rz * (1 + eye_drop) * .97) / (marks['crown'][2] - eye_z)
     sx = rx * .92 / max(marks['temple_L'][0], -marks['temple_R'][0])
-    sy = 2 * ry * .9 / (marks['occiput'][1] - marks['nasion'][1])
+    sy = 2 * ry * .86 / (marks['occiput'][1] - marks['nasion'][1])
     scale = np.array([sx, sy, sz])
     target_eye = center[2] - eye_drop * rz
     mid_y = (marks['occiput'][1] + marks['nasion'][1]) / 2
     offset = np.array([center[0], center[1] - sy * mid_y + .08 * ry, target_eye - sz * eye_z])
     return np.asarray(points) * scale + offset, scale, offset
+
+
+# ---------------------------------------------------------------- a living face on the stylized head
+
+# The face units a stylized character's face carries (the arkit-face/1 required set and the optional ones hm08 moves;
+# gaze turns the eye bones, and tongueOut needs a tongue of the head's own).
+FACE_UNITS = ('eyeBlinkLeft', 'eyeBlinkRight', 'eyeSquintLeft', 'eyeSquintRight', 'eyeWideLeft', 'eyeWideRight', 'jawOpen',
+              'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight', 'mouthStretchLeft', 'mouthStretchRight',
+              'mouthFunnel', 'mouthPucker', 'browDownLeft', 'browDownRight', 'browInnerUp', 'browOuterUpLeft', 'browOuterUpRight',
+              'cheekSquintLeft', 'cheekSquintRight', 'cheekPuff', 'noseSneerLeft', 'noseSneerRight')
+LID_CLEARANCE = .0008
+
+
+def _elevation(points, center):
+    """Each point's angle above the forward axis (-Y) seen from an eye center, in the y-z plane (radians)."""
+    d = np.asarray(points) - center
+    return np.arctan2(d[..., 2], -d[..., 1])
+
+
+def _turn(points, center, angles):
+    """Points turned about the x axis through `center` by `angles` (radians; positive raises a point in front)."""
+    d = np.asarray(points) - center
+    c, s = np.cos(angles), np.sin(angles)
+    # Forward is -y: raising a point in front turns it from -y toward +z.
+    y = d[:, 1] * c + d[:, 2] * s
+    z = d[:, 2] * c - d[:, 1] * s
+    return np.stack([d[:, 0], y, z], axis=1) + center
+
+
+def lid_morphs(rest, deltas, center, upper, lower, base_gap, overlap=.06):
+    """Blink, squint and wide for one eye, rebuilt from the face units' patterns to fit the eye's opening.
+
+    `deltas` maps 'blink', 'squint' and 'wide' to per-vertex face-unit deltas (authored on a realistic eye whose
+    opening spans `base_gap` radians); `upper` and `lower` index the lid margin's middle vertices. Each vertex turns
+    about the eye's horizontal axis by its face unit's angle, scaled per lid, keeping its distance from the eye
+    center (no lid dips into the eyeball): blink brings the upper margin down past the lower one (by `overlap` of the
+    opening) and the lower lid up a fifth of it; squint raises the lower margin a third of the opening and drops the
+    upper a sixth; wide lifts the upper lid by the face unit's share of the opening. Returns {name: targets}."""
+    rest = np.asarray(rest)
+    e0 = _elevation(rest, center)
+    gap = e0[upper] - e0[lower]
+    if gap <= 0: raise ValueError('The upper lid margin is not above the lower one')
+    out = {}
+    for name, down, up in (('blink', gap * (.8 + overlap), gap * .2), ('squint', gap * .17, gap * .33), ('wide', None, None)):
+        moved = np.linalg.norm(deltas[name], axis=1) > 1e-7
+        de = np.where(moved, _elevation(rest + deltas[name], center) - e0, 0.0)
+        if name == 'wide':
+            angle = de * min(gap / max(base_gap, 1e-6), 3.0)
+        else:
+            du, dl = de[upper], de[lower]
+            k_up = down / -du if du < -1e-6 else 0.0
+            k_low = up / dl if dl > 1e-6 else 0.0
+            angle = np.where(de < 0, de * k_up, de * k_low)
+        out[name] = _turn(rest, center, angle)
+    return out
+
+
+class RigidJaw:
+    """jawOpen's motion for rigid mouth parts (lower teeth, tongue, the mouth's lower bag): the rigid transform that
+    best fits the chin's face-unit motion. Duck-types `JawHinge` for `add_jaw_open`."""
+
+    def __init__(self, rest, moved):
+        P, Q = np.asarray(rest), np.asarray(moved)
+        cp, cq = P.mean(0), Q.mean(0)
+        U, _, Vt = np.linalg.svd((P - cp).T @ (Q - cq))
+        D = np.diag([1, 1, np.sign(np.linalg.det(Vt.T @ U.T))])
+        self.rotation = Vt.T @ D @ U.T
+        self.translation = cq - self.rotation @ cp
+
+    def move(self, point, weight=1.0, rigid=False):
+        p = np.asarray(point, dtype=np.float64)
+        return tuple(p + weight * (self.rotation @ p + self.translation - p))
+
+    def targets(self, vertices, weight=None, lower_lip=()):
+        if weight is None: weight = 1.0
+        if callable(weight): weights = [float(weight(v)) for v in vertices]
+        elif isinstance(weight, (int, float)): weights = [float(weight)] * len(vertices)
+        else: weights = [float(w) for w in weight]
+        return [self.move(v, w) if w > 0 else tuple(v) for v, w in zip(vertices, weights)]
+
+
+def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z=None, neck=None, races=None, units=FACE_UNITS):
+    """A stylized character's living face on the hm08 head in Blender's frame: the head fitted to the envelope
+    (center, radii (x, y, z)) and cropped at `neck_z`, with its face-unit morphs (lids refitted to the stylized eyes).
+
+    `neck` (the body neck's half width and depth at `neck_z`, centered on the head's axis) grafts the cropped neck onto
+    the body's: the head's lowest rows ease onto that ellipse, just outside it. The cranium is kept inside the
+    envelope (the hair is fitted to it).
+
+    Returns {'vertices', 'faces', 'morphs': {unit: targets}, 'eyes': [(center, radius)] left then right, 'landmarks',
+    'mouth_inside': face mask, 'mouth_box': (low, high) of the mouth's inside, 'lash': vertex ids, 'jaw': RigidJaw,
+    'scale': (3,)}."""
+    head = load_head()
+    mh = head_shape(years, gender, stylize, shape, races, head)
+    V = to_blender(mh)
+    faces = head.kind_faces('body')
+    marks = face_landmarks(V, faces, hm08_eyes(head, V))
+    P, scale, offset = fit_to_envelope(V, marks, center, radii)
+    fit = lambda mh_points: to_blender(mh_points) * scale + offset
+    marks = face_landmarks(P, faces, hm08_eyes(head, P))
+    deltas = {unit: fit(mh + head.dense(f'faceunits/{unit}')) - P for unit in units}
+    # Shape moves (the morphs keep their deltas): the cranium inside the envelope, the neck onto the body's.
+    shift = _cranium_inside(P, marks, center, radii)
+    if neck is not None and neck_z is not None: shift += _neck_graft(P + shift, neck_z, neck, marks)
+    P = P + shift
+    marks = face_landmarks(P, faces, hm08_eyes(head, P))
+
+    # The eyes: centers and sizes from hm08's eyeball helpers, as spheres just inside the lids resting on them.
+    eyes, skin_ids = [], head.kind_vertices('body')
+    for kind in ('helper-l-eye', 'helper-r-eye'):
+        ids = head.kind_vertices(kind)
+        lo, hi = P[ids].min(0), P[ids].max(0)
+        c, r = (lo + hi) / 2, float(np.mean((hi - lo) / 2))
+        d = np.linalg.norm(P[skin_ids] - c, axis=1)
+        near = d < 1.6 * r
+        if near.any(): r = min(r, float(d[near].min()) - LID_CLEARANCE)
+        eyes.append((c, r))
+
+    # Lids refitted to the stylized openings.
+    morphs = {}
+    base_rest = fit(head_shape(years, gender, 0, shape, races, head)) + shift
+    for side, suffix, (c, r) in (('L', 'Left', eyes[0]), ('R', 'Right', eyes[1])):
+        up = int(skin_ids[np.argmin(np.linalg.norm(P[skin_ids] - marks[f'eye_upper_{side}'], axis=1))])
+        low = int(skin_ids[np.argmin(np.linalg.norm(P[skin_ids] - marks[f'eye_lower_{side}'], axis=1))])
+        base_gap = float(_elevation(base_rest[up], c) - _elevation(base_rest[low], c))
+        lid = {'blink': deltas[f'eyeBlink{suffix}'], 'squint': deltas[f'eyeSquint{suffix}'], 'wide': deltas[f'eyeWide{suffix}']}
+        for name, targets in lid_morphs(P, lid, c, up, low, base_gap).items():
+            morphs[f'eye{name.capitalize()}{suffix}'] = targets
+    for unit in units:
+        if unit not in morphs: morphs[unit] = P + deltas[unit]
+
+    # jawOpen: the jaw turns as one piece (the face unit's best rigid fit on the chin), each vertex following it by
+    # the face unit's own share (its motion against the chin's), so the lower lip's inside, the mouth's floor and the
+    # chin swing together instead of the lip stretching into a slab. The upper lip and everything above the mouth
+    # line stay put.
+    mouth_z = marks['stomion'][2]
+    jaw = morphs['jawOpen'] - P
+    move = np.linalg.norm(jaw, axis=1)
+    chin = (move > .7 * move.max()) & (P[:, 2] < mouth_z)
+    rigid = RigidJaw(P[chin], morphs['jawOpen'][chin])
+    share = np.clip(move / np.percentile(move[chin], 50), 0, 1)
+    hold = np.clip((P[:, 2] - (mouth_z - .002 * scale[2])) / (.004 * scale[2]), 0, 1)
+    upper_lip = (P[:, 2] > mouth_z) & (np.abs(P[:, 0]) < abs(marks['mouth_corner_L'][0]) * 1.2)
+    share = np.where(upper_lip, 0.0, share * (1 - hold))
+    share = smooth_deltas(share[:, None], edges_of(faces), iterations=4)[:, 0]
+    share = np.where(upper_lip, 0.0, share)
+    swung = np.array([rigid.move(p) for p in P])
+    morphs['jawOpen'] = P + share[:, None] * (swung - P)
+
+    # Crop at the neck, keeping the mouth's bag (it hangs down inside the neck).
+    if neck_z is not None:
+        cx0 = abs(marks['mouth_corner_L'][0])
+        def kept(f):
+            q = P[[i for i in f if i >= 0]]
+            if q[:, 2].min() >= neck_z: return True
+            return bool(np.all(np.abs(q[:, 0]) < 1.4 * cx0) and np.all(q[:, 1] > marks['stomion'][1]) and q[:, 2].min() > neck_z - .06 * scale[2]
+                        and np.all(np.hypot(q[:, 0], q[:, 1] - center[1]) < .8 * (neck[0] if neck else 1)))
+        faces = faces[np.array([kept(f) for f in faces])]
+    used = np.unique(faces[faces >= 0])
+    remap = -np.ones(len(P), dtype=np.int64); remap[used] = np.arange(len(used))
+    faces = np.where(faces >= 0, remap[np.maximum(faces, 0)], -1)
+    V = P[used]
+    morphs = {k: v[used] for k, v in morphs.items()}
+
+    # The mouth's inside: faces the front cannot see at rest (behind the lips, deeper than the skin in front of them),
+    # and faces the open jaw shows between the lips (inside the opening, well behind the lips' front).
+    iod = marks['eye_center_L'][0] - marks['eye_center_R'][0]
+    cx = abs(marks['mouth_corner_L'][0])
+    corners = [[i for i in f if i >= 0] for f in faces]
+    cen = np.array([V[c].mean(0) for c in corners])
+    region = (np.abs(cen[:, 0]) < 1.6 * cx) & (np.abs(cen[:, 2] - mouth_z) < .8 * iod) & (cen[:, 1] > marks['stomion'][1] + .001 * scale[1])
+    box, pixel = (-1.7 * cx, 1.7 * cx, mouth_z - .9 * iod, mouth_z + .9 * iod), .0005 * scale[0]
+    D = depth_map(V, faces, box, pixel)
+    inside = np.zeros(len(faces), dtype=bool)
+    for k in np.nonzero(region)[0]:
+        i, j = int((cen[k, 0] - box[0]) / pixel), int((cen[k, 2] - box[2]) / pixel)
+        if 0 <= j < D.shape[0] and 0 <= i < D.shape[1] and cen[k, 1] > D[j, i] + .002 * scale[1]: inside[k] = True
+    opened = morphs['jawOpen']
+    lower = np.argmin(np.linalg.norm(V - (np.asarray(marks['stomion']) - [0, 0, .002 * scale[2]]), axis=1))
+    low_z = opened[lower, 2]
+    cen_open = np.array([opened[c].mean(0) for c in corners])
+    across = np.clip(np.abs(cen_open[:, 0]) / cx, 0, 1)
+    floor = low_z + (mouth_z - low_z) * across ** 2
+    gap = region & (np.abs(cen_open[:, 0]) < cx) & (cen_open[:, 2] < mouth_z - .001 * scale[2]) & (cen_open[:, 2] > floor + .001 * scale[2])
+    inside |= gap
+
+    # The lash line: the upper lid's margin rows (the vertices blink moves at least 85% as far as its margin).
+    lash = set()
+    for suffix, (c, r) in (('Left', eyes[0]), ('Right', eyes[1])):
+        m = np.linalg.norm(morphs[f'eyeBlink{suffix}'] - V, axis=1)
+        lash |= set(np.nonzero((m > .85 * m.max()) & (V[:, 1] < c[1]) & (np.linalg.norm(V - c, axis=1) < 1.6 * r))[0].tolist())
+    inner = np.unique(faces[inside][faces[inside] >= 0])
+    box = (V[inner].min(0), V[inner].max(0)) if len(inner) else None
+    return {'vertices': V, 'faces': faces, 'morphs': morphs, 'eyes': eyes, 'landmarks': marks, 'mouth_inside': inside,
+            'mouth_box': box, 'lash': sorted(lash), 'jaw': rigid, 'scale': scale}
+
+
+def _cranium_inside(P, marks, center, radii, fill=.975):
+    """Moves that bring the cranium (above the brows, and behind the face) inside `fill` of the envelope, easing in
+    from the brows up and fading to nothing on the face."""
+    c, r = np.asarray(center, dtype=np.float64), np.asarray(radii, dtype=np.float64)
+    rel = (P - c) / r
+    level = np.linalg.norm(rel, axis=1)
+    brow = marks['nasion'][2] + .3 * (marks['crown'][2] - marks['nasion'][2])
+    up = np.clip((P[:, 2] - brow) / (.15 * (marks['crown'][2] - brow)), 0, 1)
+    # Behind the ears (past the envelope's middle), above the jaw: the face in front may stand out of the envelope.
+    back = np.clip((P[:, 1] - c[1]) / (.3 * r[1]), 0, 1) * (P[:, 2] > marks['stomion'][2])
+    w = np.maximum(up, back)
+    over = np.maximum(level / fill, 1.0)
+    return (c + rel / over[:, None] * r - P) * w[:, None]
+
+
+def _neck_graft(P, neck_z, neck, marks):
+    """Moves that ease the neck's rows (under the jaw down to the crop) onto the body's neck ellipse, 0.5 mm out."""
+    ax, ay = neck
+    top = marks['menton'][2]
+    w = np.clip((top - P[:, 2]) / max(1e-6, top - neck_z), 0, 1) ** 1.5
+    x, y = P[:, 0], P[:, 1]
+    level = np.sqrt((x / ax) ** 2 + (y / ay) ** 2)
+    target = (1 + .0005 / min(ax, ay)) / np.maximum(level, 1e-9)
+    moved = np.stack([x * target, y * target, P[:, 2]], axis=1)
+    return (moved - P) * w[:, None]

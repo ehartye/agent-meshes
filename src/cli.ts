@@ -149,7 +149,7 @@ export async function main(args = process.argv): Promise<void> {
   });
   program.command('preview [input]').description('Workbench previews of a Blender-authored source (build.json or .py) from fixed cameras, in one Blender run: no GLB, no browser')
     .option('--out <directory>', 'Output folder (default: preview/ beside the source)')
-    .option('--views <list>', `Comma-separated views or aliases: ${['head', 'body', 'front', 'q34', 'side', 'below', 'above', 'close', 'back', 'body-front', 'body-q34', 'body-side', 'body-back'].join(', ')}`, 'front,q34,side')
+    .option('--views <list>', `Comma-separated views or aliases: ${['head', 'body', 'front', 'q34', 'side', 'below', 'above', 'close', 'eyes', 'mouth', 'mouth-q34', 'back', 'body-front', 'body-q34', 'body-side', 'body-back'].join(', ')}`, 'front,q34,side')
     .option('--shading <list>', 'Comma-separated: matcap, wire, cavity, zebra, color, or all', 'matcap')
     .option('--shape <weights>', 'Shape-key weights for every pose, e.g. eyeBlinkLeft=1,jawOpen=.5')
     .option('--pose <spec>', 'A named pose name:key=w,key=w (repeatable); each pose renders every view', (value: string, previous: string[] = []) => [...previous, value])

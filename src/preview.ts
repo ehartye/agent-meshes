@@ -11,7 +11,7 @@ import { findBlender } from './refine.ts';
  * shows creases, color shows paint. Named poses set shape-key weights. An optional persistent worker keeps one
  * headless Blender alive and runs each job dropped in its queue folder, skipping Blender's startup.
  */
-export const PREVIEW_VIEWS = Object.freeze(['front', 'q34', 'side', 'below', 'above', 'close', 'back', 'body-front', 'body-q34', 'body-side', 'body-back'] as const);
+export const PREVIEW_VIEWS = Object.freeze(['front', 'q34', 'side', 'below', 'above', 'close', 'eyes', 'mouth', 'mouth-q34', 'back', 'body-front', 'body-q34', 'body-side', 'body-back'] as const);
 export const PREVIEW_SHADINGS = Object.freeze(['matcap', 'wire', 'cavity', 'zebra', 'color'] as const);
 const VIEW_ALIASES: Record<string, string[]> = {
   head: ['front', 'q34', 'side', 'below', 'close'],

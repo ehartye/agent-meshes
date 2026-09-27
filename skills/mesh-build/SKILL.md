@@ -53,8 +53,8 @@ so use it for every look while you shape a model, and keep the full build for fi
 mesh preview asset-src/mara/build.json --views head --shading matcap,wire,cavity   --pose rest --pose blink:eyeBlinkLeft=1,eyeBlinkRight=1 --pose jaw:jawOpen=1 --sheet
 ```
 
-- **Views.** `front`, `q34`, `side`, `below`, `above`, `close` (eyes to mouth) and `back` frame the
-  head, which is the mesh with face shape keys, or `--target <pattern>`. `body-front`, `body-q34`,
+- **Views.** `front`, `q34`, `side`, `below`, `above`, `close` (eyes to mouth), `eyes`, `mouth`, `mouth-q34`
+  and `back` frame the head, which is the mesh with face shape keys, or `--target <pattern>`. `body-front`, `body-q34`,
   `body-side` and `body-back` frame everything. `head` and `body` are aliases for those sets.
 - **Shadings.**
   - `matcap` shows lumps and ripples.
