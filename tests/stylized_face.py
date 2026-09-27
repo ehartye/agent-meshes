@@ -83,17 +83,17 @@ class FaceShape(unittest.TestCase):
         with self.assertRaises(ValueError): character.parameters(dict(CAST['girl'], face_shape={'nose': 1.2}))
         for invalid in [{'snout': 1}, {'nose': 5}, {'nose': 0}, {'nose': True}, {'nose': 'big'}, {'beard': 'goatee'},
                         {'smile': -.1}, {'jaw_width': float('nan')}, {'beard_color': 'brown'}]:
-            with self.assertRaises(ValueError, msg=str(invalid)): face.face_shape(dict(values, face_shape=invalid))
+            with self.assertRaises(ValueError, msg=str(invalid)): face.face_shape_values(dict(values, face_shape=invalid))
 
     def test_every_shape_has_a_default_and_adult_men_default_to_a_heavier_brow(self):
         for name, values in CAST.items():
-            shape = face.face_shape(dict(values, face='arkit'))
+            shape = face.face_shape_values(dict(values, face='arkit'))
             self.assertEqual(set(shape), set(face.SHAPE_RANGES) | {'beard', 'beard_color'}, name)
             self.assertEqual(shape['beard'], 'none', name)
-        man, woman = face.face_shape(dict(CAST['adult-male'], face='arkit')), face.face_shape(dict(CAST['adult-female'], face='arkit'))
+        man, woman = face.face_shape_values(dict(CAST['adult-male'], face='arkit')), face.face_shape_values(dict(CAST['adult-female'], face='arkit'))
         self.assertGreater(man['brow'], woman['brow'])
         self.assertGreater(man['jaw_width'], woman['jaw_width'])
-        explicit = face.face_shape(dict(CAST['adult-male'], face='arkit', face_shape={'brow': .8}))
+        explicit = face.face_shape_values(dict(CAST['adult-male'], face='arkit', face_shape={'brow': .8}))
         self.assertEqual(explicit['brow'], .8)
 
     def test_adults_have_a_longer_lower_face_and_smaller_eyes_than_children(self):
@@ -194,6 +194,20 @@ class FaceLayout(unittest.TestCase):
                 self.assertGreater(sdf(point), 0, name)
             # Each eye's center is inside the field: the eye hole opens the skin in front of it.
             self.assertLess(sdf(layout['eye_left']), 0, name)
+
+    def test_the_face_module_shadows_no_name_of_the_recipes_it_is_embedded_after(self):
+        import ast
+        recipe = Path(__file__).resolve().parents[1] / 'recipes'
+
+        def top_level(module):
+            names = set()
+            for node in ast.parse((recipe / module).read_text()).body:
+                if isinstance(node, (ast.FunctionDef, ast.ClassDef)): names.add(node.name)
+                elif isinstance(node, ast.Assign):
+                    names |= {n.id for target in node.targets for n in ast.walk(target) if isinstance(n, ast.Name)}
+            return names
+        shared = top_level('stylized_face.py') & (top_level('stylized_character.py') | top_level('stylized_walk.py'))
+        self.assertEqual(shared, set())
 
     def test_the_embedded_recipe_needs_no_sibling_module(self):
         from unittest.mock import patch

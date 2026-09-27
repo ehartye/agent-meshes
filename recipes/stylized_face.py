@@ -7,8 +7,8 @@ walk (`stylized_walk.rig_character`) builds the body skeleton whose `head` bone 
 paint, with the 21 required ARKit morphs, all bound to `head`. The face rides the head in every clip; the morphs are
 glTF morph targets on the skinned face mesh, so they survive skinning and play over the walk and jog.
 
-`face_shape(values)`, `face_layout(values)`, `head_field(layout)` and `beard_weight` are pure (standard library plus
-the pure face helpers). The layout is drawn on a canonical head and mapped onto the character's head envelope, with
+`face_shape_values(values)`, `face_layout(values)`, `head_field(layout)` and `beard_weight` are pure (standard library
+plus the pure face helpers). The layout is drawn on a canonical head and mapped onto the character's head envelope, with
 proportions set by age (children's eyes are larger and their lower face short; adults' lower face and chin longer) and
 the character's `face_shape`: eye size and spacing, nose, mouth width, lips, jaw width, chin, cheeks, brow weight, the
 resting smile and a painted beard or stubble, so each character wears its own face.
@@ -62,7 +62,7 @@ def _character():
     return vars(stylized_character)
 
 
-def face_shape(values=None):
+def face_shape_values(values=None):
     """The living face's shape values for a character: its `face_shape` over the defaults for its age and presentation.
 
     Every SHAPE_RANGES key is a number in its range (1 is the age's own proportion; `smile` 0
@@ -95,7 +95,7 @@ def face_layout(values=None):
     recipe = _character()
     p = recipe['parameters']({} if values is None else values)
     d = recipe['landmarks'](p)
-    base, shape = PROPORTIONS[p['age']], face_shape(p)
+    base, shape = PROPORTIONS[p['age']], face_shape_values(p)
     axes = (d['rx'] / CANONICAL_HALF_WIDTH, d['rz'] / CANONICAL_HALF_DEPTH, d['ry'] / CANONICAL_HALF_HEIGHT)
     k = axes[2]
     center = (0.0, 0.0, d['head_y'])
