@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { alignCurves, analyzeGait, kneeInterior, loadGait, pearson, resolveGaitBones, symmetrizeCurves } from '../src/gait-analysis.ts';
+import { alignCurves, analyzeGait, evaluateGait, kneeInterior, loadGait, pearson, resolveGaitBones, symmetrizeCurves } from '../src/gait-analysis.ts';
 import { walkerGLB } from './helpers/gait-glb.ts';
 
 const run = promisify(execFile);
@@ -121,6 +121,31 @@ describe('analyzeGait on a synthetic walker', () => {
   }, 30000);
 });
 
+describe('evaluateGait', () => {
+  it('checks every natural-gait threshold, per gait', async () => {
+    const reference = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' });
+    const report = analyzeGait(await loadGait(await walkerGLB({ bob: 0.022 })), { clip: 'walk', references: [reference] });
+    const walk = evaluateGait(report, 'walk');
+    expect(walk.checks.map(c => c.id)).toEqual(['groundError', 'stanceSpeed', 'skate', 'seam', 'contactPop', 'kneeHyperextension', 'kneePop', 'flight',
+      'armCounterswing', 'headBob', 'headBobCount', 'headPitchRatio', 'torsoLean', 'spineFlex', 'counterRotation', 'pelvisDrop', 'curveCorrelation']);
+    expect(walk.checks.filter(c => !c.pass)).toEqual([]);
+    expect(walk.ok).toBe(true);
+    const jog = evaluateGait(report, 'jog');
+    expect(jog.ok).toBe(false);
+    expect(jog.checks.filter(c => !c.pass).map(c => c.id)).toEqual(expect.arrayContaining(['flight', 'headBob', 'torsoLean']));
+  }, 30000);
+
+  it('fails arms that swing with the legs, a hiked pelvis and a curve that does not match its reference', async () => {
+    const reference = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' });
+    const report = analyzeGait(await loadGait(await walkerGLB({ arm: -20, roll: -5 })), { clip: 'walk', references: [reference] });
+    const failed = evaluateGait(report, 'walk').checks.filter(c => !c.pass).map(c => c.id);
+    expect(failed).toEqual(expect.arrayContaining(['armCounterswing', 'pelvisDrop', 'curveCorrelation']));
+    // Without references the correlation check is absent, not passed.
+    const bare = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' });
+    expect(evaluateGait(bare, 'walk').checks.map(c => c.id)).not.toContain('curveCorrelation');
+  }, 30000);
+});
+
 describe('gait CLI', () => {
   it('samples a clip to curves JSON with source provenance and scores it against references', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'mesh-gait-cli-')); directories.push(directory);
@@ -134,6 +159,9 @@ describe('gait CLI', () => {
     const scored = JSON.parse((await cli('gait', glb, '--clip', 'walk', '--reference', curves)).stdout);
     expect(scored.comparisons[0]).toMatchObject({ reference: 'walker-curves.json', clip: 'walk', shift: 0 });
     expect(scored.comparisons[0].minR).toBeGreaterThan(0.999);
+    const checked = await cli('gait', glb, '--clip', 'walk', '--reference', curves, '--gait', 'walk');
+    expect(JSON.parse(checked.stdout)).toMatchObject({ evaluation: { gait: 'walk', ok: true } });
+    await expect(cli('gait', glb, '--clip', 'walk', '--gait', 'jog')).rejects.toMatchObject({ code: 1 });
     await expect(cli('gait', glb, '--clip', 'nope')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('No clip named nope') });
   }, 90000);
 });

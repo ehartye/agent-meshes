@@ -528,3 +528,54 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
   });
   return report;
 }
+
+export type GaitKind = 'walk' | 'jog';
+export interface GaitCheck { id: string; label: string; value: unknown; limit: string; pass: boolean }
+export interface GaitEvaluation { gait: GaitKind; ok: boolean; checks: GaitCheck[] }
+/** Natural human locomotion ranges; bob is scaled to a 1.75 m body, angles are degrees. */
+export const NATURAL_GAIT = {
+  groundError: 0.005, stanceSpeedTolerance: 0.1, seam: 0.002, contactPopRatio: 0.5, kneeMaxInteriorDeg: 180, kneePopDeg: 25,
+  armCounterswing: -0.5, headPitchRatio: [0.3, 0.7], pelvisDropDeg: [3, 7], minCurveR: 0.8,
+  walk: { headBob: [0.025, 0.06], torsoLeanDeg: [3, 8], spineJointDeg: 2, counterRotationDeg: 8 },
+  jog: { headBob: [0.05, 0.10], torsoLeanDeg: [8, 15], spineJointDeg: 4, counterRotationDeg: 12 },
+} as const;
+
+/**
+ * Score a gait report against natural-gait ranges. `curveScore` picks raw or symmetric reference
+ * scores; every scored curve must reach `minCurveR` against every reference in the report.
+ */
+export function evaluateGait(report: GaitReport, gait: GaitKind, options: { curveScore?: 'raw' | 'symmetric' } = {}): GaitEvaluation {
+  const m = report.metrics, n = NATURAL_GAIT, g = n[gait];
+  const within = (v: number, [lo, hi]: readonly [number, number]) => Number.isFinite(v) && v >= lo && v <= hi;
+  const round = (v: number, digits = 4) => Math.round(v * 10 ** digits) / 10 ** digits;
+  const checks: GaitCheck[] = [];
+  const check = (id: string, label: string, value: unknown, limit: string, pass: boolean) => checks.push({ id, label, value, limit, pass });
+  check('groundError', 'stance ground error (m)', m.groundError === null ? null : round(m.groundError, 5), `< ${n.groundError}`, m.groundError !== null && m.groundError < n.groundError);
+  const t = n.stanceSpeedTolerance;
+  check('stanceSpeed', 'planted foot backward speed / travel speed', { min: round(m.stanceSpeedRatio.min), max: round(m.stanceSpeedRatio.max) }, `${1 - t}..${1 + t}`,
+    m.stanceSpeedRatio.min >= 1 - t && m.stanceSpeedRatio.max <= 1 + t);
+  check('skate', 'planted foot world speed / travel speed', round(m.skate), `<= ${t}`, m.skate <= t);
+  check('seam', 'loop seam (m)', round(m.seam, 6), `< ${n.seam}`, m.seam < n.seam);
+  check('contactPop', 'foot velocity jump at contact / travel speed', round(m.contactVelocityJumpRatio), `< ${n.contactPopRatio}`, m.contactVelocityJumpRatio < n.contactPopRatio);
+  check('kneeHyperextension', 'largest knee interior angle (deg)', round(m.kneeMaxInteriorDeg, 2), `<= ${n.kneeMaxInteriorDeg}`, m.kneeMaxInteriorDeg <= n.kneeMaxInteriorDeg);
+  check('kneePop', 'largest knee change per frame (deg)', round(m.kneePopDeg, 2), `<= ${n.kneePopDeg} at ${Math.round(report.fps)} fps`, m.kneePopDeg <= n.kneePopDeg);
+  check('flight', 'fraction of the cycle with both feet off the ground', round(m.flightFraction), gait === 'jog' ? '> 0' : '= 0', gait === 'jog' ? m.flightFraction > 0 : m.flightFraction === 0);
+  check('armCounterswing', 'arm swing vs same-side leg swing correlation', round(m.armCounterswing), `<= ${n.armCounterswing}`, m.armCounterswing <= n.armCounterswing);
+  check('headBob', 'head vertical travel scaled to 1.75 m (m)', round(m.headBob), `${g.headBob[0]}..${g.headBob[1]}`, within(m.headBob, g.headBob));
+  check('headBobCount', 'head bobs per cycle', m.headBobPeaks, '= 2', m.headBobPeaks === 2);
+  check('headPitchRatio', 'head pitch range / chest pitch range', round(m.headPitchRatio), `${n.headPitchRatio[0]}..${n.headPitchRatio[1]}`, within(m.headPitchRatio, n.headPitchRatio));
+  check('torsoLean', 'mean forward trunk lean (deg)', round(m.torsoLeanDeg, 2), `${g.torsoLeanDeg[0]}..${g.torsoLeanDeg[1]}`, within(m.torsoLeanDeg, g.torsoLeanDeg));
+  const flexing = Object.values(m.spineJointRangeDeg).filter(v => v >= g.spineJointDeg).length;
+  check('spineFlex', 'spine joint ranges (deg)', Object.fromEntries(Object.entries(m.spineJointRangeDeg).map(([k, v]) => [k, round(v, 2)])), `>= 2 joints >= ${g.spineJointDeg}`, flexing >= 2);
+  check('counterRotation', 'shoulder vs pelvis yaw range (deg) and correlation', { range: round(m.counterRotationDeg, 2), correlation: round(m.counterRotationCorrelation) },
+    `>= ${g.counterRotationDeg}, correlation < 0`, m.counterRotationDeg >= g.counterRotationDeg && m.counterRotationCorrelation < 0);
+  const drops = [m.pelvisDropBySideDeg.left, m.pelvisDropBySideDeg.right];
+  check('pelvisDrop', 'swing-side pelvis drop per side (deg)', { left: round(drops[0], 2), right: round(drops[1], 2) }, `${n.pelvisDropDeg[0]}..${n.pelvisDropDeg[1]}`, drops.every(v => within(v, n.pelvisDropDeg)));
+  if (report.comparisons?.length) {
+    const scores = report.comparisons.map(c => ({ reference: c.reference, ...(options.curveScore === 'symmetric' ? c.symmetric : c) }));
+    check('curveCorrelation', `${options.curveScore ?? 'raw'} curve correlation per reference`,
+      Object.fromEntries(scores.map(s => [s.reference, Object.fromEntries(Object.entries(s.r).map(([k, v]) => [k, round(v, 3)]))])),
+      `every curve >= ${n.minCurveR}`, scores.every(s => Object.values(s.r).every(v => v >= n.minCurveR)));
+  }
+  return { gait, ok: checks.every(c => c.pass), checks };
+}
