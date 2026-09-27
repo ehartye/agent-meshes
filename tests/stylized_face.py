@@ -173,6 +173,33 @@ class MouthInside(unittest.TestCase):
             self.assertGreater(room['cavity_depth'], .02 * k)
 
 
+class FaceSmoothing(unittest.TestCase):
+    def test_smoothing_holds_the_lids_lips_and_nostrils_and_works_the_face_between(self):
+        L = face.face_layout(dict(CAST['girl'], face='arkit'))
+        r, k = L['eye_radius'], L['scale']
+        ex, ez = L['eye_x'], L['eye_z']
+        # Two lid rows: the margin, which a blink carries furthest, and a row by the anchor that barely moves.
+        margin = (ex, L['eye_left'][1] - 1.2 * r, ez + .3 * r)
+        anchor = (ex, L['eye_left'][1] - 1.1 * r, ez + .9 * r)
+        motion = [(margin, {'blink': (margin[0], margin[1], ez - .5 * r)}), (anchor, {'blink': (anchor[0], anchor[1], anchor[2] - .05 * r)})]
+        hole = lambda c, m: {'lids': {'center': c, 'upper_radius': 1.1 * r, 'thickness': .1 * r, 'eye_radius': r}, 'motion': m}
+        holes = {'L': hole(L['eye_left'], motion), 'R': hole(L['eye_right'], [])}
+        field = face.head_field(L)
+        front = lambda x, z: face._front(field, x, z, L['radii'][1])
+        mouth_front = front(0, L['mouth_z'])
+        weight = face.face_smoothing(L, holes, mouth_front)
+        at = lambda x, z: weight((x, front(x, z), z))
+        self.assertEqual(weight((-ex, L['eye_right'][1] - 1.1 * r, ez)), 0.0)    # on the lid
+        self.assertEqual(weight(margin), 0.0)                                      # a lid margin rolls and holds
+        self.assertEqual(weight(anchor), 1.0)                                      # the closed lid's rim is smoothed
+        self.assertEqual(at(0, L['mouth_z']), 0.0)                                 # the lips' seam
+        self.assertEqual(at(0, L['nose'][1]), 0.0)                                 # the nose
+        self.assertEqual(weight((0, L['center'][1] + .01, L['center'][2])), 0.0)   # the back of the head
+        self.assertGreater(at(0, ez), .9)                                          # the bridge between the eyes
+        self.assertGreater(at(ex, ez + 2.2 * r), .9)                               # the brow above the lid
+        self.assertGreater(at(1.6 * ex, (ez + L['mouth_z']) / 2), .9)              # the cheek
+
+
 class NeckRidesTheHead(unittest.TestCase):
     def test_the_neck_inside_the_head_rides_the_head_and_its_base_the_spine(self):
         # The walk leans the spine under an upright head: a neck riding the spine alone swings its top forward into

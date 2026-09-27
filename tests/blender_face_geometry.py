@@ -21,7 +21,7 @@ from agent_meshes_face import (
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
     face_contract_extras, lid_clearance, lid_geometry, merge_glb_node_extras, mirror_x, mouth_cavity_geometry,
     recommended_gaze, shutter_geometry, socket_geometry, soft_offset, symmetric_offsets, teeth_row_geometry,
-    tongue_geometry, validate_face_contract_extras,
+    tongue_geometry, validate_face_contract_extras, smooth_surface,
 )
 
 CENTER, RADIUS = (.032, -.07, .05), .012
@@ -2316,6 +2316,53 @@ class SdfBlankTests(unittest.TestCase):
     def test_rejects_a_field_the_center_is_not_inside(self):
         from agent_meshes_face import sdf_blank
         with self.assertRaisesRegex(ValueError, 'inside'): sdf_blank(self.field, (0, 0, .5))
+
+def grid(n=12, size=.06):
+    """A square grid of quads in the x-z plane at y = 0 (the face's front), n cells a side."""
+    step = size / n
+    vertices = [(i * step - size / 2, 0.0, j * step - size / 2) for j in range(n + 1) for i in range(n + 1)]
+    faces = [(j * (n + 1) + i, j * (n + 1) + i + 1, (j + 1) * (n + 1) + i + 1, (j + 1) * (n + 1) + i) for j in range(n) for i in range(n)]
+    return vertices, faces
+
+
+class SmoothSurface(unittest.TestCase):
+    def test_smoothing_flattens_a_crease_and_keeps_unweighted_vertices_still(self):
+        vertices, faces = grid()
+        # A sharp ridge along one row (a crease like the lid patch's rim), the grid's border held still.
+        creased = [(x, -.003 if abs(z) < 1e-9 else 0.0, z) for x, _, z in vertices]
+        border = lambda v: abs(abs(v[0]) - .03) < 1e-9 or abs(abs(v[2]) - .03) < 1e-9
+        weights = [0.0 if border(v) else 1.0 for v in creased]
+        smooth = smooth_surface(creased, faces, weights, iterations=20)
+        # The crease's sharpness (how far the ridge row stands from the rows either side) falls to a fraction.
+        n, step = 12, .005
+        def sharpness(points, i): return abs(points[i][1] - (points[i - n - 1][1] + points[i + n + 1][1]) / 2)
+        ridge = [i for i, v in enumerate(creased) if abs(v[2]) < 1e-9 and abs(v[0]) < .02]
+        self.assertLess(max(sharpness(smooth, i) for i in ridge), .25 * min(sharpness(creased, i) for i in ridge))
+        for i, v in enumerate(creased):
+            if weights[i] == 0: self.assertEqual(smooth[i], v)
+
+    def test_smoothing_is_linear_so_morphs_smoothed_alike_still_blend(self):
+        vertices, faces = grid(8)
+        bumpy = [(x, .002 * math.sin(40 * x) * math.cos(50 * z), z) for x, _, z in vertices]
+        moved = [(x + .001, y + .004 * math.exp(-(x * x + z * z) / .0002), z) for x, y, z in bumpy]
+        weights = [.5 + .5 * math.cos(20 * v[0]) for v in bumpy]
+        a, b = smooth_surface(bumpy, faces, weights), smooth_surface(moved, faces, weights)
+        half = smooth_surface([tuple((p + q) / 2 for p, q in zip(u, v)) for u, v in zip(bumpy, moved)], faces, weights)
+        for u, v, h in zip(a, b, half):
+            for k in range(3): self.assertAlmostEqual(h[k], (u[k] + v[k]) / 2, places=12)
+
+    def test_smoothing_keeps_a_rounded_surface_from_shrinking(self):
+        sphere = ellipsoid_geometry((0, 0, 0), (.02, .02, .02), rings=16, segments=24)
+        smooth = smooth_surface(sphere['vertices'], sphere['faces'], [1.0] * len(sphere['vertices']), iterations=10)
+        radii = [math.dist(v, (0, 0, 0)) for v in smooth]
+        self.assertGreater(min(radii), .0195)
+        self.assertLess(max(radii), .0205)
+
+    def test_smoothing_rejects_bad_weights(self):
+        vertices, faces = grid(2)
+        for bad in ([1.0], [2.0] * len(vertices), [-.1] * len(vertices)):
+            with self.assertRaises(ValueError): smooth_surface(vertices, faces, bad)
+
 
 if __name__ == '__main__':
     unittest.main()

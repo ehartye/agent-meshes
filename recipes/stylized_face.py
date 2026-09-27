@@ -24,11 +24,11 @@ CANONICAL_CENTER = (0.0, 0.0, .13)
 # eyes set wide, a small nose, the mouth well below the eyes (1.3-1.9 times the eyes' half spacing) and a soft, narrowing
 # jaw. Children's eyes are larger and their lower face short and round; adults' lower face is longer, the chin lower.
 PROPORTIONS = {
-    'child': dict(eye=(.043, .124), eye_radius=.0212, eye_depth=1.05, iris=40, pupil=17, opening=(46, 34, 30), mouth_z=.070,
+    'child': dict(eye=(.043, .124), eye_radius=.0212, eye_depth=1.2, iris=40, pupil=17, opening=(46, 34, 30), mouth_z=.070,
                   mouth_half_width=.019, nose=(0, .092), nose_size=(.0068, .0062, .0060), lip_fullness=.0019,
                   cheek=((.05, -.046, .094), (.024, .022, .02)), face=((0, -.012, .099), (.086, .075, .060)),
                   jaw=.12, chin=1.0, lower=.6, brow_inner=(.013, .152), brow_outer=(.061, .153), brow_height=.0068, bridge=.0015),
-    'adult': dict(eye=(.043, .126), eye_radius=.0185, eye_depth=1.05, iris=38, pupil=16, opening=(45, 31, 27), mouth_z=.064,
+    'adult': dict(eye=(.043, .126), eye_radius=.0185, eye_depth=1.2, iris=38, pupil=16, opening=(45, 31, 27), mouth_z=.064,
                   mouth_half_width=.0205, nose=(0, .089), nose_size=(.0070, .0080, .0072), lip_fullness=.0019,
                   cheek=((.049, -.044, .093), (.02, .019, .019)), face=((0, -.014, .093), (.083, .074, .066)),
                   jaw=.2, chin=1.12, lower=.6, brow_inner=(.012, .151), brow_outer=(.061, .153), brow_height=.0068, bridge=.003),
@@ -207,6 +207,44 @@ def _front(sdf, x, z, depth):
     return high
 
 
+def face_smoothing(layout, holes, mouth_front):
+    """The face's smoothing weight (0..1) at a rest point: 1 over the front of the face, 0 on each eye's lids and hole
+    (within its upper lid's outer radius and a little more), on the lips' seam and on the nostrils, and 0 behind the
+    face. Pure given the holes' `lids` (their eye center, `upper_radius` and `thickness`)."""
+    k, mouth_z, half_width = layout['scale'], layout['mouth_z'], layout['mouth_half_width']
+    nose, nose_size = layout['nose'], layout['nose_size']
+    eyes = [(hole['lids']['center'], hole['lids']['upper_radius'] + hole['lids']['thickness'], hole['lids']['eye_radius'])
+            for hole in (holes['L'], holes['R'])]
+    # A continuous eye's lid rows by rest position, with how far a blink carries each (the margin furthest).
+    cell = 1e-6
+    travel = {}
+    for hole in (holes['L'], holes['R']):
+        moves = [(rest, max(math.dist(rest, target) for target in moved.values())) for rest, moved in hole.get('motion', ())]
+        most = max((t for _, t in moves), default=0.0)
+        for rest, t in moves: travel[tuple(round(c / cell) for c in rest)] = t / most if most > 0 else 0.0
+
+    def ramp(e0, e1, v):
+        t = min(1.0, max(0.0, (v - e0) / (e1 - e0)))
+        return t * t * (3 - 2 * t)
+
+    def weight(v):
+        if v[1] > layout['center'][1]: return 0.0
+        w = 1.0
+        moving = travel.get(tuple(round(c / cell) for c in v))
+        if moving is not None:
+            # The lid rows near the margin roll over the eye and hold; the rows toward the anchor, which barely move and
+            # made the closed lid's rim, are smoothed.
+            w *= 1 - ramp(.25, .6, moving)
+        else:
+            for center, lid, r in eyes: w *= ramp(lid - .05 * r, lid + .3 * r, math.dist(v, center))
+        # The mouth, lips and chin in front of the teeth and tongue, which sit a few millimetres behind the skin there.
+        if v[1] < mouth_front + .03 * k:
+            w *= ramp(1.0, 1.7, math.hypot(v[0] / (1.5 * half_width), (v[2] - mouth_z + .004 * k) / (.022 * k)))
+        w *= ramp(.9, 1.5, math.hypot(v[0], v[2] - nose[1]) / (1.6 * max(nose_size)))
+        return w
+    return weight
+
+
 def neck_head_share(z, d):
     """How much of a neck vertex at height `z` rides the head bone rather than the spine (0 at the shoulders, 1 from
     below the chin up), for the character's landmarks `d`. The walk leans the spine under an upright head, and a neck
@@ -241,7 +279,7 @@ def add_face(objects, values=None):
         JawHinge, add_eye_bones, add_jaw_open, build_eye, eye_hole_mask, eye_holes, face_contract, follow_skin, front_surface,
         join_face_parts, linear_color, material, mesh_from_geometry, mouth_cavity_geometry, nose_geometry,
         paint_vertices, recommended_gaze, sculpt_lips, sdf_blank, shape_key, skin_brow_geometry, skin_tints,
-        slit_mouth, soft_offset, symmetric_offsets, teeth_row_geometry, tongue_geometry, use_vertex_colors,
+        slit_mouth, smooth_skin, soft_offset, symmetric_offsets, teeth_row_geometry, tongue_geometry, use_vertex_colors,
         join_geometry,
     )
     p = _character()['parameters']({} if values is None else values)
@@ -274,7 +312,7 @@ def add_face(objects, values=None):
                        wide=(12, 4))
     holes = eye_holes(blank['vertices'], blank['faces'], eye_left, radius, max_edge=.25 * radius,
                       socket=0, crease=0,
-                      blend=1.2 * radius, lash_width=8, **eye_options)
+                      blend=.5 * radius, lash_width=8, **eye_options)
     lips = sculpt_lips(holes['vertices'], holes['faces'], mouth_z, half_width, fullness=L['lip_fullness'],
                        height=.5 * half_width)
     nose = nose_geometry(lips['vertices'], lips['faces'], L['nose'], L['nose_size'])
@@ -313,7 +351,9 @@ def add_face(objects, values=None):
     for side, sx in (('Left', 1), ('Right', -1)):
         corner_side = (sx * corner[0], corner[1], corner[2])
         cheek_side = (sx * cheek[0], cheek[1], cheek[2])
-        up = soft_offset(rest, corner_side, .032 * k, (sx * .005 * k, .0015 * k, .0085 * k), mask=still)
+        # The lower lip's middle stays over the lower teeth; only toward the corners does it rise with them.
+        up = soft_offset(rest, corner_side, .032 * k, (sx * .005 * k, .0015 * k, .0085 * k),
+                         mask=[still(v) * (1.0 if u else min(1.0, (v[0] / half_width) ** 2)) for v, u in zip(rest, upper_lip)])
         lift = soft_offset(rest, cheek_side, (.032 * k, .026 * k, .03 * k), (sx * .0012 * k, -.0022 * k, .0058 * k), mask=still)
         grin = soft_offset(rest, (sx * .45 * half_width, mouth_front, mouth_z + .002 * k), (1.05 * half_width, .014 * k, .007 * k),
                            (0, -.0004 * k, .0026 * k), mask=upper_lip)
@@ -384,8 +424,13 @@ def add_face(objects, values=None):
     add_jaw_open(lower, jaw, rigid=True)
     tongue_hex = _hex(_mix(linear_color('#b24c55'), (base[0] * .5, base[1] * .2, base[2] * .2), .25))
     # The tongue lies on the mouth floor, its tip well behind the chin's skin (a short child's chin is close behind the lips).
-    tongue_z, tongue_length = mouth_z - .013 * k, room['tongue_length']
-    tongue_y = min(room['tongue_y'], max(mouth_front + .024 * k, front(0, tongue_z) + .006 * k + tongue_length / 2))
+    # Its front stays behind the chin's skin and its back in front of the neck (mouth_depths): a short child's chin and
+    # a neck close behind the mouth leave a shorter tongue.
+    tongue_z = mouth_z - .013 * k
+    tongue_front = max(mouth_front + .009 * k, front(0, tongue_z) + .006 * k)
+    tongue_back = room['tongue_y'] + room['tongue_length'] / 2
+    tongue_length = max(.008 * k, min(room['tongue_length'], tongue_back - tongue_front))
+    tongue_y = tongue_front + tongue_length / 2
     tongue = mesh_from_geometry('tongue', tongue_geometry((0, tongue_y, tongue_z), length=tongue_length, width=1.2 * half_width,
                                 thickness=.0075 * k), [material('tongue', tongue_hex, roughness=.45)])
     add_jaw_open(tongue, jaw, rigid=True)
@@ -399,6 +444,11 @@ def add_face(objects, values=None):
                           iris=L['iris'], pupil=L['pupil'], lash_width=8)
         eyeballs.append(built['eyeball'])
         parts.append(built['lids'])
+    # Smooth the face (rest and every morph alike, the blinks included): the lid patches' rims, the bridge between the
+    # eyes and the cheeks' smile motion left creases that read as crumpled folds round the sockets, a V between the
+    # brows and a pointed lens round each closed lid. The lid margins, the eye holes, the lips' seam and the nostrils
+    # hold still. Before the brows, which sit on the smoothed skin.
+    smooth_skin(head, face_smoothing(L, holes, mouth_front), iterations=30)
     # Brows a shade darker than the hair, so they read against the skin at lineup size whatever the two colors.
     brow_mat = material('brow', _hex(_mix(linear_color(hair_hex), (.01, .008, .007), .75)), roughness=.7)
     h = L['brow_height']

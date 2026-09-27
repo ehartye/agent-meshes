@@ -674,7 +674,14 @@ push the skin near `center` by `offset`, fading smoothly to zero at `radius` (on
 distance, or an (x, y, z) triple for an ellipsoid). `symmetric_offsets(...)`
 returns the (Left, Right) pair, mirrored across x = 0; `mirror_x(point)` mirrors
 one point. Brows, cheeks and mouth shapes are usually one or two of these per
-side. `ellipsoid_geometry(center, radii)` is a closed head blank, and
+side. `smooth_surface(vertices, faces, weights, iterations=6)` smooths a surface
+(Taubin: each iteration shrinks toward the neighbours' mean and inflates back, so
+round forms keep their size); a vertex's weight (0..1) scales its motion and 0
+holds it still. It is linear in the positions, so `smooth_skin(obj, weights,
+iterations)` smooths a skin's rest shape and every shape key alike and the morphs
+still blend: run it after the shape keys, before `join_face_parts`, with weights 0
+on the lid margins, the eye holes and the mouth's seam, to soften the creases a
+construction leaves (a lid patch's rim, the bridge between two eye holes). `ellipsoid_geometry(center, radii)` is a closed head blank, and
 `cut_faces(vertices, faces, remove)` drops the faces whose centroid
 `remove(centroid)` accepts (a hair cap's front, a chin plate) and reindexes the
 rest. **It returns a 3-tuple** `(vertices, faces, mapping)`, where `mapping[old]`

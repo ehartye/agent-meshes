@@ -19,7 +19,7 @@ __all__ = [
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
     'eye_window', 'lash_faces', 'lash_geometry', 'eye_hole', 'eye_holes', 'continuous_lid_edges', 'CONTINUOUS_OPTIONS', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry', 'dome_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
-    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'follow_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
+    'symmetric_offsets', 'smooth_surface', 'smooth_skin', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'follow_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'add_eye_bones', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
@@ -2858,6 +2858,39 @@ def soft_offset(vertices, center, radius, offset, mask=None):
     return result
 
 
+def smooth_surface(vertices, faces, weights, iterations=6, shrink=.5, inflate=-.53):
+    """The surface smoothed (Taubin: a shrinking pass then an inflating one per iteration, so round surfaces keep their size).
+
+    Each vertex moves toward the mean of its edge neighbours by `shrink` times its weight, then away by `inflate`
+    times it; a weight of 0 holds a vertex still (a lid margin, a mouth seam, the skin round an eye hole). The
+    operator is linear in the positions, so a skin's rest shape and each morph target smoothed alike still blend
+    as before: smooth a skin's shape keys with it too (`smooth_skin`). Softens creases and ridges a construction
+    left in a skin (a lid patch's rim, the bridge between two eye holes) without moving what the weights hold.
+    """
+    vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    weights = list(weights)
+    if len(weights) != len(vertices): raise ValueError('Smoothing needs one weight per vertex')
+    weights = [_number(w, 'Smoothing weight', 0, 1) for w in weights]
+    iterations = _count(iterations, 'Smoothing iterations', 0)
+    neighbours = [set() for _ in vertices]
+    for face in faces:
+        for a, b in zip(face, face[1:] + face[:1]):
+            neighbours[a].add(b); neighbours[b].add(a)
+    moving = [i for i, w in enumerate(weights) if w > 0 and neighbours[i]]
+    rings = {i: tuple(neighbours[i]) for i in moving}
+    points = [list(v) for v in vertices]
+    for _ in range(iterations):
+        for factor in (shrink, inflate):
+            means = {}
+            for i in moving:
+                ring = rings[i]
+                means[i] = [sum(points[j][k] for j in ring) / len(ring) for k in range(3)]
+            for i in moving:
+                w, p, m = factor * weights[i], points[i], means[i]
+                for k in range(3): p[k] += w * (m[k] - p[k])
+    return [tuple(p) for p in points]
+
+
 def symmetric_offsets(vertices, center, radius, offset, mask=None):
     """(Left, Right) targets: the region as given for the character's left, mirrored across x = 0 for the right."""
     return soft_offset(vertices, center, radius, offset, mask), soft_offset(vertices, mirror_x(center), radius, mirror_x(offset), mask)
@@ -5252,6 +5285,35 @@ def _sharp_edges(vertices, faces, angle):
 
 # The color attribute skin paint lives in; glTF exports it as COLOR_0 when a material uses it.
 PAINT_LAYER = 'tint'
+
+
+def smooth_skin(obj, weights, iterations=6):
+    """Smooth a skin mesh's rest shape and every shape key alike with `smooth_surface` (Blender).
+
+    `weights` is one 0..1 value per vertex or a callable of the rest position; 0 holds a vertex still. The smoothing is
+    linear, so the morphs blend as before; a key that moves nothing near the weighted vertices keeps its motion
+    exactly. Run it after the shape keys are made, before `join_face_parts`.
+    """
+    mesh = obj.data
+    rest = [tuple(v.co) for v in mesh.vertices]
+    weights = [weights(v) for v in rest] if callable(weights) else list(weights)
+    faces = [tuple(p.vertices) for p in mesh.polygons]
+    smoothed = smooth_surface(rest, faces, weights, iterations)
+    reach = {i for i, w in enumerate(weights) if w > 0}
+    for face in faces:
+        if any(i in reach for i in face): reach.update(face)
+    keys = mesh.shape_keys
+    if keys:
+        for block in keys.key_blocks:
+            points = [tuple(point.co) for point in block.data]
+            if all(points[i] == rest[i] for i in reach):
+                targets = [tuple(p[k] + s[k] - r[k] for k in range(3)) for p, s, r in zip(points, smoothed, rest)]
+            else:
+                targets = smooth_surface(points, faces, weights, iterations)
+            for point, target in zip(block.data, targets): point.co = target
+    for vertex, target in zip(mesh.vertices, smoothed): vertex.co = target
+    mesh.update()
+    return obj
 
 
 def paint_vertices(obj, tints, layer=PAINT_LAYER):
