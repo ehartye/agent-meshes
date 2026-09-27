@@ -518,7 +518,13 @@ def dress(m,costume,d):
         front_patch('layer-shirt-front',costume['shirt']['color'],hem-.004*s,sh+.052*s,lambda y:-neckline(y),neckline,.003)
     if overalls:
         bib=lambda y: mix(hw*.27,sw*.17,smooth01(hip,bib_top,y))
-        front_patch('layer-bib',overalls['color'],hip,bib_top,lambda y:-bib(y),bib,.005,lift=.004*s)
+        front_patch('layer-bib',overalls['color'],hip+.014*s,bib_top,lambda y:-bib(y),bib,.005,lift=.004*s)
+        # The waistband closes the overalls round the body and covers the bib's hem.
+        ring_band('layer-overalls-waistband',shade(overalls['color'],.94),torso,hip-.008*s,hip+.036*s,.007,lift=.004*s,rim=.8)
+        for side,label in [(-1,'left'),(1,'right')]:
+            button=surface_point(around(torso(hip+.022*s),hip+.022*s,math.pi/2-side*math.pi/2),.006*s)
+            m.ellipsoid('layer-overalls-side-button-'+label,button,(.007*s,.011*s,.011*s),overalls['buttons'])
+            m.parts[-1].update(roughness=.35,metalness=.6)
         front_patch('layer-bib-pocket',shade(overalls['color'],.9),mix(hip,bib_top,.5),mix(hip,bib_top,.86),lambda y:-sw*.075,lambda y:sw*.075,.004,lift=.009*s)
         for side,label in [(-1,'left'),(1,'right')]:
             if jacket:
@@ -584,13 +590,15 @@ def dress(m,costume,d):
             ring_band('layer-'+label+'-leg-hem',shade(bottom['color'],.9),label+'-leg',.195*s,.225*s,.006,rim=.6)
     belt=costume.get('belt')
     if belt:
+        # A belt rides over an overalls waistband; its pouches hang in front of the belt.
+        under=.007*s if overalls else 0
         ring_band('layer-belt',belt['color'],torso,hip+.004*s,hip+.042*s,.007,rim=.8,roughness=.6,
-                  lift=lambda i,j: s*(.003+.007*max(0,math.sin(i*math.tau/24))**2))
-        front_patch('layer-buckle',belt['buckle'],hip-.001*s,hip+.047*s,lambda y:-.024*s,lambda y:.024*s,.005,lift=.014*s,rim=.7,roughness=.35,metalness=.7)
-        for k,t in enumerate([math.pi/2-1.22,math.pi/2+1.22,-math.pi/2+.95,-math.pi/2-.95][:belt['pouches']]):
+                  lift=lambda i,j: under+s*(.003+.007*max(0,math.sin(i*math.tau/24))**2))
+        front_patch('layer-buckle',belt['buckle'],hip-.001*s,hip+.047*s,lambda y:-.024*s,lambda y:.024*s,.005,lift=.014*s+under,rim=.7,roughness=.35,metalness=.7)
+        for k,t in enumerate([math.pi/2-.95,math.pi/2+.95,-math.pi/2+.95,-math.pi/2-.95][:belt['pouches']]):
             # Tool pouches hang from the belt onto the upper thigh.
-            ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s,rim=.3)
-            ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.034*s,.006,t0=t-.28,t1=t+.28,lift=.03*s,rim=.9)
+            ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s+under,rim=.3)
+            ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.034*s,.006,t0=t-.28,t1=t+.28,lift=.03*s+under,rim=.9)
     pack=costume.get('backpack')
     if pack:
         for side,label in [(-1,'left'),(1,'right')]:

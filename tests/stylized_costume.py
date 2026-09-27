@@ -80,6 +80,44 @@ class GarmentLayers(unittest.TestCase):
         pouch=by_name['layer-pouch-0']['vertices']
         self.assertLess(min(v[1] for v in pouch),d['hip_y']-.045*s)
 
+    def test_overalls_bib_rises_from_a_waistband(self):
+        """Overalls close round the waist, so the bib grows out of a band instead of hanging like an apron."""
+        for config in [TESS,MARA]:
+            d=character.landmarks(config);s=d['s'];by_name=parts(config)
+            band=by_name['layer-overalls-waistband']['vertices'];bib=by_name['layer-bib']['vertices']
+            lo,hi=min(v[1] for v in band),max(v[1] for v in band)
+            with self.subTest(height=config['height']):
+                self.assertLessEqual(lo,d['hip_y'])
+                self.assertGreaterEqual(hi,d['hip_y']+.035*s)
+                self.assertTrue(lo<min(v[1] for v in bib)<hi-.02*s,'bib hem must tuck under the band')
+                back=[v for v in band if v[2]<0];self.assertTrue(back,'band wraps the back')
+                for label in ['left','right']:self.assertIn('layer-overalls-side-button-'+label,by_name)
+                # The band covers the bib hem it overlaps.
+                body=character.body_surface(config)
+                hem=[v for v in bib if v[1]<hi-.012*s]
+                band_out=max(body.value(v) for v in band if abs(v[0])<.02*s and v[2]>0)
+                self.assertLess(max(body.value(v) for v in hem),band_out)
+
+    def test_belt_and_pouches_stand_over_the_overalls_waistband(self):
+        """Stacked layers never show through each other: belt over waistband, pouches over belt."""
+        d=character.landmarks(MARA);s=d['s'];by_name=parts(MARA);body=character.body_surface(MARA)
+        def outer(name):
+            v=by_name[name]['vertices'];return v[:len(v)//2]
+        lo,hi=d['hip_y']+.012*s,d['hip_y']+.035*s
+        belt=[v for v in outer('layer-belt') if lo-.01*s<=v[1]<=hi+.01*s]
+        for v in outer('layer-overalls-waistband'):
+            if not lo<=v[1]<=hi:continue
+            # The belt surface over this waistband point stands further out.
+            over=min(belt,key=lambda b:math.hypot(math.atan2(b[2],b[0])-math.atan2(v[2],v[0]),(b[1]-v[1])/(.1*s)))
+            with self.subTest(point=v):self.assertGreater(body.value(over),body.value(v))
+        # Below its top edge (which tucks under the belt) a pouch covers the belt.
+        hi=d['hip_y']+.03*s
+        pouch=[v for v in outer('layer-pouch-0') if lo<=v[1]<=hi]
+        angles=sorted(math.atan2(v[2],v[0]) for v in pouch);inside=lambda v:angles[0]+.05<math.atan2(v[2],v[0])<angles[-1]-.05
+        near=[v for v in outer('layer-belt') if lo<=v[1]<=hi and inside(v)]
+        self.assertGreater(min(body.value(v) for v in pouch if inside(v)),max(body.value(v) for v in near))
+        self.assertLess(max(v[1] for v in by_name['layer-overalls-waistband']['vertices']),min(v[1] for v in by_name['layer-jacket-hem']['vertices'])-.001*s)
+
     def test_every_layer_is_seated_on_the_body(self):
         """Each slab's inner face is embedded and its outer face stands proud: nothing floats."""
         for name,config in CAST.items():
@@ -211,5 +249,18 @@ class GarmentRig(unittest.TestCase):
                         drift=max(abs(math.dist(a,b)-r)-.25*r for a,b,r in zip(moved,anchors,rest))
                         with self.subTest(name=name,part=part['name'],gait=gait,phase=phase):
                             self.assertLess(drift,.006*s)
+
+    def test_swinging_hands_clear_the_tool_pouches(self):
+        """Belt pouches sit off the arm's swing lane, so a hand never brushes into one."""
+        config=MARA;d=character.landmarks(config);s=d['s'];by_name=parts(config)
+        pouch=[v for n,p in by_name.items() if n.startswith('layer-pouch') for v in p['vertices'][::2]]
+        for side in ['left','right']:
+            hand=[v for n,p in by_name.items() if n.startswith(side+'-') and any(t in n for t in ['palm','finger','thumb','glove']) for v in p['vertices'][::3]]
+            for gait in ['walk','jog']:
+                for k in range(16):
+                    moved=walk.skinned_vertices(side+'-hand',hand,d,k/16,gait)
+                    bag=walk.skinned_vertices('layer-pouch-0',pouch,d,k/16,gait)
+                    gap=min(math.dist(a,b) for a in moved for b in bag)
+                    with self.subTest(side=side,gait=gait,phase=k/16):self.assertGreater(gap,.01*s)
 
 if __name__=='__main__':unittest.main()
