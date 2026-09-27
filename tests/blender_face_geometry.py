@@ -1284,6 +1284,31 @@ class EyeHoleTests(unittest.TestCase):
         with self.assertRaises(ValueError): eye_holes(blank['vertices'], blank['faces'], (-.026, -.07, .15), .017)
         with self.assertRaisesRegex(ValueError, 'midline'): eye_holes(blank['vertices'], blank['faces'], (.018, -.07, .15), .017)
 
+    def test_the_socket_dips_meet_smoothly_on_the_midline(self):
+        # P1 round 1: each half took only its own eye's socket dip, so where the dip still reached the midline (large
+        # eyes set close) the mirrored halves met in a crease that shaded as a seam down the forehead and nose.
+        from agent_meshes_face import eye_holes
+        blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=72, segments=96)
+        for style in ('continuous', 'shells'):
+            options = {} if style == 'continuous' else {'style': 'shells'}
+            cut = eye_holes(blank['vertices'], blank['faces'], (.038, -.066, .142), .019, opening=(45, 32, 28), **options)
+            vertices, faces = cut['vertices'], cut['faces']
+            normals = [[0.0, 0.0, 0.0] for _ in vertices]
+            for f in faces:
+                a, b, c = (vertices[i] for i in f[:3])
+                u, v = [b[k] - a[k] for k in range(3)], [c[k] - a[k] for k in range(3)]
+                n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+                for i in f:
+                    for k in range(3): normals[i][k] += n[k]
+            unit = lambda n: [c / (math.sqrt(sum(x * x for x in n)) or 1) for c in n]
+            # Beside the midline between the eyes, the skin's normal turns no faster than the head's own curvature.
+            worst = 0.0
+            for i, p in enumerate(vertices):
+                if not (0 < abs(p[0]) < .004 and p[1] < -.05 and .125 < p[2] < .16): continue
+                n = unit(normals[i])
+                worst = max(worst, abs(n[0]) / abs(p[0]))
+            self.assertLess(worst, 30, f'{style}: the midline creases (normal x turns {worst:.0f} per metre beside it)')
+
     def test_the_bevel_turns_evenly_round_the_rim(self):
         # Round 5: each rim vertex took its bevel from its own irregular clipped triangles, so neighbours' bevels turned
         # up to 52 degrees apart and the lower rim showed facet ticks.

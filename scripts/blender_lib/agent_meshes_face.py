@@ -1125,9 +1125,22 @@ CONTINUOUS_OPTIONS = ('opening', 'meet', 'overlap', 'squint', 'squint_upper_shar
                       'lash_width', 'lower_lash_width', 'column_step')
 
 
+def _twin_shaped(shaped, point):
+    """`point` moved by one eye's skin shaping (`shaped`) plus the mirrored eye's (the same shaping, reflected)."""
+    own = shaped(point)
+    reflected = mirror_x(point)
+    return _add(own, mirror_x(_sub(shaped(reflected), reflected)))
+
+
 def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25, lining_gap=.0001,
-             lining_rings=5, corner_margin=2, bevel=.5, style='continuous', **lid_options):
+             lining_rings=5, corner_margin=2, bevel=.5, style='continuous', twin=False, **lid_options):
     """Make a lid eye in a skin: by default the skin itself becomes the lids (`style='continuous'`).
+
+    `twin=True` also shapes the skin by the mirrored eye's socket (at the reflected
+    center), adding the two eyes' displacements, so where a socket dip reaches past
+    the midline the dips of both eyes meet there smoothly. `eye_holes` sets it: it
+    keeps one half of this skin and mirrors it, and a half shaped by one eye alone
+    meets its reflection in a crease down the brow and nose.
 
     **`style='continuous'` (the default).** The skin round the eye is rebuilt as one
     surface: it flows over the eyeball as the upper and lower lids, each lid's margin
@@ -1210,7 +1223,7 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
         unknown = sorted(set(lid_options) - set(CONTINUOUS_OPTIONS))
         if unknown: raise ValueError(f"eye_hole(style='continuous') takes {', '.join(CONTINUOUS_OPTIONS)}, not {', '.join(unknown)} (shell-lid options: pass style='shells')")
         return _continuous_eye_hole(vertices, faces, center, eye_radius, margin=margin, clearance=clearance, blend=blend, max_edge=max_edge,
-                                    socket=socket, **lid_options)
+                                    socket=socket, twin=twin, **lid_options)
     if style != 'shells': raise ValueError("eye_hole style must be 'continuous' or 'shells'")
     center = _vector(center, 3, 'Eye center')
     eye_radius = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
@@ -1229,11 +1242,10 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     # New points on the smooth surface through the skin, not on its flat faces: shaped round the eye, flat midpoints
     # shade the blank's facets as streaks radiating from it.
     points, polygons, _ = _refine(vertices, faces, near, max_edge, normals=_vertex_normals(vertices, faces))
-    pushed = 0
-    for i, point in enumerate(points):
+    def shape_skin(point):
         d = _sub(point, center)
         r = math.hypot(*d)
-        if r < 1e-12: continue
+        if r < 1e-12: return point
         target = r
         if socket > 0 and depth < r < far:
             # Draw far skin in toward `depth` near the window, fading out with angle and distance: the rim stays
@@ -1245,8 +1257,12 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
             # the drawn-in radius, so a blend wide enough to reach the socket dip meets it with no step.
             h = max(blend - abs(target - push), 0.0) / blend
             target = max(target, push) + h * h * blend / 4
-        if target != r:
-            points[i] = _add(center, _mul(d, target / r))
+        return point if target == r else _add(center, _mul(d, target / r))
+    pushed = 0
+    for i, point in enumerate(points):
+        moved = _twin_shaped(shape_skin, point) if twin else shape_skin(point)
+        if moved != point:
+            points[i] = moved
             pushed += 1
     # Pushing skin that ran inside the lids out onto the mound stretches its edges: split them again (on the shaped
     # skin's smooth surface), and keep each new midpoint out of the lids.
@@ -1396,14 +1412,17 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
     cuts the left eye's hole (`eye_left`, the character's left, +X) with `options`
     as for `eye_hole`, keeps the half of the skin at x >= 0 (clipped exactly on the
     midline) and mirrors it, so the right half, its hole, lids, window and wall are
-    the left's reflection and the midline has one row of shared vertices. The blank
+    the left's reflection and the midline has one row of shared vertices. The left
+    eye is cut with `twin=True`, so both eyes' socket dips shape that half and the
+    halves meet on the midline without a crease. The blank
     must be left-right symmetric. Returns {'vertices', 'faces', 'L': hole, 'R': hole},
     each hole as `eye_hole` returns it (indices into the new mesh), ready for
     `build_eye(..., hole=holes['L'])`, `eye_hole_mask` and the brow helpers.
     """
     eye_left = _vector(eye_left, 3, 'Left eye center')
     if eye_left[0] <= 0: raise ValueError("eye_left is the character's left eye, at x > 0")
-    left = eye_hole(vertices, faces, eye_left, eye_radius, **options)
+    # Each eye's socket dip is added to the other's, so where a dip reaches the midline the halves meet smoothly.
+    left = eye_hole(vertices, faces, eye_left, eye_radius, twin=True, **options)
     # Points within a micron of the midline lie on it (smooth refinement leaves some a few nanometres off, and a clip
     # there would add near-duplicate points).
     source_vertices = [((0.0,) + tuple(p[1:])) if abs(p[0]) < 1e-6 else tuple(p) for p in left['vertices']]
@@ -1618,7 +1637,7 @@ def _patch_rim(faces, q, level, around, step, front_face, what):
 
 def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25,
                          opening=(45, 38, 30), meet=-8, overlap=6, squint=.45, squint_upper_share=.2, wide=(10, 4), corner=1.25,
-                         thickness=None, gap=None, crease=.035, lash_width=5, lower_lash_width=2.5, column_step=2.5):
+                         thickness=None, gap=None, crease=.035, lash_width=5, lower_lash_width=2.5, column_step=2.5, twin=False):
     """`eye_hole(style='continuous')`: the skin itself flows over the eyeball as the lids (see `eye_hole`)."""
     center = _vector(center, 3, 'Eye center')
     r = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
@@ -1715,11 +1734,10 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
     reach = max(inner_u) + t + blend + 2 * max_edge
     near = lambda p: math.dist(p, center) < reach or (math.dist(p, center) < far and level(p) < socket)
     points, polygons, _ = _refine(vertices, faces, near, max_edge, normals=_vertex_normals(vertices, faces))
-    pushed = 0
-    for i, point in enumerate(points):
+    def shape_skin(point):
         d = _sub(point, center)
         rad = math.hypot(*d)
-        if rad < 1e-12 or rad > far: continue
+        if rad < 1e-12 or rad > far: return point
         u = _mul(d, 1 / rad)
         push = outer_at(u)
         depth, target = 1.25 * (push + blend / 4), rad
@@ -1729,8 +1747,12 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
         if target < push + blend:
             h = max(blend - abs(target - push), 0.0) / blend
             target = max(target, push) + h * h * blend / 4
-        if target != rad:
-            points[i] = _add(center, _mul(u, target))
+        return point if target == rad else _add(center, _mul(u, target))
+    pushed = 0
+    for i, point in enumerate(points):
+        moved = _twin_shaped(shape_skin, point) if twin else shape_skin(point)
+        if moved != point:
+            points[i] = moved
             pushed += 1
 
     # Below a full cheek the skin runs away from the eye fast (the directions graze it): keep the patch's lower edge on
