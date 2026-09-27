@@ -20,7 +20,7 @@ __all__ = [
     'eye_window', 'lash_faces', 'lash_geometry', 'eye_hole', 'eye_holes', 'continuous_lid_edges', 'CONTINUOUS_OPTIONS', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry', 'dome_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
     'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
-    'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
+    'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'add_eye_bones', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
 
@@ -4504,14 +4504,16 @@ def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, 
 
 # ---------------------------------------------------------------- contract extras
 
-def face_contract_extras(morphs, yaw_max, pitch_max, lid_follow=None, emotions=None, exposed_teeth=(), drop_missing=True):
+def face_contract_extras(morphs, yaw_max, pitch_max, lid_follow=None, emotions=None, exposed_teeth=(), drop_missing=True, skeleton='head'):
     """Build the root-node `extras` for `arkit-face/1`: {'arkitFace': {...}}.
 
     `morphs` lists the morph names the GLB carries and must include all 21 required
     names. `emotions` defaults to the canonical concept-sheet presets; with
     `drop_missing` a preset's morph curves the head lacks are removed (gaze curves
     always stay, since they drive eye bones). `exposed_teeth` names the teeth that
-    show at rest (an empty list when none do).
+    show at rest (an empty list when none do). `skeleton='body'` declares a full-body
+    character: its `head` bone hangs under body bones instead of being the skin's root
+    (see `add_eye_bones`); the default `'head'` is a head-only rig and writes nothing.
     """
     morphs = list(dict.fromkeys(morphs))
     missing = [name for name in ARKIT_REQUIRED if name not in morphs]
@@ -4529,6 +4531,7 @@ def face_contract_extras(morphs, yaw_max, pitch_max, lid_follow=None, emotions=N
         'emotions': result,
         'exposedTeeth': list(exposed_teeth),
     }}
+    if skeleton != 'head': extras['arkitFace']['skeleton'] = skeleton
     errors = validate_face_contract_extras(extras, morphs)
     if errors: raise ValueError('; '.join(errors))
     return extras
@@ -4567,6 +4570,8 @@ def validate_face_contract_extras(extras, morphs=None):
             for curve, value in curves.items():
                 if curve not in ARKIT_NAMES: errors.append(f'extras.arkitFace.emotions.{name}.{curve} is not an ARKit curve')
                 elif not real(value) or not 0 <= value <= 1: errors.append(f'extras.arkitFace.emotions.{name}.{curve} must be in [0, 1]')
+    if face.get('skeleton', 'head') not in ('head', 'body'):
+        errors.append(f"extras.arkitFace.skeleton must be 'head' or 'body', got {face.get('skeleton')!r}")
     teeth = face.get('exposedTeeth')
     if not isinstance(teeth, list) or not all(isinstance(t, str) and t for t in teeth):
         errors.append('extras.arkitFace.exposedTeeth must be a list of names (empty when no teeth show at rest)')
@@ -4784,9 +4789,39 @@ def face_skeleton(head, eye_left, eye_right, name='Face rig', bone_length=None):
     if bpy.context.object and bpy.context.object.mode != 'OBJECT': bpy.ops.object.mode_set(mode='OBJECT')
     bpy.ops.object.mode_set(mode='EDIT')
     root = data.edit_bones.new('head'); root.head = head; root.tail = _add(head, (0, 0, 2 * length)); root.roll = 0
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return add_eye_bones(rig, eye_left, eye_right, bone_length=length)
+
+
+def add_eye_bones(rig, eye_left, eye_right, head='head', bone_length=None):
+    """Give an existing armature the contract's eye bones: `eye_L` and `eye_R`, children of its `head` bone.
+
+    This is how a full-body character carries an `arkit-face/1` face: its body
+    skeleton already has a `head` bone (under the neck or spine) that the walk and
+    jog clips turn, and the eyes, lids and mouth ride it. Each eye bone pivots at its
+    eyeball center (world coordinates; the rig's transform is honored), points up
+    (+Z) with zero roll like `face_skeleton`'s, and is not connected, so it adds no
+    keyframes and follows the head in every clip. Declare the rig with
+    `face_contract(rig, objects, ..., skeleton='body')`. Returns the armature.
+    """
+    import bpy
+    if getattr(rig, 'type', None) != 'ARMATURE': raise ValueError('add_eye_bones needs an armature object')
+    eye_left, eye_right = (_vector(p, 3, label) for p, label in ((eye_left, 'Left eye'), (eye_right, 'Right eye')))
+    if eye_left[0] <= eye_right[0]: raise ValueError("eye_L is the character's left eye and must have the larger x (+X)")
+    if rig.data.bones.get(head) is None: raise ValueError(f'The rig has no {head!r} bone for the eyes to hang from')
+    for label in ('eye_L', 'eye_R'):
+        if rig.data.bones.get(label) is not None: raise ValueError(f'The rig already has an {label} bone')
+    length = .25 * abs(eye_left[0] - eye_right[0]) if bone_length is None else _number(bone_length, 'Bone length', 0, low_open=True)
+    inverse = rig.matrix_world.inverted()
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT': bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode='EDIT')
+    parent = rig.data.edit_bones[head]
     for label, position in (('eye_L', eye_left), ('eye_R', eye_right)):
-        bone = data.edit_bones.new(label); bone.head = position; bone.tail = _add(position, (0, 0, length)); bone.roll = 0
-        bone.parent = root; bone.use_connect = False
+        from mathutils import Vector
+        start = inverse @ Vector(position)
+        bone = rig.data.edit_bones.new(label); bone.head = start; bone.tail = inverse @ Vector(_add(position, (0, 0, length))); bone.roll = 0
+        bone.parent = parent; bone.use_connect = False
     bpy.ops.object.mode_set(mode='OBJECT')
     return rig
 

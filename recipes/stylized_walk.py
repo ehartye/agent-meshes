@@ -211,7 +211,8 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
     from agent_meshes_author import bind_skin
     def convert(point):x,y,z=point;return Vector((x,-z,y))
     bones=rest_bones(layout)
-    def bone_name(name):return 'rig-'+name
+    # The head bone keeps the arkit-face/1 name, so a living face's eye bones hang under `head` (stylized_face).
+    def bone_name(name):return 'head' if name=='head' else 'rig-'+name
     data=bpy.data.armatures.new('settler-skeleton');rig=bpy.data.objects.new('settler-rig',data)
     bpy.context.collection.objects.link(rig);bpy.context.view_layer.objects.active=rig;rig.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')

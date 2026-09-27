@@ -99,7 +99,7 @@ class ContractConstantsTests(unittest.TestCase):
         self.assertEqual(CANONICAL_EMOTIONS['surprised']['jawOpen'], .6)
 
     def test_author_module_reexports_the_face_helpers(self):
-        for name in ('lid_geometry', 'JawHinge', 'teeth_row_geometry', 'face_contract_extras', 'build_eye', 'face_skeleton', 'add_jaw_open'):
+        for name in ('lid_geometry', 'JawHinge', 'teeth_row_geometry', 'face_contract_extras', 'build_eye', 'face_skeleton', 'add_eye_bones', 'add_jaw_open'):
             self.assertTrue(hasattr(agent_meshes_author, name), name)
 
 
@@ -1005,6 +1005,17 @@ class ContractExtrasTests(unittest.TestCase):
         self.assertTrue(any('exposedTeeth' in e for e in errors))
         with self.assertRaises(ValueError):
             face_contract_extras(list(ARKIT_REQUIRED)[1:], yaw_max=25, pitch_max=15)
+
+
+    def test_a_full_body_character_declares_its_body_skeleton(self):
+        face = face_contract_extras(list(ARKIT_REQUIRED), yaw_max=25, pitch_max=15, skeleton='body')['arkitFace']
+        self.assertEqual(face['skeleton'], 'body')
+        self.assertNotIn('skeleton', face_contract_extras(list(ARKIT_REQUIRED), yaw_max=25, pitch_max=15)['arkitFace'])
+        with self.assertRaises(ValueError):
+            face_contract_extras(list(ARKIT_REQUIRED), yaw_max=25, pitch_max=15, skeleton='torso')
+        extras = face_contract_extras(list(ARKIT_REQUIRED), yaw_max=25, pitch_max=15)
+        extras['arkitFace']['skeleton'] = 'legs'
+        self.assertTrue(any('skeleton' in e for e in validate_face_contract_extras(extras)))
 
 
 class GlbExtrasTests(unittest.TestCase):

@@ -382,6 +382,7 @@ export function faceExtrasProblems(extras: unknown, fileMorphs?: string[]): stri
     const value = isRecord(face.lidFollow) ? face.lidFollow[key] : undefined;
     if (!isNumber(value) || value < 0 || value > 1) problems.push(`extras.arkitFace.lidFollow.${key} must be a number in [0, 1]`);
   }
+  if (face.skeleton !== undefined && face.skeleton !== 'head' && face.skeleton !== 'body') problems.push(`extras.arkitFace.skeleton must be 'head' or 'body', got ${JSON.stringify(face.skeleton)}`);
   if (!isRecord(face.emotions)) problems.push('extras.arkitFace.emotions must be an object of presets');
   else {
     for (const name of FACE_EMOTIONS) if (!isRecord(face.emotions[name])) problems.push(`extras.arkitFace.emotions.${name} is missing`);
@@ -423,7 +424,11 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   }
 
   const graph = sceneGraph(json);
-  const all = instances(doc, graph);
+  const everything = instances(doc, graph);
+  // A full-body character declares `extras.arkitFace.skeleton: 'body'`: its `head` hangs under body bones, and the face
+  // is judged on the parts that ride head and the eye bones, not on the body below it.
+  const rigExtras = graph.roots.map(r => nodes[r]?.extras).find(e => isRecord(e) && isRecord(e.arkitFace)) as Record<string, Record<string, unknown>> | undefined;
+  const bodySkeleton = rigExtras?.arkitFace.skeleton === 'body';
   const worldPosition = (node: number) => new Vector3().setFromMatrixPosition(graph.world.get(node) ?? new Matrix4());
 
   // 2. skeleton: the skin audit verify-unreal shares (one skin, the contract bones, head -> eye_L/eye_R)
@@ -439,11 +444,18 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   if (missingBones.length) skeletonProblems.push(`the skin lacks bone(s) ${missingBones.join(', ')}`);
   if (facts) for (const [name, parent] of Object.entries(ARKIT_FACE_BONE_PARENTS)) {
     if (bones[name] === undefined) continue;
-    if (parent === null) { if (!facts.roots.includes(name) || facts.roots.length !== 1) skeletonProblems.push(`${name} is not the root bone of the skin (roots: ${facts.roots.join(', ') || 'none'})`); }
+    if (parent === null && bodySkeleton) { if (facts.roots.includes(name)) skeletonProblems.push(`${name} is a root bone, but extras.arkitFace.skeleton is 'body': a body skeleton carries head under its body bones`); }
+    else if (parent === null) { if (!facts.roots.includes(name) || facts.roots.length !== 1) skeletonProblems.push(`${name} is not the root bone of the skin (roots: ${facts.roots.join(', ') || 'none'})${facts.jointParents[name] ? `; a full-body character declares extras.arkitFace.skeleton: 'body'` : ''}`); }
     else if (facts.jointParents[name] !== parent) skeletonProblems.push(`${name} is not a child of ${parent} (its parent is ${facts.jointParents[name] ?? 'the scene root'})`);
   }
   if (bones.eye_L !== undefined && bones.eye_R !== undefined && worldPosition(bones.eye_L).x <= worldPosition(bones.eye_R).x) skeletonProblems.push("eye_L must be the character's left eye, on the +X side of eye_R");
-  check('skeleton', skeletonProblems, 'one skin with head, eye_L and eye_R');
+  check('skeleton', skeletonProblems, bodySkeleton ? `one skin with head, eye_L and eye_R on a body skeleton (head under ${facts?.jointParents.head ?? 'the body'})` : 'one skin with head, eye_L and eye_R');
+  // The face: on a body skeleton, the parts bound wholly to head and the eye bones (the face, eyeballs, hair, ears).
+  const faceJoints = ['head', 'eye_L', 'eye_R'].map(bone).filter((j): j is number => j !== undefined);
+  // Hair on a body character is head dressing (it has its own bar): it occludes, but is not a part joined to the face,
+  // nor skin the crease lines read, nor the chin.
+  const dressing = (i: Instance) => bodySkeleton && i.names.some(n => /hair/i.test(n));
+  const all = bodySkeleton ? everything.filter(i => i.skinned && Array.from({ length: i.count }, (_, v) => faceJoints.reduce((sum, j) => sum + i.influence(v, j), 0)).every(w => w >= BOUND)) : everything;
 
   // 3. skinning
   const unskinned = skinFacts.meshNodes.filter(n => n.skin === null).map(n => n.name ?? n.meshName ?? `node ${n.node}`);
@@ -761,7 +773,8 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
             // passed within 1.2 eyeball radii of the center (through the eye hole) to reach it. Other back faces (under
             // a hair cap, seen past the head's outline) are not the eye's business.
             const x = window.x0 + i * window.step, y = window.y0 + j * window.step, z = window.depth[k];
-            const inside = window.facing[k] < 0 && z < c[2] && (Math.hypot(x - c[0], y - c[1], z - c[2]) < 1.8 * radius || dx * dx + dy * dy <= (1.2 * radius) ** 2);
+            // Under hair on a body character (head dressing) is the hair's business, not a gap at the eye.
+            const inside = window.facing[k] < 0 && z < c[2] && !dressing(owner) && (Math.hypot(x - c[0], y - c[1], z - c[2]) < 1.8 * radius || dx * dx + dy * dy <= (1.2 * radius) ** 2);
             const what = socket(owner.names) ? owner.label : inside ? `the inside of ${owner.label}` : undefined;
             if (!what) continue;
             // A leak nearer the other eye belongs to that eye's window.
@@ -850,7 +863,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     'the skin, lids, teeth and other face parts are opaque');
 
   // 10f. attached parts: brows, ridges, nostrils and other small parts sit on the skin at rest and while morphs play
-  const attached = attachedParts(all.filter(i => !eyeballInstances.has(i) && !i.transparent),
+  const attached = attachedParts(all.filter(i => !eyeballInstances.has(i) && !i.transparent && !dressing(i)),
     (['L', 'R'] as const).filter(side => eyes[side]).map(side => ({ center: eyes[side]!.center.toArray() as [number, number, number], radius: eyes[side]!.radius, suffix: side === 'L' ? 'Left' as const : 'Right' as const })), fileMorphs);
   measurements.attached = attached.parts;
   check('attached-parts', attached.problems, attached.parts.length
@@ -859,7 +872,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
 
   // 10g. eye crease: one soft crease above a lid eye and none below, not the stacked bands of a terraced socket
   if (eyes.L && eyes.R) {
-    const surfaces = all.filter(i => !eyeballInstances.has(i) && !i.transparent);
+    const surfaces = all.filter(i => !eyeballInstances.has(i) && !i.transparent && !dressing(i));
     const eyeList = (['L', 'R'] as const).map(side => ({ center: eyes[side]!.center.toArray() as [number, number, number], radius: eyes[side]!.radius, suffix: side === 'L' ? 'Left' as const : 'Right' as const }));
     // Attached parts (brows, ridges, freckles) lie on the skin: the lines read the skin under them.
     const parts = attachedTriangles(surfaces, eyeList);
@@ -986,7 +999,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   const bindingProblems: string[] = [];
   if (bones.head !== undefined) {
     const jointName = (joint: number) => nodes[joint]?.name ?? `node ${joint}`;
-    for (const instance of all) {
+    for (const instance of everything) {
       if (!instance.skinned || eyeballInstances.has(instance)) continue;
       const required = instance.targets.size > 0 || instance.names.some(n => /skull|gum|teeth|tooth|head|skin|face|lid/i.test(n));
       if (!required) continue;
@@ -1025,7 +1038,8 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   check('mouth-parts', partProblems, parts.length ? `jawOpen carries ${parts.map(i => i.label).join(', ')}` : 'no tongue or mouth-cavity meshes named by convention');
 
   // 16. puppet jaw: the chin, the face's lowest point, drops with the jaw (E3), not only the lips
-  const skin = all.filter(i => !mouthPart(i.names) && !socket(i.names) && !body(i.names) && !eyeballInstances.has(i));
+  // On a body character the face is its morph-bearing mesh: hair, a helmet or a collar riding head are not its chin.
+  const skin = all.filter(i => !mouthPart(i.names) && !socket(i.names) && !body(i.names) && !eyeballInstances.has(i) && !dressing(i) && (!bodySkeleton || i.morphMesh));
   let restLow = Infinity, openLow = Infinity, top = -Infinity;
   for (const instance of skin) {
     const open = positions(instance, { jawOpen: 1 });

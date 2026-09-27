@@ -120,6 +120,53 @@ for (const fixture of ['test_head', 'test_robot', 'test_frog', 'test_kid', 'test
   expect(json.nodes!.find(n => n.name === 'eye_L')!.translation![0]).toBeGreaterThan(0);
 }, 600000);
 
+maybe('a face on a body skeleton (head under spine, add_eye_bones) builds and passes arkit-face/1', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-face-body-')); directories.push(directory);
+  const config = join(directory, 'build.json');
+  await writeFile(config, JSON.stringify({ version: 1, name: 'test_body_face', blender: { script: resolve('tests/fixtures/face-rig/test_body_face.py') }, output: 'generated' }));
+  const built = await buildAsset(config);
+  const bytes = await readFile(join(built.output, 'model.glb'));
+  const report = await verifyFaceContract(bytes);
+  expect(report.failures).toEqual([]);
+  expect(report.checks.find(c => c.id === 'skeleton')!.message).toMatch(/body skeleton \(head under spine\)/);
+  const { json } = readGLB(bytes);
+  const parent = (name: string) => json.nodes!.find(n => n.children?.some(c => json.nodes![c].name === name))?.name;
+  expect([parent('eye_L'), parent('eye_R'), parent('head')]).toEqual(['head', 'head', 'spine']);
+  expect(json.nodes!.find(n => n.name === 'eye_L')!.rotation ?? [0, 0, 0, 1]).toEqual([0, 0, 0, 1]);
+  // The chin is the face's, not the torso's below it.
+  expect(report.measurements.chinDropRatio).toBeGreaterThanOrEqual(0.1);
+}, 600000);
+
+maybe('a stylized character with face=arkit walks and jogs with a living face on its head bone', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-face-character-')); directories.push(directory);
+  const config = join(directory, 'build.json');
+  await writeFile(config, JSON.stringify({ version: 1, name: 'test_character_face', blender: { script: resolve('tests/fixtures/face-rig/test_character_face.py') }, output: 'generated' }));
+  const built = await buildAsset(config);
+  const bytes = await readFile(join(built.output, 'model.glb'));
+  const report = await verifyFaceContract(bytes);
+  expect(report.failures).toEqual([]);
+  expect(report.checks.find(c => c.id === 'skeleton')!.message).toMatch(/head under rig-spine/);
+  const { json } = readGLB(bytes);
+  const parent = (name: string) => json.nodes!.find(n => n.children?.some(c => json.nodes![c].name === name))?.name;
+  expect([parent('eye_L'), parent('eye_R'), parent('head')]).toEqual(['head', 'head', 'rig-spine']);
+  // The walk and jog clips still turn the head (the face rides it); they hold the eye bones at rest, so gaze is free.
+  type Clip = { name?: string; channels: { sampler: number; target: { node?: number; path: string } }[]; samplers: { output: number }[] };
+  const animations = (json as { animations?: Clip[] }).animations ?? [];
+  expect(animations.map(a => a.name).sort()).toEqual(['jog', 'walk']);
+  const doc = readGLB(bytes);
+  const head = json.nodes!.findIndex(n => n.name === 'head'), eyes = ['eye_L', 'eye_R'].map(n => json.nodes!.findIndex(x => x.name === n));
+  for (const clip of animations) {
+    expect(clip.channels.some(c => c.target.node === head)).toBe(true);
+    for (const channel of clip.channels.filter(c => eyes.includes(c.target.node!) && c.target.path === 'rotation')) {
+      const values = readAccessor(doc, clip.samplers[channel.sampler].output).data;
+      for (let i = 0; i < values.length; i += 4) expect(Math.abs(values[i + 3])).toBeCloseTo(1, 5);
+    }
+  }
+  // One morph mesh, the face, bound to the one body skin.
+  expect(json.meshes!.filter(m => Array.isArray(m.extras?.targetNames)).map(m => m.name)).toEqual(['face']);
+  expect(json.skins).toHaveLength(1);
+}, 900000);
+
 maybe('the face-rig wrappers validate, join and export inside real Blender', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-face-wrappers-')); directories.push(directory);
   const result = await authorGLB(resolve('tests/blender_face_fixture.py'), join(directory, 'model.glb'));

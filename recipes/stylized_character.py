@@ -10,7 +10,7 @@ import re
 VERSION = 1
 DEFAULTS = dict(height=1.82, age='adult', presentation='female', species='human',
                 vacuum=False, skin='#b97d57', hair='#363544', accent='#d47d48',
-                eyes='#507d76')
+                eyes='#507d76', face='static')
 
 def parameters(values):
     if not isinstance(values, dict) or set(values) - set(DEFAULTS):
@@ -21,6 +21,9 @@ def parameters(values):
     for key, choices in [('age', ('adult','child')), ('presentation', ('female','male')), ('species', ('human','alien'))]:
         if p[key] not in choices: raise ValueError(f'{key} must be one of {choices}')
     if not isinstance(p['vacuum'], bool): raise ValueError('vacuum must be a boolean')
+    # 'arkit' leaves the face's features to the rigged arkit-face/1 face (stylized_face.add_face).
+    if p['face'] not in ('static','arkit'): raise ValueError("face must be 'static' or 'arkit'")
+    if p['face']=='arkit' and p['species']=='alien': raise ValueError('The arkit face is for human faces; aliens keep the static face')
     for key in ['skin','hair','accent','eyes']:
         if not isinstance(p[key], str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',p[key]):
             raise ValueError(f'{key} must be a six-digit hex color')
@@ -109,7 +112,11 @@ def face_shape(x,y,rx,ry,rz):
     relief+=.075*gauss(X,Y,0,-.67,.36,.18)           # chin
     return base+rz*relief
 
-def anatomy_head(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,style,alien=False):
+def anatomy_head(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,style,alien=False,features=True):
+    if features: static_face(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,alien)
+    head_dressing(m,cx,cy,cz,rx,ry,rz,skin,hair,style,alien)
+
+def static_face(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,alien=False):
     verts=[]; faces=[]; n=96; count=64
     for i in range(count+1):
         lat=-math.pi/2+math.pi*(.0001+.9998*i/count)
@@ -178,6 +185,10 @@ def anatomy_head(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,style,alien=False):
     for side,name in [(-1,'left'),(1,'right')]:
         nostril=[surface(side*rx*(.095+.06*i/6),ry*(-.155+.012*math.sin(i*math.pi/6)),.001) for i in range(7)]
         m.tube(name+'-nostril',nostril,[rx*.009]*7,'#714c49' if not alien else '#65526e')
+
+def head_dressing(m,cx,cy,cz,rx,ry,rz,skin,hair,style,alien=False):
+    """Ears, hair or fronds: the parts round a head that do not move with the face."""
+    for side,name in [(-1,'left'),(1,'right')]:
         # Ear body and raised helix, with an inset concha.
         m.ellipsoid(name+'-ear',(cx+side*rx*.96,cy-.012,cz),(rx*.24,ry*.29,rz*.24),skin)
         m.ellipsoid(name+'-ear-concha',(cx+side*rx*1.065,cy-.012,cz+rz*.17),(rx*.115,ry*.18,.008),'#a26758' if not alien else '#748780')
@@ -257,8 +268,10 @@ def geometry(values=None):
             m.tube(label+'-finger-'+str(finger),[(fx,wrist_y-.063*s,.067*s),(fx,wrist_y-.093*s-length*.45,.081*s),(fx,wrist_y-.086*s-length,.084*s)],[.010*s,.009*s,.006*s],hand_color)
         m.tube(label+'-thumb',[(side*(wx-.022*s),wrist_y-.035*s,.068*s),(side*(wx-.057*s),wrist_y-.053*s,.09*s),(side*(wx-.055*s),wrist_y-.083*s,.103*s)],[.019*s,.013*s,.008*s],hand_color)
     if not eva:
-        anatomy_head(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['eyes'],p['presentation'],alien)
+        anatomy_head(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['eyes'],p['presentation'],alien,features=p['face']=='static')
     else:
+        # A living face rides inside the helmet: its ears and hair come with it.
+        if p['face']=='arkit': head_dressing(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['presentation'])
         # Pressure shell and visor are fitted over the same head envelope.
         m.ellipsoid('helmet-shell',(0,head_y,0),(rx*1.24,ry*1.13,rz*1.3),ivory)
         m.ellipsoid('visor-gasket',(0,head_y,rz*.79),(rx*1.09,ry*.77,rz*.60),navy)

@@ -601,3 +601,18 @@ export function terracedSocket(head: SynthHead, side: 'L' | 'R'): void {
   const index = head.meshes.findIndex(m => m.name === `eye_mask_${side}`);
   head.meshes[index] = { name: `eye_mask_${side}`, material: 'skin', positions, indices, targets: [], bones: positions.map(() => 'head') };
 }
+
+/**
+ * Put the head on a body: `head` becomes a child of `spine` (under `root`), with a torso and legs bound to the body
+ * bones far below the face, as a full-body character carries its face. `declare` marks the rig as a body skeleton in
+ * `extras.arkitFace.skeleton`.
+ */
+export function onBody(head: SynthHead, declare = true): void {
+  const neck: Vec3 = [0, -0.25, 0];
+  head.joints.unshift({ name: 'root', translation: [0, -1.5, 0], children: ['spine'] }, { name: 'spine', translation: [0, 1.25, 0], children: ['head'] });
+  head.joints.find(j => j.name === 'head')!.translation = [-neck[0], -neck[1], -neck[2]];
+  const torso = box([0, -0.5, -0.02], [0.2, 0.25, 0.1]), legs = box([0, -1.15, -0.02], [0.15, 0.35, 0.08]);
+  head.meshes.push({ name: 'torso', material: 'jacket', ...torso, targets: [], bones: torso.positions.map(() => 'spine') });
+  head.meshes.push({ name: 'legs', material: 'trousers', ...legs, targets: [], bones: legs.positions.map(() => 'root') });
+  if (declare) head.rootExtras = { arkitFace: { ...(head.rootExtras!.arkitFace as Record<string, unknown>), skeleton: 'body' } };
+}

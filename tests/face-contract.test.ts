@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
-import { ballNose, browBar, tube, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, terracedSocket, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { ballNose, browBar, onBody, tube, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, terracedSocket, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -421,6 +421,48 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
       expect(failure).toMatch(/hole in/);
       expect(failure).not.toMatch(/between the lids and the skin's eye hole/);
     }
+  });
+
+  it('passes a face on a declared body skeleton and judges the face apart from the body below it', async () => {
+    const result = await report(head => onBody(head));
+    expect(result.failures).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(result.checks.find(c => c.id === 'skeleton')!.message).toMatch(/body/);
+    // The chin, face height and model height are the face's, not the legs' far below it.
+    expect(result.measurements.chinDrop).toBeCloseTo(JAW_DROP, 5);
+    expect(result.measurements.faceHeight).toBeCloseTo(0.22, 5);
+    expect(result.measurements.height).toBeCloseTo(0.22, 3);
+  });
+
+  it('judges the hair of a body character as head dressing: it occludes, but is neither a part joined to the face nor its chin', async () => {
+    const hairy = (head: SynthHead) => {
+      // A fringe lock standing 5 mm off the brow mask and a ponytail hanging below the chin, riding head (static).
+      fringe(head, 0.012);
+      mesh(head, 'hair').positions = mesh(head, 'hair').positions.map(p => [p[0], p[1], p[2] + 0.005] as Vec3);
+      const tail = sphere([0, -0.16, -0.08], 0.03);
+      head.meshes.push({ name: 'tied-hair', material: 'hair', ...tail, targets: [], bones: tail.positions.map(() => 'head') });
+    };
+    // A suit's helmet collar rides head below the chin: the chin is still the face's (its morph-bearing mesh).
+    const collar = sphere([0, -0.2, 0], 0.05);
+    const suited = await report(head => { onBody(head); head.meshes.push({ name: 'helmet-ring', material: 'suit', ...collar, targets: [], bones: collar.positions.map(() => 'head') }); });
+    expect(suited.failures).toEqual([]);
+    expect(suited.measurements.chinDrop).toBeCloseTo(JAW_DROP, 5);
+    const body = await report(head => { onBody(head); hairy(head); });
+    expect(body.failures).toEqual([]);
+    expect(body.measurements.chinDrop).toBeCloseTo(JAW_DROP, 5);
+    // A head-only rig keeps judging every part near the face.
+    expect(failed(await report(hairy))).toEqual(expect.arrayContaining(['eye-crease', 'puppet-jaw']));
+  });
+
+  it('fails a head under body bones unless the rig declares a body skeleton', async () => {
+    const result = await report(head => onBody(head, false));
+    expect(failed(result)).toContain('skeleton');
+    expect(result.failures.find(f => f.startsWith('skeleton: '))).toMatch(/skeleton: 'body'/);
+  });
+
+  it('still requires every morph-bearing body part to ride head on a body skeleton', async () => {
+    const result = await report(head => { onBody(head); const legs = mesh(head, 'legs'); legs.targets = [{ name: 'jawOpen', positions: legs.positions.map(p => [p[0], p[1] - 0.01, p[2]] as Vec3) }]; });
+    expect(failed(result)).toContain('head-binding');
   });
 
   it('rejects bytes that are not a GLB', async () => {
