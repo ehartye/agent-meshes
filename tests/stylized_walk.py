@@ -78,8 +78,11 @@ class WalkContract(unittest.TestCase):
             for p in [0,stance,1]:
                 a,b,c=point(p-eps),point(p),point(p+eps)
                 self.assertLess(math.dist(tuple((y-x)/eps for x,y in zip(a,b)),tuple((y-x)/eps for x,y in zip(b,c))),.005)
-                # Sole roll also has zero angular acceleration at these joins.
-                self.assertLess(math.hypot(*( (x-2*y+z)/eps**2 for x,y,z in zip(a,b,c))),.08)
+                # Acceleration is continuous too: the toe roll carries through toe-off.
+                h=1e-5;f=lambda t:point(p+t)
+                before=tuple((x-2*y+z)/h**2 for x,y,z in zip(f(-2*h),f(-h),f(0)))
+                after=tuple((x-2*y+z)/h**2 for x,y,z in zip(f(0),f(h),f(2*h)))
+                self.assertLess(math.dist(before,after),.05*max(1,math.hypot(*before)))
 
     def test_jog_and_walk_anatomy_sweep(self):
         import stylized_character as character
@@ -137,6 +140,21 @@ class WalkContract(unittest.TestCase):
         self.assertEqual(walk.skin_weights('left-boot',[(-.1,0,.2)],layout),[{'left-foot':1}])
         # The hem follows the same pelvis as the belt and trouser yoke.
         self.assertEqual(walk.skin_weights('flight-jacket',[(.17,layout['hip_y']+.04,0)],layout),[{'pelvis':1}])
+
+    def test_every_vertex_keeps_one_to_four_influences(self):
+        # glTF skins carry at most four joints per vertex. On a short torso the pelvis,
+        # lumbar and chest blends overlap the elbow blend, so a jacket vertex can touch five.
+        import stylized_character as character
+        import stylized_walk as walk
+        for values in [{},{'height':1.12,'age':'child','species':'alien'},{'height':1.19,'age':'child'},{'height':.7,'age':'child'}]:
+            d=character.landmarks(values);s=d['s']
+            grid=[(x*s,y*d['h'],0) for x in [-.3+.005*i for i in range(121)] for y in [.3+.0025*j for j in range(221)]]
+            # A remeshed jacket vertex of the 1.12 m alien child that reached five joints.
+            grid.append((-.14977,.60209,.03855))
+            for name in ['flight-jacket','trousers','front-fastener','neck']:
+                for row in walk.skin_weights(name,grid,d):
+                    self.assertTrue(1<=len(row)<=4,(values,name,row))
+                    self.assertAlmostEqual(sum(row.values()),1)
 
     def test_articulation_and_attached_torso(self):
         import stylized_character as character

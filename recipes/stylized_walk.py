@@ -54,19 +54,19 @@ GAITS={
     'walk':dict(stance=.573,stride=.445,sway=.018,arm=.32,arm_phase=-.1,bend=.25,
                 lift=[.0605,.126,.108,.076,.0686,.133,.0775,.00507],
                 reach=[.0321,.147,-.0543,-.238,.0355,.247,-.0911,-.115],
-                heel=-.112,peak=1.14,heel_flat=.16,toe_from=.715,peak_at=.356,flat_at=.745,
+                heel=-.13,peak=1.14,heel_flat=.16,toe_from=.715,peak_at=.356,flat_at=.745,
                 base=-.032,bob=.0234,bob_shape=[(2,-.636,-.772)],
                 roll=4.5,roll_shape=[(1,.992,.126)],
                 lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
                 head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
                 yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0608),
-    'jog':dict(stance=.42,stride=.50,lift=[.1,.2,.25,.25,.2,.1],reach=[],sway=.012,arm=.48,arm_phase=0,bend=.95,
-               heel=-.23,peak=.70,heel_flat=.23,toe_from=.60,peak_at=.22,flat_at=.72,
-               base=-.06,bob=.022,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
+    'jog':dict(stance=.264,stride=.456,lift=[.021,.297,.323,.0638,.329,.0543,.347,.526],reach=[-.94,-1.7,-2.16,-1.56,-.82,-.467,-.176,-.275],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
+               heel=-.243,peak=1.21,heel_flat=.392,toe_from=.758,peak_at=.424,flat_at=.76,
+               base=-.0467,bob=.0672,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
                roll=5.0,roll_shape=[(1,-.888,.473),(3,-.052,-.026)],
-               lean=12.0,lumbar=.55,pitch=3.0,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
+               lean=17.3,lumbar=.55,pitch=3.0,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
                head=.5,head_lean=4.0,head_shape=[(2,-.95,.273),(4,-.071,-.046)],
-               yaw=6.0,chest_yaw=8.0,yaw_phase=0,body_phase=0),
+               yaw=6.0,chest_yaw=8.0,yaw_phase=0,body_phase=.0387),
 }
 TORSO=['root','pelvis','spine','chest','neck','head']
 
@@ -140,8 +140,16 @@ def _foot_roll(phase,settings):
     heel lead into the next contact.
 
     The toe roll never pauses at toe-off: easing to a stop exactly where the sole
-    leaves the ground would concentrate its jerk at the contact change.
+    leaves the ground would concentrate its jerk at the contact change. An optional
+    swing_roll profile (radians, B-spline control points over swing) shapes the
+    ankle in the air and vanishes near both contact changes.
     """
+    stance=settings['stance']
+    if phase>=stance and settings.get('swing_roll'):
+        return _base_roll(phase,settings)+_profile((phase-stance)/(1-stance),settings['swing_roll'])
+    return _base_roll(phase,settings)
+
+def _base_roll(phase,settings):
     stance=settings['stance'];heel=settings['heel'];peak=settings['peak']
     flat=stance*settings['heel_flat'];start=stance*settings['toe_from']
     top=stance+(1-stance)*settings['peak_at'];level=stance+(1-stance)*settings['flat_at']
@@ -263,7 +271,10 @@ def skin_weights(name,vertices,d):
     s=d['s'];hip=d['hip_y'];knee=hip*.53;shoulder=d['shoulder_y'];wrist=hip+.095*s;elbow=(wrist+shoulder)/2;sx=d['shoulder_w']*.49
     side='left' if name.startswith('left-') else 'right'
     def rigid(bone):return [{bone:1} for _ in vertices]
-    def clean(row):return {bone:value for bone,value in row.items() if value>0}
+    def clean(row):
+        # glTF skins carry four joints per vertex: keep the strongest, renormalized.
+        kept=sorted(((v,b) for b,v in row.items() if v>0),reverse=True)[:4];total=sum(v for v,_ in kept)
+        return {b:v/total for v,b in kept}
     if any(token in name for token in ['boot','outsole','ankle']):return rigid(side+'-foot')
     if name in ['left-hand','right-hand']:return rigid(name)
     if 'wrist-seal' in name:return rigid(side+'-forearm')
