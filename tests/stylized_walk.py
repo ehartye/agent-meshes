@@ -147,7 +147,7 @@ class WalkContract(unittest.TestCase):
             self.assertEqual({b for row in walk.skin_weights(name,parts[name]['vertices'],layout) for b in row},{bone},name)
         # Head, hair and every helmet part share one rigid head binding, so the glass cannot touch the face in any clip.
         for name,part in parts.items():
-            if part.get('head') or (name.startswith('helmet') and name!='helmet-neck-seal') or 'helmet-lamp' in name:
+            if part.get('head') or (name.startswith('helmet') and name!='helmet-neck-seal') or 'helmet-pod' in name:
                 self.assertEqual({b for row in walk.skin_weights(name,part['vertices'][:50],layout) for b in row},{'head'},name)
         # The neck seal flexes from the chest to the helmet ring.
         seal=walk.skin_weights('helmet-neck-seal',parts['helmet-neck-seal']['vertices'],layout)

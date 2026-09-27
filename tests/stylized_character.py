@@ -155,6 +155,57 @@ class VacuumHelmetContract(unittest.TestCase):
         self.assertAlmostEqual(small['clearance'], .022, places=3)
         self.assertGreater(min(large['radii']), max(small['radii']))
 
+    def test_head_clears_the_whole_bubble_glass_and_shell(self):
+        # The shell's inner surface is the same bubble: an ear or ponytail behind the window must clear it too.
+        for name in CAST:
+            parts, by = self.suited(name)
+            head = self.head_parts(parts)
+            with self.subTest(name=name):
+                self.assertGreaterEqual(self.mesh_clearance(head, by['helmet-shell']), .015)
+
+    def test_face_and_ears_sit_behind_the_glass_not_the_rim(self):
+        # The window plane is placed from the head: every face, eye and ear vertex from the back of the ears forward
+        # is in front of it with room to spare, so the rim never crosses an ear and the profile reads through glass.
+        # The back of the skull and the hair may run on into the shell.
+        for name in CAST:
+            parts, by = self.suited(name)
+            fit = by['helmet-glass']['fit']; window = fit['window']
+            back = min(v[2] for p in self.head_parts(parts) if 'ear' in p['name'] for v in p['vertices'])
+            with self.subTest(name=name):
+                for part in self.head_parts(parts):
+                    if 'hair' in part['name']: continue
+                    for v in part['vertices']:
+                        if v[2] < back: continue
+                        d = [(v[k]-fit['center'][k])/fit['radii'][k] for k in range(3)]
+                        self.assertGreaterEqual(sum(d[k]*window['normal'][k] for k in range(3)) - window['offset'], .02, part['name'])
+
+    def test_side_pods_sit_on_the_shell_behind_the_ears_in_suit_colors(self):
+        for name in CAST:
+            parts, by = self.suited(name)
+            fit = by['helmet-glass']['fit']; window = fit['window']
+            ears = [v for p in parts if p.get('head') and 'ear' in p['name'] for v in p['vertices']]
+            skin = self.recipe().parameters(dict(CAST[name], vacuum=True))
+            with self.subTest(name=name):
+                pods = [p for p in parts if 'helmet-pod' in p['name']]
+                self.assertEqual(len(pods), 4)
+                for pod in pods:
+                    self.assertNotIn(pod['color'].lower(), {skin['skin'].lower(), skin['accent'].lower()})
+                    for v in pod['vertices']:
+                        d = [(v[k]-fit['center'][k])/fit['radii'][k] for k in range(3)]
+                        self.assertLess(sum(d[k]*window['normal'][k] for k in range(3)), window['offset'])
+                    self.assertLess(max(v[2] for v in pod['vertices']), min(v[2] for v in ears))
+
+    def test_glass_declares_what_it_holds_for_the_build_enclosure_check(self):
+        for name in CAST:
+            parts, by = self.suited(name)
+            with self.subTest(name=name):
+                encloses = by['helmet-glass']['extras']['encloses']
+                self.assertEqual(encloses['parts'], [p['name'] for p in self.head_parts(parts)])
+                self.assertEqual(encloses['with'], ['helmet-shell'])
+                self.assertEqual((encloses['clearance'], encloses['maxClearance']), (.015, .04))
+        clothed = self.recipe().geometry(dict(CAST['mara'], vacuum=False))
+        self.assertFalse(any('extras' in p for p in clothed))
+
     def test_fieldwork_suit_language(self):
         parts, by = self.suited('mara')
         for required in ['backpack', 'left-shoulder-pad', 'right-elbow-pad', 'left-thigh-pouch', 'belt-pouch-left']:

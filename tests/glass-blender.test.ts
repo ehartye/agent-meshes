@@ -31,6 +31,11 @@ maybe('material(opacity=..., transmission=..., ior=...) exports glTF glass that 
     ['lens-glass', 'OPAQUE', 1, 1, true],
   ]);
   expect(glass[1].ior).toBeCloseTo(1.45);
+  // The bubble's extras.encloses survives Blender's exporter, and the build checks it at every pose.
+  expect(verification.enclosures.ok).toBe(true);
+  expect(verification.enclosures.enclosures[0]).toMatchObject({ enclosure: 'bubble', parts: ['head'], ok: true });
+  expect(verification.enclosures.enclosures[0].closest.clearance).toBeGreaterThan(0.05);
+  expect(verification.enclosures.enclosures[0].closest.clearance).toBeLessThan(0.06);
 }, 240000);
 
 const both = findBlender() && unrealAvailable() && !process.env.AGENT_MESHES_SKIP_UNREAL ? it : it.skip;

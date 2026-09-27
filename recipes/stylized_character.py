@@ -4,6 +4,7 @@ geometry(parameters) returns named Y-up mesh data using only the standard librar
 build_character(parameters) adapts those meshes to the agent-meshes Blender runner.
 This is a static authoring recipe, not an animation-ready human topology generator.
 """
+import json
 import math
 import re
 
@@ -298,17 +299,24 @@ def helmet_fit(points,neck_radius,clearance=HELMET_CLEARANCE,max_aspect=1.3):
     return dict(center=center,radii=radii,cut_y=cut_y,opening_radius=opening(center,radii),
                 clearance=min(ellipsoid_clearance(v,center,radii) for v in near_surface(center,radii)))
 
-def vacuum_helmet(m,fit,s,colors,segments=96,rings=48):
+def vacuum_helmet(m,fit,s,colors,show=(),segments=96,rings=48):
     """Hollow bubble helmet on a fitted ellipsoid: a clear glass window over the face, a cream crown-and-back shell
-    with thickness, a gold rim around the window and the neck opening, a neck seal down to the suit, and lamps.
+    with thickness, a gold rim around the window and the neck opening, a neck seal down to the suit, and radio pods.
 
     One latitude-longitude bubble (neck cut to crown) is split by the window plane, which leans back from the
     chin to the crown: glass in front of it (the face, and the profile from the side), shell behind (crown and
     back). Triangles are clipped exactly at the plane, so glass and shell share their edge vertices. The glass is
     the bubble surface itself, so the fit's clearance is the distance from the face to the glass.
+
+    The window plane is placed from the head: every point in `show` (face, eyes, ears) sits in front of it with room
+    to spare, so the rim never crosses an ear and the profile reads through glass; hair may run on into the shell.
+    Radio pods sit on the shell behind the rim, at ear height, never over the ears.
     """
     (cx,cy,cz),radii=fit['center'],fit['radii'];thick=.009*s
-    lean=math.radians(12);f=(0,-math.sin(lean),math.cos(lean));k=-.06  # window plane: d.f=k, d on the unit bubble
+    lean=math.radians(12);f=(0,-math.sin(lean),math.cos(lean))  # window plane: d.f=k, d on the unit bubble
+    def facing(p):return sum((p[i]-(cx,cy,cz)[i])/radii[i]*f[i] for i in range(3))
+    k=max(-.45,min([-.06]+[facing(p)-.05 for p in show]))
+    fit['window']=dict(normal=f,offset=k)
     lat_cut=math.asin(max(-1,min(1,(fit['cut_y']-cy)/radii[1])))
     def world(d,grow=0):return tuple(c+(r+grow)*v for c,r,v in zip((cx,cy,cz),radii,d))
     def unit(p):return tuple((p[i]-(cx,cy,cz)[i])/radii[i] for i in range(3))
@@ -380,11 +388,14 @@ def vacuum_helmet(m,fit,s,colors,segments=96,rings=48):
     def surface(lat,lon,grow):return world((math.cos(lat)*math.sin(lon),math.sin(lat),math.cos(lat)*math.cos(lon)),grow)
     glint=[surface(math.radians(30+7*math.sin(math.pi*q/8)),math.radians(-46+4.5*q),.002) for q in range(9)]
     m.tube('helmet-glint',glint,[.0028*s*math.sin(math.pi*(q+.5)/9.5) for q in range(9)],'#f4fbff')
-    # Lamps sit on the rim at its widest point on each side.
+    # Radio pods (direction A): teal discs with gold caps on the shell, at ear height, a little behind the rim.
+    ear_lat=math.asin(max(-.6,min(.6,sum(p[1]-cy for p in show)/max(len(show),1)/radii[1]))) if show else 0
+    lon=math.acos(max(-1,min(1,(k-.22-math.sin(ear_lat)*f[1])/(math.cos(ear_lat)*f[2]))))
     for sign,label in [(-1,'left'),(1,'right')]:
-        d=edge_dir(0 if sign>0 else math.pi);lamp=world(d,thick+.012*s)
-        m.ellipsoid(label+'-helmet-lamp',lamp,(.016*s,.034*s,.030*s),colors['lamp'])
-        m.ellipsoid(label+'-helmet-lamp-lens',(lamp[0]+sign*.013*s,lamp[1],lamp[2]),(.005*s,.022*s,.019*s),colors['rim'])
+        d=(sign*math.cos(ear_lat)*math.sin(lon),math.sin(ear_lat),math.cos(ear_lat)*math.cos(lon))
+        pod=world(d,thick+.006*s);cap=world(d,thick+.017*s)
+        m.ellipsoid(label+'-helmet-pod',pod,(.013*s,.036*s,.036*s),colors['pod'])
+        m.ellipsoid(label+'-helmet-pod-cap',cap,(.006*s,.022*s,.022*s),colors['rim'])
     return fit
 
 def fieldwork_suit(m,dims,colors):
@@ -412,7 +423,7 @@ def fieldwork_colors(parts):
     """Recolor the shared suit body in direction A's palette: cream suit, teal pads and gloves, olive boots."""
     for part in parts:
         name=part['name']
-        if part.get('head') or name.startswith('helmet') or 'helmet-lamp' in name:continue
+        if part.get('head') or name.startswith('helmet') or 'helmet-pod' in name:continue
         if 'outsole' in name:part['color']=FIELDWORK['sole']
         elif 'boot' in name or name.endswith('-ankle'):part['color']=FIELDWORK['boot']
         elif any(t in name for t in ['-palm','-finger','-thumb']):part['color']=FIELDWORK['glove']
@@ -479,8 +490,18 @@ def geometry(values=None):
         points=[v for part in m.parts[head_start:] for v in part['vertices']]
         chin=[(x,y-.12*ry,z) for part in m.parts[head_start:] if part['name']=='face' for x,y,z in part['vertices'] if y<head_y-.3*ry and z>0]
         fit=helmet_fit(points+chin,neck_radius=.075*s)
-        colors=dict(FIELDWORK,lamp=accent)
-        vacuum_helmet(m,fit,s,colors)
+        colors=dict(FIELDWORK,pod=FIELDWORK['pad'])
+        held=m.parts[head_start:]
+        # The window shows the face, eyes and ears: every non-hair vertex from the back of the ears forward.
+        ears=[v[2] for part in held if 'ear' in part['name'] for v in part['vertices']]
+        back=min(ears) if ears else 0
+        show=[v for part in held if 'hair' not in part['name'] for v in part['vertices'] if v[2]>=back]
+        vacuum_helmet(m,fit,s,colors,show=show)
+        # The build's enclosure check poses every clip and morph and fails if any of these comes within 1.5 cm of
+        # the bubble (glass or shell), or if the bubble is more than 4 cm from all of them.
+        glass=next(part for part in m.parts if part['name']=='helmet-glass')
+        glass['extras']=dict(encloses=dict(parts=[part['name'] for part in held],with_=None,clearance=.015,maxClearance=.04))
+        glass['extras']['encloses']['with']=['helmet-shell'];del glass['extras']['encloses']['with_']
         cut=fit['cut_y'];opening=fit['opening_radius']
         m.rings('helmet-neck-seal',[(shoulder_y+.035*s,0,0,opening*1.02,opening*.92),(mix(shoulder_y,cut,.5),0,0,opening*.98,opening*.9),(cut-.002*s,0,fit['center'][2]*.5,opening*.97,opening*.9)],FIELDWORK['strap'])
         fieldwork_suit(m,dims,colors)
@@ -505,6 +526,8 @@ def build_character(values=None):
         bm=bmesh.new(); bm.from_mesh(obj.data)
         bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces)); bm.to_mesh(obj.data); bm.free()
         for polygon in obj.data.polygons: polygon.use_smooth=True
+        # glTF node extras (the helmet's `encloses` declaration); export_glb writes this property into the GLB.
+        if part.get('extras'):obj['agent_meshes_extras']=json.dumps(part['extras'])
         result.append(obj)
     # Solid garment and hand surfaces: source pieces remain deterministic design data.
     groups=[('flight-jacket',['tailored-torso','left-sleeve','right-sleeve']),

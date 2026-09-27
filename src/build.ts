@@ -6,6 +6,7 @@ import type { Project } from './core/types.ts';
 import type { Operation } from './core/types.ts';
 import { createProject, applyOperation, validateProject } from './core/model.ts';
 import { exportGLB, verifyGLB } from './export.ts';
+import { verifyEnclosures, type EnclosuresReport } from './enclosure.ts';
 import { findBlender, refineGLB } from './refine.ts';
 import { authorGLB } from './author.ts';
 
@@ -61,6 +62,15 @@ async function checkOwnership(output: string, config: string): Promise<boolean> 
   await checkTree(output, parsed.data.files);
   return true;
 }
+/**
+ * A GLB that declares `extras.encloses` (a glass helmet round a head) must hold it at every pose; null when
+ * nothing is declared. A failure stops the build, like a validator error.
+ */
+async function checkEnclosures(bytes: Uint8Array): Promise<EnclosuresReport | null> {
+  const report = await verifyEnclosures(bytes);
+  if (!report.ok) throw new Error(`Enclosure check failed:\n${report.failures.join('\n')}`);
+  return report.enclosures.length ? report : null;
+}
 async function move(source: string, destination: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     try { await rename(source, destination); return; } catch (error) {
@@ -92,11 +102,13 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
     if (config.blender) {
       const source = await readFile(input);
       const result = await authorGLB(input, join(stage, 'model.glb'));
-      const verification = await verifyGLB(await readFile(join(stage, 'model.glb')));
+      const authored = await readFile(join(stage, 'model.glb'));
+      const verification = await verifyGLB(authored);
       if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
+      const enclosures = await checkEnclosures(authored);
       files = ['model.glb', 'verification.json', 'authoring.json'];
       await Promise.all([
-        writeFile(join(stage, 'verification.json'), `${JSON.stringify(verification, null, 2)}\n`),
+        writeFile(join(stage, 'verification.json'), `${JSON.stringify(enclosures ? { ...verification, enclosures } : verification, null, 2)}\n`),
         writeFile(join(stage, 'authoring.json'), `${JSON.stringify({ version: 1, source: { script: portable(relative(dirname(configFile), input)), sha256: createHash('sha256').update(source).digest('hex') }, blender: result.blender, meshes: result.meshes }, null, 2)}\n`),
       ]);
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
@@ -123,11 +135,12 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
         verification = await verifyGLB(bytes);
         if (!verification.ok) throw new Error(`Refined GLB verification failed with ${verification.errors} errors`);
       }
+      const enclosures = await checkEnclosures(bytes);
       files = ['project.mesh.json', 'model.glb', 'verification.json'];
       await Promise.all([
         writeFile(join(stage, files[0]), `${JSON.stringify(project, null, 2)}\n`),
         writeFile(join(stage, files[1]), bytes),
-        writeFile(join(stage, files[2]), `${JSON.stringify(verification, null, 2)}\n`),
+        writeFile(join(stage, files[2]), `${JSON.stringify(enclosures ? { ...verification, enclosures } : verification, null, 2)}\n`),
       ]);
       if (options.decorate) files.push(...await options.decorate(structuredClone(project), stage));
     }

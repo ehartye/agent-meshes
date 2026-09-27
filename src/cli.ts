@@ -113,8 +113,13 @@ export async function main(args = process.argv): Promise<void> {
       return;
     }
     const { verifyGLB } = await import('./export.ts');
-    const result = await verifyGLB(await readFile(file)); process.stdout.write(`${JSON.stringify(result)}\n`);
-    if (!result.ok) process.exitCode = 1;
+    const { verifyEnclosures } = await import('./enclosure.ts');
+    const bytes = await readFile(file);
+    const result = await verifyGLB(bytes), enclosures = await verifyEnclosures(bytes);
+    // A file whose nodes declare extras.encloses (a helmet round a head) is also checked at every clip phase and morph.
+    process.stdout.write(`${JSON.stringify(enclosures.enclosures.length ? { ...result, ok: result.ok && enclosures.ok, enclosures } : result)}\n`);
+    if (!enclosures.ok) process.stderr.write(`${enclosures.failures.map(line => `FAIL ${line}`).join('\n')}\n`);
+    if (!result.ok || !enclosures.ok) process.exitCode = 1;
   });
   program.command('verify-unreal <file>').description('Import a GLB into a scratch Unreal project headlessly (Interchange) and report what Unreal created; import only, no runtime render')
     .option('--contract <name>', 'Require a rig contract\'s names verbatim, for example arkit-face/1')

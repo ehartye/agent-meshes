@@ -4,6 +4,8 @@ build() returns the objects for the build runner to export. The bubble uses mate
 the lens material(transmission=..., ior=...); tests check the GLB's alphaMode, extensions and
 Unreal's translucent import.
 """
+import json
+
 import bpy
 from agent_meshes_author import bind_skin, make_mesh, material
 
@@ -34,6 +36,8 @@ def build():
     head = sphere('head', .1, (0, 0, 1.6), skin)
     bubble = sphere('bubble', .16, (0, 0, 1.6), glass, rings=24, segments=32)
     eye = sphere('lens', .02, (.12, -.2, 1.6), lens)
+    # The bubble declares what it holds; the build's enclosure check reads it from the node's glTF extras.
+    bubble['agent_meshes_extras'] = json.dumps({'encloses': {'parts': ['head'], 'clearance': .015, 'maxClearance': .08}})
     data = bpy.data.armatures.new('rig'); rig = bpy.data.objects.new('rig', data)
     bpy.context.collection.objects.link(rig); bpy.context.view_layer.objects.active = rig
     bpy.ops.object.mode_set(mode='EDIT')
