@@ -173,6 +173,21 @@ class MouthInside(unittest.TestCase):
             self.assertGreater(room['cavity_depth'], .02 * k)
 
 
+class NeckRidesTheHead(unittest.TestCase):
+    def test_the_neck_inside_the_head_rides_the_head_and_its_base_the_spine(self):
+        # The walk leans the spine under an upright head: a neck riding the spine alone swings its top forward into
+        # the open mouth.
+        for name, values in CAST.items():
+            d = character.landmarks(values)
+            bottom, top = d['shoulder_y'] + .02 * d['s'], d['head_y'] - .55 * d['ry']
+            share = lambda z: face.neck_head_share(z, d)
+            self.assertEqual(share(bottom), 0.0, name)
+            self.assertEqual(share(top), 1.0, name)
+            self.assertEqual(share(face.face_layout(dict(values, face='arkit'))['mouth_z']), 1.0, name)
+            steps = [share(bottom + (top - bottom) * i / 20) for i in range(21)]
+            self.assertEqual(steps, sorted(steps), name)
+
+
 class FaceLayout(unittest.TestCase):
     def test_features_sit_on_the_front_of_the_head_in_order_and_mirror(self):
         for name, values in CAST.items():

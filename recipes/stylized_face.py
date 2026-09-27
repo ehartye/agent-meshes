@@ -207,6 +207,15 @@ def _front(sdf, x, z, depth):
     return high
 
 
+def neck_head_share(z, d):
+    """How much of a neck vertex at height `z` rides the head bone rather than the spine (0 at the shoulders, 1 from
+    below the chin up), for the character's landmarks `d`. The walk leans the spine under an upright head, and a neck
+    riding the spine alone swings its top, which rises inside the head to the mouth, forward into the open mouth. Pure."""
+    bottom, top = d['shoulder_y'] + .02 * d['s'], d['head_y'] - .55 * d['ry']
+    t = min(1.0, max(0.0, (z - bottom) / (.6 * (top - bottom))))
+    return t * t * (3 - 2 * t)
+
+
 def mouth_depths(mouth_front, behind, k):
     """How deep the mouth's dark bag reaches behind the lips, and the tongue's length and furthest-back center (y).
 
@@ -244,6 +253,17 @@ def add_face(objects, values=None):
     k, eye_left, eye_right, radius = L['scale'], L['eye_left'], L['eye_right'], L['eye_radius']
     mouth_z, half_width = L['mouth_z'], L['mouth_half_width']
     add_eye_bones(rig, eye_left, eye_right)
+    # The neck rises inside the head to the mouth: its upper part rides the head (neck_head_share), so the walk's lean
+    # does not swing it into the open mouth.
+    d = _character()['landmarks'](p)
+    for obj in objects:
+        if getattr(obj, 'type', None) != 'MESH' or obj.name != 'neck' or 'rig-spine' not in obj.vertex_groups: continue
+        spine = obj.vertex_groups['rig-spine']
+        head_group = obj.vertex_groups.get('head') or obj.vertex_groups.new(name='head')
+        for v in obj.data.vertices:
+            share = neck_head_share((obj.matrix_world @ v.co).z, d)
+            spine.add([v.index], 1 - share, 'REPLACE')
+            head_group.add([v.index], share, 'REPLACE')
 
     skin_hex, hair_hex = L['skin'], L['hair']
     skin = material('skin', skin_hex, roughness=.55)
@@ -260,7 +280,7 @@ def add_face(objects, values=None):
     nose = nose_geometry(lips['vertices'], lips['faces'], L['nose'], L['nose_size'])
     vertices, faces = nose['vertices'], nose['faces']
     front = front_surface(vertices, faces)
-    jaw = JawHinge.ear(vertices, mouth_z, half_width, band=.06 * k, lip_round=.7)
+    jaw = JawHinge.ear(vertices, mouth_z, half_width, band=.065 * k, lip_round=.85)
     head = mesh_from_geometry('head_skin', {'vertices': vertices, 'faces': faces, 'material_indices': nose['material_indices']},
                               [skin, nostril])
     slit_mouth(head, mouth_z, half_width)
@@ -344,10 +364,17 @@ def add_face(objects, values=None):
     behind = [v.y for v in behind if abs(v.x) < 1.3 * half_width and abs(v.z - mouth_z) < .025 * k and v.y > mouth_front]
     room = mouth_depths(mouth_front, min(behind) if behind else None, k)
     bag = follow_skin(mouth_cavity_geometry((0, mouth_front, mouth_z - .002 * k), width=2 * half_width + .01 * k, height=.04 * k,
-                                            depth=room['cavity_depth'], surface=front, inset=.006 * k), head, reach=.03 * k, skip=['jawOpen'])
+                                            depth=room['cavity_depth'], rings=12, surface=front, inset=.006 * k), head, reach=.03 * k, skip=['jawOpen'])
     cavity = mesh_from_geometry('mouth_cavity', bag, [dark])
     for name, targets in bag['morphs'].items(): shape_key(cavity, name, targets)
-    add_jaw_open(cavity, jaw)
+    # The bag's lower half swings with the jaw by a smooth weight that never runs ahead of the lower lip's (so no part
+    # of it drops through the chin) and has no kink at the mouth's corners, where the lip's own shape folded a shallow
+    # bag (one with a neck close behind the mouth). It eases in below the mouth line: the bag has no slit.
+    def bag_weight(v):
+        u = min(1.0, max(0.0, (mouth_z + .001 * k - v[2]) / (.012 * k)))
+        c = min(1.0, abs(v[0]) / half_width)
+        return u * u * (3 - 2 * u) * (1 - c * c * (3 - 2 * c))
+    add_jaw_open(cavity, jaw, weight=bag_weight)
     teeth = '#eeeae0'
     # The upper gum line sits well above the lips (a real mouth's does), so the smiling corners stay below it.
     upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, mouth_front + .005 * k, mouth_z + .0045 * k), .8 * half_width,
