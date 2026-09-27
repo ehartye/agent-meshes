@@ -10,7 +10,7 @@ import re
 VERSION = 1
 DEFAULTS = dict(height=1.82, age='adult', presentation='female', species='human',
                 vacuum=False, skin='#b97d57', hair='#363544', accent='#d47d48',
-                eyes='#507d76', face='static')
+                eyes='#507d76', face='static', face_shape={})
 
 def parameters(values):
     if not isinstance(values, dict) or set(values) - set(DEFAULTS):
@@ -24,6 +24,9 @@ def parameters(values):
     # 'arkit' leaves the face's features to the rigged arkit-face/1 face (stylized_face.add_face).
     if p['face'] not in ('static','arkit'): raise ValueError("face must be 'static' or 'arkit'")
     if p['face']=='arkit' and p['species']=='alien': raise ValueError('The arkit face is for human faces; aliens keep the static face')
+    # face_shape tunes the living face's features (stylized_face.face_shape validates its keys and ranges).
+    if not isinstance(p['face_shape'], dict): raise ValueError('face_shape must be a dict of living-face shape values')
+    if p['face_shape'] and p['face']!='arkit': raise ValueError("face_shape shapes the living face: set face='arkit'")
     for key in ['skin','hair','accent','eyes']:
         if not isinstance(p[key], str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',p[key]):
             raise ValueError(f'{key} must be a six-digit hex color')
