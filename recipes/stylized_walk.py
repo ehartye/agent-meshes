@@ -174,6 +174,26 @@ def skin_weights(name,vertices,d):
     s=d['s'];hip=d['hip_y'];knee=hip*.53;shoulder=d['shoulder_y'];wrist=hip+.095*s;elbow=(wrist+shoulder)/2;sx=d['shoulder_w']*.49
     side='left' if name.startswith('left-') else 'right'
     def rigid(bone):return [{bone:1} for _ in vertices]
+    if name.startswith('layer-pouch'):return rigid('pelvis')  # belt-hung pouches ride the hips
+    if name.startswith('layer-'):
+        # Garment layers follow the body under them: the jacket rule above the hip, trousers below.
+        # Torso-hung layers (belts, hems, straps) never follow the arms; sleeve cuffs and badges do.
+        on_arm=name in ['layer-top','layer-bottom'] or 'sleeve' in name or 'badge' in name
+        if any(token in name for token in ['badge','button','plate']):
+            # Small rigid trims move as the garment point at their centre.
+            centre=tuple(sum(v[k] for v in vertices)/len(vertices) for k in range(3))
+            row=(skin_weights('flight-jacket',[centre if on_arm else (0,)+centre[1:]],d) if centre[1]>=hip else skin_weights('trousers',[centre],d))[0]
+            return [dict(row) for _ in vertices]
+        upper=skin_weights('flight-jacket',vertices if on_arm else [(0,y,z) for x,y,z in vertices],d)
+        lower=skin_weights('trousers',vertices,d)
+        return [a if v[1]>=hip else b for v,a,b in zip(vertices,upper,lower)]
+    if name.startswith(('left-hand-glove','right-hand-glove')):return rigid(side+'-hand')
+    if 'boot' in name:
+        # The boot shaft flexes with the shin above the ankle; the foot carries the rest.
+        rows=[]
+        for x,y,z in vertices:
+            t=w_smooth(.15*s,.19*s,y);rows.append({bone:w for bone,w in [(side+'-foot',1-t),(side+'-shin',t)] if w>0})
+        return rows
     if any(token in name for token in ['boot','outsole','ankle']):return rigid(side+'-foot')
     if name in ['left-hand','right-hand']:return rigid(name)
     if 'wrist-seal' in name:return rigid(side+'-forearm')
@@ -184,7 +204,13 @@ def skin_weights(name,vertices,d):
             side='left' if x<0 else 'right'
             if name=='flight-jacket':
                 shoulder_blend=w_smooth(shoulder-.14*s,shoulder+.02*s,y)
-                arm=w_smooth(sx+.015*s-shoulder_blend*.075*s,sx+.07*s-shoulder_blend*.055*s,abs(x))
+                # Below the chest the arm begins where the torso ends, so the inner forearm
+                # (and a cuff over it) never binds to the pelvis as the arm swings.
+                # The torso side allows for an eased jacket over the body. Sleeves end at the
+                # wrist, so nothing lower (hips, thighs, belts) can belong to an arm.
+                edge=(d['hip_w']*.5+(d['shoulder_w']*.46-d['hip_w']*.5)*w_smooth(hip,d['chest_y'],y))*1.04+.018*s
+                edge+=s*(1-w_smooth(hip+.06*s,hip+.085*s,y))
+                arm=w_smooth(min(sx+.015*s-shoulder_blend*.075*s,edge),min(sx+.07*s-shoulder_blend*.055*s,edge+.025*s),abs(x))
                 forearm=1-w_smooth(elbow-.045*s,elbow+.045*s,y)
                 torso=w_smooth(hip+.065*s,hip+.20*s,y)
                 row={'pelvis':(1-arm)*(1-torso),'spine':(1-arm)*torso,side+'-upper-arm':arm*(1-forearm),side+'-forearm':arm*forearm}
@@ -259,3 +285,35 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
             track.strips.new(action.name,0,action)
     scene.frame_set(0)
     return objects+[rig]
+
+def _arc(a,b):
+    """Shortest-arc rotation taking direction a onto b (Blender's rotation_difference)."""
+    a=w_unit(a);b=w_unit(b);axis=(a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0])
+    sine=math.hypot(*axis);cosine=w_dot(a,b)
+    if sine<1e-12:return lambda v:v
+    axis=w_mul(axis,1/sine)
+    def rotate(v):
+        # Rodrigues: v cos + (k x v) sin + k (k.v)(1 - cos)
+        k=axis;cross=(k[1]*v[2]-k[2]*v[1],k[2]*v[0]-k[0]*v[2],k[0]*v[1]-k[1]*v[0])
+        return w_add(w_add(w_mul(v,cosine),w_mul(cross,sine)),w_mul(k,w_dot(k,v)*(1-cosine)))
+    return rotate
+
+def skinned_vertices(name,vertices,d,phase,gait='walk'):
+    """Linear-blend skinning of a recipe mesh at a gait phase, without Blender (Y up).
+
+    Mirrors rig_character: torso bones take their explicit frames, limbs the shortest
+    arc from rest to posed direction. Garment and contact checks sample clips with it.
+    """
+    rest=rest_bones(d);pose=gait_pose(d,phase,gait);rotations=gait_rotations(phase,gait);moves={}
+    for bone,b in rest.items():
+        start,end=pose[bone]
+        rotate=(lambda v,r=rotations[bone]:_body_rotate(v,r)) if bone in rotations else _arc(w_sub(b['tail'],b['head']),w_sub(end,start))
+        moves[bone]=(start,b['head'],rotate)
+    result=[]
+    for v,row in zip(vertices,skin_weights(name,vertices,d)):
+        total=sum(row.values());point=(0,0,0)
+        for bone,weight in row.items():
+            start,head,rotate=moves[bone]
+            point=w_add(point,w_mul(w_add(start,rotate(w_sub(v,head))),weight/total))
+        result.append(point)
+    return result

@@ -20,6 +20,7 @@ jobs:
       - run: python tests/blender_author_skin.py
       - run: python tests/stylized_character.py
       - run: python tests/stylized_walk.py
+      - run: python tests/stylized_costume.py
       - run: node --test tests/botanical-kit.test.mjs
       - run: python tests/blender_face_geometry.py
       - run: npm test

@@ -23,7 +23,7 @@ class CharacterContract(unittest.TestCase):
         self.assertIn('face', by_name)
         self.assertIn('left-upper-eyelid', by_name)
         self.assertIn('left-thumb', by_name)
-        foot = by_name['left-boot']['vertices']
+        foot = [v for n in ['left-boot', 'left-boot-toe-cap'] for v in by_name[n]['vertices']]
         self.assertGreater(max(v[2] for v in foot), .18)
         self.assertLess(min(v[2] for v in foot), -.05)
         self.assertAlmostEqual(min(v[1] for p in first for v in p['vertices']), 0, places=5)
