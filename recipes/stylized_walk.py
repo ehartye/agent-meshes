@@ -321,11 +321,18 @@ def skin_weights(name,vertices,d):
     if name in ['chest-terminal','chest-readout','collar','air-hose'] or name.startswith(('air-tank','tank-band')):return rigid('chest')
     return rigid('head')
 
+def clip_frames(seconds,fps=60):
+    """Frames in a looped clip: the nearest even count (ties up), so the rig-right
+    touchdown at half a cycle is keyed like the left one and the mirrored legs
+    are sampled alike."""
+    return 2*math.floor(seconds*fps/2+.5)
+
 def rig_character(objects,layout,duration=1.2,jog_duration=None):
     """Bind geometry and bake walk, plus optional light jog, as named actions.
 
     Named NLA tracks preserve both clips through the authored glTF exporter.
-    Durations are rounded to the nearest frame at 60 Hz. The rig carries
+    Durations are rounded to the nearest even frame count at 60 Hz (see
+    clip_frames). The rig carries
     `agent-meshes/gait/1` extras: height, stance, contact phases, travel speed
     and each hand's rest palm and thumb directions.
     """
@@ -355,10 +362,10 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
         world=obj.matrix_world.copy();obj.parent=None;obj.matrix_world=world
     fps=60;scene=bpy.context.scene;scene.render.fps=fps;scene.frame_start=0
     clips=[('walk',duration)]+([] if jog_duration is None else [('jog',jog_duration)])
-    scene.frame_end=max(round(seconds*fps) for _,seconds in clips)
+    scene.frame_end=max(clip_frames(seconds,fps) for _,seconds in clips)
     rig.animation_data_create();actions=[];declared={}
     for gait,seconds in clips:
-        frames=round(seconds*fps);action=bpy.data.actions.new(gait);rig.animation_data.action=action
+        frames=clip_frames(seconds,fps);action=bpy.data.actions.new(gait);rig.animation_data.action=action
         settings=gait_settings(gait)
         declared[gait]={'stance':settings['stance'],'travelSpeed':travel_speed(layout,gait,frames/fps),
                         'contactPhase':{bone_name('left-foot'):0,bone_name('right-foot'):.5}}

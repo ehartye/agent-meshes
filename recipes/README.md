@@ -113,7 +113,8 @@ motion or facial animation.
 `rig_character` bakes a `walk` action and, when `jog_duration` is provided, a `jog`
 action at 60 Hz from frame zero with identical loop endpoints. Omitting
 `jog_duration` preserves the single-clip API. Durations are 0.6–3 seconds and
-round to the nearest frame. Named NLA tracks retain both clips during GLB export.
+round to the nearest even frame count, so both feet's touchdowns fall on keys.
+Named NLA tracks retain both clips during GLB export.
 Mesh objects retain Armature modifiers but are detached from the rig's object
 parent so glTF skins export as scene roots without parent-transform warnings.
 The returned list includes the rig; pass the complete list to the managed build.

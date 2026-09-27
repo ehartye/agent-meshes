@@ -177,6 +177,14 @@ class WalkContract(unittest.TestCase):
             self.assertGreater(max(bends)-min(bends),.1)
             if gait=='jog':self.assertGreater(min(bends),.8)
 
+class ClipFrames(unittest.TestCase):
+    def test_clips_key_both_contacts_on_frames(self):
+        import stylized_walk as walk
+        # The rig-right foot lands half a cycle after the left: an even frame count keys
+        # both touchdowns, so the mirrored legs are sampled alike. Ties round up.
+        self.assertEqual([walk.clip_frames(t) for t in [.75,.9,1.1,1.35,1.2]],[46,54,66,82,72])
+        self.assertEqual(walk.clip_frames(.75,30),22)
+
 class Hands(unittest.TestCase):
     def test_declared_hand_frames_match_the_authored_hands(self):
         import stylized_character as character
