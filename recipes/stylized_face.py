@@ -325,6 +325,9 @@ def add_face(objects, values=None):
     rest = [tuple(v.co) for v in head.data.vertices]
     corner = (half_width, front(half_width, mouth_z), mouth_z)
     still = eye_hole_mask(holes['L'], holes['R'])
+    # The cheeks' motions fade out toward the lids over a wider band: at the default one a smile's lifted cheek met the
+    # still lower lid in a crease.
+    soft = eye_hole_mask(holes['L'], holes['R'], band=45)
 
     mouth_front = front(0, mouth_z)
     (bx, bz), (ox, oz) = L['brow_inner'], L['brow_outer']
@@ -338,7 +341,7 @@ def add_face(objects, values=None):
         'mouthStretch': (corner, .026 * k, (.005 * k, .001 * k, -.0015 * k)),
     }
     for name, (center, reach, offset) in pairs.items():
-        left, right = symmetric_offsets(rest, center, reach, offset, mask=still)
+        left, right = symmetric_offsets(rest, center, reach, offset, mask=soft if name == 'cheekSquint' else still)
         shape_key(head, f'{name}Left', left)
         shape_key(head, f'{name}Right', right)
     # The smile: the corners draw up, out and back, the cheek above each rises and rounds forward into the lower lid,
@@ -354,7 +357,7 @@ def add_face(objects, values=None):
         # The lower lip's middle stays over the lower teeth; only toward the corners does it rise with them.
         up = soft_offset(rest, corner_side, .032 * k, (sx * .005 * k, .0015 * k, .0085 * k),
                          mask=[still(v) * (1.0 if u else min(1.0, (v[0] / half_width) ** 2)) for v, u in zip(rest, upper_lip)])
-        lift = soft_offset(rest, cheek_side, (.03 * k, .024 * k, .028 * k), (sx * .0012 * k, -.0016 * k, .0048 * k), mask=still)
+        lift = soft_offset(rest, cheek_side, (.03 * k, .024 * k, .028 * k), (sx * .0012 * k, -.0016 * k, .0048 * k), mask=soft)
         grin = soft_offset(rest, (sx * .4 * half_width, mouth_front, mouth_z + .002 * k), (.8 * half_width, .014 * k, .007 * k),
                            (0, -.0004 * k, .0026 * k), mask=upper_lip)
         shape_key(head, f'mouthSmile{side}', [tuple(a[i] + b[i] + g[i] - 2 * r[i] for i in range(3)) for a, b, g, r in zip(up, lift, grin, rest)])
