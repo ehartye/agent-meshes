@@ -455,7 +455,10 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   // Hair on a body character is head dressing (it has its own bar): it occludes, but is not a part joined to the face,
   // nor skin the crease lines read, nor the chin.
   const dressing = (i: Instance) => bodySkeleton && i.names.some(n => /hair/i.test(n));
-  const all = bodySkeleton ? everything.filter(i => i.skinned && Array.from({ length: i.count }, (_, v) => faceJoints.reduce((sum, j) => sum + i.influence(v, j), 0)).every(w => w >= BOUND)) : everything;
+  // A suit's helmet riding head (its shell, visor and fittings, by name) is costume round the face, judged by its own
+  // bar: the face is judged as if it were lifted off, so an opaque visor neither hides the eyes nor counts as the skin.
+  const gear = (i: Instance) => bodySkeleton && i.names.some(n => /helmet|visor/i.test(n));
+  const all = bodySkeleton ? everything.filter(i => i.skinned && !gear(i) && Array.from({ length: i.count }, (_, v) => faceJoints.reduce((sum, j) => sum + i.influence(v, j), 0)).every(w => w >= BOUND)) : everything;
 
   // 3. skinning
   const unskinned = skinFacts.meshNodes.filter(n => n.skin === null).map(n => n.name ?? n.meshName ?? `node ${n.node}`);

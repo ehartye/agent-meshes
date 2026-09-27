@@ -454,6 +454,20 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(failed(await report(hairy))).toEqual(expect.arrayContaining(['eye-crease', 'puppet-jaw']));
   });
 
+  it('judges a suit helmet riding head on a body character as head dressing: its visor neither hides the eyes nor joins the face', async () => {
+    // An opaque helmet shell round the whole head and a visor highlight standing a centimetre off the face, riding head.
+    const helmet = (head: SynthHead) => {
+      onBody(head);
+      const shell = sphere([0, 0, 0], 0.2), highlight = sphere([-0.03, 0.03, 0.12], 0.01);
+      head.meshes.push({ name: 'helmet-shell', material: 'suit', ...shell, targets: [], bones: shell.positions.map(() => 'head') });
+      head.meshes.push({ name: 'visor-highlight', material: 'suit', ...highlight, targets: [], bones: highlight.positions.map(() => 'head') });
+    };
+    const suited = await report(helmet);
+    expect(suited.failures).toEqual([]);
+    // A head-only rig has no dressing: the same visor hides its eyes.
+    expect(failed(await report(head => { helmet(head); head.joints = passingHead().joints; head.rootExtras = passingHead().rootExtras; head.meshes = head.meshes.filter(m => !['torso', 'legs'].includes(m.name)); }))).toContain('lid-follow');
+  });
+
   it('fails a head under body bones unless the rig declares a body skeleton', async () => {
     const result = await report(head => onBody(head, false));
     expect(failed(result)).toContain('skeleton');
