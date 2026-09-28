@@ -160,9 +160,9 @@ def beard_weight(point, marks, k):
         return t * t * (3 - 2 * t)
     # Down the face from under the cheekbones (a little above the nose's base, rising toward the ears into sideburns).
     top = nose_z + .004 * k + .25 * max(0.0, abs(x) - 1.2 * hw)
-    vertical = 1 - ramp(top - .006 * k, top + .004 * k, z)
+    vertical = 1 - ramp(top - .016 * k, top + .006 * k, z)
     # Round the head: the front and sides back to the ears, not the nape.
-    around = 1 - ramp(marks['occiput'][1] - .09 * k, marks['occiput'][1] - .05 * k, y)
+    around = 1 - ramp(marks['occiput'][1] - .1 * k, marks['occiput'][1] - .04 * k, y)
     # Under the jaw it thins out toward the throat.
     under = ramp(marks['menton'][2] - .03 * k, marks['menton'][2] - .005 * k, z)
     # Bare lips: an ellipse round the mouth; the moustache stays above it.
@@ -180,15 +180,19 @@ def beard_shell(face, k, thickness=.006, weight=beard_weight):
     from agent_meshes_hm08 import vertex_normals
     V, F, marks = face['vertices'], face['faces'], face['landmarks']
     w = np.array([weight(v, marks, k) for v in V])
-    chosen = [f for f in F if min(w[i] for i in f if i >= 0) > .02]
+    chosen = [f for f in F if min(w[i] for i in f if i >= 0) > .08]
     if not chosen: return None
     used = sorted({int(i) for f in chosen for i in f if i >= 0})
     remap = {old: new for new, old in enumerate(used)}
     normals = vertex_normals(V, F)[used]
     ww = w[used]
-    # Fuller on the chin, thinning up the cheeks; the rim sinks 0.6 mm (scaled) under the skin.
+    # Fuller on the chin, thinning up the cheeks, and easing to nothing at the edge, where the rim tucks 0.8 mm (scaled)
+    # under the skin: the beard grows out of the face instead of sitting on it like a cut-out.
     fullness = np.clip(1.4 - (V[used, 2] - marks['menton'][2]) / (marks['subnasale'][2] - marks['menton'][2]), .55, 1.0)
-    lift = (thickness * k * fullness * ww ** .6 - .0006 * k * (1 - ww))[:, None]
+    grow = np.clip((ww - .08) / .5, 0, 1)
+    grow = grow * grow * (3 - 2 * grow)
+    tuck = 1 - np.clip((ww - .08) / .25, 0, 1)
+    lift = (thickness * k * fullness * grow - .0008 * k * tuck)[:, None]
     shell = V[used] + normals * lift
     faces = [[remap[int(i)] for i in f if i >= 0] for f in chosen]
     # The shell rides the skin: each vertex takes its skin vertex's motion in every morph, then any face that motion
@@ -287,6 +291,9 @@ def add_face(objects, values=None):
         cheek = np.array(marks['eye_lower_L']) * [sx, 1, 1] + [sx * .15 * hw, 0, -1.1 * lip_h * 2]
         patches.append({'center': tuple(cheek), 'radius': (.9 * hw, .02 * k, .7 * hw), 'color': blush, 'strength': .55})
     patches.append({'center': (0, front, mz), 'radius': (hw * 1.05, .02 * k, lip_h * 1.4), 'color': lip, 'strength': .75})
+    # The lip line: a thin dark crease where the lips meet, as the boards draw a closed mouth (and no light catches
+    # the crack between them).
+    patches.append({'center': (0, front + .004 * k, mz), 'radius': (hw * .98, .012 * k, .0014 * k), 'color': tuple(c * .35 for c in lip), 'strength': .8})
     tints = skin_tints([tuple(v) for v in V], base=skin_hex, patches=patches)
     lash_tint = tuple(.3 for _ in range(3))
     tints = [lash_tint if i in lash_set else t for i, t in enumerate(tints)]

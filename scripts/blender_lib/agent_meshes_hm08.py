@@ -707,7 +707,7 @@ FEATURES = {
     'nose_bridge': (('nose/nose-scale-depth', 2.0), ('nose/nose-hump', .6)),
     'mouth_width': (('mouth/mouth-scale-horiz', 2.5),),
     'lips': (('mouth/mouth-upperlip-volume', .6), ('mouth/mouth-lowerlip-volume', .6)),
-    'jaw_width': (('chin/chin-bones', 2.5),),
+    'jaw_width': (('head/head-square', None),),   # handled below: square out, inverted triangle in
     'chin': (('chin/chin-height', 2.5),),
     'chin_width': (('chin/chin-width', 2.5),),
     'cheeks': (('cheek/{s}-cheek-volume', .8), ('head/head-fat', .4)),
@@ -717,8 +717,8 @@ FEATURES = {
 
 
 def feature_weights(shape, head=None):
-    """Target weights for a character's shape controls: factors round 1 (eye_size, nose, mouth_width, lips, jaw_width,
-    chin, chin_width, cheeks, brow, nose_length, nose_width, nose_bridge), eye_spacing (factor), eye_tilt (-1..1,
+    """Target weights for a character's shape controls: factors round 1 (eye_size, nose, mouth_width, lips,
+    chin, chin_width, cheeks, brow, nose_length, jaw_width, nose_width, nose_bridge), eye_spacing (factor), eye_tilt (-1..1,
     up at the outer corner) and smile (0..1, the corners turned up)."""
     head = head or load_head()
     weights = {}
@@ -742,6 +742,10 @@ def feature_weights(shape, head=None):
         elif key == 'brow':
             v = (value - 1) * .5
             if v: add(f'eyebrows/eyebrows-trans-{"forward" if v > 0 else "backward"}', min(1.0, abs(v)))
+        elif key == 'jaw_width':
+            # hm08's chin-bones drops the jawline rather than widening it; the head-shape targets move the gonial angles.
+            v = (value - 1) * 2.5
+            if v: add('head/head-square' if v > 0 else 'head/head-invertedtriangular', min(1.0, abs(v)))
         elif key == 'smile':
             if value > 0: add('mouth/mouth-angles-up', min(1.0, value))
         else:

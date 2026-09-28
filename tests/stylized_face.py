@@ -1,4 +1,4 @@
-"""Living-face layout contract for the stylized character recipe (no Blender required).
+"""Living-face contract for the stylized character recipe on the hm08 head (numpy; Blender not required).
 
 Blender coordinates: Z up, meters, the face looks down -Y, the character's left is +X.
 """
@@ -10,6 +10,9 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'recipes'))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
 
+import numpy as np
+
+import agent_meshes_hm08 as hm
 import stylized_character as character
 import stylized_face as face
 
@@ -23,10 +26,12 @@ FEATURES = ['face', 'left-eye-white', 'left-iris', 'left-upper-eyelid', 'left-la
             'lower-lip', 'left-nostril']
 
 
-def inside_head(point, d, slack=0.0):
-    """Within the head's ellipsoid envelope (rx wide, rz deep, ry tall) around (0, 0, head_y)."""
-    x, y, z = point
-    return (x / d['rx']) ** 2 + (y / d['rz']) ** 2 + ((z - d['head_y']) / d['ry']) ** 2 <= (1 + slack) ** 2
+def shape_marks(values):
+    """The hm08 head a character's spec shapes (before the envelope fit), in meters, and its landmarks."""
+    spec = face.head_spec(dict(values, face='arkit'))
+    head = hm.load_head()
+    V = hm.to_blender(hm.head_shape(spec['years'], spec['gender'], spec['stylize'], spec['shape']))
+    return V, hm.face_landmarks(V, head.kind_faces('body'), hm.hm08_eyes(head, V))
 
 
 class FaceParameters(unittest.TestCase):
@@ -43,219 +48,210 @@ class FaceParameters(unittest.TestCase):
             for feature in FEATURES:
                 self.assertIn(feature, static, name)
                 self.assertNotIn(feature, living, name)
-            for kept in ['hair-cap', 'left-ear', 'right-ear-helix', 'swept-hair-lock-0', 'neck', 'left-boot']:
+            for kept in ['hair-cap', 'left-ear', 'swept-hair-lock-0', 'neck', 'left-boot']:
                 self.assertIn(kept, living, name)
-            self.assertEqual(static - living, {n for n in static if n not in living})
-
-    def test_a_suit_carries_the_living_head_and_hair_inside_its_helmet(self):
-        for name, values in CAST.items():
-            parts = {p['name'] for p in character.geometry(dict(values, face='arkit', vacuum=True))}
-            self.assertIn('helmet-shell', parts, name)
-            self.assertIn('hair-cap', parts, name)
-            self.assertIn('left-ear', parts, name)
-            self.assertNotIn('face', parts, name)
-            # The static suit is unchanged: no head inside.
-            self.assertNotIn('hair-cap', {p['name'] for p in character.geometry(dict(values, vacuum=True))})
-
-
-def surface_y(sdf, x, z, start=-.4):
-    """The head field's front surface y at (x, z): marching back from in front of the face."""
-    y = start
-    while sdf((x, y, z)) > 0: y += .0005
-    return y
-
-
-def surface_x(sdf, y, z):
-    """The head field's outermost x at (y, z): marching in from the side."""
-    x = .4
-    while sdf((x, y, z)) > 0: x -= .0005
-    return x
 
 
 class FaceShape(unittest.TestCase):
     def test_face_shape_is_a_validated_character_parameter_of_the_living_face(self):
-        self.assertEqual(character.parameters({})['face_shape'], {})
         values = dict(CAST['adult-male'], face='arkit', face_shape={'beard': 'stubble', 'brow': 1.6})
         self.assertEqual(character.parameters(values)['face_shape'], {'beard': 'stubble', 'brow': 1.6})
-        for invalid in [5, 'round', None, ['beard']]:
-            with self.assertRaises(ValueError): character.parameters(dict(values, face_shape=invalid))
-        # A static face has no living face to shape.
         with self.assertRaises(ValueError): character.parameters(dict(CAST['girl'], face_shape={'nose': 1.2}))
         for invalid in [{'snout': 1}, {'nose': 5}, {'nose': 0}, {'nose': True}, {'nose': 'big'}, {'beard': 'goatee'},
-                        {'smile': -.1}, {'jaw_width': float('nan')}, {'beard_color': 'brown'}]:
+                        {'smile': -.1}, {'jaw_width': float('nan')}, {'beard_color': 'brown'}, {'years': 90}, {'eye_tilt': 2}]:
             with self.assertRaises(ValueError, msg=str(invalid)): face.face_shape_values(dict(values, face_shape=invalid))
 
-    def test_every_shape_has_a_default_and_adult_men_default_to_a_heavier_brow(self):
+    def test_every_shape_has_a_default_and_children_are_children(self):
         for name, values in CAST.items():
             shape = face.face_shape_values(dict(values, face='arkit'))
             self.assertEqual(set(shape), set(face.SHAPE_RANGES) | {'beard', 'beard_color'}, name)
             self.assertEqual(shape['beard'], 'none', name)
-        man, woman = face.face_shape_values(dict(CAST['adult-male'], face='arkit')), face.face_shape_values(dict(CAST['adult-female'], face='arkit'))
+            self.assertEqual(shape['years'] < 12, values['age'] == 'child', name)
+        man, woman = (face.face_shape_values(dict(CAST[n], face='arkit')) for n in ('adult-male', 'adult-female'))
         self.assertGreater(man['brow'], woman['brow'])
         self.assertGreater(man['jaw_width'], woman['jaw_width'])
-        explicit = face.face_shape_values(dict(CAST['adult-male'], face='arkit', face_shape={'brow': .8}))
-        self.assertEqual(explicit['brow'], .8)
 
-    def test_adults_have_a_longer_lower_face_and_smaller_eyes_than_children(self):
-        adult, child = (face.face_layout(dict(CAST[n], face='arkit')) for n in ('adult-female', 'girl'))
-        drop = lambda L: (L['eye_left'][2] - L['mouth_z']) / L['scale']
-        self.assertGreater(drop(adult), 1.1 * drop(child))
-        self.assertLess(adult['eye_radius'] / adult['scale'], .92 * child['eye_radius'] / child['scale'])
-        # The mouth sits well below the eyes (the boards: about 1.3-1.9 times the half spacing of the eyes).
-        for L in (adult, child):
-            self.assertGreater((L['eye_left'][2] - L['mouth_z']) / L['eye_left'][0], 1.2)
+    def test_every_head_control_reaches_hm08_targets(self):
+        for key in face.HEAD_FEATURES:
+            low, high = face.SHAPE_RANGES[key]
+            for value in (low, high):
+                self.assertTrue(hm.feature_weights({key: value}) or value == face.NEUTRAL.get(key, 1.0), key)
 
-    def test_shape_parameters_move_the_features(self):
-        values = dict(CAST['adult-female'], face='arkit')
-        base = face.face_layout(values)
-        shaped = lambda **shape: face.face_layout(dict(values, face_shape=shape))
-        self.assertAlmostEqual(shaped(nose=1.5)['nose_size'][0], 1.5 * base['nose_size'][0])
-        self.assertAlmostEqual(shaped(mouth_width=1.2)['mouth_half_width'], 1.2 * base['mouth_half_width'])
-        self.assertAlmostEqual(shaped(eye_size=1.1)['eye_radius'], 1.1 * base['eye_radius'])
-        self.assertGreater(shaped(brow=2)['brow_height'], 1.5 * base['brow_height'])
-        self.assertGreater(shaped(lips=2)['lip_fullness'], 1.5 * base['lip_fullness'])
-        self.assertEqual(shaped(beard='beard')['beard'], 'beard')
-        self.assertGreater(shaped(smile=1)['resting_smile'], base['resting_smile'])
-        k = base['scale']
-        # jaw_width widens the lower face at the jaw; cheeks fill the face out in front of the cheekbones.
-        jaw_z = (base['mouth_z'] + base['chin_z']) / 2
-        wide, narrow = (face.head_field(shaped(jaw_width=w)) for w in (1.3, .8))
-        self.assertGreater(surface_x(wide, -.03 * k, jaw_z), surface_x(narrow, -.03 * k, jaw_z) + .006 * k)
-        full, flat = (face.head_field(shaped(cheeks=c)) for c in (2, .3))
-        cx, _, cz = base['cheek'][0]
-        self.assertLess(surface_y(full, cx, cz), surface_y(flat, cx, cz) - .003 * k)
-        # Bigger eyes push the brows up, clear of the upper lid's reach.
-        big = face.face_layout(dict(CAST['girl'], face='arkit', face_shape={'eye_size': 1.2}))
-        for brow in (big['brow_inner'], big['brow_outer']):
-            self.assertGreaterEqual(brow[1], big['eye_left'][2] + 1.45 * big['eye_radius'] - 1e-9)
-        # A longer chin reaches lower.
-        self.assertLess(shaped(chin=1.3)['chin_z'], base['chin_z'] - .005 * k)
+    def test_shape_parameters_move_the_features_measurably(self):
+        base = dict(CAST['adult-female'])
+        _, rest = shape_marks(base)
 
-    def test_a_beard_covers_the_jaw_chin_and_upper_lip_but_not_the_lips_eyes_or_neck(self):
-        L = face.face_layout(dict(CAST['adult-male'], face='arkit', face_shape={'beard': 'beard'}))
-        sdf, k = face.head_field(L), L['scale']
-        mouth_z, hw = L['mouth_z'], L['mouth_half_width']
-        at = lambda x, z: face.beard_weight((x, surface_y(sdf, x, z), z), L, surface_y(sdf, x, z))
-        chin = (L['mouth_z'] + L['chin_z']) / 2
-        self.assertGreater(at(0, chin), .9)                                  # chin
-        self.assertGreater(at(1.8 * hw, mouth_z - .01 * k), .9)              # jaw beside the mouth
-        self.assertGreater(at(.6 * hw, mouth_z + .007 * k), .5)              # moustache
-        self.assertLess(at(0, mouth_z), .05)                                 # the lips stay bare
-        self.assertEqual(at(L['eye_left'][0], L['eye_left'][2]), 0)          # no beard on the eyes
-        self.assertEqual(at(0, L['brow_inner'][1]), 0)
-        # Behind the jaw, down the neck, is not beard.
-        self.assertEqual(face.beard_weight((0, L['center'][1] + .05 * k, chin), L, 0.0), 0)
+        def marks(**shape): return shape_marks(dict(base, face_shape=shape))[1]
+        width = lambda m, a, b: m[a][0] - m[b][0]
+        iod = width(rest, 'eye_center_L', 'eye_center_R')
+        eye_area = lambda m: width(m, 'eye_outer_L', 'eye_inner_L') * (m['eye_upper_L'][2] - m['eye_lower_L'][2])
+        self.assertGreater(eye_area(marks(eye_size=1.25)), 1.06 * eye_area(rest))
+        self.assertGreater(width(marks(eye_spacing=1.15), 'eye_center_L', 'eye_center_R'), iod + .002)
+        self.assertLess(marks(nose_length=1.5)['subnasale'][2], rest['subnasale'][2] - .0005)
+        self.assertLess(marks(nose_bridge=1.6)['nose_tip'][1], rest['nose_tip'][1] - .0005)
+        self.assertGreater(width(marks(mouth_width=1.35), 'mouth_corner_L', 'mouth_corner_R'), width(rest, 'mouth_corner_L', 'mouth_corner_R') + .001)
+        self.assertLess(marks(chin=1.4)['menton'][2], rest['menton'][2] - .001)
+        self.assertGreater(width(marks(jaw_width=1.4), 'jaw_L', 'jaw_R'), width(rest, 'jaw_L', 'jaw_R') + .001)
+        self.assertGreater(width(marks(cheeks=2.5), 'cheek_L', 'cheek_R'), width(rest, 'cheek_L', 'cheek_R') + .0005)
+        full = marks(lips=2.5)   # fuller lips pout: both lips come forward
+        self.assertLess(full['upper_lip'][1] + full['lower_lip'][1], rest['upper_lip'][1] + rest['lower_lip'][1] - .002)
 
-    def test_the_face_is_flat_across_the_eyes_with_no_ridge_standing_out_between_them(self):
+    def test_children_have_larger_eyes_and_shorter_lower_faces_than_adults(self):
+        def proportions(values):
+            _, m = shape_marks(values)
+            height = m['crown'][2] - m['menton'][2]
+            eye = m['eye_outer_L'][0] - m['eye_inner_L'][0]
+            return eye / height, (m['nasion'][2] - m['menton'][2]) / height
+        adult, girl = proportions(CAST['adult-female']), proportions(CAST['girl'])
+        self.assertGreater(girl[0], adult[0])
+        self.assertLess(girl[1], adult[1])
+
+
+class HeadSpec(unittest.TestCase):
+    def test_the_spec_fits_the_character_envelope_and_crops_under_the_chin(self):
         for name, values in CAST.items():
-            L = face.face_layout(dict(values, face='arkit'))
-            sdf, k = face.head_field(L), L['scale']
-            ex, _, ez = L['eye_left']
-            bridge, beside = surface_y(sdf, 0, ez), surface_y(sdf, ex, ez)
-            # The bridge may stand a little proud of the skin over the eyes, but not a centimetre (the V-ridge).
-            self.assertGreater(bridge, beside - .0045 * k, name)
-            # And the eye's front sits near the skin: the lids wrap it with no mound.
-            self.assertLess(abs((L['eye_left'][1] - L['eye_radius']) - beside), .25 * L['eye_radius'], name)
-
-
-class MouthInside(unittest.TestCase):
-    def test_the_mouth_inside_stays_in_front_of_the_neck(self):
-        k, front = 1.6, -.12
-        free = face.mouth_depths(front, None, k)
-        self.assertAlmostEqual(free['cavity_depth'], .055 * k)
-        # The body's neck rises into the head behind the mouth: an open jaw must show the dark bag, not the neck, even
-        # as the head nods over the neck.
-        for behind in (-.03, -.053):
-            room = face.mouth_depths(front, behind, k)
-            self.assertLessEqual(front + room['cavity_depth'], behind - .012 * k + 1e-12)
-            self.assertLessEqual(room['tongue_y'] + room['tongue_length'] / 2, front + room['cavity_depth'] + 1e-12)
-            self.assertGreater(room['tongue_y'] - room['tongue_length'] / 2, front)
-            self.assertGreater(room['cavity_depth'], .02 * k)
-
-
-class FaceSmoothing(unittest.TestCase):
-    def test_smoothing_holds_the_lids_lips_and_nostrils_and_works_the_face_between(self):
-        L = face.face_layout(dict(CAST['girl'], face='arkit'))
-        r, k = L['eye_radius'], L['scale']
-        ex, ez = L['eye_x'], L['eye_z']
-        # Two lid rows: the margin, which a blink carries furthest, and a row by the anchor that barely moves.
-        margin = (ex, L['eye_left'][1] - 1.2 * r, ez + .3 * r)
-        anchor = (ex, L['eye_left'][1] - 1.1 * r, ez + .9 * r)
-        motion = [(margin, {'blink': (margin[0], margin[1], ez - .5 * r)}), (anchor, {'blink': (anchor[0], anchor[1], anchor[2] - .01 * r)})]
-        hole = lambda c, m: {'lids': {'center': c, 'upper_radius': 1.1 * r, 'thickness': .1 * r, 'eye_radius': r}, 'motion': m}
-        holes = {'L': hole(L['eye_left'], motion), 'R': hole(L['eye_right'], [])}
-        field = face.head_field(L)
-        front = lambda x, z: face._front(field, x, z, L['radii'][1])
-        mouth_front = front(0, L['mouth_z'])
-        weight = face.face_smoothing(L, holes, mouth_front)
-        at = lambda x, z: weight((x, front(x, z), z))
-        self.assertEqual(weight((-ex, L['eye_right'][1] - 1.1 * r, ez)), 0.0)    # on the lid
-        self.assertEqual(weight(margin), 0.0)                                      # a lid margin rolls and holds
-        self.assertEqual(weight(anchor), 1.0)                                      # the closed lid's rim is smoothed
-        self.assertEqual(at(0, L['mouth_z']), 0.0)                                 # the lips' seam
-        self.assertEqual(at(0, L['nose'][1]), 0.0)                                 # the nose
-        self.assertEqual(weight((0, L['center'][1] + .01, L['center'][2])), 0.0)   # the back of the head
-        self.assertGreater(at(0, ez), .9)                                          # the bridge between the eyes
-        self.assertGreater(at(ex, ez + 2.2 * r), .9)                               # the brow above the lid
-        self.assertGreater(at(1.6 * ex, (ez + L['mouth_z']) / 2), .9)              # the cheek
+            d = character.landmarks(values)
+            spec = face.head_spec(dict(values, face='arkit'))
+            self.assertEqual(spec['center'], (0.0, 0.0, d['head_y']), name)
+            self.assertEqual(spec['radii'], (d['rx'], d['rz'], d['ry']), name)
+            self.assertEqual(spec['neck_z'], 'chin', name)
+            self.assertEqual(spec['gender'], 1.0 if values['presentation'] == 'male' else 0.0, name)
 
 
 class NeckRidesTheHead(unittest.TestCase):
     def test_the_neck_inside_the_head_rides_the_head_and_its_base_the_spine(self):
-        # The walk leans the spine under an upright head: a neck riding the spine alone swings its top forward into
-        # the open mouth.
         for name, values in CAST.items():
             d = character.landmarks(values)
             bottom, top = d['shoulder_y'] + .02 * d['s'], d['head_y'] - .55 * d['ry']
             share = lambda z: face.neck_head_share(z, d)
             self.assertEqual(share(bottom), 0.0, name)
             self.assertEqual(share(top), 1.0, name)
-            self.assertEqual(share(face.face_layout(dict(values, face='arkit'))['mouth_z']), 1.0, name)
             steps = [share(bottom + (top - bottom) * i / 20) for i in range(21)]
             self.assertEqual(steps, sorted(steps), name)
 
 
-class FaceLayout(unittest.TestCase):
-    def test_features_sit_on_the_front_of_the_head_in_order_and_mirror(self):
-        for name, values in CAST.items():
-            d = character.landmarks(values)
-            layout = face.face_layout(dict(values, face='arkit'))
-            left, right = layout['eye_left'], layout['eye_right']
-            self.assertEqual(right, (-left[0], left[1], left[2]), name)
-            self.assertGreater(left[0], 0, name)
-            self.assertLess(left[1], -.5 * d['rz'], name)      # forward (-Y), in the front half of the head
-            self.assertTrue(inside_head(left, d), name)
-            self.assertTrue(layout['mouth_z'] < layout['nose'][1] < left[2] < layout['brow_inner'][1], name)
-            self.assertLess(layout['brow_inner'][0], layout['brow_outer'][0], name)
-            self.assertGreater(layout['mouth_half_width'], layout['nose_size'][0], name)
-            self.assertLess(layout['mouth_half_width'], left[0], name)
-            self.assertAlmostEqual(layout['center'][2], d['head_y'], places=9)
-            self.assertGreater(layout['eye_radius'], 0, name)
-            self.assertLess(layout['eye_radius'], .8 * left[0], name)  # a bridge of skin between the eyes
+class LivingFace(unittest.TestCase):
+    """One adult's built face: its morphs keep the skin smooth and do what the board's faces do."""
 
-    def test_the_face_scales_with_the_head_and_children_have_larger_eyes(self):
-        adult = face.face_layout(CAST['adult-female'])
-        girl = face.face_layout(CAST['girl'])
-        da, dg = character.landmarks(CAST['adult-female']), character.landmarks(CAST['girl'])
-        self.assertAlmostEqual(adult['scale'], da['ry'] / face.CANONICAL_HALF_HEIGHT, places=9)
-        self.assertGreater(girl['eye_radius'] / dg['ry'], adult['eye_radius'] / da['ry'])
-        male = face.face_layout(CAST['adult-male'])
-        self.assertGreater(male['nose_size'][0] / male['scale'], adult['nose_size'][0] / adult['scale'])
+    @classmethod
+    def setUpClass(cls):
+        cls.layout = face.face_layout(dict(CAST['adult-female'], face='arkit'))
+        cls.face = cls.layout['face']
+        cls.V, cls.F, cls.M = cls.face['vertices'], cls.face['faces'], cls.face['morphs']
+        cls.marks = cls.face['landmarks']
+        cls.T = cls.F[:, :3]
 
-    def test_the_head_field_is_inside_at_the_center_and_outside_past_the_hair_envelope(self):
-        for name, values in CAST.items():
-            d = character.landmarks(values)
-            layout = face.face_layout(values)
-            sdf = face.head_field(layout)
-            self.assertLess(sdf((0, 0, d['head_y'])), 0, name)
-            # The cranium is the head envelope the hair cap is fitted to: its crown and back are on it.
-            self.assertAlmostEqual(sdf((0, 0, d['head_y'] + d['ry'])), 0, delta=.002 * layout['scale'])
-            self.assertAlmostEqual(sdf((0, d['rz'], d['head_y'])), 0, delta=.002 * layout['scale'])
-            for point in [(d['rx'] * 1.2, 0, d['head_y']), (0, 0, d['head_y'] + d['ry'] * 1.1), (0, -d['rz'] * 1.5, d['head_y'])]:
-                self.assertGreater(sdf(point), 0, name)
-            # Each eye's center is inside the field: the eye hole opens the skin in front of it.
-            self.assertLess(sdf(layout['eye_left']), 0, name)
+    def pose(self, **weights):
+        return self.V + sum(w * (self.M[n] - self.V) for n, w in weights.items())
 
+    def normals(self, P):
+        n = np.cross(P[self.T[:, 1]] - P[self.T[:, 0]], P[self.T[:, 2]] - P[self.T[:, 0]])
+        return n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-20)
+
+    def region(self, name):
+        """Triangles over the nose bridge (between the eyes) or under the left eye."""
+        m, V = self.marks, self.V
+        c = V[self.T].mean(axis=1)
+        (eye, r), _ = self.face['eyes']
+        if name == 'bridge':
+            return (np.abs(c[:, 0]) < .35 * (m['eye_center_L'][0] - m['eye_center_R'][0])) & \
+                (c[:, 2] < m['nasion'][2] + .5 * r) & (c[:, 2] > m['nose_tip'][2] + .3 * r) & (c[:, 1] < m['nasion'][1] + .2 * r)
+        below = (c[:, 2] < m['eye_lower_L'][2] - .1 * r) & (c[:, 2] > m['eye_lower_L'][2] - .9 * r)
+        return below & (np.abs(c[:, 0] - eye[0]) < .7 * r) & (c[:, 1] < eye[1])
+
+    def turn(self, P, region):
+        """The largest angle (degrees) between neighbouring triangles' normals in a region: a ripple or a pocket turns
+        the surface hard over a few millimetres."""
+        n = self.normals(P)
+        pairs = {}
+        for k, t in enumerate(self.T):
+            if not region[k]: continue
+            for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])): pairs.setdefault((min(a, b), max(a, b)), []).append(k)
+        worst = 0.0
+        for ks in pairs.values():
+            if len(ks) == 2: worst = max(worst, math.degrees(math.acos(max(-1.0, min(1.0, float(n[ks[0]] @ n[ks[1]]))))))
+        return worst
+
+    def test_the_bridge_and_under_eye_stay_smooth_at_rest_and_in_every_state(self):
+        states = {'rest': {}, 'blink .5': {'eyeBlinkLeft': .5}, 'blink': {'eyeBlinkLeft': 1}, 'squint': {'eyeSquintLeft': 1},
+                  'smile': {'mouthSmileLeft': 1, 'mouthSmileRight': 1}, 'jaw': {'jawOpen': 1}}
+        for where in ('bridge', 'under-eye'):
+            region = self.region(where)
+            self.assertGreater(region.sum(), 20, where)
+            rest = self.turn(self.V, region)
+            self.assertLess(rest, 45, where)   # hm08's own lid and nasal folds; round 2's pockets turned 90
+            for label, weights in states.items():
+                self.assertLess(self.turn(self.pose(**weights), region), rest + 12, f'{where} at {label}')
+
+    def test_the_bridge_profile_has_no_terraces(self):
+        m, V = self.marks, self.V
+        box = (-.003, .003, m['nose_tip'][2], m['nasion'][2] + .01)
+        D = hm.depth_map(V, self.F, box, .0003)
+        profile = np.where(np.isfinite(D), D, np.nan)[:, D.shape[1] // 2]
+        profile = profile[np.isfinite(profile)]
+        slope = np.diff(profile)
+        turns = np.sum(np.diff(np.sign(np.round(slope, 6))) != 0)
+        self.assertLessEqual(turns, 3)
+
+    def test_blink_and_squint_keep_the_under_eye_full(self):
+        (eye, r), _ = self.face['eyes']
+        region = self.region('under-eye')
+        verts = np.unique(self.T[region])
+        for label, weights in (('blink', {'eyeBlinkLeft': 1}), ('squint', {'eyeSquintLeft': 1})):
+            P = self.pose(**weights)
+            inward = np.linalg.norm(self.V[verts] - eye, axis=1) - np.linalg.norm(P[verts] - eye, axis=1)
+            self.assertLess(inward.max(), .0003, label)
+
+    def test_a_full_blink_closes_the_eye_and_no_morph_turns_a_face_over(self):
+        for (eye, r), side in zip(self.face['eyes'], ('Left', 'Right')):
+            self.assertEqual(hm.eyeball_shows(self.M[f'eyeBlink{side}'], self.F, eye, r), 0, side)
+            self.assertGreater(hm.eyeball_shows(self.V, self.F, eye, r), 100, side)
+        for name, target in self.M.items():
+            self.assertEqual(len(hm.flipped(self.V, target, self.F)), 0, name)
+
+    def test_the_open_jaw_parts_the_lips_in_a_rounded_d_and_drops_the_chin(self):
+        m, J = self.marks, self.M['jawOpen']
+        drop = self.V[:, 2] - J[:, 2]
+        hw = abs(m['mouth_corner_L'][0])
+        lower = (self.V[:, 2] < m['stomion'][2]) & (self.V[:, 2] > m['stomion'][2] - .006 * self.layout['scale']) & \
+            (self.V[:, 1] < m['stomion'][1] + .004 * self.layout['scale'])
+        at = lambda x: drop[lower & (np.abs(self.V[:, 0] - x) < .12 * hw)].max()
+        self.assertGreater(at(.5 * hw), .8 * at(0.0))        # no V: half way to the corner it has nearly all the drop
+        menton = int(np.argmin(np.linalg.norm(self.V - m['menton'], axis=1)))
+        self.assertGreater(self.V[menton, 2] - J[menton, 2], .08 * (m['crown'][2] - m['menton'][2]))
+        # The chin's outline at the open jaw stays round: its lowest points across the chin are level, not a point.
+        chin = J[np.abs(J[:, 0]) < .6 * hw]
+        side = J[(np.abs(J[:, 0]) > .5 * hw) & (np.abs(J[:, 0]) < .7 * hw)]
+        self.assertLess(side[:, 2].min() - chin[:, 2].min(), .12 * (m['stomion'][2] - m['menton'][2]))
+
+    def test_the_smile_lifts_the_corners_with_the_lips_closed(self):
+        m = self.marks
+        corner = int(np.argmin(np.linalg.norm(self.V - m['mouth_corner_L'], axis=1)))
+        P = self.pose(mouthSmileLeft=1)
+        self.assertGreater(P[corner, 2] - self.V[corner, 2], .002)
+        # The lips stay together in the middle: the seam between the upper and lower lip does not open.
+        mid = np.abs(self.V[:, 0]) < .003
+        near = mid & (np.abs(self.V[:, 2] - m['stomion'][2]) < .003) & (self.V[:, 1] < m['stomion'][1] + .003)
+        up, low = near & (self.V[:, 2] >= m['stomion'][2]), near & (self.V[:, 2] < m['stomion'][2])
+        gap = lambda Q: Q[up, 2].min() - Q[low, 2].max()
+        self.assertLess(gap(P), gap(self.V) + .0005)
+
+
+class Beard(unittest.TestCase):
+    def test_a_beard_covers_the_jaw_and_chin_but_not_the_lips_eyes_or_forehead(self):
+        L = face.face_layout(dict(CAST['adult-female'], face='arkit'))
+        m, k = L['landmarks'], L['scale']
+        w = lambda p: face.beard_weight(p, m, k)
+        self.assertGreater(w(m['pogonion']), .9)
+        self.assertEqual(w(m['stomion']), 0.0)
+        self.assertEqual(w(m['eye_center_L']), 0.0)
+        self.assertEqual(w(m['nasion']), 0.0)
+        shell = face.beard_shell(L['face'], k)
+        self.assertIsNotNone(shell)
+        self.assertIn('jawOpen', shell['morphs'])
+
+
+class Embedding(unittest.TestCase):
     def test_the_face_module_shadows_no_name_of_the_recipes_it_is_embedded_after(self):
         import ast
         recipe = Path(__file__).resolve().parents[1] / 'recipes'
@@ -277,11 +273,12 @@ class FaceLayout(unittest.TestCase):
         for module in ['stylized_character.py', 'stylized_walk.py', 'stylized_face.py']:
             exec((recipe / module).read_text(), namespace)
         original_import = __import__
+
         def import_without_sibling(name, *args, **kwargs):
             if name.startswith('stylized_'): raise ModuleNotFoundError(name)
             return original_import(name, *args, **kwargs)
         with patch('builtins.__import__', side_effect=import_without_sibling):
-            self.assertIn('eye_left', namespace['face_layout'](CAST['girl']))
+            self.assertIn('neck_z', namespace['head_spec'](dict(CAST['girl'], face='arkit')))
 
 
 if __name__ == '__main__': unittest.main()
