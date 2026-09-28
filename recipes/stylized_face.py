@@ -191,12 +191,23 @@ def beard_shell(face, k, thickness=.006, weight=beard_weight):
     lift = (thickness * k * fullness * ww ** .6 - .0006 * k * (1 - ww))[:, None]
     shell = V[used] + normals * lift
     faces = [[remap[int(i)] for i in f if i >= 0] for f in chosen]
+    # The shell rides the skin: each vertex takes its skin vertex's motion in every morph, then any face that motion
+    # turns over is relaxed (the beard's own mixes, the contract's emotion presets with the jaw).
+    from agent_meshes_face import CANONICAL_EMOTIONS
+    from agent_meshes_hm08 import unfold_morphs
     morphs = {}
     for name, targets in face['morphs'].items():
-        moved = targets[used]
-        if np.abs(moved - V[used]).max() < 1e-7: continue
-        morphs[name] = moved + vertex_normals(targets, F)[used] * lift
-    return {'vertices': shell, 'faces': faces, 'morphs': morphs, 'weights': ww}
+        moved = targets[used] - V[used]
+        if np.abs(moved).max() < 1e-7: continue
+        morphs[name] = shell + moved
+    from agent_meshes_hm08 import flat_triangles
+    mixes = [dict(p) for p in CANONICAL_EMOTIONS.values() if p] + [dict(p, jawOpen=1.0) for p in CANONICAL_EMOTIONS.values() if p]
+    tris = flat_triangles(shell, np.array([f + [-1] * (4 - len(f)) for f in faces]))[0]
+    if 'jawOpen' in morphs:
+        jaw, _ = unfold_morphs(shell, tris, {'jawOpen': morphs['jawOpen']}, calm=False, iterations=80, coherent=True)
+        morphs.update(jaw)
+    morphs, _ = unfold_morphs(shell, tris, morphs, mixes, keep=['jawOpen'])
+    return {'vertices': shell, 'faces': [[int(i) for i in t if i >= 0] for t in tris], 'morphs': morphs, 'weights': ww}
 
 
 def _mix(a, b, t): return tuple(x + (y - x) * t for x, y in zip(a, b))

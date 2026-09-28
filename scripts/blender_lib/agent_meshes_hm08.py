@@ -331,6 +331,60 @@ def flat_triangles(vertices, faces):
     return np.array(out, dtype=np.int64), np.array(source, dtype=np.int64)
 
 
+CREASE_ABOVE = tuple(range(50, 131, 5))
+CREASE_BELOW = tuple(range(230, 311, 5))
+
+
+def eye_crease_folds(vertices, faces, center, radius, reach=1.3, turn=20.0, span=.06, step_share=1 / 400):
+    """The arkit-face/1 verifier's terraced-socket measure, in Blender's frame: along radial lines round an eye in a
+    front view (above: 50-130 degrees, below: 230-310, 90 straight up), from the first skin past the eyeball out to
+    `reach` radii, count the folds (the surface turning back toward the viewer by `turn` degrees within `span` radii
+    of surface). Returns (median folds above, median folds below)."""
+    c, r = np.asarray(center, dtype=np.float64), float(radius)
+    R, step = reach * r, r * step_share
+    box = (c[0] - R, c[0] + R, c[2] - R, c[2] + R)
+    D = depth_map(np.asarray(vertices, dtype=np.float64), faces, box, step)
+    H, W = D.shape
+    d, sp = 3, span * r
+
+    def count(angle):
+        a = math.radians(angle)
+        heights, started = [], False
+        for k in range(int(R / step) + 1):
+            x, z = c[0] + k * step * math.cos(a), c[2] + k * step * math.sin(a)
+            i, j = int(round((x - box[0]) / step)), int(round((z - box[2]) / step))
+            if not (0 <= i < W and 0 <= j < H): break
+            y = D[j, i]
+            q = (x - c[0]) ** 2 + (z - c[2]) ** 2
+            ball = c[1] - math.sqrt(r * r - q) if q < r * r else math.inf
+            on_ball = ball <= y
+            if k == 0 and not on_ball: return None
+            if not started:
+                if on_ball or not np.isfinite(y): continue
+                started = True
+            if not np.isfinite(y) or on_ball or y > c[1]: break
+            heights.append(-y)
+        if len(heights) < 2 * d + 2: return None
+        h = np.array(heights)
+        arc = np.concatenate([[0], np.cumsum(np.hypot(step, np.diff(h)))])
+        slope = [math.degrees(math.atan2(h[k + d] - h[k - d], 2 * d * step)) for k in range(d, len(h) - d)]
+        folds, last = 0, -math.inf
+        for k in range(len(slope)):
+            low = slope[k]
+            for m in range(k + 1, len(slope)):
+                if arc[m + d] - arc[k + d] > sp: break
+                if slope[m] - low >= turn:
+                    if arc[k + d] - last > sp: folds += 1
+                    last = arc[k + d]
+                    break
+                low = min(low, slope[m])
+        return folds
+    above = [n for n in (count(a) for a in CREASE_ABOVE) if n is not None]
+    below = [n for n in (count(a) for a in CREASE_BELOW) if n is not None]
+    median = lambda v: sorted(v)[len(v) // 2] if v else 0
+    return median(above), median(below)
+
+
 @lru_cache(maxsize=1)
 def margin_vertices():
     """The left eye's lid margin on hm08's own topology: its corners and the vertices along its upper and lower margins
@@ -347,9 +401,13 @@ def margin_vertices():
             'upper': [nearest(p) for p in contour[:, 0]], 'lower': [nearest(p) for p in contour[:, 1]]}
 
 
-def eyeball_shows(vertices, faces, center, radius, rays=30):
-    """How many of a grid of front rays across an eyeball (a sphere) reach it before the skin."""
+def eyeball_shows(vertices, faces, center, radius, rays=30, pitch=0.0, band=None):
+    """How many of a grid of rays across an eyeball (a sphere) reach it before the skin: from the front, or seen from
+    `pitch` degrees above (+) or below (-); `band` (eyeball radii) counts only rays that near the center's height."""
     c, r = np.asarray(center), float(radius)
+    if pitch:
+        # Seen from below is the head turned up: turn the skin about the eye's horizontal axis.
+        vertices = _turn(np.asarray(vertices, dtype=np.float64), c, np.full(len(vertices), math.radians(-pitch)))
     pixel = 2 * r / rays
     box = (c[0] - r, c[0] + r, c[2] - r, c[2] + r)
     D = depth_map(np.asarray(vertices), faces, box, pixel)
@@ -357,6 +415,7 @@ def eyeball_shows(vertices, faces, center, radius, rays=30):
     zs = box[2] + pixel * np.arange(D.shape[0]) - c[2]
     X, Z = np.meshgrid(xs, zs)
     inside = X * X + Z * Z < r * r
+    if band is not None: inside &= np.abs(Z) < band * r
     front = c[1] - np.sqrt(np.clip(r * r - X * X - Z * Z, 0, None))
     return int((inside & (front < D - 1e-7)).sum())
 
@@ -738,8 +797,9 @@ FACE_UNITS = ('eyeBlinkLeft', 'eyeBlinkRight', 'eyeSquintLeft', 'eyeSquintRight'
 LID_CLEARANCE = .0008
 # Lid shapes character_face tries, in order (see lid_morphs): the first that folds no face and hides the eyeball when
 # closed wins.
-LID_CANDIDATES = tuple({'corner': .15, 'inner_corner': i, 'reach': r, 'overlap': o} for r in (1.35, 1.3, 1.4, 1.25, 1.5, 1.7)
-                       for o in (.18, .26, .34) for i in (.25, .15, .35))
+LID_CANDIDATES = tuple({'corner': .15, 'inner_corner': i, 'reach': r, 'overlap': o, 'fade': fade, 'proud': proud}
+                       for fade, proud in ((.8, .04), (1.3, .02), (1.8, 0.0)) for r in (1.35, 1.3, 1.4, 1.25, 1.5)
+                       for o in (.18, .26) for i in (.25, .15))
 
 
 def _elevation(points, center):
@@ -758,7 +818,8 @@ def _turn(points, center, angles):
     return np.stack([d[:, 0], y, z], axis=1) + center
 
 
-def lid_morphs(rest, center, radius, margin, overlap=.18, clearance=LID_CLEARANCE, crease=.55, cheek=.4, wide=.22, reach=1.7, corner=.15, edges=None, almond=0.0, inner_corner=None):
+def lid_morphs(rest, center, radius, margin, overlap=.18, clearance=LID_CLEARANCE, crease=.55, cheek=.4, wide=.22, reach=1.7, corner=.15, edges=None, almond=0.0, inner_corner=None,
+              fade=.8, proud=.04):
     """Blink, squint and wide for one eye, as rolling curtains round its lid margins, and the rest-shape push that keeps
     the lids clear of the eyeball.
 
@@ -847,7 +908,7 @@ def lid_morphs(rest, center, radius, margin, overlap=.18, clearance=LID_CLEARANC
             return np.where(np.abs(pos) >= np.abs(neg), pos, neg)
         blink, squint, lift = spread(blink), spread(squint), spread(lift)
     sweep = np.abs(blink) + np.abs(squint) + np.abs(lift)
-    need = (radius + clearance) / np.cos(np.minimum(sweep, 2.5) / 2) + .04 * radius * share * upper_side
+    need = (radius + clearance) / np.cos(np.minimum(sweep, 2.5) / 2) + proud * radius * share * hand
     grow = np.where(sweep > 1e-6, np.maximum(need - dist, 0.0), 0.0)
     # Spread the push over the moving lid and a little past it, so the pushed lids blend into the skin.
     grow_near = grow.copy()
@@ -858,7 +919,7 @@ def lid_morphs(rest, center, radius, margin, overlap=.18, clearance=LID_CLEARANC
             dd = np.linalg.norm(rest - rest[i], axis=1)
             closer = dd < far
             far, spread = np.where(closer, dd, far), np.where(closer, grow[i], spread)
-        t = np.clip(1 - far / (.45 * radius), 0, 1)
+        t = np.clip(1 - far / (fade * radius), 0, 1)
         grow_near = np.maximum(grow, spread * t * t * (3 - 2 * t) * (d[:, 1] < 0))
     push = d / np.maximum(dist, 1e-12)[:, None] * grow_near[:, None]
     pushed = rest + push
@@ -986,7 +1047,9 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         tris = flat_triangles(pushed, faces)[0]   # the triangles the GLB will carry
         folds = sum(len(flipped(pushed, pose(mix), tris)) for mix in mixes)
         shows = sum(eyeball_shows(pose(mix), faces, c, r) for mix in closed)
-        return folds, shows
+        shows += sum(eyeball_shows(pose(mix), faces, c, r, pitch=p, band=.6) for mix in closed for p in (-25, -15, 15))
+        above, below = eye_crease_folds(pushed, faces, c, r)
+        return folds + 5 * max(0, above - 1) + 5 * max(0, below - 1), shows
     # A few lid shapes, gentlest first: the first that folds nothing and hides the eyeball when closed wins (a round
     # stylized eye needs its corners tapered just so); failing that, the one that does least harm.
     best = None
@@ -1001,11 +1064,17 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     for unit in units:
         if unit not in morphs: morphs[unit] = P + deltas[unit]
 
-    # jawOpen: the face unit's own jaw (it knows which rows are the lower lip), opened a fifth further (a puppet's chin
+    # jawOpen: the face unit's own jaw (it knows which rows are the lower lip), opened further (a puppet's chin
     # drops a tenth of the face), with the upper lip and everything above the mouth line held still. The rigid mouth
     # parts (lower teeth, tongue) follow its best rigid fit on the chin.
     mouth_z = marks['stomion'][2]
-    jaw = 1.2 * (morphs['jawOpen'] - P)
+    jaw = morphs['jawOpen'] - P
+    # Opened just far enough that the chin (the face's lowest point) drops 11% of the face's height, the contract's
+    # puppet jaw (the face unit is a realistic jaw's travel; a stylized chin is short).
+    kept = P[:, 2] >= (neck_z if neck_z is not None else -np.inf)   # (what the crop below keeps)
+    height = P[kept, 2].max() - P[kept, 2].min()
+    drop = P[kept, 2].min() - (P + jaw)[kept, 2].min()
+    jaw *= float(np.clip(.11 * height / max(drop, 1e-9), .6, 1.5))
     hold = np.clip((P[:, 2] - mouth_z - .002 * scale[2]) / (.004 * scale[2]), 0, 1)
     jaw *= (1 - hold)[:, None]
     morphs['jawOpen'] = P + jaw
@@ -1083,6 +1152,11 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     for side in ('Left', 'Right'):
         mixes += [{f'eyeBlink{side}': w} for w in (.25, .5, .75)] + [{f'eyeBlink{side}': w, f'eyeSquint{side}': 1.0} for w in (.25, .5, .75, 1.0)]
         mixes += [{f'eyeBlink{side}': 1.0, f'eyeWide{side}': 1.0}, {f'eyeBlink{side}': 1.0, f'eyeSquint{side}': 1.0, f'eyeWide{side}': 1.0}]
+    # The jaw unfolds too, but only by relaxing its edges: the lips and chin (half its motion or more) keep theirs.
+    jaw_move = np.linalg.norm(morphs['jawOpen'] - V, axis=1)
+    unfolded, _ = unfold_morphs(V, faces, {'jawOpen': morphs['jawOpen']}, pinned=jaw_move > .85 * jaw_move.max(), calm=False, iterations=80,
+                                coherent=True)
+    morphs.update(unfolded)
     lids = [n for n in morphs if n.startswith(('eyeBlink', 'eyeSquint', 'eyeWide'))]
     morphs, _ = unfold_morphs(V, faces, morphs, mixes, keep=lids + ['jawOpen'])
     # Lids that still turn a face over (a twist in the inner corner's pocket) relax there, their margins pinned: the
@@ -1094,17 +1168,14 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
                 m = np.linalg.norm(morphs[f'eyeBlink{side}'] - V, axis=1)
                 pinned |= m > threshold * m.max()
             trial, _ = unfold_morphs(V, faces, {n: morphs[n] for n in lids}, [{n: .5} for n in lids], pinned=pinned, calm=False, iterations=60)
-            closed_ok = all(eyeball_shows(V + sum(trial[f'{n}{side}'] - V for n in combo), faces, eye_c, eye_r) == 0
+            closed_ok = all(eyeball_shows(V + sum(trial[f'{n}{side}'] - V for n in combo), faces, eye_c, eye_r, pitch=p,
+                                          band=None if p == 0 else .6) == 0
                             for side, (eye_c, eye_r) in (('Left', eyes[0]), ('Right', eyes[1]))
-                            for combo in (('eyeBlink',), ('eyeBlink', 'eyeWide'), ('eyeBlink', 'eyeSquint', 'eyeWide')))
+                            for combo in (('eyeBlink',), ('eyeBlink', 'eyeWide'), ('eyeBlink', 'eyeSquint', 'eyeWide'))
+                            for p in (0, -25, -15, 15))
             if closed_ok and not any(len(flipped(V, trial[n], faces)) for n in lids):
                 morphs.update(trial)
                 break
-    # The jaw unfolds too, but only by relaxing its edges: the lips and chin (half its motion or more) keep theirs.
-    jaw_move = np.linalg.norm(morphs['jawOpen'] - V, axis=1)
-    unfolded, _ = unfold_morphs(V, faces, {'jawOpen': morphs['jawOpen']}, pinned=jaw_move > .85 * jaw_move.max(), calm=False, iterations=80,
-                                coherent=True)
-    morphs.update(unfolded)
 
 
     # The lash line: the upper lid's margin rows (the vertices blink moves at least 85% as far as its margin).
