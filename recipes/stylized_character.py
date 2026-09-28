@@ -1013,8 +1013,9 @@ def dress(m,costume,d):
             if gloves['trim']:
                 m.rings(label+'-hand-glove-strap',[(wrist-.004*s,x,.056*s,.036*s,.041*s),(wrist+.01*s,x,.055*s,.04*s,.043*s)],gloves['trim'])
 
-def geometry(values=None,meshes=None):
-    p=parameters({} if values is None else values); m=Meshes() if meshes is None else meshes; dims=landmarks(p)
+def geometry(values=None,meshes=None,layout=None):
+    # layout overrides the body measurements (a sculpted body's fitted rig layout), so garments and boots fit it.
+    p=parameters({} if values is None else values); m=Meshes() if meshes is None else meshes; dims=dict(landmarks(p),**(layout or {}))
     s=dims['s'];h=dims['h'];child=dims['child'];alien=dims['alien'];eva=p['vacuum']
     rx,ry,rz,head_y,shoulder_y,hip_y,shoulder_w,hip_w,chest_y,waist_y=(dims[k] for k in ['rx','ry','rz','head_y','shoulder_y','hip_y','shoulder_w','hip_w','chest_y','waist_y'])
     skin=p['skin'];accent=p['accent'];navy='#263b51';ivory='#dfdfcc'
@@ -1052,13 +1053,13 @@ def geometry(values=None,meshes=None):
     boots=costume.get('boots',COSTUME_SLOTS['boots']) if costume else COSTUME_SLOTS['boots']
     if eva: boots=dict(color=ivory,sole=navy,toe=shade(ivory,.9),laces=None,collar=navy)
     for side,label in [(-1,'left'),(1,'right')]:
-        lx=side*dims['leg_x']; knee_y=hip_y*.53
+        lx=side*dims['leg_x']; knee_y=dims.get('knee_y',hip_y*.53)
         # A broad build deepens the thigh more than the calf, so a deep jog knee bend folds the calf clear.
         m.rings(label+'-leg',leg_ease(girth(girth([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)],.3,.4,below=hip_y-.02*s),0,-.2,below=knee_y-.01*s)),trouser)
         if not costume: m.ellipsoid(label+'-knee-panel',(lx,knee_y,.081*s),(.047*s,.063*s,.013*s),accent)
         work_boot(m,label,lx,side,s,boots,child,m.lofts[label+'-leg'])
         # Tapered sleeve contours include deltoid, elbow and forearm.
-        wrist_y=hip_y+.095*s; elbow_y=mix(wrist_y,shoulder_y,.49)
+        wrist_y=dims.get('wrist_y',hip_y+.095*s); elbow_y=dims.get('elbow_y',mix(wrist_y,shoulder_y,.49))
         sx=shoulder_w*.49; wx=sx+.092*s
         m.rings(label+'-sleeve',(lambda rows: ease(rows,1.05,.006) if loose_top else rows)(girth([(wrist_y,side*wx,.055*s,.038*s,.039*s),(elbow_y-.06*s,side*(wx-.009*s),.03*s,.048*s,.047*s),(elbow_y,side*(wx-.015*s),.012*s,.045*s,.047*s),(elbow_y+.1*s,side*(sx+.033*s),0,.062*s,.063*s),(shoulder_y-.022*s,side*sx,0,.073*s,.077*s),(shoulder_y+.026*s,side*(sx-.05*s),0,.06*s,.06*s)],.3,.3)),body)
         if not costume: m.rings(label+'-wrist-seal',[(wrist_y-.009*s,side*wx,.055*s,.041*s,.043*s),(wrist_y+.025*s,side*wx,.052*s,.042*s,.044*s)],navy)
@@ -1116,13 +1117,13 @@ def body_surface(values=None):
     m=Meshes(); geometry(values,m)
     return BodySurface({name:m.lofts[name] for name in BODY_LOFTS})
 
-def build_character(values=None):
+def build_character(values=None,layout=None):
     """Blender adapter: Y-up recipe data becomes Z-up authoring scene geometry."""
     from agent_meshes_author import make_mesh, material, fuse_meshes, topology_report
     import bmesh
     import bpy
     result=[]; materials={}
-    for part in geometry(values):
+    for part in geometry(values,layout=layout):
         color=part['color']; glass=part.get('material') or {}; key=(color,part['roughness'],part['metalness'],tuple(sorted(glass.items())))
         if key not in materials:
             srgb=[int(color[i:i+2],16)/255 for i in (1,3,5)]

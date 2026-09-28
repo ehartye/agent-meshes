@@ -432,7 +432,9 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None,weights='parts')
     closed mesh (a sculpted base body) with Blender's automatic bone-heat weights, at most four bones a vertex;
     the mesh must stand in the rig's rest pose (arms hanging, see rest_bones).
     """
-    if weights not in ('parts','heat'):raise ValueError("weights must be 'parts' or 'heat'")
+    # weights may also map object names to a mode (a heat-bound sculpted body wearing parts-bound recipe boots).
+    mode_of=(lambda obj:weights) if isinstance(weights,str) else (lambda obj:weights.get(obj.name,'parts'))
+    if any(mode_of(o) not in ('parts','heat') for o in objects):raise ValueError("weights must be 'parts' or 'heat'")
     for value in [duration]+([] if jog_duration is None else [jog_duration]):
         if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not .6<=value<=3:
             raise ValueError('duration must be 0.6..3 seconds')
@@ -452,7 +454,7 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None,weights='parts')
         if bone['parent']:b.parent=data.edit_bones[bone_name(bone['parent'])]
     bpy.ops.object.mode_set(mode='OBJECT')
     for obj in objects:
-        if weights=='heat':
+        if mode_of(obj)=='heat':
             bpy.ops.object.select_all(action='DESELECT');obj.select_set(True);rig.select_set(True)
             bpy.context.view_layer.objects.active=rig
             bpy.ops.object.parent_set(type='ARMATURE_AUTO')
