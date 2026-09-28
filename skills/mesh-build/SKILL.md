@@ -71,8 +71,11 @@ through a belt, a hand sinking into a hip, a boot cuff driving into the leg. A v
 was outside another closed part at rest and is inside it by more than the tolerance (2 mm) at a
 phase, so layers seated into the body at rest are never reported. Garments are `layer-*`, gloves,
 boots and outsoles by default (`--garments <regex>`); garment-vs-garment, garment-vs-body and
-garment self-folds (a surface folding through its own volume, measured against surface more than
-3 cm away at rest) are checked. `--ignore <regex>` leaves parts out. The JSON lists each
+garment self-folds (a surface folding through its own volume, measured against cloth more than
+3 cm away along the rest surface, and at most the cloth over it along its normal) are checked.
+The rest pose itself fails when two garments cross, each hiding a patch of the other's outward
+surface (a trouser leg wider than the boot shaft round it shows through in jagged patches);
+`--crossing-vertices` (8) and `--crossing-depth` (0.004 m) size that patch. `--ignore <regex>` leaves parts out. The JSON lists each
 intrusion by clip, phase, part pair, vertex count, depth and the deepest vertex's rest and posed
 position, plus the worst per pair; it exits 1 with one `FAIL` line per pair otherwise.
 
