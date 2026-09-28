@@ -390,8 +390,8 @@ BOOT_SOLE=[(-.105,.056),(-.088,.047),(-.06,.042),(-.03,.040),(0,.033),(.08,.030)
 BOOT_ARCH=[(-.105,0),(-.034,0),(-.024,.011),(.07,.009),(.105,0),(.245,0)]
 # Shaft over the ankle and a padded cuff round its top: y, half width, half depth (unit scale).
 BOOT_SHAFT_Z=-.016
-BOOT_SHAFT=[(.085,.046,.058),(.125,.061,.078),(.19,.060,.074),(.262,.064,.076)]
-BOOT_CUFF=[(.25,.063,.075),(.258,.073,.085),(.284,.073,.085),(.292,.066,.078)]
+BOOT_SHAFT=[(.105,.05,.062),(.135,.061,.078),(.19,.062,.078),(.262,.067,.084)]
+BOOT_CUFF=[(.25,.066,.083),(.258,.076,.093),(.284,.076,.093),(.292,.069,.086)]
 BOOT_TOP_Y=BOOT_CUFF[-1][0]
 BOOT_TOE_CAP=.168
 
@@ -456,6 +456,21 @@ def work_boot(m,label,lx,side,s,colors):
     shaft=lambda rows: [(y*s,(lx/s)*s,BOOT_SHAFT_Z*s,rx*s,rz*s) for y,rx,rz in rows]
     m.rings(label+'-boot-shaft',shaft(BOOT_SHAFT),colors['color'])
     m.parts[-1]['roughness']=.7
+    # A stitched welt runs round the seam where the shaft meets the upper, hiding the join.
+    def inside_upper(x,y,z):
+        width,sole,_,_,_=boot_section(z)
+        if not BOOT_HEEL<z<BOOT_TOE or abs(x)>=width: return False
+        return sole<=y<=boot_top_point(z,x)[0][1]
+    seam=[]
+    for k in range(40):
+        phi=k*math.tau/40; y=BOOT_SHAFT[-1][0]
+        while y>BOOT_SHAFT[0][0]:
+            rx=_profile([(r[0],r[1]) for r in BOOT_SHAFT],y); rz=_profile([(r[0],r[2]) for r in BOOT_SHAFT],y)
+            x,z=rx*math.cos(phi),BOOT_SHAFT_Z+rz*math.sin(phi)
+            if inside_upper(x-(-side*.010*smooth01(.08,BOOT_TOE,z)),y,z): break
+            y-=.001
+        seam.append(((lx/s+x*1.03)*s,y*s,(BOOT_SHAFT_Z+(z-BOOT_SHAFT_Z)*1.03)*s))
+    loop_tube(m,label+'-boot-welt',seam,.0045*s,shade(colors['color'],.8))
     m.rings(label+'-boot-cuff',shaft(BOOT_CUFF),colors['collar'])
     m.parts[-1]['roughness']=.85
     # Tread lugs: blocks on the sole's sidewall, clear of the planar tread the gait pivots on.

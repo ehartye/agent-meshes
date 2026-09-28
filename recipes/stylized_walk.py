@@ -195,7 +195,7 @@ def skin_weights(name,vertices,d):
         # stay seated round the leg wherever the knee blend reaches.
         rows=[]
         for (x,y,z),leg in zip(vertices,skin_weights('trousers',[(x if x*(1 if side=='right' else -1)>0 else -x,y,z) for x,y,z in vertices],d)):
-            t=w_smooth(.11*s,.16*s,y);row={side+'-foot':1-t}
+            t=w_smooth(.09*s,.15*s,y);row={side+'-foot':1-t}
             for bone,w in leg.items():row[bone]=row.get(bone,0)+t*w
             rows.append({bone:w for bone,w in row.items() if w>0})
         return rows
