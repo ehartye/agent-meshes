@@ -239,7 +239,7 @@ COSTUME_SLOTS=dict(
     hoodie=dict(color='#5c7d4a',trim='#e0873a',badge=None),
     overalls=dict(color='#3a6f86',cuffs=None,cargo=False,pockets=False,buttons='#c9ccd0'),
     trousers=dict(color='#263b51',cuffs=None,cargo=False,pockets=False),
-    belt=dict(color='#4a3426',buckle='#b9bec4',pouches=0,pouch='#6a5638'),
+    belt=dict(color='#4a3426',buckle='#b9bec4',pouches=0,pouch='#6a5638',tools=0,tool='#9aa1a8',handle='#8a5a3a'),
     backpack=dict(color='#3a3a3e',straps='#2d2a2c'),
     gloves=dict(color='#3a3436',trim=None),
     boots=dict(color='#56565c',sole='#2b2a2e',toe='#48484e',laces='#e08a3a',collar='#6c5d50'),
@@ -259,6 +259,7 @@ def costume_parameters(value):
         layer=dict(schema,**fields)
         for key,v in layer.items():
             if key=='pouches': ok=isinstance(v,int) and not isinstance(v,bool) and 0<=v<=4
+            elif key=='tools': ok=isinstance(v,int) and not isinstance(v,bool) and 0<=v<=2
             elif key in ('cargo','pockets'): ok=isinstance(v,bool)
             else: ok=(v is None and schema[key] is None) or (isinstance(v,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',v))
             if not ok: raise ValueError(f'costume {slot}.{key} is invalid')
@@ -714,6 +715,23 @@ def dress(m,costume,d):
             ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s+under,rim=.3,level=True,bridge=True)
             # The flap folds over the pouch mouth: it stands clear of the pouch top and rises past it.
             ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.047*s,.006,t0=t-.29,t1=t+.29,lift=.036*s+under,rim=.9,level=True,bridge=True)
+    if belt and belt['tools']:
+        # Tools hang from the belt down the front of each thigh: a hammer on the right, a wrench on the left.
+        for k,(side,label) in enumerate([(1,'right'),(-1,'left')][:belt['tools']]):
+            piece=label+'-leg'; t=math.pi/2-side*.2
+            def on_leg(y,offset): return surface_point(around(piece,y,t),offset)
+            start=len(m.parts)
+            top=hip-.03*s  # hung below the belt and clear of the pouch flaps
+            if k==0:
+                m.tube('layer-tool-0',[on_leg(y,.026*s) for y in [top,top-.07*s,top-.14*s]],[.0075*s,.007*s,.0085*s],belt['handle'])
+                head=on_leg(top,.03*s)
+                m.tube('layer-tool-0-head',[vadd(head,(-.035*s,0,0)),head,vadd(head,(.028*s,0,0))],[.012*s,.012*s,.009*s],belt['tool'])
+                m.parts[-1].update(roughness=.35,metalness=.7)
+            else:
+                m.tube('layer-tool-1',[on_leg(y,.024*s) for y in [top,top-.07*s,top-.14*s]],[.006*s]*3,belt['tool'])
+                m.ellipsoid('layer-tool-1-jaw',on_leg(top,.024*s),(.017*s,.017*s,.007*s),belt['tool'])
+                m.ellipsoid('layer-tool-1-ring',on_leg(top-.145*s,.024*s),(.012*s,.012*s,.006*s),belt['tool'])
+                merge_parts(m,start,'layer-tool-1'); m.parts[-1].update(roughness=.35,metalness=.7)
     pack=costume.get('backpack')
     if pack:
         # A broad pack rides low on the back, below a lowered hood so the hood still reads from behind.

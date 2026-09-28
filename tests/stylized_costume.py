@@ -142,6 +142,22 @@ class GarmentLayers(unittest.TestCase):
                 band_out=max(body.value(v) for v in band if abs(v[0])<.02*s and v[2]>0)
                 self.assertLess(max(body.value(v) for v in hem),band_out)
 
+    def test_tool_belt_carries_hanging_tools(self):
+        """A tool belt hangs a hammer and a wrench on the front of the thighs, clear of the cloth."""
+        config={**MARA,'costume':{**MARA['costume'],'belt':{'pouches':3,'tools':2}}}
+        d=character.landmarks(config);s=d['s'];hip=d['hip_y']
+        m=character.Meshes();character.geometry(config,m);by_name={p['name']:p for p in m.parts}
+        body=character.BodySurface({n:m.lofts[n] for n in character.BODY_LOFTS})
+        for k in range(2):
+            tool=by_name['layer-tool-'+str(k)]['vertices']
+            with self.subTest(tool=k):
+                self.assertLess(min(v[1] for v in tool),hip-.1*s)
+                self.assertGreater(max(v[1] for v in tool),hip-.04*s)
+                self.assertGreater(min(v[2] for v in tool),0)
+                self.assertTrue(all(body.value(v)>0 for v in tool))
+        with self.assertRaises(ValueError):character.parameters({'costume':{'shirt':{},'trousers':{},'belt':{'tools':5}}})
+        self.assertNotIn('layer-tool-0',parts(MARA))
+
     def test_belt_and_pouches_stand_over_the_overalls_waistband(self):
         """Stacked layers never show through each other: belt over waistband, pouches over belt."""
         d=character.landmarks(MARA);s=d['s'];by_name=parts(MARA);body=character.body_surface(MARA)
