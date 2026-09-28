@@ -163,6 +163,27 @@ actual Blender export deforms in the offline public viewer.
 
 `node scripts/agent-meshes.mjs refine model.glb smooth.glb --subdivide 1 --noise 0.004 --noise-scale 0.05 --only robin` rounds primitives into organic forms with a subdivision surface and, if asked, adds a feather- or fur-like displacement from a procedural clouds texture, while keeping bones, skins, vertex colors and clips. It runs Blender headless through `scripts/blender-refine.py`; Blender is found on PATH, in the usual install folders, in the Microsoft Store app alias, or from `AGENT_MESHES_BLENDER`. Primitive builds without refinement do not need Blender, and the refine test skips when it is absent. A build config can ask for the pass with `"refine":{"subdivide":1,"noise":0.003,"noiseScale":0.04,"only":["robin"]}`; the refined GLB is verified again, and a build that asks for refinement fails when Blender is missing rather than shipping a coarser model. Renders and contact sheets still come from the unrefined project.
 
+## Garment penetration check
+
+```powershell
+node scripts/agent-meshes.mjs check-garments character.glb
+node scripts/agent-meshes.mjs check-garments character.glb --clips jog --samples 32 --tolerance 0.003 --json
+```
+
+Samples every clip of a skinned GLB at evenly spaced phases (16 by default), poses each mesh as
+three.js skins it, and reports every place one part pushes into another: a lifted thigh tearing
+through a belt, a hand sinking into a hip, a boot cuff driving into the leg. A vertex counts when it
+was outside another closed part at rest and is inside it by more than the tolerance (2 mm) at a
+phase, so layers seated into the body at rest are never reported. Garments are `layer-*`, gloves,
+boots and outsoles by default (`--garments <regex>`); garment-vs-garment, garment-vs-body and
+garment self-folds (a surface folding through its own volume, measured against cloth more than
+3 cm away along the rest surface, and at most the cloth over it along its normal) are checked.
+The rest pose itself fails when two garments cross, each hiding a patch of the other's outward
+surface (a trouser leg wider than the boot shaft round it shows through in jagged patches);
+`--crossing-vertices` (8) and `--crossing-depth` (0.004 m) size that patch. `--ignore <regex>` leaves parts out. The JSON lists each
+intrusion by clip, phase, part pair, vertex count, depth and the deepest vertex's rest and posed
+position, plus the worst per pair; it exits 1 with one `FAIL` line per pair otherwise.
+
 ## Unreal import check
 
 `verify-unreal` imports a GLB into a scratch Unreal Engine project headlessly, through Interchange (the engine's glTF translator), and prints a JSON report of what Unreal made of it:

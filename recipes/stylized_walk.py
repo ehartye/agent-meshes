@@ -123,10 +123,10 @@ def _foot_path(phase,settings,length):
     z=-stride*.5-travel*u+(stride+travel)*_ease(u)
     # Both profiles are exactly zero near toe-off and touchdown, so they add no
     # velocity, acceleration or jerk where the sole leaves or meets the ground.
-    z+=stride*_profile(u,settings['reach'])
-    return length*_profile(u,settings['lift'],push=settings.get('push',0)),center+z
+    z+=stride*_swing_profile(u,settings['reach'])
+    return length*_swing_profile(u,settings['lift'],push=settings.get('push',0)),center+z
 
-def _profile(u,points,pad=PROFILE_PAD,push=0):
+def _swing_profile(u,points,pad=PROFILE_PAD,push=0):
     """Uniform cubic B-spline over swing progress u through `points`, padded with
     zero control points at each end: three zero the value, velocity and
     acceleration at toe-off and touchdown; four also the jerk. A `push` lead
@@ -154,7 +154,7 @@ def _foot_roll(phase,settings):
     """
     stance=settings['stance']
     if phase>=stance and settings.get('swing_roll'):
-        return _base_roll(phase,settings)+_profile((phase-stance)/(1-stance),settings['swing_roll'])
+        return _base_roll(phase,settings)+_swing_profile((phase-stance)/(1-stance),settings['swing_roll'])
     return _base_roll(phase,settings)
 
 def _base_roll(phase,settings):
@@ -216,7 +216,7 @@ def rest_bones(d):
     add('neck',(0,shoulder+.05*s,0),(0,skull,0),'chest')
     add('head',(0,skull,0),(0,d['head_y']+d['ry'],0),'neck')
     for side,name in [(-1,'left'),(1,'right')]:
-        x=side*.096*s
+        x=side*d.get('leg_x',.096*s)
         add(name+'-thigh',(x,hip,0),(x,hip*.53,.015*s),'pelvis')
         add(name+'-shin',(x,hip*.53,.015*s),(x,.14*s,0),name+'-thigh')
         add(name+'-foot',(x,.14*s,0),(x,.06*s,.20*s),name+'-shin')
@@ -309,6 +309,41 @@ def skin_weights(name,vertices,d):
         # glTF skins carry four joints per vertex: keep the strongest, renormalized.
         kept=sorted(((v,b) for b,v in row.items() if v>0),reverse=True)[:4];total=sum(v for v,_ in kept)
         return {b:v/total for v,b in kept}
+    if name.startswith('layer-'):
+        # Garment layers follow the body under them: the jacket rule above the hip, trousers below.
+        # Torso-hung layers (belts, hems, straps) never follow the arms; sleeve cuffs and badges do.
+        # A strap wrapping under the arm takes the torso side's weights, as the cloth under it does.
+        on_arm=name in ['layer-top','layer-bottom'] or 'sleeve' in name or 'badge' in name or name.endswith('-lower')
+        if any(token in name for token in ['badge','button','plate']):
+            # Small rigid trims move as the garment point at their centre.
+            centre=tuple(sum(v[k] for v in vertices)/len(vertices) for k in range(3))
+            row=(skin_weights('flight-jacket',[centre if on_arm else (0,)+centre[1:]],d) if centre[1]>=hip else skin_weights('trousers',[centre],d))[0]
+            return [dict(row) for _ in vertices]
+        upper=skin_weights('flight-jacket',vertices if on_arm else [(0,y,z) for x,y,z in vertices],d)
+        lower=skin_weights('trousers',vertices,d)
+        return [a if v[1]>=hip else b for v,a,b in zip(vertices,upper,lower)]
+    if name.startswith(('left-hand-glove','right-hand-glove')):return skin_weights(side+'-hand',vertices,d)  # gloves bend with the fingers
+    if 'boot' in name:
+        # The boot shaft flexes with the shin above the ankle; the foot carries the rest. The
+        # bend sits low, inside the upper, so the shaft and cuff ride the shin with the leg in them.
+        # Above that the boot takes the trouser leg's own weights, so a tall shaft and its cuff
+        # stay seated round the leg wherever the knee blend reaches.
+        # A boot point takes the weights of the shin point at the same direction round its own axis
+        # (the shaft sits further back than the shin, centred at z=-.006 unit), so a cuff and the
+        # trouser hem beside it bind alike on every side of the knee blend.
+        shaft_z=globals().get('BOOT_SHAFT_Z')
+        if shaft_z is None:
+            from stylized_character import BOOT_SHAFT_Z as shaft_z
+        x0=d.get('leg_x',.096*s)
+        def shin(x,y,z):
+            x=x if x*(1 if side=='right' else -1)>0 else -x
+            a=math.atan2(z-shaft_z*s,abs(x)-x0);return (math.copysign(x0+.06*s*math.cos(a),x),y,-.006*s+.06*s*math.sin(a))
+        rows=[]
+        for (x,y,z),leg in zip(vertices,skin_weights('trousers',[shin(*v) for v in vertices],d)):
+            t=w_smooth(.09*s,.15*s,y);row={side+'-foot':1-t}
+            for bone,w in leg.items():row[bone]=row.get(bone,0)+t*w
+            rows.append(clean(row))
+        return rows
     if any(token in name for token in ['boot','outsole','ankle']):return rigid(side+'-foot')
     if name in ['left-hand','right-hand']:
         # Fingers bend at the knuckles; the palm and the thumb's root stay on the hand.
@@ -322,14 +357,37 @@ def skin_weights(name,vertices,d):
             side='left' if x<0 else 'right'
             if name=='flight-jacket':
                 shoulder_blend=w_smooth(shoulder-.14*s,shoulder+.02*s,y)
-                arm=w_smooth(sx+.015*s-shoulder_blend*.075*s,sx+.07*s-shoulder_blend*.055*s,abs(x))
-                forearm=1-w_smooth(elbow-.045*s,elbow+.045*s,y)
+                # Below the chest the arm begins where the torso ends, so the inner forearm
+                # (and a cuff over it) never binds to the pelvis as the arm swings.
+                # The torso side allows for an eased jacket over the body. Sleeves end at the
+                # wrist, so nothing lower (hips, thighs, belts) can belong to an arm.
+                edge=(d['hip_w']*.5+(d['shoulder_w']*.46-d['hip_w']*.5)*w_smooth(hip,d['chest_y'],y))*1.04+.018*s
+                edge+=s*(1-w_smooth(hip+.06*s,hip+.085*s,y))
+                arm=w_smooth(min(sx+.015*s-shoulder_blend*.075*s,edge),min(sx+.07*s-shoulder_blend*.055*s,edge+.025*s),abs(x))
+                # The inner elbow blends wider (by direction round the arm, as the knee does), so a
+                # bent arm rolls the sleeve into a crease instead of folding it through itself.
+                front=(z-.012*s)/max(1e-9,math.hypot(abs(x)-(sx+.077*s),z-.012*s))
+                reach=s*(.055+.1*w_smooth(-.4,.6,front))
+                forearm=1-w_smooth(elbow-reach,elbow+reach,y)
+                # The torso side follows the pelvis, lumbar and chest joints of the gait rig.
                 row={bone:(1-arm)*w for bone,w in _torso_row(y,d).items()}
                 row.update({side+'-upper-arm':arm*(1-forearm),side+'-forearm':arm*forearm})
             else:
-                pelvis=w_smooth(hip-.15*s,hip-.035*s,y)
-                lower=1-w_smooth(knee-.055*s,knee+.055*s,y)
-                row={'pelvis':pelvis,side+'-thigh':(1-pelvis)*(1-lower),side+'-shin':(1-pelvis)*lower}
+                # The hip blends over most of the upper thigh, so a lifted thigh eases the cloth
+                # below the waist forward instead of driving through it; the crotch shares both
+                # thighs, so the inseam never tears open between them.
+                pelvis=w_smooth(hip-.26*s,hip-.015*s,y)
+                # Below the crotch the legs part, and each inseam binds its own thigh alone.
+                crotch=.06*s*w_smooth(hip-.42*s,hip-.3*s,y)+1e-6
+                right=w_smooth(-crotch,crotch,x)
+                # The back of the knee blends wider (by direction round the leg, so layers standing
+                # proud of the cloth take the same weights as the cloth under them), so a deep swing flexion folds the cloth
+                # into a crease instead of driving the calf through the thigh.
+                back=(z-.005*s)/max(1e-9,math.hypot(abs(x)-d.get('leg_x',.096*s),z-.005*s))  # direction round the leg, not depth
+                # Behind the knee the blend also centres lower, so the crease forms where the calf thins.
+                reach=s*(.12+.095*w_smooth(.35,-.5,back));dip=s*.035*w_smooth(.35,-.5,back)
+                lower=1-w_smooth(knee-dip-reach,knee-dip+reach,y)
+                row={'pelvis':pelvis,'left-thigh':(1-pelvis)*(1-lower)*(1-right),'right-thigh':(1-pelvis)*(1-lower)*right,side+'-shin':(1-pelvis)*lower}
             rows.append(clean(row))
         return rows
     if name=='neck':
@@ -423,3 +481,37 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
     rig[EXTRAS_PROPERTY]=json.dumps(extras)
     scene.frame_set(0)
     return objects+[rig]
+
+def _arc(a,b):
+    """Shortest-arc rotation taking direction a onto b (Blender's rotation_difference)."""
+    a=w_unit(a);b=w_unit(b);axis=(a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0])
+    sine=math.hypot(*axis);cosine=w_dot(a,b)
+    if sine<1e-12:return lambda v:v
+    axis=w_mul(axis,1/sine)
+    def rotate(v):
+        # Rodrigues: v cos + (k x v) sin + k (k.v)(1 - cos)
+        k=axis;cross=(k[1]*v[2]-k[2]*v[1],k[2]*v[0]-k[0]*v[2],k[0]*v[1]-k[1]*v[0])
+        return w_add(w_add(w_mul(v,cosine),w_mul(cross,sine)),w_mul(k,w_dot(k,v)*(1-cosine)))
+    return rotate
+
+def skinned_vertices(name,vertices,d,phase,gait='walk'):
+    """Linear-blend skinning of a recipe mesh at a gait phase, without Blender (Y up).
+
+    Mirrors rig_character: torso and arm bones take their explicit frames, legs the shortest
+    arc from rest to posed direction. Garment and contact checks sample clips with it.
+    """
+    rest=rest_bones(d);pose=gait_pose(d,phase,gait);rotations=gait_rotations(phase,gait);moves={}
+    turns={bone:(lambda v,r=r:_body_rotate(v,r)) for bone,r in rotations.items()}
+    turns.update(arm_rotations(phase,gait,rotations=rotations))
+    for bone,b in rest.items():
+        start,end=pose[bone]
+        rotate=turns[bone] if bone in turns else _arc(w_sub(b['tail'],b['head']),w_sub(end,start))
+        moves[bone]=(start,b['head'],rotate)
+    result=[]
+    for v,row in zip(vertices,skin_weights(name,vertices,d)):
+        total=sum(row.values());point=(0,0,0)
+        for bone,weight in row.items():
+            start,head,rotate=moves[bone]
+            point=w_add(point,w_mul(w_add(start,rotate(w_sub(v,head))),weight/total))
+        result.append(point)
+    return result
