@@ -177,7 +177,8 @@ def skin_weights(name,vertices,d):
     if name.startswith('layer-'):
         # Garment layers follow the body under them: the jacket rule above the hip, trousers below.
         # Torso-hung layers (belts, hems, straps) never follow the arms; sleeve cuffs and badges do.
-        on_arm=name in ['layer-top','layer-bottom'] or 'sleeve' in name or 'badge' in name
+        # A strap wrapping under the arm takes the torso side's weights, as the cloth under it does.
+        on_arm=name in ['layer-top','layer-bottom'] or 'sleeve' in name or 'badge' in name or name.endswith('-lower')
         if any(token in name for token in ['badge','button','plate']):
             # Small rigid trims move as the garment point at their centre.
             centre=tuple(sum(v[k] for v in vertices)/len(vertices) for k in range(3))
@@ -188,10 +189,15 @@ def skin_weights(name,vertices,d):
         return [a if v[1]>=hip else b for v,a,b in zip(vertices,upper,lower)]
     if name.startswith(('left-hand-glove','right-hand-glove')):return rigid(side+'-hand')
     if 'boot' in name:
-        # The boot shaft flexes with the shin above the ankle; the foot carries the rest.
+        # The boot shaft flexes with the shin above the ankle; the foot carries the rest. The
+        # bend sits low, inside the upper, so the shaft and cuff ride the shin with the leg in them.
+        # Above that the boot takes the trouser leg's own weights, so a tall shaft and its cuff
+        # stay seated round the leg wherever the knee blend reaches.
         rows=[]
-        for x,y,z in vertices:
-            t=w_smooth(.15*s,.19*s,y);rows.append({bone:w for bone,w in [(side+'-foot',1-t),(side+'-shin',t)] if w>0})
+        for (x,y,z),leg in zip(vertices,skin_weights('trousers',[(x if x*(1 if side=='right' else -1)>0 else -x,y,z) for x,y,z in vertices],d)):
+            t=w_smooth(.11*s,.16*s,y);row={side+'-foot':1-t}
+            for bone,w in leg.items():row[bone]=row.get(bone,0)+t*w
+            rows.append({bone:w for bone,w in row.items() if w>0})
         return rows
     if any(token in name for token in ['boot','outsole','ankle']):return rigid(side+'-foot')
     if name in ['left-hand','right-hand']:return rigid(name)
