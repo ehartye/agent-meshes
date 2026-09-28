@@ -786,7 +786,8 @@ def feature_weights(shape, head=None):
 # shorter, softer chin. The eyes grow by `eye_lens`, not a target (hm08's eye scale moves the lids, not the eyeball).
 CARTOON_TARGETS = {
     'eyes/l-eye-bag-decr': 1.0, 'eyes/r-eye-bag-decr': 1.0, 'eyes/l-eye-bag-height-decr': .6, 'eyes/r-eye-bag-height-decr': .6,
-    'nose/nose-volume-decr': 1.0, 'nose/nose-scale-horiz-decr': .6, 'nose/nose-scale-vert-decr': .5, 'nose/nose-scale-depth-decr': .8,
+    'nose/nose-volume-decr': 1.0, 'nose/nose-scale-horiz-decr': .6, 'nose/nose-scale-vert-decr': .6, 'nose/nose-scale-depth-decr': 1.0,
+    'nose/nose-trans-backward': .5,
     'nose/nose-point-width-decr': .5, 'nose/nose-flaring-decr': .5,
     'head/head-round': .5, 'chin/chin-height-decr': .4, 'chin/chin-prominent-decr': .5,
 }
@@ -1131,9 +1132,20 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         (c, r) = helper(P)
         P = lens(P, [c, c * flip], r, 1 + CARTOON_EYES * cartoon)
         (c, r) = helper(P)
-        P = relax_surround(P, skin_edges, [c, c * flip], r, min(1.0, cartoon))
+        P = relax_surround(P, skin_edges, [c, c * flip], r, min(1.0, cartoon), iterations=60)
         P = .5 * (P + P[partner] * flip)
         marks = face_landmarks(P, faces, hm08_eyes(head, P))
+        # The boards' nose is a small soft button: its ridges and nostril wings relaxed away (less, where that would
+        # smooth away the crease under the nose the lips' landmarks start from).
+        tip, base = marks['nose_tip'], marks['subnasale']
+        size = marks['nasion'][2] - base[2]
+        button = np.array([0.0, tip[1], base[2] + .25 * size])
+        for share in (1.0, .6, .3):
+            Q = relax_surround(P, skin_edges, [button], .5 * size, share * min(1.0, cartoon), near=0.0, far=1.0, iterations=25)
+            Q = .5 * (Q + Q[partner] * flip)
+            try: marks, P = face_landmarks(Q, faces, hm08_eyes(head, Q)), Q
+            except ValueError: continue
+            break
         warm = stylized_mouth(P, marks, helper(P)[1], skin_edges)['smile'] - P
         P = P + .3 * min(1.0, cartoon) * (warm + warm[partner] * flip)
         marks = face_landmarks(P, faces, hm08_eyes(head, P))
