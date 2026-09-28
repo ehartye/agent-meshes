@@ -391,7 +391,7 @@ def _profile(points,z):
     return rows[-1][1]
 
 # Work boot in unit-height metres (x half width, heel -z, toe +z, sole at y=0).
-BOOT_HEEL,BOOT_TOE,BOOT_HEEL_ROUND,BOOT_TOE_ROUND=-.105,.245,.05,.075
+BOOT_HEEL,BOOT_TOE,BOOT_HEEL_ROUND,BOOT_TOE_ROUND=-.105,.245,.034,.075
 BOOT_WIDTH=[(-.105,.054),(-.06,.058),(0,.059),(.07,.061),(.15,.067),(.20,.064),(.245,.058)]
 BOOT_TOP=[(-.105,.08),(-.092,.112),(-.078,.135),(-.058,.158),(.03,.18),(.058,.176),(.083,.158),(.112,.132),(.15,.108),(.195,.098),(.225,.088),(.245,.068)]
 BOOT_SOLE=[(-.105,.056),(-.088,.047),(-.06,.042),(-.03,.040),(0,.033),(.08,.030),(.15,.032),(.2,.040),(.232,.050),(.245,.054)]
@@ -450,7 +450,8 @@ def work_boot(m,label,lx,side,s,colors,child=False,leg=None):
         for k in range(upper_count+1):
             t=math.pi*k/upper_count; c=math.cos(t)
             loop.append((width*math.copysign(abs(c)**e,c),sole+(top-sole)*abs(math.sin(t))**e))
-        chamfer=.008; tread=max(width*.35,width-chamfer/math.tan(math.radians(58)))
+        # The tread edge rounds off more round the heel, so from behind the sole reads as one rounded heel.
+        chamfer=.008+.01*(1-smooth01(BOOT_HEEL+.01,BOOT_HEEL+BOOT_HEEL_ROUND+.02,z)); tread=max(width*.35,width-chamfer/math.tan(math.radians(58)))
         loop+=[(-width,mix(sole,arch+chamfer,.5)),(-width,arch+chamfer),(-tread,arch),(-tread/2,arch),(0,arch),
                (tread/2,arch),(tread,arch),(width,arch+chamfer),(width,mix(arch+chamfer,sole,.5))]
         shift=-side*.010*smooth01(.08,BOOT_TOE,z)
