@@ -7,8 +7,9 @@ import { readGLB } from './gltf-read.ts';
  * Gait analysis of a skinned, animated GLB, with no renderer: clips are sampled from their
  * keyframe tracks and skinned vertices are posed as three.js poses them. It reads biped rigs by
  * bone name (stylized `rig-*`, UE-mannequin / Mesh2Motion and Mixamo conventions) and reports
- * per-phase body curves plus locomotion metrics: foot contact, skating, loop seam, knee angles,
- * head bob, torso lean, spine flex, shoulder-pelvis counter-rotation and pelvis drop.
+ * per-phase body curves plus locomotion metrics: foot contact, skating, stride, loop seam, knee angles,
+ * head bob, torso lean, spine flex, shoulder-pelvis counter-rotation, pelvis drop and hand orientation.
+ * Skating, stride and hands are read from the skinned geometry, never from what the rig declares.
  *
  * Frame: glTF Y is up. Forward is the travel direction, detected from planted feet moving
  * backward in an in-place loop. Anatomical left is up x forward. Left and right legs and arms
@@ -29,7 +30,7 @@ export interface GaitBones {
   legs: { a: Leg; b: Leg }; arms: { a: Arm; b: Arm };
 }
 export interface DeclaredClip { stance?: number; travelSpeed?: number; contactPhase?: Record<string, number> }
-/** Rest-pose palm normal and thumb direction of a rigid hand bone, in model (glTF, Y-up) space. */
+/** Rest-pose palm normal and thumb direction a rig may declare; informational, since hands are measured from their skinned geometry. */
 export interface DeclaredHand { palm: Vec3; thumb: Vec3 }
 export interface DeclaredGait { format: string; height?: number; clips?: Record<string, DeclaredClip>; hands?: Record<string, DeclaredHand> }
 interface Rest { position: Vector3; quaternion: Quaternion; scale: Vector3 }
@@ -44,10 +45,19 @@ export interface GaitOptions {
 export interface GaitMetrics {
   /** Largest |lowest foot vertex height| over planted frames, meters; null for a rig without skinned feet. */
   groundError: number | null;
-  /** Largest planted contact-point world speed (with travel added) as a fraction of travel speed. */
+  /**
+   * Largest horizontal world speed (with travel added), as a fraction of travel speed, of any sole vertex within
+   * 1 mm of the floor on two frames in a row: heel grazes and toe slips count, whatever stance the rig declares.
+   * Rigs without skinned feet fall back to the planted contact point.
+   */
   skate: number;
-  /** Planted contact-point backward speed over travel speed, min and max. */
+  /** Grounded contact-point backward speed over travel speed, min and max. */
   stanceSpeedRatio: { min: number; max: number };
+  /**
+   * Ground covered per cycle at the grounded soles' median backward speed: meters, per body height and per leg
+   * length (hip to ankle at rest). thighSwingDeg is the range of the thigh's sagittal swing.
+   */
+  stride: { meters: number; perHeight: number; perLeg: number; legLength: number; travelSpeed: number; thighSwingDeg: number };
   /** Largest vertex distance between the first and last frame, meters. */
   seam: number;
   /** Largest foot velocity discontinuity (second difference of per-frame velocity) within two frames of a touchdown or liftoff, m/s. */
@@ -63,7 +73,7 @@ export interface GaitMetrics {
   counterRotationDeg: number; counterRotationCorrelation: number;
   pelvisDropDeg: number; pelvisDropBySideDeg: { left: number; right: number };
   armCounterswing: number;
-  /** Declared hand orientation at rest and through the clip; null when the rig declares no hands. */
+  /** Hand orientation measured from the skinned hands at rest and through the clip; null without skinned hands. */
   hands: HandMetrics | null;
   pelvisBob: number;
 }
@@ -71,9 +81,10 @@ export interface GaitMetrics {
  * Palm angle about the forearm axis, per hand: 0 faces the thigh, positive turns the palm backward, negative
  * forward (toward palm up with the forearm raised). thumbForward is the cosine between the thumb and the
  * anterior side of the forearm (forward when it hangs, up when it points forward), smallest of both hands.
+ * curl is how far the fingertips bend toward the palm, as a fraction of hand length, smallest of both hands.
  */
-export interface HandPose { palmDeg: { left: number; right: number }; thumbForward: number }
-export interface HandMetrics { rest: HandPose; palmDeg: { min: number; max: number }; thumbForward: number }
+export interface HandPose { palmDeg: { left: number; right: number }; thumbForward: number; curl: number }
+export interface HandMetrics { rest: HandPose; palmDeg: { min: number; max: number }; thumbForward: number; curl: number }
 export interface CurveScore { shift: number; r: Record<string, number>; minR: number; meanR: number }
 /** Raw scores against the reference, and `symmetric` scores of the mirrored-gait parts of both. */
 export interface GaitComparison extends CurveScore { reference: string; clip: string; required: boolean; symmetric: CurveScore }
@@ -267,8 +278,50 @@ interface Snapshot {
   position: Map<string, Vector3>; world: Map<string, Quaternion>; local: Map<string, Quaternion>;
   /** Per anatomical foot: sole vertices (or null), lowest height, index of the lowest vertex, contact reference point. */
   feet: { left: FootState; right: FootState };
+  /** Per anatomical hand: skinned hand vertices, or null without them. */
+  hands: { left: Float64Array | null; right: Float64Array | null };
 }
 interface FootState { vertices: Float64Array | null; height: number; lowest: number; point: Vector3; centroid: Vector3 }
+
+/** A sole vertex this close to the lowest the foot reaches in the clip is on the floor (m). */
+const GROUND_TOLERANCE = 0.001;
+
+/**
+ * Palm normal, thumb direction and finger curl of a skinned hand at `wrist`, continuing the forearm along `axis`
+ * (elbow to wrist). Across the forearm the hand is widest from thumb to little finger and thinnest through the palm.
+ * The fingertips bend toward the palm, which gives the palm its side, and the thumb branches from the near half of
+ * the hand while the fingers continue its middle, which gives the thumb its side.
+ */
+export function handShape(vertices: Float64Array, wrist: Vector3, axis: Vector3): { palm: Vector3; thumb: Vector3; curl: number } {
+  const count = vertices.length / 3, point = (i: number) => new Vector3(vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]);
+  const centroid = new Vector3();
+  for (let i = 0; i < count; i++) centroid.add(point(i));
+  centroid.multiplyScalar(1 / count);
+  const along = axis.clone().normalize(), across = (v: Vector3) => v.addScaledVector(along, -v.dot(along));
+  const cov = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < count; i++) {
+    const d = across(point(i).sub(centroid)).toArray();
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) cov[r * 3 + c] += d[r] * d[c];
+  }
+  // Power iteration for the widest direction across the hand.
+  let width = across(new Vector3(0.57, 0.61, 0.55)).normalize();
+  for (let k = 0; k < 64; k++) {
+    const [x, y, z] = width.toArray();
+    width = across(new Vector3(cov[0] * x + cov[1] * y + cov[2] * z, cov[3] * x + cov[4] * y + cov[5] * z, cov[6] * x + cov[7] * y + cov[8] * z)).normalize();
+  }
+  const palm = along.clone().cross(width).normalize();
+  const reach = Array.from({ length: count }, (_, i) => point(i).sub(wrist).dot(along)), length = Math.max(...reach);
+  const meanAlong = (axis: Vector3, keep: (t: number) => boolean) => {
+    let sum = 0, n = 0;
+    for (let i = 0; i < count; i++) if (keep(reach[i])) { sum += point(i).sub(wrist).dot(axis); n++; }
+    return n ? sum / n : 0;
+  };
+  const distal = (t: number) => t > 0.75 * length, proximal = (t: number) => t < 0.5 * length;
+  let curl = (meanAlong(palm, distal) - meanAlong(palm, proximal)) / length;
+  if (curl < 0) { palm.negate(); curl = -curl; }
+  const thumb = meanAlong(width, proximal) >= meanAlong(width, distal) ? width : width.negate();
+  return { palm, thumb, curl };
+}
 
 const range = (values: number[]) => Math.max(...values) - Math.min(...values);
 const mean = (values: number[]) => values.reduce((s, v) => s + v, 0) / values.length;
@@ -318,9 +371,10 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
   // Anatomical left: decided after forward is known; start with named sides.
   let leftKey: 'a' | 'b' = 'a';
   const legFor = (side: 'left' | 'right') => legOf[side === 'left' ? leftKey : (leftKey === 'a' ? 'b' : 'a')];
-  // A foot is every skinned vertex whose strongest influence is the foot bone or a bone below it (toes).
-  const footVertices = (leg: Leg) => {
-    const below = new Set<Object3D>(); node(leg.foot).traverse(o => below.add(o));
+  // A foot is every skinned vertex whose strongest influence is the foot bone or a bone below it (toes); a hand,
+  // the hand bone or below it (fingers).
+  const verticesBelow = (bone: string) => {
+    const below = new Set<Object3D>(); node(bone).traverse(o => below.add(o));
     return skins.map(mesh => {
       const index = mesh.geometry.attributes.skinIndex, weight = mesh.geometry.attributes.skinWeight, picked: number[] = [];
       for (let i = 0; i < index.count; i++) {
@@ -330,8 +384,11 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
       return { mesh, picked };
     }).filter(set => set.picked.length);
   };
-  let soles: { left: ReturnType<typeof footVertices>; right: ReturnType<typeof footVertices> } | null = null;
-  const posed = (sets: ReturnType<typeof footVertices>) => {
+  type VertexSets = ReturnType<typeof verticesBelow>;
+  const footVertices = (leg: Leg) => verticesBelow(leg.foot);
+  let soles: { left: VertexSets; right: VertexSets } | null = null;
+  let handSets: { left: VertexSets; right: VertexSets } | null = null;
+  const posed = (sets: VertexSets) => {
     const out = new Float64Array(sets.reduce((n, set) => n + set.picked.length, 0) * 3), v = new Vector3(); let k = 0;
     for (const { mesh, picked } of sets) for (const i of picked) { mesh.getVertexPosition(i, v); v.applyMatrix4(mesh.matrixWorld); out[k++] = v.x; out[k++] = v.y; out[k++] = v.z; }
     return out;
@@ -355,9 +412,11 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
     pose(source, bound, time);
     const position = new Map<string, Vector3>(), world = new Map<string, Quaternion>(), local = new Map<string, Quaternion>();
     for (const name of tracked) { const o = node(name); position.set(name, o.getWorldPosition(new Vector3())); world.set(name, o.getWorldQuaternion(new Quaternion())); local.set(name, o.quaternion.clone()); }
-    return { position, world, local, feet: { left: footState('left'), right: footState('right') } };
+    return { position, world, local, feet: { left: footState('left'), right: footState('right') },
+      hands: { left: handSets?.left.length ? posed(handSets.left) : null, right: handSets?.right.length ? posed(handSets.right) : null } };
   };
 
+  const sides = ['left', 'right'] as const;
   // Pass 1: forward from planted feet sliding backward (named sides are fine here).
   let forward: Vector3;
   if (options.forward) forward = new Vector3(...options.forward).setY(0).normalize();
@@ -377,28 +436,34 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
   const armLeftKey: 'a' | 'b' = at(bones.arms.a.upper).dot(lateral) >= at(bones.arms.b.upper).dot(lateral) ? 'a' : 'b';
   const armFor = (side: 'left' | 'right') => bones.arms[side === 'left' ? armLeftKey : (armLeftKey === 'a' ? 'b' : 'a')];
   { const left = footVertices(legFor('left')), right = footVertices(legFor('right')); if (left.length && right.length) soles = { left, right }; }
+  { const hand = (side: 'left' | 'right') => armFor(side).hand ? verticesBelow(armFor(side).hand!) : []; handSets = { left: hand('left'), right: hand('right') }; }
+  const legLength = mean(sides.map(side => { const leg = legFor(side); return at(leg.thigh).distanceTo(at(leg.calf)) + at(leg.calf).distanceTo(at(leg.foot)); }));
 
   // Pass 2: frames at the analysis rate, including the closing frame.
   const shots = Array.from({ length: frames + 1 }, (_, k) => snapshot(duration * k / frames));
-  const sides = ['left', 'right'] as const;
   const declaredClip = source.declared?.clips?.[clip.name];
   const contactSource: 'declared' | 'auto' = declaredClip?.stance !== undefined && declaredClip.contactPhase ? 'declared' : 'auto';
-  const planted: Record<'left' | 'right', boolean[]> = { left: [], right: [] };
+  const planted: Record<'left' | 'right', boolean[]> = { left: [], right: [] }, stanceWindows: Record<'left' | 'right', boolean[]> = { left: [], right: [] };
   for (const side of sides) {
+    // Stance windows from the soles: floor at the 10th percentile, so a heel strike that dips through the ground
+    // does not lift the threshold off the rest of the stance; any duty factor above 0.1 has it in stance.
+    const heights = shots.map(s => s.feet[side].height), floor = [...heights].sort((a, b) => a - b)[Math.floor(0.1 * heights.length)];
+    const tol = 0.1 * (Math.max(...heights) - floor);
+    stanceWindows[side] = heights.map(h => h < floor + tol);
     if (contactSource === 'declared') {
       const foot = legFor(side).foot, phase = declaredClip!.contactPhase![foot];
       if (phase === undefined) throw Object.assign(new Error(`Declared gait for ${clip.name} has no contact phase for ${foot}`), { code: 'GAIT_EXTRAS' });
       planted[side] = shots.map((_, k) => (((k / frames - phase) % 1) + 1) % 1 < declaredClip!.stance! - 1e-9);
-    } else {
-      // Floor at the 10th percentile, so a heel strike that dips through the ground does not
-      // lift the threshold off the rest of the stance; any duty factor above 0.1 has it in stance.
-      const heights = shots.map(s => s.feet[side].height), floor = [...heights].sort((a, b) => a - b)[Math.floor(0.1 * heights.length)];
-      const tol = 0.1 * (Math.max(...heights) - floor);
-      planted[side] = heights.map(h => h < floor + tol);
-    }
+    } else planted[side] = stanceWindows[side];
   }
   const axis = (v: Vector3) => ({ f: v.dot(forward), l: v.dot(lateral), u: v.dot(UP) });
 
+  // Grounded soles, from geometry: a foot is down while its lowest vertex is within GROUND_TOLERANCE of the lowest
+  // it gets in the clip. Rigs without skinned feet use the planted windows.
+  const floor = { left: Math.min(...shots.map(s => s.feet.left.height)), right: Math.min(...shots.map(s => s.feet.right.height)) };
+  const grounded: Record<'left' | 'right', boolean[]> = soles
+    ? { left: shots.map(s => s.feet.left.height <= floor.left + GROUND_TOLERANCE), right: shots.map(s => s.feet.right.height <= floor.right + GROUND_TOLERANCE) }
+    : planted;
   // Contact-point speeds: the material point that is lowest, followed to the next frame.
   const stanceSpeeds: number[] = [], skates: number[] = [];
   const contactVelocity = (side: 'left' | 'right', k: number) => {
@@ -406,11 +471,22 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
     if (a.vertices && b.vertices) { const i = a.lowest * 3; return new Vector3(b.vertices[i] - a.vertices[i], b.vertices[i + 1] - a.vertices[i + 1], b.vertices[i + 2] - a.vertices[i + 2]).multiplyScalar(frames / duration); }
     return b.point.clone().sub(a.point).multiplyScalar(frames / duration);
   };
-  for (const side of sides) for (let k = 0; k < frames; k++) if (planted[side][k] && planted[side][k + 1]) stanceSpeeds.push(-contactVelocity(side, k).dot(forward));
-  const travelSpeed = options.travelSpeed ?? declaredClip?.travelSpeed ?? median(stanceSpeeds);
-  for (const side of sides) for (let k = 0; k < frames; k++) if (planted[side][k] && planted[side][k + 1]) {
-    const v = contactVelocity(side, k).setY(0).addScaledVector(forward, travelSpeed);
-    skates.push(v.length() / travelSpeed);
+  for (const side of sides) for (let k = 0; k < frames; k++) if (grounded[side][k] && grounded[side][k + 1]) stanceSpeeds.push(-contactVelocity(side, k).dot(forward));
+  // Ground speed from the soles' stance windows, whatever the rig declares: it sets the stride.
+  const windowSpeeds: number[] = [];
+  for (const side of sides) for (let k = 0; k < frames; k++) if (stanceWindows[side][k] && stanceWindows[side][k + 1]) windowSpeeds.push(-contactVelocity(side, k).dot(forward));
+  const measuredTravel = median(windowSpeeds);
+  const travelSpeed = options.travelSpeed ?? declaredClip?.travelSpeed ?? measuredTravel;
+  // Skating: every sole vertex on the floor in two frames running moves with the ground.
+  const slip = new Vector3();
+  for (const side of sides) for (let k = 0; k < frames; k++) if (grounded[side][k] && grounded[side][k + 1]) {
+    const a = shots[k].feet[side].vertices, b = shots[k + 1].feet[side].vertices, level = floor[side] + GROUND_TOLERANCE;
+    if (a && b) {
+      for (let i = 0; i < a.length; i += 3) if (a[i + 1] <= level && b[i + 1] <= level) {
+        slip.set(b[i] - a[i], 0, b[i + 2] - a[i + 2]).multiplyScalar(frames / duration).addScaledVector(forward, travelSpeed);
+        skates.push(slip.length() / travelSpeed);
+      }
+    } else skates.push(contactVelocity(side, k).setY(0).addScaledVector(forward, travelSpeed).length() / travelSpeed);
   }
   const groundError = soles ? Math.max(0, ...sides.flatMap(side => shots.filter((_, k) => planted[side][k]).map(s => Math.abs(s.feet[side].height)))) : null;
   const airborne = shots.slice(0, frames).filter((s, k) => soles ? sides.every(side => s.feet[side].height > 0.005) : sides.every(side => !planted[side][k]));
@@ -490,32 +566,30 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
   });
   const drops = [drop.left, drop.right].filter(Number.isFinite);
 
-  // Hands: the declared rest palm normal and thumb, carried by each hand bone's world rotation and read in the
-  // plane across the forearm. The body's left is the chest's, which the arms hang from. Anterior is forearm x
-  // left: forward when the arm hangs, up when it points forward; the thumb belongs there and the palm faces the
-  // body's midline.
-  const declaredHands = source.declared?.hands;
-  const handBones = sides.map(side => armFor(side).hand);
-  const hands = declaredHands && handBones.every(name => name && declaredHands[name]) ? (() => {
-    const handPose = (world: (name: string) => Quaternion, position: (name: string) => Vector3): HandPose => {
+  // Hands, from the skinned hand geometry, read in the plane across the forearm. The body's left is the chest's,
+  // which the arms hang from. Anterior is forearm x left: forward when the arm hangs, up when it points forward;
+  // the thumb belongs there and the palm faces the body's midline.
+  const hands = handSets && sides.every(side => handSets![side].length) ? (() => {
+    const handPose = (world: (name: string) => Quaternion, position: (name: string) => Vector3, vertices: (side: 'left' | 'right') => Float64Array): HandPose => {
       const left = lateral.clone().applyQuaternion(world(chest).clone().multiply(restWorld.get(chest)!.clone().invert()));
-      const palmDeg = { left: 0, right: 0 }; let thumbForward = Infinity;
+      const palmDeg = { left: 0, right: 0 }; let thumbForward = Infinity, curl = Infinity;
       for (const side of sides) {
-        const arm = armFor(side), declared = declaredHands[arm.hand!], turn = world(arm.hand!).clone().multiply(restWorld.get(arm.hand!)!.clone().invert());
-        const along = position(arm.hand!).clone().sub(position(arm.lower)).normalize();
+        const arm = armFor(side), wrist = position(arm.hand!), along = wrist.clone().sub(position(arm.lower)).normalize();
+        const shape = handShape(vertices(side), wrist, along);
         const across = (v: Vector3) => v.clone().addScaledVector(along, -v.dot(along)).normalize();
         const anterior = across(along.clone().cross(left)), medial = across(left.clone().multiplyScalar(side === 'left' ? -1 : 1));
-        const palm = across(new Vector3(...declared.palm).applyQuaternion(turn)), thumb = across(new Vector3(...declared.thumb).applyQuaternion(turn));
+        const palm = across(shape.palm), thumb = across(shape.thumb);
         palmDeg[side] = Math.atan2(-palm.dot(anterior), palm.dot(medial)) * DEG;
-        thumbForward = Math.min(thumbForward, thumb.dot(anterior));
+        thumbForward = Math.min(thumbForward, thumb.dot(anterior)); curl = Math.min(curl, shape.curl);
       }
-      return { palmDeg, thumbForward };
+      return { palmDeg, thumbForward, curl };
     };
-    const posed = shots.slice(0, frames).map(s => handPose(name => s.world.get(name)!, name => s.position.get(name)!));
+    const posedHands = shots.slice(0, frames).map(s => handPose(name => s.world.get(name)!, name => s.position.get(name)!, side => s.hands[side]!));
     restore(source);
-    const rest = handPose(name => node(name).getWorldQuaternion(new Quaternion()), at);
-    const angles = posed.flatMap(p => [p.palmDeg.left, p.palmDeg.right]);
-    return { rest, palmDeg: { min: Math.min(...angles), max: Math.max(...angles) }, thumbForward: Math.min(...posed.map(p => p.thumbForward)) };
+    const rest = handPose(name => node(name).getWorldQuaternion(new Quaternion()), at, side => posed(handSets![side]));
+    const angles = posedHands.flatMap(p => [p.palmDeg.left, p.palmDeg.right]);
+    return { rest, palmDeg: { min: Math.min(...angles), max: Math.max(...angles) }, thumbForward: Math.min(...posedHands.map(p => p.thumbForward)),
+      curl: Math.min(rest.curl, ...posedHands.map(p => p.curl)) };
   })() : null;
 
   // Phase zero: the anatomical-left touchdown.
@@ -551,6 +625,8 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
     counterRotationDeg: range(relYaw), counterRotationCorrelation: pearson(column('shoulderYaw'), column('pelvisYaw')),
     pelvisDropDeg: drops.length ? mean(drops) : NaN, pelvisDropBySideDeg: { left: drop.left, right: drop.right },
     armCounterswing: Math.max(pearson(column('armSwingLeft'), column('legSwingLeft')), pearson(column('armSwingRight'), column('legSwingRight'))),
+    stride: { meters: measuredTravel * duration, perHeight: measuredTravel * duration / height, perLeg: measuredTravel * duration / legLength, legLength,
+      travelSpeed: measuredTravel, thighSwingDeg: Math.max(range(column('legSwingLeft')), range(column('legSwingRight'))) },
     hands, pelvisBob: range(column('pelvisHeight')) * scale,
   };
   restore(source);
@@ -579,9 +655,11 @@ export interface GaitEvaluation { gait: GaitKind; ok: boolean; checks: GaitCheck
 /** Natural human locomotion ranges; bob is scaled to a 1.75 m body, angles are degrees. */
 export const NATURAL_GAIT = {
   groundError: 0.005, stanceSpeedTolerance: 0.1, seam: 0.002, contactPopRatio: 0.5, kneeMaxInteriorDeg: 180, kneePopDeg: 25,
-  armCounterswing: -0.5, palmDeg: [-20, 45], thumbForward: 0.5, headPitchRatio: [0.3, 0.7], pelvisDropDeg: [3, 7], minCurveR: 0.8,
-  walk: { headBob: [0.025, 0.06], torsoLeanDeg: [3, 8], spineJointDeg: 2, counterRotationDeg: 8 },
-  jog: { headBob: [0.05, 0.10], torsoLeanDeg: [8, 15], spineJointDeg: 4, counterRotationDeg: 12 },
+  armCounterswing: -0.5, palmDeg: [-20, 45], thumbForward: 0.5, handCurl: 0.05, headPitchRatio: [0.3, 0.7], pelvisDropDeg: [3, 7], minCurveR: 0.8,
+  // Stride in leg lengths (hip to ankle): Mesh2Motion's Walk_Loop and Walk_Female cover 1.58 and 1.60, about
+  // 0.72 x height; a light jog covers at least 2 (Run_Female 3.3).
+  walk: { headBob: [0.025, 0.06], torsoLeanDeg: [3, 8], spineJointDeg: 2, counterRotationDeg: 8, strideLegs: [1.4, 2.2] },
+  jog: { headBob: [0.05, 0.10], torsoLeanDeg: [8, 15], spineJointDeg: 4, counterRotationDeg: 12, strideLegs: [2, 4] },
 } as const;
 
 /**
@@ -604,12 +682,15 @@ export function evaluateGait(report: GaitReport, gait: GaitKind, options: { curv
   check('kneeHyperextension', 'largest knee interior angle (deg)', round(m.kneeMaxInteriorDeg, 2), `<= ${n.kneeMaxInteriorDeg}`, m.kneeMaxInteriorDeg <= n.kneeMaxInteriorDeg);
   check('kneePop', 'largest knee change per frame (deg)', round(m.kneePopDeg, 2), `<= ${n.kneePopDeg} at ${Math.round(report.fps)} fps`, m.kneePopDeg <= n.kneePopDeg);
   check('flight', 'fraction of the cycle with both feet off the ground', round(m.flightFraction), gait === 'jog' ? '> 0' : '= 0', gait === 'jog' ? m.flightFraction > 0 : m.flightFraction === 0);
+  check('stride', 'stride per leg length (hip to ankle), from the grounded soles', { legs: round(m.stride.perLeg, 3), height: round(m.stride.perHeight, 3), meters: round(m.stride.meters, 3) },
+    `${g.strideLegs[0]}..${g.strideLegs[1]} legs`, within(m.stride.perLeg, g.strideLegs));
   check('armCounterswing', 'arm swing vs same-side leg swing correlation', round(m.armCounterswing), `<= ${n.armCounterswing}`, m.armCounterswing <= n.armCounterswing);
   const h = m.hands, palms = h ? [h.rest.palmDeg.left, h.rest.palmDeg.right, h.palmDeg.min, h.palmDeg.max] : [];
-  check('handOrientation', 'palm angle from facing the thigh (deg, + back) and thumb-forward cosine, at rest and through the clip',
+  check('handOrientation', 'skinned hands: palm angle from facing the thigh (deg, + back), thumb-forward cosine and finger curl, at rest and through the clip',
     h ? { restPalm: { left: round(h.rest.palmDeg.left, 2), right: round(h.rest.palmDeg.right, 2) }, palm: { min: round(h.palmDeg.min, 2), max: round(h.palmDeg.max, 2) },
-      thumbForward: round(Math.min(h.rest.thumbForward, h.thumbForward)) } : null,
-    `palm ${n.palmDeg[0]}..${n.palmDeg[1]}, thumb >= ${n.thumbForward}`, !!h && palms.every(v => within(v, n.palmDeg)) && Math.min(h.rest.thumbForward, h.thumbForward) >= n.thumbForward);
+      thumbForward: round(Math.min(h.rest.thumbForward, h.thumbForward)), curl: round(h.curl) } : null,
+    `palm ${n.palmDeg[0]}..${n.palmDeg[1]}, thumb >= ${n.thumbForward}, curl >= ${n.handCurl}`,
+    !!h && palms.every(v => within(v, n.palmDeg)) && Math.min(h.rest.thumbForward, h.thumbForward) >= n.thumbForward && h.curl >= n.handCurl);
   check('headBob', 'head vertical travel scaled to 1.75 m (m)', round(m.headBob), `${g.headBob[0]}..${g.headBob[1]}`, within(m.headBob, g.headBob));
   check('headBobCount', 'head bobs per cycle', m.headBobPeaks, '= 2', m.headBobPeaks === 2);
   check('headPitchRatio', 'head pitch range / chest pitch range', round(m.headPitchRatio), `${n.headPitchRatio[0]}..${n.headPitchRatio[1]}`, within(m.headPitchRatio, n.headPitchRatio));

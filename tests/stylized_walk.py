@@ -78,8 +78,9 @@ class WalkContract(unittest.TestCase):
             for p in [0,stance,1]:
                 a,b,c=point(p-eps),point(p),point(p+eps)
                 self.assertLess(math.dist(tuple((y-x)/eps for x,y in zip(a,b)),tuple((y-x)/eps for x,y in zip(b,c))),.005)
-                # Acceleration is continuous too: the toe roll carries through toe-off.
-                h=1e-5;f=lambda t:point(p+t)
+                # Acceleration is continuous too: the toe roll carries through toe-off. A
+                # smooth join leaves jerk * h between the one-sided differences, so h is small.
+                h=2e-6;f=lambda t:point(p+t)
                 before=tuple((x-2*y+z)/h**2 for x,y,z in zip(f(-2*h),f(-h),f(0)))
                 after=tuple((x-2*y+z)/h**2 for x,y,z in zip(f(0),f(h),f(2*h)))
                 self.assertLess(math.dist(before,after),.05*max(1,math.hypot(*before)))
@@ -268,6 +269,39 @@ class NaturalGait(unittest.TestCase):
                         self.assertLess(_pearson(col(side+'_arm'),col(side+'_leg')),-.5)
                     both_up=any(not row['left_planted'] and not row['right_planted'] for row in rows)
                     self.assertEqual(both_up,gait=='jog')
+
+    def test_walk_strides_out(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        # A person covers about 1.5 leg lengths (hip to ankle) per walk cycle: Walk_Loop's
+        # stride is 0.72 x height. A shorter stride with the same knee curve is a shuffle.
+        for values in [{},{'height':1.22,'age':'child'}]:
+            d=character.landmarks(values);length=walk.leg_length(d);s=walk.gait_settings('walk')
+            stride=length*s['stride']/s['stance']
+            self.assertGreaterEqual(stride/length,1.55,values)
+            self.assertAlmostEqual(walk.travel_speed(d,'walk',1.0)*1.0,stride)
+        self.assertGreaterEqual(walk.leg_length(character.landmarks({}))*1.55/1.82,.62)
+
+    def test_grounded_sole_moves_with_the_ground(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        # Every outsole or boot vertex within 1 mm of the floor on two frames in a row
+        # moves at travel speed: no heel graze before touchdown, no toe slip at liftoff.
+        for values,seconds in [({},{'walk':1.05,'jog':.75}),({'height':1.22,'age':'child'},{'walk':.9,'jog':.65})]:
+            d=character.landmarks(values);rest=walk.rest_bones(d)
+            parts={p['name']:p['vertices'] for p in character.geometry(values)}
+            sole=[walk.w_sub(v,rest['left-foot']['head']) for n,vs in parts.items() if n.startswith('left-') and any(t in n for t in ['boot','outsole','ankle']) for v in vs]
+            for gait,duration in seconds.items():
+                frames=walk.clip_frames(duration);dt=duration/frames;speed=walk.travel_speed(d,gait,frames/60)
+                def posed(phase):
+                    a,b=walk.gait_pose(d,phase,gait)['left-foot'];u=walk.w_sub(b,a)
+                    angle=math.atan2(u[2],u[1])-math.atan2(.20,-.08)
+                    return [walk.w_add(a,walk.w_rotate_x(v,angle)) for v in sole]
+                shots=[posed(k/frames) for k in range(frames+1)];worst=0
+                for k in range(frames):
+                    for p,q in zip(shots[k],shots[k+1]):
+                        if p[1]<.001 and q[1]<.001:worst=max(worst,math.hypot((q[2]-p[2])/dt+speed,(q[0]-p[0])/dt)/speed)
+                with self.subTest(values=values,gait=gait):self.assertLessEqual(worst,.1)
 
     def test_walk_straightens_the_stance_knee(self):
         import stylized_character as character

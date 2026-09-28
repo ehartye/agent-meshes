@@ -6,7 +6,7 @@ Blender adapter binds existing named meshes and bakes the same gait into a GLB.
 import math
 from functools import lru_cache
 
-WALK_VERSION=3
+WALK_VERSION=4
 
 def w_add(a,b):return tuple(x+y for x,y in zip(a,b))
 def w_sub(a,b):return tuple(x-y for x,y in zip(a,b))
@@ -30,7 +30,9 @@ def _body_rotate(p,angles):
 #
 # Leg timing, fractions of the cycle or of leg length:
 #   stance: duty factor. A jog below .5 has two flight intervals.
-#   stride: rearward contact travel during stance.
+#   stride: rearward contact travel during stance; center: fore-aft offset of
+#   that travel (fractions of stride). The walk covers about 1.6 leg lengths per
+#   cycle: heel strike ahead of the hip, toe-off well behind it.
 #   lift: swing clearance (fractions of leg length), B-spline control points
 #   over swing progress; reach: the same, added to the fore-aft swing path
 #   (fractions of stride).
@@ -51,11 +53,11 @@ def _body_rotate(p,angles):
 #   yaw, chest_yaw: pelvis turn with the forward leg; chest turn against it.
 #   body_phase: delay of the body curves relative to the feet.
 GAITS={
-    'walk':dict(stance=.573,stride=.445,sway=.018,arm=.32,arm_phase=-.1,bend=.25,
-                lift=[.0605,.126,.108,.076,.0686,.133,.0775,.00507],
-                reach=[.0321,.147,-.0543,-.238,.0355,.247,-.0911,-.115],
-                heel=-.13,peak=1.14,heel_flat=.16,toe_from=.715,peak_at=.356,flat_at=.745,
-                base=-.032,bob=.0234,bob_shape=[(2,-.636,-.772)],
+    'walk':dict(stance=.641,stride=1.034,center=-.114,sway=.018,arm=.32,arm_phase=-.1,bend=.25,
+                lift=[.0659,.1315,.1127,.0793,.0716,.1388,.0809,.0785],
+                reach=[-.0396,.0822,-.0303,-.133,.0198,.138,-.0509,-.2241],
+                heel=-.298,peak=1.45,heel_flat=.172,toe_from=.646,peak_at=.367,flat_at=.745,
+                base=-.0486,bob=.0376,bob_shape=[(2,-.636,-.772)],
                 roll=4.5,roll_shape=[(1,.992,.126)],
                 lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
                 head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
@@ -108,8 +110,8 @@ def gait_rotations(phase,gait='walk',settings=None):
 PROFILE_PAD=3
 
 def _foot_path(phase,settings,length):
-    stance=settings['stance'];stride=length*settings['stride']
-    if phase<stance:return (0,stride*(.5-phase/stance))
+    stance=settings['stance'];stride=length*settings['stride'];center=stride*settings.get('center',0)
+    if phase<stance:return (0,center+stride*(.5-phase/stance))
     u=(phase-stance)/(1-stance)
     # Continuing the stance travel and adding a septic smoothstep matches stance
     # velocity, acceleration and jerk at toe-off and at the next contact.
@@ -118,7 +120,7 @@ def _foot_path(phase,settings,length):
     # Both profiles are exactly zero near toe-off and touchdown, so they add no
     # velocity, acceleration or jerk where the sole leaves or meets the ground.
     z+=stride*_profile(u,settings['reach'])
-    return length*_profile(u,settings['lift']),z
+    return length*_profile(u,settings['lift']),center+z
 
 def _profile(u,points,pad=PROFILE_PAD):
     """Uniform cubic B-spline over swing progress u through `points`, padded with

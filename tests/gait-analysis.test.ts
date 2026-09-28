@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { alignCurves, analyzeGait, evaluateGait, kneeInterior, loadGait, pearson, resolveGaitBones, symmetrizeCurves } from '../src/gait-analysis.ts';
-import { walkerGLB } from './helpers/gait-glb.ts';
+import { twistHands, walkerGLB } from './helpers/gait-glb.ts';
 
 const run = promisify(execFile);
 const directories: string[] = [];
@@ -67,13 +67,13 @@ describe('analyzeGait on a synthetic walker', () => {
     const m = report.metrics;
     expect(report.forward.map(v => Math.round(v * 1000) / 1000 + 0)).toEqual([0, 0, 1]);
     expect(report.height).toBe(1.75);
-    expect(report.travelSpeed).toBeCloseTo(0.6 / (0.6 * 1.2), 6);
+    expect(report.travelSpeed).toBeCloseTo(0.6 / (0.55 * 1.2), 6);
     expect(report.contactSource).toBe('declared');
     expect(m.seam).toBeLessThan(1e-5);
     expect(m.groundError).toBeLessThan(1e-4);
-    expect(m.skate).toBeLessThan(0.01);
-    expect(m.stanceSpeedRatio.min).toBeGreaterThan(0.99);
-    expect(m.stanceSpeedRatio.max).toBeLessThan(1.01);
+    expect(m.skate).toBeLessThan(0.05);
+    expect(m.stanceSpeedRatio.min).toBeGreaterThan(0.97);
+    expect(m.stanceSpeedRatio.max).toBeLessThan(1.03);
     expect(m.flightFraction).toBe(0);
     expect(m.headBob).toBeCloseTo(0.04, 2);
     expect(m.headBobPeaks).toBe(2);
@@ -104,7 +104,7 @@ describe('analyzeGait on a synthetic walker', () => {
     const popping = analyzeGait(await loadGait(await walkerGLB({ smoothLiftoff: false })), { clip: 'walk' });
     expect(popping.metrics.contactVelocityJumpRatio).toBeGreaterThan(0.5);
     expect(report.contactSource).toBe('auto');
-    expect(report.travelSpeed).toBeCloseTo(0.6 / (0.6 * 1.2), 1);
+    expect(report.travelSpeed).toBeCloseTo(0.6 / (0.55 * 1.2), 1);
   }, 30000);
 
   it('finds each foot from the vertices skinned to it, whatever the meshes are called', async () => {
@@ -116,24 +116,52 @@ describe('analyzeGait on a synthetic walker', () => {
     expect(anonymous.curves.footHeightLeft).toEqual(named.curves.footHeightLeft);
   }, 30000);
 
-  it('measures declared palms and thumbs from the hand bones, at rest and through the clip', async () => {
+  it('measures palms, thumbs and finger curl from the skinned hand geometry, at rest and through the clip', async () => {
     const natural = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' }).metrics.hands!;
     // Palms face the thighs and thumbs point forward; the arm swing leaves the hand's twist alone.
-    expect(natural.rest.palmDeg.left).toBeCloseTo(0, 3);
-    expect(natural.rest.palmDeg.right).toBeCloseTo(0, 3);
-    expect(natural.rest.thumbForward).toBeCloseTo(1, 3);
-    expect(Math.abs(natural.palmDeg.min)).toBeLessThan(1);
-    expect(Math.abs(natural.palmDeg.max)).toBeLessThan(1);
+    expect(Math.abs(natural.rest.palmDeg.left)).toBeLessThan(3);
+    expect(Math.abs(natural.rest.palmDeg.right)).toBeLessThan(3);
+    expect(natural.rest.thumbForward).toBeGreaterThan(0.99);
+    expect(Math.abs(natural.palmDeg.min)).toBeLessThan(3);
+    expect(Math.abs(natural.palmDeg.max)).toBeLessThan(3);
     expect(natural.thumbForward).toBeGreaterThan(0.99);
+    expect(natural.curl).toBeGreaterThan(0.05);
     // A forearm that turns the palm forward (toward palm up) by 70 degrees mid-clip shows as a negative palm angle.
     const twisted = analyzeGait(await loadGait(await walkerGLB({ handTwist: 70 })), { clip: 'walk' }).metrics.hands!;
-    expect(twisted.rest.palmDeg.left).toBeCloseTo(0, 3);
-    expect(twisted.palmDeg.min).toBeCloseTo(-70, 0);
+    expect(Math.abs(twisted.rest.palmDeg.left)).toBeLessThan(3);
+    expect(twisted.palmDeg.min).toBeGreaterThan(-73);
+    expect(twisted.palmDeg.min).toBeLessThan(-67);
     // Backward hands: palms forward, thumbs toward the body.
     const backward = analyzeGait(await loadGait(await walkerGLB({ palms: 'backward' })), { clip: 'walk' }).metrics.hands!;
-    expect(backward.rest.palmDeg.left).toBeCloseTo(-90, 3);
-    expect(backward.rest.thumbForward).toBeCloseTo(0, 3);
+    expect(backward.rest.palmDeg.left).toBeCloseTo(-90, 0);
+    expect(Math.abs(backward.rest.thumbForward)).toBeLessThan(0.05);
+    // What the rig declares does not matter; the skinned hands do.
+    const declared = analyzeGait(await loadGait(await walkerGLB({ declaredPalms: 'backward' })), { clip: 'walk' }).metrics.hands!;
+    expect(declared.rest.palmDeg).toEqual(natural.rest.palmDeg);
+    // Hand bones turned 180 degrees about their axis at rest and in every key: the bones move as before relative
+    // to their rest, but the skinned hands face out with the thumbs back.
+    const flipped = analyzeGait(await loadGait(twistHands(await walkerGLB(), 180)), { clip: 'walk' }).metrics.hands!;
+    expect(Math.abs(flipped.rest.palmDeg.left)).toBeGreaterThan(170);
+    expect(flipped.rest.thumbForward).toBeLessThan(-0.95);
+    expect(flipped.thumbForward).toBeLessThan(-0.95);
+    // Flat fingers have no curl.
+    expect(analyzeGait(await loadGait(await walkerGLB({ curl: 0 })), { clip: 'walk' }).metrics.hands!.curl).toBeLessThan(0.04);
     expect(analyzeGait(await loadGait(await walkerGLB({ palms: 'none' })), { clip: 'walk' }).metrics.hands).toBeNull();
+  }, 30000);
+
+  it('measures stride from the soles and skating from every sole vertex on the floor', async () => {
+    const report = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' });
+    // Stance carries the sole 0.6 m back in 0.55 x 1.2 s: 0.909 m/s, 1.09 m per cycle. The rest leg is 0.34 + 0.42 m.
+    const stride = 0.6 / 0.55;
+    expect(report.metrics.stride.meters).toBeCloseTo(stride, 3);
+    expect(report.metrics.stride.perHeight).toBeCloseTo(stride / 1.75, 3);
+    expect(report.metrics.stride.perLeg).toBeCloseTo(stride / 0.76, 2);
+    expect(report.metrics.skate).toBeLessThan(0.05);
+    const short = analyzeGait(await loadGait(await walkerGLB({ stride: 0.3 })), { clip: 'walk' });
+    expect(short.metrics.stride.meters).toBeCloseTo(0.3 / 0.55, 3);
+    // The declared stance says nothing about a sole skimming the floor at speed just before touchdown.
+    const grazing = analyzeGait(await loadGait(await walkerGLB({ swing: 'graze' })), { clip: 'walk' });
+    expect(grazing.metrics.skate).toBeGreaterThan(0.1);
   }, 30000);
 
   it('compares curves against a reference after phase alignment', async () => {
@@ -152,13 +180,13 @@ describe('evaluateGait', () => {
     const reference = analyzeGait(await loadGait(await walkerGLB()), { clip: 'walk' });
     const report = analyzeGait(await loadGait(await walkerGLB({ bob: 0.022 })), { clip: 'walk', references: [reference] });
     const walk = evaluateGait(report, 'walk');
-    expect(walk.checks.map(c => c.id)).toEqual(['groundError', 'stanceSpeed', 'skate', 'seam', 'contactPop', 'kneeHyperextension', 'kneePop', 'flight',
+    expect(walk.checks.map(c => c.id)).toEqual(['groundError', 'stanceSpeed', 'skate', 'seam', 'contactPop', 'kneeHyperextension', 'kneePop', 'flight', 'stride',
       'armCounterswing', 'handOrientation', 'headBob', 'headBobCount', 'headPitchRatio', 'torsoLean', 'spineFlex', 'counterRotation', 'pelvisDrop', 'curveCorrelation']);
     expect(walk.checks.filter(c => !c.pass)).toEqual([]);
     expect(walk.ok).toBe(true);
     const jog = evaluateGait(report, 'jog');
     expect(jog.ok).toBe(false);
-    expect(jog.checks.filter(c => !c.pass).map(c => c.id)).toEqual(expect.arrayContaining(['flight', 'headBob', 'torsoLean']));
+    expect(jog.checks.filter(c => !c.pass).map(c => c.id)).toEqual(expect.arrayContaining(['flight', 'stride', 'headBob', 'torsoLean']));
   }, 30000);
 
   it('fails arms that swing with the legs, a hiked pelvis and a curve that does not match its reference', async () => {
@@ -166,11 +194,17 @@ describe('evaluateGait', () => {
     const report = analyzeGait(await loadGait(await walkerGLB({ arm: -20, roll: -5 })), { clip: 'walk', references: [reference] });
     const failed = evaluateGait(report, 'walk').checks.filter(c => !c.pass).map(c => c.id);
     expect(failed).toEqual(expect.arrayContaining(['armCounterswing', 'pelvisDrop', 'curveCorrelation']));
-    // Palms turned forward mid-clip, backward hands, and undeclared hands all fail the hand check.
-    for (const options of [{ handTwist: 70 }, { palms: 'backward' as const }, { palms: 'none' as const }]) {
+    // Palms turned forward mid-clip, backward hands, flat fingers and missing hands all fail the hand check.
+    for (const options of [{ handTwist: 70 }, { palms: 'backward' as const }, { curl: 0 }, { palms: 'none' as const }]) {
       const hands = evaluateGait(analyzeGait(await loadGait(await walkerGLB(options)), { clip: 'walk' }), 'walk').checks.find(c => c.id === 'handOrientation')!;
       expect(hands.pass).toBe(false);
     }
+    // So do hands twisted 180 degrees on their bones, however the rig declares them.
+    const flipped = evaluateGait(analyzeGait(await loadGait(twistHands(await walkerGLB(), 180)), { clip: 'walk' }), 'walk');
+    expect(flipped.checks.find(c => c.id === 'handOrientation')!.pass).toBe(false);
+    // A shuffle fails the stride check, and a sole that grazes the floor at speed fails the skate check.
+    expect(evaluateGait(analyzeGait(await loadGait(await walkerGLB({ stride: 0.3 })), { clip: 'walk' }), 'walk').checks.find(c => c.id === 'stride')!.pass).toBe(false);
+    expect(evaluateGait(analyzeGait(await loadGait(await walkerGLB({ swing: 'graze' })), { clip: 'walk' }), 'walk').checks.find(c => c.id === 'skate')!.pass).toBe(false);
     // A palm turned slightly back still hangs naturally.
     const back = evaluateGait(analyzeGait(await loadGait(await walkerGLB({ handTwist: -30 })), { clip: 'walk' }), 'walk');
     expect(back.checks.find(c => c.id === 'handOrientation')!.pass).toBe(true);
