@@ -193,15 +193,18 @@ def skin_weights(name,vertices,d):
         # bend sits low, inside the upper, so the shaft and cuff ride the shin with the leg in them.
         # Above that the boot takes the trouser leg's own weights, so a tall shaft and its cuff
         # stay seated round the leg wherever the knee blend reaches.
-        # A boot point takes the weights of the leg point at the same direction round its own axis:
-        # the shaft sits further back than the shin (centred at z=-.006 unit), so a cuff and the
+        # A boot point takes the weights of the shin point at the same direction round its own axis
+        # (the shaft sits further back than the shin, centred at z=-.006 unit), so a cuff and the
         # trouser hem beside it bind alike on every side of the knee blend.
         shaft_z=globals().get('BOOT_SHAFT_Z')
         if shaft_z is None:
             from stylized_character import BOOT_SHAFT_Z as shaft_z
-        shift=(-.006-shaft_z)*s
+        x0=d.get('leg_x',.096*s)
+        def shin(x,y,z):
+            x=x if x*(1 if side=='right' else -1)>0 else -x
+            a=math.atan2(z-shaft_z*s,abs(x)-x0);return (math.copysign(x0+.06*s*math.cos(a),x),y,-.006*s+.06*s*math.sin(a))
         rows=[]
-        for (x,y,z),leg in zip(vertices,skin_weights('trousers',[(x if x*(1 if side=='right' else -1)>0 else -x,y,z+shift) for x,y,z in vertices],d)):
+        for (x,y,z),leg in zip(vertices,skin_weights('trousers',[shin(*v) for v in vertices],d)):
             t=w_smooth(.09*s,.15*s,y);row={side+'-foot':1-t}
             for bone,w in leg.items():row[bone]=row.get(bone,0)+t*w
             rows.append({bone:w for bone,w in row.items() if w>0})

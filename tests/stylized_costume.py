@@ -395,7 +395,7 @@ class GarmentRig(unittest.TestCase):
             hem=walk.skin_weights('layer-right-leg-hem',[(x0+.06*s*c,y,-.006*s+.06*s*sn)],d)[0]
             cuff=walk.skin_weights('right-boot-cuff',[(x0+.08*s*c,y,character.BOOT_SHAFT_Z*s+.08*s*sn)],d)[0]
             with self.subTest(angle=angle):
-                for bone in set(hem)|set(cuff):self.assertAlmostEqual(hem.get(bone,0),cuff.get(bone,0),delta=.015)
+                for bone in set(hem)|set(cuff):self.assertAlmostEqual(hem.get(bone,0),cuff.get(bone,0),delta=.005)
 
     def test_skinned_vertices_follow_the_rig(self):
         d=character.landmarks({});rest=walk.rest_bones(d)
