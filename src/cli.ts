@@ -138,6 +138,26 @@ export async function main(args = process.argv): Promise<void> {
     process.stdout.write(`${options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2)}\n`);
     if (!report.ok) process.exitCode = 1;
   });
+  program.command('check-garments <file>').description('Sample every clip of a skinned GLB and report garment-vs-body, garment-vs-garment and self-fold penetration per part and phase')
+    .option('--clips <list>', 'Comma-separated clips to sample (default: all)')
+    .option('--samples <count>', 'Phases per clip, evenly spaced from 0', '16')
+    .option('--tolerance <meters>', 'Depth past which an intrusion counts', '0.002')
+    .option('--garments <regex>', 'Part names that are garments (default: layer-*, gloves, boots, outsoles)')
+    .option('--ignore <regex>', 'Part names to leave out of the check')
+    .option('--json', 'Print only one compact JSON line').action(async (file, options) => {
+    const { checkGarments, garmentSummary } = await import('./garment-check.ts');
+    const report = await checkGarments(await readFile(file), {
+      samples: Number(options.samples), tolerance: Number(options.tolerance),
+      ...(options.clips ? { clips: String(options.clips).split(',').map((c: string) => c.trim()) } : {}),
+      ...(options.garments ? { garments: new RegExp(String(options.garments)) } : {}),
+      ...(options.ignore ? { ignore: new RegExp(String(options.ignore)) } : {}),
+    });
+    process.stdout.write(`${options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2)}\n`);
+    if (!report.ok) {
+      process.stderr.write(`${report.pairs.length} part pair${report.pairs.length === 1 ? '' : 's'} interpenetrate\n${garmentSummary(report).map(line => `FAIL ${line}`).join('\n')}\n`);
+      process.exitCode = 1;
+    }
+  });
   program.command('refine <input> <output>').description('Optional Blender stage: subdivide, smooth and displace a GLB, keeping bones and clips')
     .option('--subdivide <levels>', 'Subdivision surface levels', '1')
     .option('--noise <strength>', 'Displacement strength from a clouds texture, in meters', '0')
