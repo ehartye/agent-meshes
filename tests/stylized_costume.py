@@ -318,6 +318,19 @@ class GarmentRig(unittest.TestCase):
         a,b=walk.skin_weights('layer-bottom',[under,proud],d)
         for bone in set(a)|set(b):self.assertAlmostEqual(a.get(bone,0),b.get(bone,0),places=3)
 
+    def test_buckle_rides_the_belt_as_one_rigid_plate(self):
+        """A buckle never tears in two when the thigh lifts: it moves as the belt point at its centre."""
+        for config in [MARA,OREN]:
+            d=character.landmarks(config);buckle=parts(config)['layer-buckle']['vertices']
+            rows=walk.skin_weights('layer-buckle',buckle,d)
+            belt=parts(config)['layer-belt']['vertices'];s=d['s']
+            outer=buckle[:len(buckle)//2]
+            with self.subTest(height=config['height']):
+                # The plate stands proud of the belt across its face, so the belt never cuts it in two.
+                self.assertGreater(min(v[2] for v in outer if abs(v[0])<.016*s),max(v[2] for v in belt if abs(v[0])<.03*s)+.001*s)
+                self.assertTrue(all(row==rows[0] for row in rows))
+                self.assertFalse(any('thigh' in bone for bone in rows[0]))
+
     def test_boot_shaft_follows_the_shin_and_sole_the_foot(self):
         d=character.landmarks(MARA);by_name=parts(MARA)
         sole=walk.skin_weights('left-outsole',by_name['left-outsole']['vertices'],d)

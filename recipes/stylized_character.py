@@ -327,7 +327,7 @@ class BodySurface:
             lo=t
         raise ValueError('garment ray never leaves the body')
 
-def layer_patch(m,body,name,color,rays,thickness,lift=0,embed=.004,rim=.45,wrap=False,roughness=.85,metalness=0,level=False):
+def layer_patch(m,body,name,color,rays,thickness,lift=0,embed=.004,rim=.45,wrap=False,roughness=.85,metalness=0,level=False,bridge=False):
     """Closed garment slab raycast onto the body; rays[i][j]=(origin,direction).
 
     i runs across the patch and j along it; wrap joins the i ends into a band. The inner
@@ -336,16 +336,22 @@ def layer_patch(m,body,name,color,rays,thickness,lift=0,embed=.004,rim=.45,wrap=
     open edges, so patches read as sewn cloth rather than cut plates. lift may be a
     function of (i, j) for layers stacked over other layers. level=True offsets along the
     horizontal part of the normal, so a thick piece hung at a waist crease stays flat-faced.
+    bridge=True spans a step in the body along each j column (a jacket hem over a trouser yoke):
+    the outer face stands out to the column's farthest point, so a belt runs straight over it.
     """
     nu=len(rays); nv=len(rays[0]); outer=[]; inner=[]
     for i in range(nu):
-        for j in range(nv):
-            origin,direction=rays[i][j]
-            p=body.cast(origin,direction); n=body.normal(p)
-            if level: n=vunit((n[0],0,n[2]))
+        column=[body.cast(*rays[i][j]) for j in range(nv)]
+        normals=[body.normal(p) for p in column]
+        if level: normals=[vunit((n[0],0,n[2])) for n in normals]
+        across=vunit(tuple(sum(n[k] for n in normals) for k in range(3))) if bridge else None
+        reach=max(sum(a*b for a,b in zip(p,across)) for p in column) if bridge else 0
+        for j,(p,n) in enumerate(zip(column,normals)):
             base=lift(i,j) if callable(lift) else lift
             edge=min(j,nv-1-j) if wrap else min(i,nu-1-i,j,nv-1-j)
-            outer.append(vadd(p,vscale(n,base+thickness*(rim,.82,1)[min(edge,2)])))
+            o=vadd(p,vscale(n,base+thickness*(rim,.82,1)[min(edge,2)]))
+            if bridge: o=vadd(o,vscale(across,reach-sum(a*b for a,b in zip(p,across))))
+            outer.append(o)
             inner.append(vadd(p,vscale(n,-embed)))
     count=nu*nv; index=lambda i,j: (i%nu)*nv+j; faces=[]
     for i in range(nu if wrap else nu-1):
@@ -694,16 +700,18 @@ def dress(m,costume,d):
             ring_band('layer-'+label+'-leg-hem',shade(bottom['color'],.9),label+'-leg',(boot_top-.004)*s,(boot_top+.024)*s,.008,rim=.6)
     belt=costume.get('belt')
     if belt:
-        # A belt rides over an overalls waistband; its pouches hang in front of the belt.
+        # A belt rides over an overalls waistband; its pouches hang in front of the belt. Belt,
+        # buckle and pouches bridge the step where a jacket hem meets the trouser yoke, running
+        # straight over it, and the buckle stands proud of the belt's front.
         under=.007*s if overalls else 0
-        ring_band('layer-belt',belt['color'],torso,hip+.004*s,hip+.042*s,.007,rim=.8,roughness=.6,
+        ring_band('layer-belt',belt['color'],torso,hip+.004*s,hip+.042*s,.007,rim=.8,roughness=.6,bridge=True,
                   lift=lambda i,j: under+s*(.003+.007*max(0,math.sin(i*math.tau/24))**2))
-        front_patch('layer-buckle',belt['buckle'],hip-.001*s,hip+.047*s,lambda y:-.024*s,lambda y:.024*s,.005,lift=.014*s+under,rim=.7,roughness=.35,metalness=.7)
+        front_patch('layer-buckle',belt['buckle'],hip,hip+.046*s,lambda y:-.024*s,lambda y:.024*s,.005,lift=.019*s+under,rim=.7,roughness=.35,metalness=.7,bridge=True,level=True)
         for k,t in enumerate([math.pi/2-.95,math.pi/2+.95,-math.pi/2+.95,-math.pi/2-.95][:belt['pouches']]):
             # Tool pouches hang from the belt onto the upper thigh.
-            ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s+under,rim=.3,level=True)
+            ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s+under,rim=.3,level=True,bridge=True)
             # The flap folds over the pouch mouth: it stands clear of the pouch top and rises past it.
-            ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.047*s,.006,t0=t-.29,t1=t+.29,lift=.036*s+under,rim=.9,level=True)
+            ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.047*s,.006,t0=t-.29,t1=t+.29,lift=.036*s+under,rim=.9,level=True,bridge=True)
     pack=costume.get('backpack')
     if pack:
         for side,label in [(-1,'left'),(1,'right')]:
