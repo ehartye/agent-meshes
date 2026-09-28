@@ -781,12 +781,13 @@ def geometry(values=None,meshes=None):
     # Across the chest the top gains depth, not width, so its side seam stays under
     # the armpit and off the swinging arm.
     top_ease=(lambda rows: ease(rows,1.04,.008,below=shoulder_y+.03*s,side_below=chest_y-.01*s)) if loose_top else (lambda rows: rows)
-    # A heavier build thickens the torso front to back, the waist, the neck and the limbs.
+    # A heavier build thickens the torso front to back, the waist, the neck and the limbs. The waist
+    # widens less than it deepens, so a swinging arm still clears a broad torso's side.
     bulk=lambda k: 1+k*(dims['build']-1)
     def girth(rows,ku,kv,below=9):
         return [(a,u,v,ru*bulk(ku),rv*bulk(kv)) if a<below else (a,u,v,ru,rv) for a,u,v,ru,rv in rows]
     leg_ease=(lambda rows: ease(rows,1.07,.006,above=.26*s)) if costume else (lambda rows: rows)
-    m.rings('tailored-torso',top_ease(girth(girth([(hip_y+.026*s,0,0,hip_w*.47,.105*s),(hip_y+.04*s,0,0,hip_w*.5,.11*s),(waist_y,0,0,hip_w*.41,.096*s),(chest_y,0,.005*s,shoulder_w*.46,.115*s),(shoulder_y,0,0,shoulder_w*.50,.094*s),(shoulder_y+.065*s,0,0,.075*s,.065*s)],.6,0,below=chest_y-.01*s),0,.6,below=shoulder_y-.01*s)),body)
+    m.rings('tailored-torso',top_ease(girth(girth([(hip_y+.026*s,0,0,hip_w*.47,.105*s),(hip_y+.04*s,0,0,hip_w*.5,.11*s),(waist_y,0,0,hip_w*.41,.096*s),(chest_y,0,.005*s,shoulder_w*.46,.115*s),(shoulder_y,0,0,shoulder_w*.50,.094*s),(shoulder_y+.065*s,0,0,.075*s,.065*s)],.4,0,below=chest_y-.01*s),0,.6,below=shoulder_y-.01*s)),body)
     m.rings('neck',girth([(shoulder_y+.02*s,0,0,.053*s,.051*s),(head_y-ry*.55,0,0,.058*s,.053*s)],.45,.45),skin)
     m.rings('collar',[(shoulder_y+.038*s,0,0,.076*s,.071*s),(shoulder_y+.068*s,0,0,.071*s,.067*s)],ring['color'] if ring else navy)
     if ring: m.parts[-1].update(roughness=.4,metalness=.55)
