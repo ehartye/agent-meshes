@@ -18,7 +18,7 @@ class WalkContract(unittest.TestCase):
             if name=='stylized_character':raise ModuleNotFoundError(name)
             return original_import(name,*args,**kwargs)
         with patch('builtins.__import__',side_effect=import_without_sibling):
-            self.assertEqual(len(namespace['jog_pose'](namespace['landmarks']({}),.1)),18)
+            self.assertEqual(len(namespace['jog_pose'](namespace['landmarks']({}),.1)),20)
 
     def test_foot_roll_internal_joins_are_smooth(self):
         import stylized_character as character
@@ -213,6 +213,33 @@ class Hands(unittest.TestCase):
                 self.assertEqual(rows,sorted(rows,reverse=True))
                 for knuckle,tip in zip(knuckles,tips):
                     self.assertGreater(walk.w_dot(walk.w_sub(centroid(tip),centroid(knuckle)),palm),.008*d['s'])
+
+class Fingers(unittest.TestCase):
+    def test_fingers_curl_loosely_and_more_in_the_jog(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        d=character.landmarks({});rest=walk.rest_bones(d);s=d['s']
+        parts={p['name']:p['vertices'] for p in character.geometry({})}
+        for side,label in [(-1,'left'),(1,'right')]:
+            fingers=rest[label+'-fingers'];self.assertEqual(fingers['parent'],label+'-hand')
+            # Fingertips ride the finger joint; the palm and the thumb's root stay on the hand.
+            tip=parts[label+'-finger-1'][-1];root=parts[label+'-thumb'][0];palm=parts[label+'-palm'][-1]
+            rows=walk.skin_weights(label+'-hand',[tip,root,palm],d)
+            self.assertGreater(rows[0].get(label+'-fingers',0),.99)
+            self.assertEqual(rows[1],{label+'-hand':1});self.assertEqual(rows[2],{label+'-hand':1})
+            curls={}
+            for gait in ['walk','jog']:
+                values=[]
+                for i in range(24):
+                    phase=i/24;pose=walk.gait_pose(d,phase,gait);turn=walk.arm_rotations(phase,gait)[label+'-hand']
+                    straight=walk.w_unit(turn(walk.w_sub(fingers['tail'],fingers['head'])))
+                    bent=walk.w_unit(walk.w_sub(*reversed(pose[label+'-fingers'])))
+                    # The fingers bend toward the palm, which faces the thigh.
+                    self.assertGreater(walk.w_dot(walk.w_sub(bent,straight),turn((-side,0,0))),0)
+                    values.append(math.acos(max(-1,min(1,walk.w_dot(straight,bent)))))
+                    self.assertLess(math.dist(pose[label+'-fingers'][0],walk.w_add(pose[label+'-hand'][0],turn(walk.w_sub(fingers['head'],rest[label+'-hand']['head'])))),1e-9)
+                curls[gait]=min(values)
+            self.assertGreater(curls['walk'],.05);self.assertGreater(curls['jog'],.45)
 
 def _gait_measures(walk,d,gait,n=120):
     """Body measures as agent-meshes' gait command takes them from the exported bones."""

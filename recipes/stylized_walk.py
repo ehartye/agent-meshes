@@ -15,6 +15,8 @@ def w_unit(a):return w_mul(a,1/math.hypot(*a))
 def w_dot(a,b):return sum(x*y for x,y in zip(a,b))
 def w_smooth(lo,hi,v):
     t=max(0,min(1,(v-lo)/(hi-lo)));return t*t*(3-2*t)
+def _rotate_z(p,angle):
+    x,y,z=p;c=math.cos(angle);s=math.sin(angle);return(x*c-y*s,x*s+y*c,z)
 def w_rotate_x(p,angle):
     x,y,z=p;c=math.cos(angle);s=math.sin(angle);return(x,y*c-z*s,y*s+z*c)
 
@@ -40,6 +42,7 @@ def _body_rotate(p,angles):
 #   strike and at the top of the toe roll; heel_flat/toe_from end the heel
 #   rocker and start the toe roll within stance; peak_at/flat_at time swing.
 #   arm, arm_phase, bend: shoulder swing (rad), its lag, and elbow bend.
+#   curl: finger bend toward the palm at the knuckles (rad); a loose fist in the jog.
 #
 # Body curves follow the symmetric part of Mesh2Motion's CC0 Walk_Loop and
 # Jog_Fwd_Loop (github.com/Mesh2Motion/mesh2motion-app): each shape is
@@ -53,7 +56,7 @@ def _body_rotate(p,angles):
 #   yaw, chest_yaw: pelvis turn with the forward leg; chest turn against it.
 #   body_phase: delay of the body curves relative to the feet.
 GAITS={
-    'walk':dict(stance=.641,stride=1.034,center=-.114,sway=.018,arm=.32,arm_phase=-.1,bend=.25,
+    'walk':dict(stance=.641,stride=1.034,center=-.114,sway=.018,arm=.32,arm_phase=-.1,bend=.25,curl=.2,
                 lift=[.0659,.1315,.1127,.0793,.0716,.1388,.0809,.0785],
                 reach=[-.0396,.0822,-.0303,-.133,.0198,.138,-.0509,-.2241],
                 heel=-.298,peak=1.45,heel_flat=.172,toe_from=.646,peak_at=.367,flat_at=.745,
@@ -62,13 +65,13 @@ GAITS={
                 lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
                 head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
                 yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0608),
-    'jog':dict(stance=.221,stride=.448,lift=[.0279,.196,.359,.263,.0686,.265,.16,.264,.501,.336],reach=[-.655,-1.42,-1.93,-2.05,-1.46,-.855,-.56,-.329,-.292,-.254],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
+    'jog':dict(curl=.75,stance=.221,stride=.448,lift=[.0279,.196,.359,.263,.0686,.265,.16,.264,.501,.336],reach=[-.655,-1.42,-1.93,-2.05,-1.46,-.855,-.56,-.329,-.292,-.254],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
                heel=-.202,swing_roll=[-.0362,-.00647,.0252,.0425,.0524,.0554,.0145,-.0458,-.0679,-.0765],peak=1.22,heel_flat=.411,toe_from=.729,peak_at=.401,flat_at=.745,
                base=-.0553,bob=.0741,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
                roll=5.0,roll_shape=[(1,-.888,.473),(3,-.052,-.026)],
-               lean=17.3,lumbar=.55,pitch=3.0,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
+               lean=17.3,lumbar=.55,pitch=5.5,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
                head=.5,head_lean=4.0,head_shape=[(2,-.95,.273),(4,-.071,-.046)],
-               yaw=6.0,chest_yaw=8.0,yaw_phase=0,body_phase=-.00152),
+               yaw=8.0,chest_yaw=18.0,yaw_phase=0,body_phase=-.00152),
 }
 TORSO=['root','pelvis','spine','chest','neck','head']
 
@@ -217,7 +220,10 @@ def rest_bones(d):
         add(name+'-upper-arm',(side*sx,shoulder,0),(side*(wx-.015*s),elbow,.012*s),'chest')
         add(name+'-forearm',(side*(wx-.015*s),elbow,.012*s),(side*wx,wrist,.055*s),name+'-upper-arm')
         add(name+'-hand',(side*wx,wrist,.055*s),(side*wx,wrist-.12*s,.084*s),name+'-forearm')
+        add(name+'-fingers',(side*(wx-.005*s),wrist-KNUCKLE*s,.058*s),(side*(wx-.005*s),wrist-.15*s,.058*s),name+'-hand')
     return bones
+
+KNUCKLE=.082
 
 def hand_frames(d):
     """Rest palm normal and thumb direction of each rigid hand (Y up, +Z forward):
@@ -258,6 +264,8 @@ def gait_pose(d,phase,gait='walk',settings=None):
         wrist=w_add(elbow,turn[name+'-forearm'](w_sub(rest[name+'-forearm']['tail'],rest[name+'-forearm']['head'])))
         pose[name+'-upper-arm']=(shoulder,elbow);pose[name+'-forearm']=(elbow,wrist)
         pose[name+'-hand']=(wrist,w_add(wrist,turn[name+'-hand'](w_sub(rest[name+'-hand']['tail'],rest[name+'-hand']['head']))))
+        knuckle=w_add(wrist,turn[name+'-hand'](w_sub(rest[name+'-fingers']['head'],rest[name+'-hand']['head'])))
+        pose[name+'-fingers']=(knuckle,w_add(knuckle,turn[name+'-fingers'](w_sub(rest[name+'-fingers']['tail'],rest[name+'-fingers']['head']))))
     return pose
 
 def arm_rotations(phase,gait='walk',settings=None,rotations=None):
@@ -266,7 +274,8 @@ def arm_rotations(phase,gait='walk',settings=None,rotations=None):
     Arms counterswing their own leg (back at that foot's touchdown) about the
     chest's lateral axis, and the forearm and hand add the elbow bend. The
     chest frame carries each bone whole, so the hand keeps its rest twist:
-    palms toward the thighs, thumbs forward.
+    palms toward the thighs, thumbs forward. The fingers bend toward the palm
+    about the hand's front-to-back knuckle axis.
     """
     settings=settings or gait_settings(gait);rotations=rotations or gait_rotations(phase,gait,settings)
     frame=rotations['chest'];out={}
@@ -274,7 +283,10 @@ def arm_rotations(phase,gait='walk',settings=None,rotations=None):
         swing=math.tau*((phase+offset)%1-settings['arm_phase']);angle=settings['arm']*math.cos(swing)
         bend=settings['bend']+.09*math.sin(swing-.5)
         out[name+'-upper-arm']=lambda v,a=angle:_body_rotate(w_rotate_x(v,a),frame)
-        out[name+'-forearm']=out[name+'-hand']=lambda v,a=angle-bend:_body_rotate(w_rotate_x(v,a),frame)
+        out[name+'-forearm']=out[name+'-hand']=hand=lambda v,a=angle-bend:_body_rotate(w_rotate_x(v,a),frame)
+        # Rest palms face the midline: -X for the rig-right hand, +X for the rig-left.
+        curl=settings.get('curl',0)*(1 if name=='left' else -1)
+        out[name+'-fingers']=lambda v,c=curl,hand=hand:hand(_rotate_z(v,c))
     return out
 
 def walk_pose(d,phase):return gait_pose(d,phase,'walk')
@@ -295,7 +307,10 @@ def skin_weights(name,vertices,d):
         kept=sorted(((v,b) for b,v in row.items() if v>0),reverse=True)[:4];total=sum(v for v,_ in kept)
         return {b:v/total for v,b in kept}
     if any(token in name for token in ['boot','outsole','ankle']):return rigid(side+'-foot')
-    if name in ['left-hand','right-hand']:return rigid(name)
+    if name in ['left-hand','right-hand']:
+        # Fingers bend at the knuckles; the palm and the thumb's root stay on the hand.
+        knuckle=wrist-KNUCKLE*s
+        return [clean({name:1-f,side+'-fingers':f}) for f in (w_smooth(knuckle+.004*s,knuckle-.012*s,y) for _,y,_ in vertices)]
     if 'wrist-seal' in name:return rigid(side+'-forearm')
     if name in ['waist-belt']:return rigid('pelvis')
     if name in ['flight-jacket','trousers'] or 'knee-panel' in name:

@@ -310,17 +310,21 @@ export function handShape(vertices: Float64Array, wrist: Vector3, axis: Vector3)
     width = across(new Vector3(cov[0] * x + cov[1] * y + cov[2] * z, cov[3] * x + cov[4] * y + cov[5] * z, cov[6] * x + cov[7] * y + cov[8] * z)).normalize();
   }
   const palm = along.clone().cross(width).normalize();
-  const reach = Array.from({ length: count }, (_, i) => point(i).sub(wrist).dot(along)), length = Math.max(...reach);
-  const meanAlong = (axis: Vector3, keep: (t: number) => boolean) => {
-    let sum = 0, n = 0;
-    for (let i = 0; i < count; i++) if (keep(reach[i])) { sum += point(i).sub(wrist).dot(axis); n++; }
-    return n ? sum / n : 0;
-  };
-  const distal = (t: number) => t > 0.75 * length, proximal = (t: number) => t < 0.5 * length;
-  let curl = (meanAlong(palm, distal) - meanAlong(palm, proximal)) / length;
+  let curl = fingerCurl(vertices, wrist, along, palm);
   if (curl < 0) { palm.negate(); curl = -curl; }
-  const thumb = meanAlong(width, proximal) >= meanAlong(width, distal) ? width : width.negate();
+  // The thumb's side: the near half of the hand leans toward it more than the far quarter does.
+  const thumb = fingerCurl(vertices, wrist, along, width) <= 0 ? width : width.negate();
   return { palm, thumb, curl };
+}
+
+/** How far the far quarter of a hand sits toward `toward` from its near half, as a fraction of hand length. */
+function fingerCurl(vertices: Float64Array, wrist: Vector3, axis: Vector3, toward: Vector3): number {
+  const count = vertices.length / 3, along = axis.clone().normalize(), reach: number[] = [], side: number[] = [], d = new Vector3();
+  for (let i = 0; i < count; i++) { d.set(vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2]).sub(wrist); reach.push(d.dot(along)); side.push(d.dot(toward)); }
+  const length = Math.max(...reach), meanOf = (keep: (t: number) => boolean) => {
+    let sum = 0, n = 0; for (let i = 0; i < count; i++) if (keep(reach[i])) { sum += side[i]; n++; } return n ? sum / n : 0;
+  };
+  return (meanOf(t => t > 0.75 * length) - meanOf(t => t < 0.5 * length)) / length;
 }
 
 const range = (values: number[]) => Math.max(...values) - Math.min(...values);
@@ -566,21 +570,29 @@ export function analyzeGait(source: GaitSource, options: GaitOptions): GaitRepor
   });
   const drops = [drop.left, drop.right].filter(Number.isFinite);
 
-  // Hands, from the skinned hand geometry, read in the plane across the forearm. The body's left is the chest's,
-  // which the arms hang from. Anterior is forearm x left: forward when the arm hangs, up when it points forward;
-  // the thumb belongs there and the palm faces the body's midline.
+  // Hands, from the skinned hand geometry, read in the plane across the forearm. The rest palm and thumb come from
+  // the hand vertices at rest; through the clip the hand bone carries them, so curling fingers do not tilt them,
+  // and the curl is read from the posed vertices. The body's left is the chest's, which the arms hang from.
+  // Anterior is forearm x left: forward when the arm hangs, up when it points forward; the thumb belongs there and
+  // the palm faces the body's midline.
   const hands = handSets && sides.every(side => handSets![side].length) ? (() => {
+    restore(source);
+    const restShape = Object.fromEntries(sides.map(side => {
+      const arm = armFor(side), wrist = at(arm.hand!);
+      return [side, handShape(posed(handSets![side]), wrist, wrist.clone().sub(at(arm.lower)))];
+    })) as Record<'left' | 'right', ReturnType<typeof handShape>>;
     const handPose = (world: (name: string) => Quaternion, position: (name: string) => Vector3, vertices: (side: 'left' | 'right') => Float64Array): HandPose => {
       const left = lateral.clone().applyQuaternion(world(chest).clone().multiply(restWorld.get(chest)!.clone().invert()));
       const palmDeg = { left: 0, right: 0 }; let thumbForward = Infinity, curl = Infinity;
       for (const side of sides) {
         const arm = armFor(side), wrist = position(arm.hand!), along = wrist.clone().sub(position(arm.lower)).normalize();
-        const shape = handShape(vertices(side), wrist, along);
+        const turn = world(arm.hand!).clone().multiply(restWorld.get(arm.hand!)!.clone().invert());
         const across = (v: Vector3) => v.clone().addScaledVector(along, -v.dot(along)).normalize();
         const anterior = across(along.clone().cross(left)), medial = across(left.clone().multiplyScalar(side === 'left' ? -1 : 1));
-        const palm = across(shape.palm), thumb = across(shape.thumb);
+        const palm = across(restShape[side].palm.clone().applyQuaternion(turn)), thumb = across(restShape[side].thumb.clone().applyQuaternion(turn));
         palmDeg[side] = Math.atan2(-palm.dot(anterior), palm.dot(medial)) * DEG;
-        thumbForward = Math.min(thumbForward, thumb.dot(anterior)); curl = Math.min(curl, shape.curl);
+        thumbForward = Math.min(thumbForward, thumb.dot(anterior));
+        curl = Math.min(curl, fingerCurl(vertices(side), wrist, along, palm));
       }
       return { palmDeg, thumbForward, curl };
     };
