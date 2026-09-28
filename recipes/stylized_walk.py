@@ -397,6 +397,19 @@ def skin_weights(name,vertices,d):
                        'head':w_smooth(skull-.04*s,skull+.01*s,y)}) for _,y,_ in vertices]
     if name=='front-fastener':return [clean(_torso_row(y,d)) for _,y,_ in vertices]
     if name in ['chest-terminal','chest-readout','collar','air-hose'] or name.startswith(('air-tank','tank-band')):return rigid('chest')
+    # Fieldwork suit kit rides the bone under it; the helmet's neck seal flexes from the chest to the helmet ring.
+    if name.startswith('backpack') or name.endswith('-chest-strap'):return rigid('chest')
+    if name.startswith('belt-pouch'):return rigid('pelvis')
+    if name.endswith('-shoulder-pad'):return rigid(side+'-upper-arm')
+    if name.endswith('-elbow-pad'):return rigid(side+'-forearm')
+    if name.endswith('-thigh-pouch'):return rigid(side+'-thigh')
+    if name=='helmet-neck-seal':
+        ys=[v[1] for v in vertices];low,high=min(ys),max(ys)
+        rows=[]
+        for y in ys:
+            t=w_smooth(low+(high-low)*.35,high,y)
+            rows.append({bone:value for bone,value in {'chest':1-t,'head':t}.items() if value>0})
+        return rows
     return rigid('head')
 
 def clip_frames(seconds,fps=60):

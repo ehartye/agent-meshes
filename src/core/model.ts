@@ -29,8 +29,17 @@ export function validateGeometry(g: Part['geometry']): void {
     if (g.outline.some(([x, y]) => Math.abs(x) > 0.5 || Math.abs(y) > 0.5)) throw new Error('Outline points must be within -0.5 to 0.5');
   } else if (g.outline) throw new Error(`Only a prism takes an outline, not a ${g.type}`);
 }
-/** Surface finish: metalness 0 is paint or plastic, 1 is bare metal; roughness 0 is a mirror, 1 is chalk. Absent means the scene's default finish. */
-export const materialSchema = z.object({ metalness: z.number().min(0).max(1).default(0), roughness: z.number().min(0).max(1).default(0.65) }).strict();
+/**
+ * Surface finish: metalness 0 is paint or plastic, 1 is bare metal; roughness 0 is a mirror, 1 is chalk. Absent means the scene's default finish.
+ * Glass: opacity below 1 blends the surface over what is behind it (glTF alphaMode BLEND); transmission 0 to 1 is
+ * physically transmitted light (KHR_materials_transmission) and ior the index of refraction (KHR_materials_ior, 1.5 is glass);
+ * doubleSided draws both faces, so a hollow bubble shows its far wall. Omitted glass fields mean an opaque, one-sided surface.
+ */
+export const materialSchema = z.object({
+  metalness: z.number().min(0).max(1).default(0), roughness: z.number().min(0).max(1).default(0.65),
+  opacity: z.number().min(0).max(1).optional(), transmission: z.number().min(0).max(1).optional(),
+  ior: z.number().min(1).max(2.333).optional(), doubleSided: z.boolean().optional(),
+}).strict();
 const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 /** A painted pattern baked into vertex colors in world space. `size` is the dot spacing, stripe period or check size in meters. */
 export const patternSchema = z.object({

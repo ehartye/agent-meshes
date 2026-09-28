@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { auditMorphNames, SHARED_MORPH_FIX, UE_FALLBACK_MORPH_NAME, type MorphNameAudit } from './gltf-morphs.ts';
 import { auditSkins, type SkinAudit } from './gltf-skins.ts';
 import { ARKIT_FACE_CONTRACT } from './arkit-face.ts';
+import { auditGlass, type GlassMaterial } from './gltf-materials.ts';
 
 /**
  * Unreal destination check: import a GLB into a scratch UE project headlessly through
@@ -190,10 +191,12 @@ export function parseUnrealLog(text: string): ParsedUnrealLog {
   return result;
 }
 
+/** An imported material slot: its material, the base material it instances, and the blend mode and two-sidedness it renders with. */
+export interface UnrealMaterialFacts { name: string; base?: string; blendMode?: string | null; twoSided?: boolean | null }
 export interface UnrealSkeletalMeshFacts {
   path: string; skeleton: string | null; morphTargets: string[]; bones: string[]; lods: number; vertices: number[]; materialSlots?: number;
   /** Whether the import kept vertex colors (COLOR_0, skin paint), and each slot's material and base material. */
-  hasVertexColors?: boolean | null; materials?: ({ name: string; base?: string } | null)[];
+  hasVertexColors?: boolean | null; materials?: (UnrealMaterialFacts | null)[];
   /** The mesh's reference skeleton: each bone mapped to its parent bone, null for the root. */
   boneParents?: Record<string, string | null>;
   /** Why `boneParents` could not be read. */
@@ -201,10 +204,12 @@ export interface UnrealSkeletalMeshFacts {
 }
 export interface UnrealRawReport {
   ok: boolean; engineVersion?: string; destination: string; importReturned: boolean; error?: string;
-  assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: { path: string; lods: number; vertices: number[] }[];
+  assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: { path: string; lods: number; vertices: number[]; materials?: (UnrealMaterialFacts | null)[] }[];
 }
-/** What the GLB itself says before Unreal sees it: its morph name and skin audits, or why it could not be read. */
-export interface UnrealPreflight { morphNames?: MorphNameAudit; skins?: SkinAudit; error?: string }
+/** What the GLB itself says before Unreal sees it: its morph name, skin and glass audits, or why it could not be read. */
+export interface UnrealPreflight { morphNames?: MorphNameAudit; skins?: SkinAudit; glass?: GlassMaterial[]; error?: string }
+/** One GLB glass material and what Unreal made of it: `ok` when the imported material renders translucent. */
+export interface UnrealGlass { material: string; gltf: string; unreal: string | null; blendMode: string | null; twoSided: boolean | null; ok: boolean }
 export interface UnrealReport {
   tool: 'agent-meshes verify-unreal'; ok: boolean; failures: string[]; input: string;
   /** Findings that did not fail this run, such as a pre-flight issue Unreal happened to tolerate. */
@@ -222,6 +227,8 @@ export interface UnrealReport {
    * LOD 0 of every SkeletalMesh and StaticMesh Unreal made. Absent when the GLB was unreadable.
    */
   geometry?: UnrealGeometry;
+  /** Every glass material in the GLB (alphaMode BLEND or KHR_materials_transmission) and the blend mode Unreal imported it with. */
+  glass?: UnrealGlass[];
   elapsedMs: number;
 }
 
@@ -280,6 +287,24 @@ function geometryOf(raw: UnrealRawReport, audit: SkinAudit | undefined): UnrealG
 
 const union = (lists: string[][]) => [...new Set(lists.flat())];
 
+/** Blend modes that draw what is behind a surface (EBlendMode): everything but opaque and masked. */
+const TRANSLUCENT_BLEND = /^BLEND_(TRANSLUCENT|ADDITIVE|MODULATE|ALPHACOMPOSITE|ALPHA_COMPOSITE|ALPHAHOLDOUT|ALPHA_HOLDOUT|TRANSLUCENTCOLOREDTRANSMITTANCE|TRANSLUCENT_COLORED_TRANSMITTANCE)$/;
+const glassLabel = (g: GlassMaterial) => g.transmission > 0 && g.alphaMode !== 'BLEND' ? `KHR_materials_transmission ${Number(g.transmission.toFixed(3))}`
+  : `alphaMode BLEND, opacity ${Number(g.opacity.toFixed(3))}${g.transmission > 0 ? `, KHR_materials_transmission ${Number(g.transmission.toFixed(3))}` : ''}`;
+const importedMaterials = (raw: Pick<UnrealRawReport, 'skeletalMeshes' | 'staticMeshes'>) =>
+  [...raw.skeletalMeshes, ...raw.staticMeshes].flatMap(m => m.materials ?? []).filter((m): m is UnrealMaterialFacts => m !== null);
+
+/** Match each GLB glass material to the imported material of the same name (Interchange keeps glTF material names). */
+function glassOf(raw: UnrealRawReport, glass: GlassMaterial[]): UnrealGlass[] {
+  const materials = importedMaterials(raw);
+  return glass.map(g => {
+    const name = g.name ?? `material ${g.material}`;
+    const hit = materials.find(m => m.name === g.name && m.blendMode) ?? materials.find(m => m.name === g.name);
+    const blendMode = hit?.blendMode ?? null;
+    return { material: name, gltf: glassLabel(g), unreal: hit?.name ?? null, blendMode, twoSided: hit?.twoSided ?? null, ok: !!hit && (blendMode === null || TRANSLUCENT_BLEND.test(blendMode)) };
+  });
+}
+
 export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, run: { input: string; editor: string; version: string; exitCode: number; logFile: string; elapsedMs: number; /** Set when the run was stopped at this timeout. */ timeoutMs?: number; preflight?: UnrealPreflight }): UnrealReport {
   const assetsByClass: Record<string, string[]> = {};
   for (const asset of raw.assets) (assetsByClass[asset.class] ??= []).push(asset.path);
@@ -307,6 +332,7 @@ export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, ru
     morphTargets, bones: union(raw.skeletalMeshes.map(m => m.bones)),
     log: { file: run.logFile, ...log },
     ...(() => { const geometry = geometryOf(raw, preflight.skins); return geometry ? { geometry } : {}; })(),
+    ...(preflight.glass?.length ? { glass: glassOf(raw, preflight.glass) } : {}),
     elapsedMs: run.elapsedMs,
   };
 }
@@ -531,6 +557,13 @@ export function reviewUnrealReport(report: UnrealReport, expect: UnrealExpectati
   if (used.length > 1 && meshes.length === 1 && report.summary.skeletons <= 1) {
     warnings.push(`pre-flight: the GLB binds its meshes to ${used.length} skins (${used.map(skin => `${skinLabel(skin)}: joints ${quoted(skin.joints)}, used by ${quoted(skin.usedBy)}`).join('; ')}). Unreal merged them into one SkeletalMesh here, but ${expect.contract ? `the ${expect.contract} contract asks for a single skin, and ` : ''}other importers may keep one skeleton per skin; bind every mesh to one skin.`);
   }
+  for (const glass of report.glass ?? []) {
+    if (!glass.unreal) {
+      const names = [...new Set(importedMaterials(report).map(m => m.name))].sort();
+      failures.push(`glass material "${glass.material}" (${glass.gltf}) has no imported Unreal material of that name (materials: ${names.join(', ') || 'none'})`);
+    } else if (glass.blendMode === null) warnings.push(`glass material "${glass.material}": Unreal did not report a blend mode, so its translucency is unchecked`);
+    else if (!glass.ok) failures.push(`glass material "${glass.material}" (${glass.gltf}) imported opaque: Unreal material "${glass.unreal}" has blend mode ${glass.blendMode}, so the surface behind it would be hidden`);
+  }
   if (errors.length) failures.push(`${report.log.importErrors.length} import error(s): ${report.log.importErrors.join(' | ')}`);
   return { failures, warnings };
 }
@@ -557,7 +590,7 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
   await stat(input).catch(() => { throw Object.assign(new Error(`GLB not found: ${input}`), { code: 'CLI_ARGUMENT_ERROR' }); });
   const bytes = new Uint8Array(await readFile(input));
   let preflight: UnrealPreflight;
-  try { preflight = { morphNames: auditMorphNames(bytes), skins: auditSkins(bytes) }; } catch (error) { preflight = { error: (error as Error).message }; }
+  try { preflight = { morphNames: auditMorphNames(bytes), skins: auditSkins(bytes), glass: auditGlass(bytes) }; } catch (error) { preflight = { error: (error as Error).message }; }
   const unreal = findUnreal();
   if (!unreal) {
     const found = preflight.morphNames?.issues.map(i => i.message) ?? [];

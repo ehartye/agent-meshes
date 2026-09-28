@@ -30,6 +30,15 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
   mirror, 1 chalk. Omitted, a part keeps the default matte finish (metalness 0.08, roughness 0.65).
   `{"metalness":1,"roughness":0.1}` is polished chrome. A shell takes the same `material` for its
   whole surface.
+- **Glass** is a `material` too. `opacity` 0 to 1 below 1 blends the surface over what is behind it
+  (glTF `alphaMode: BLEND`, base color alpha = opacity); `transmission` 0 to 1 is physically
+  transmitted light (`KHR_materials_transmission`); `ior` 1 to 2.333 sets `KHR_materials_ior` (1.5
+  is glass); `doubleSided: true` draws both faces so a hollow bubble shows its far wall. A clear
+  visor or bubble is `{"metalness":0,"roughness":0.05,"opacity":0.18,"ior":1.5,"doubleSided":true}`.
+  Prefer opacity (BLEND) for a see-through visor: every consumer (three.js, Blender, Unreal) reads
+  it the same way; transmission refracts in three.js and Unreal but costs an extra render pass.
+  Glass casts no shadow and gets no outline hull (either would hide what is behind it). Keep glass
+  a separate part from anything opaque, and keep 1.5 cm or more between the glass and what it holds.
 
 ## Shells
 

@@ -79,7 +79,12 @@ teeth) is not a recipe or a JSON-operations model: author it in Blender with the
 helpers and check it against the `arkit-face/1` contract. Read the face-rig section of
 [mesh-rigging](../mesh-rigging/SKILL.md) first.
 In Blender sources, `material(name, '#e8a27c', emission='#ffaa00')` takes sRGB hex colors straight
-from a concept sheet (or linear tuples) and can glow (lens glass, a bulb).
+from a concept sheet (or linear tuples) and can glow (lens glass, a bulb). **Glass** is
+`material(name, '#eaf6ff', roughness=.04, opacity=.16, ior=1.5)` (alphaMode BLEND, double-sided by
+default; `transmission=1` for KHR_materials_transmission); in the operation model it is
+`material: {opacity, transmission, ior, doubleSided}` ([operations](references/operations.md)).
+The character recipe's vacuum suit shows the pattern: a helmet fitted to the head it holds
+(`helmet_fit`), clear glass over a living face, an opaque shell and rims (recipes/README.md).
 
 `recipe`, `state`, `save` and `open` print the whole project (a recipe is a few hundred kilobytes
 of JSON on one line). Redirect that output to a file or trim it. `inspect` without a selector is

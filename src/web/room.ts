@@ -3,6 +3,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { Puppet } from '../render/puppet.ts';
 import type { Quality } from '../render/quality.ts';
 import { applyIdMaterials, idColor, resolveIdColors } from '../render/id-render.ts';
+import { isGlassObject } from '../render/glass.ts';
 import type { IdImage, IdRenderColors, IdTarget } from '../render/id-render.ts';
 
 /** GLB bytes, or the GLB as a base64 string (works from file:// where fetch does not). */
@@ -44,11 +45,12 @@ export function addFloor(scene: THREE.Scene, background: string | null): THREE.M
   return floor;
 }
 
-/** Inverted-hull ink outlines behind every part; hiding a part also hides its hull. Returns the hulls. */
+/** Inverted-hull ink outlines behind every opaque part (a hull would show through glass); hiding a part also hides its hull. Returns the hulls. */
 export function addOutlines(puppet: Puppet, thickness: number, color = '#111111'): THREE.Mesh[] {
   const hulls = new Map<string, THREE.Mesh>(), ink = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
   for (const name of puppet.parts) {
     const mesh = puppet.object(name);
+    if (isGlassObject(mesh)) continue;
     // The same geometry pushed out along its normals, drawn back-face only.
     const source = mesh.geometry.clone(); if (!source.getAttribute('normal')) source.computeVertexNormals();
     const pos = source.getAttribute('position'), nor = source.getAttribute('normal');
