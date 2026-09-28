@@ -83,6 +83,10 @@ class WalkContract(unittest.TestCase):
                 h=2e-6;f=lambda t:point(p+t)
                 before=tuple((x-2*y+z)/h**2 for x,y,z in zip(f(-2*h),f(-h),f(0)))
                 after=tuple((x-2*y+z)/h**2 for x,y,z in zip(f(0),f(h),f(2*h)))
+                if p==stance and walk.gait_settings(gait).get('push'):
+                    # The jog's push-off lifts the toe with an upward acceleration; fore-aft stays smooth.
+                    self.assertGreater(after[1]-before[1],0)
+                    before,after=(before[0],before[2]),(after[0],after[2])
                 self.assertLess(math.dist(before,after),.05*max(1,math.hypot(*before)))
 
     def test_jog_and_walk_anatomy_sweep(self):
@@ -314,7 +318,7 @@ class NaturalGait(unittest.TestCase):
         import stylized_walk as walk
         # Every outsole or boot vertex within 1 mm of the floor on two frames in a row
         # moves at travel speed: no heel graze before touchdown, no toe slip at liftoff.
-        for values,seconds in [({},{'walk':1.1,'jog':.8}),({'height':1.22,'age':'child'},{'walk':1.0,'jog':.7})]:
+        for values,seconds in [({},{'walk':1.1,'jog':.8}),({'height':1.22,'age':'child'},{'walk':1.0,'jog':.75})]:
             d=character.landmarks(values);rest=walk.rest_bones(d)
             parts={p['name']:p['vertices'] for p in character.geometry(values)}
             sole=[walk.w_sub(v,rest['left-foot']['head']) for n,vs in parts.items() if n.startswith('left-') and any(t in n for t in ['boot','outsole','ankle']) for v in vs]

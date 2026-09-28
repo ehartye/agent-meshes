@@ -37,7 +37,8 @@ def _body_rotate(p,angles):
 #   cycle: heel strike ahead of the hip, toe-off well behind it.
 #   lift: swing clearance (fractions of leg length), B-spline control points
 #   over swing progress; reach: the same, added to the fore-aft swing path
-#   (fractions of stride).
+#   (fractions of stride). push starts the lift with an upward push-off
+#   acceleration, so the toe clears the floor before it can slip.
 #   heel/peak: sole roll in radians (positive points the toe down) at heel
 #   strike and at the top of the toe roll; heel_flat/toe_from end the heel
 #   rocker and start the toe roll within stance; peak_at/flat_at time swing.
@@ -65,9 +66,9 @@ GAITS={
                 lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
                 head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
                 yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0608),
-    'jog':dict(curl=.75,stance=.2206,stride=.4478,center=.01411,lift=[.06921,.1281,.3937,.2584,.1134,.2609,.1937,.2911,.3496,.333],reach=[-.8031,-1.301,-1.973,-2.041,-1.316,-.8062,-.5034,-.4924,-.5876,-.2682],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
-               heel=-.2772,swing_roll=[-.0362,-.00647,.0252,.0425,.0524,.0554,.0145,-.0458,-.0679,-.0765],peak=1.223,heel_flat=.6789,toe_from=.7289,peak_at=.3903,flat_at=.745,
-               base=-.0554,bob=.07658,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
+    'jog':dict(curl=.75,stance=.221,stride=.448,push=.011564,lift=[.027729,.15469,.3483,.263,.0686,.265,.16,.264,.501,.336],reach=[-.66932,-1.3342,-1.93,-2.05,-1.46,-.855,-.56,-.329,-.292,-.254],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
+               heel=-.202,swing_roll=[-.0362,-.00647,.0252,.0425,.0524,.0554,.0145,-.0458,-.0679,-.0765],peak=1.22,heel_flat=.411,toe_from=.729,peak_at=.401,flat_at=.745,
+               base=-.0553,bob=.0741,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
                roll=5.0,roll_shape=[(1,-.888,.473),(3,-.052,-.026)],
                lean=17.3,lumbar=.55,pitch=5.5,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
                head=.5,head_lean=4.0,head_shape=[(2,-.95,.273),(4,-.071,-.046)],
@@ -123,14 +124,16 @@ def _foot_path(phase,settings,length):
     # Both profiles are exactly zero near toe-off and touchdown, so they add no
     # velocity, acceleration or jerk where the sole leaves or meets the ground.
     z+=stride*_profile(u,settings['reach'])
-    return length*_profile(u,settings['lift']),center+z
+    return length*_profile(u,settings['lift'],push=settings.get('push',0)),center+z
 
-def _profile(u,points,pad=PROFILE_PAD):
+def _profile(u,points,pad=PROFILE_PAD,push=0):
     """Uniform cubic B-spline over swing progress u through `points`, padded with
     zero control points at each end: three zero the value, velocity and
-    acceleration at toe-off and touchdown; four also the jerk."""
+    acceleration at toe-off and touchdown; four also the jerk. A `push` lead
+    (push, -push/2, push) in place of the toe-off pads still starts at zero value
+    and velocity, but with an upward push-off acceleration."""
     if not points:return 0.0
-    p=[0]*pad+list(points)+[0]*pad;spans=len(p)-3;x=max(0,min(1,u))*spans;k=min(int(x),spans-1);t=x-k
+    p=([push,-push/2,push] if push else [0]*pad)+list(points)+[0]*pad;spans=len(p)-3;x=max(0,min(1,u))*spans;k=min(int(x),spans-1);t=x-k
     w=((1-t)**3,3*t**3-6*t*t+4,-3*t**3+3*t*t+3*t+1,t**3)
     return sum(a*b for a,b in zip(w,p[k:k+4]))/6
 
