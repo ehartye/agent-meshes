@@ -205,7 +205,8 @@ def travel_speed(d,gait='walk',seconds=1.0,settings=None):
     s=settings or gait_settings(gait);return leg_length(d)*s['stride']/(s['stance']*seconds)
 
 def rest_bones(d):
-    s=d['s'];hip=d['hip_y'];shoulder=d['shoulder_y'];wrist=hip+.095*s;elbow=(wrist+shoulder)/2
+    # knee_y / elbow_y / wrist_y let a sculpted body put the joints where its anatomy is; defaults suit the recipe body.
+    s=d['s'];hip=d['hip_y'];shoulder=d['shoulder_y'];wrist=d.get('wrist_y',hip+.095*s);elbow=d.get('elbow_y',(wrist+shoulder)/2);knee=d.get('knee_y',hip*.53)
     sx=d['shoulder_w']*.49;wx=sx+.092*s;waist=hip+(shoulder-hip)*.45;skull=d['head_y']-d['ry']*.5
     bones={}
     def add(name,head,tail,parent=None):bones[name]=dict(head=head,tail=tail,parent=parent)
@@ -217,8 +218,8 @@ def rest_bones(d):
     add('head',(0,skull,0),(0,d['head_y']+d['ry'],0),'neck')
     for side,name in [(-1,'left'),(1,'right')]:
         x=side*d.get('leg_x',.096*s)
-        add(name+'-thigh',(x,hip,0),(x,hip*.53,.015*s),'pelvis')
-        add(name+'-shin',(x,hip*.53,.015*s),(x,.14*s,0),name+'-thigh')
+        add(name+'-thigh',(x,hip,0),(x,knee,.015*s),'pelvis')
+        add(name+'-shin',(x,knee,.015*s),(x,.14*s,0),name+'-thigh')
         add(name+'-foot',(x,.14*s,0),(x,.06*s,.20*s),name+'-shin')
         add(name+'-upper-arm',(side*sx,shoulder,0),(side*(wx-.015*s),elbow,.012*s),'chest')
         add(name+'-forearm',(side*(wx-.015*s),elbow,.012*s),(side*wx,wrist,.055*s),name+'-upper-arm')
@@ -418,7 +419,7 @@ def clip_frames(seconds,fps=60):
     are sampled alike."""
     return 2*math.floor(seconds*fps/2+.5)
 
-def rig_character(objects,layout,duration=1.2,jog_duration=None):
+def rig_character(objects,layout,duration=1.2,jog_duration=None,weights='parts'):
     """Bind geometry and bake walk, plus optional light jog, as named actions.
 
     Named NLA tracks preserve both clips through the authored glTF exporter.
@@ -426,7 +427,12 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
     clip_frames). The rig carries
     `agent-meshes/gait/1` extras: height, stance, contact phases, travel speed
     and each hand's rest palm and thumb directions.
+
+    weights='parts' binds the recipe's named parts by body region (skin_weights). weights='heat' binds any
+    closed mesh (a sculpted base body) with Blender's automatic bone-heat weights, at most four bones a vertex;
+    the mesh must stand in the rig's rest pose (arms hanging, see rest_bones).
     """
+    if weights not in ('parts','heat'):raise ValueError("weights must be 'parts' or 'heat'")
     for value in [duration]+([] if jog_duration is None else [jog_duration]):
         if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not .6<=value<=3:
             raise ValueError('duration must be 0.6..3 seconds')
@@ -446,9 +452,17 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
         if bone['parent']:b.parent=data.edit_bones[bone_name(bone['parent'])]
     bpy.ops.object.mode_set(mode='OBJECT')
     for obj in objects:
-        vertices=[(v.co.x,v.co.z,-v.co.y) for v in obj.data.vertices]
-        weights=[{bone_name(n):w for n,w in row.items()} for row in skin_weights(obj.name,vertices,layout)]
-        bind_skin(obj,rig,weights)
+        if weights=='heat':
+            bpy.ops.object.select_all(action='DESELECT');obj.select_set(True);rig.select_set(True)
+            bpy.context.view_layer.objects.active=rig
+            bpy.ops.object.parent_set(type='ARMATURE_AUTO')
+            bpy.context.view_layer.objects.active=obj
+            bpy.ops.object.vertex_group_limit_total(limit=4)
+            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+        else:
+            vertices=[(v.co.x,v.co.z,-v.co.y) for v in obj.data.vertices]
+            rows=[{bone_name(n):w for n,w in row.items()} for row in skin_weights(obj.name,vertices,layout)]
+            bind_skin(obj,rig,rows)
         # The modifier still points to the rig. Export skins at scene root so
         # consumers do not need nonstandard parent-transform behavior for skins.
         world=obj.matrix_world.copy();obj.parent=None;obj.matrix_world=world

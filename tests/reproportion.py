@@ -112,5 +112,25 @@ class Targets(unittest.TestCase):
         self.assertAlmostEqual(off(T) / off(L), 1.5, places=6)
 
 
+class Repose(unittest.TestCase):
+    def test_segment_members_rotate_and_scale_with_their_segment(self):
+        L = figure()
+        # Swing the left arm from hanging out at an angle to straight down, twice as long.
+        sh = L['shoulder_L'].p
+        joints = {'elbow_L': sh + np.array([0, 0, -0.30]), 'wrist_L': sh + np.array([0, 0, -0.56])}
+        segs = [('shoulder_L', 'elbow_L', []), ('elbow_L', 'wrist_L', [])]
+        L['upperarm_mid_L'] = rp.Landmark((L['shoulder_L'].p + L['elbow_L'].p) / 2 + np.array([0.02, 0, 0]), 'arm_L')
+        segs[0][2].append('upperarm_mid_L')
+        T = rp.pose_segments(L, joints, segs)
+        np.testing.assert_allclose(T['elbow_L'].p, joints['elbow_L'])
+        np.testing.assert_allclose(T['wrist_L'].p, joints['wrist_L'])
+        # The member sits halfway down the new upper arm, its 2 cm offset scaled by the length ratio.
+        ratio = 0.30 / np.linalg.norm(L['elbow_L'].p - sh)
+        mid = sh + np.array([0, 0, -0.15])
+        self.assertAlmostEqual(np.linalg.norm(T['upperarm_mid_L'].p - mid), 0.02 * ratio, places=6)
+        # Landmarks off every segment stay where they were.
+        np.testing.assert_allclose(T['crown'].p, L['crown'].p)
+
+
 if __name__ == '__main__':
     unittest.main()

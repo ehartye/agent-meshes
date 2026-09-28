@@ -145,3 +145,40 @@ def proportion_targets(source, heads, leg_share, arm_scale=1.0, torso_widen=1.0,
             new_perp *= np.linalg.norm(perp) * factor / norm
         moved[name] = Landmark(a2 + t * (b2 - a2) + new_perp, lm.group, lm.axis)
     return moved
+
+
+def _rotation_between(u, v):
+    """The minimal rotation matrix taking unit vector u to unit vector v."""
+    u, v = u / np.linalg.norm(u), v / np.linalg.norm(v)
+    c = float(np.dot(u, v))
+    axis = np.cross(u, v)
+    s = np.linalg.norm(axis)
+    if s < 1e-12:
+        if c > 0:
+            return np.eye(3)
+        ortho = np.array([1.0, 0, 0]) if abs(u[0]) < 0.9 else np.array([0, 1.0, 0])
+        axis = np.cross(u, ortho); axis /= np.linalg.norm(axis)
+        return 2 * np.outer(axis, axis) - np.eye(3)
+    k = axis / s
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    return np.eye(3) + s * K + (1 - c) * K @ K
+
+
+def pose_segments(landmarks, joints, segments):
+    """Repose a landmark set: move `joints` (name -> position) and carry each segment's member landmarks along.
+
+    segments: (start_joint, end_joint, [member names]). A member keeps its place along the segment and its offset
+    from it, rotated with the segment and scaled by the segment's length change. Joints not listed stay put;
+    landmarks outside every segment are unchanged.
+    """
+    out = {n: Landmark(lm.p.astype(float).copy(), lm.group, lm.axis) for n, lm in landmarks.items()}
+    for n, p in joints.items():
+        out[n].p = np.asarray(p, float)
+    for a, b, members in segments:
+        A, B = landmarks[a].p.astype(float), landmarks[b].p.astype(float)
+        A2, B2 = out[a].p, out[b].p
+        R = _rotation_between(B - A, B2 - A2)
+        ratio = np.linalg.norm(B2 - A2) / np.linalg.norm(B - A)
+        for m in members:
+            out[m].p = A2 + R @ ((landmarks[m].p.astype(float) - A) * ratio)
+    return out
