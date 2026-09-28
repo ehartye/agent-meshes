@@ -416,7 +416,10 @@ def boot_top_point(z,x):
     slope=(boot_section(z+.002)[2]-boot_section(z-.002)[2])/.004
     return (x,y,z),vunit((0,1,-slope))
 
-def work_boot(m,label,lx,side,s,colors,child=False):
+BOOT_CLEARANCE=.006  # the shaft and cuff stand this far off the trouser leg at rest (unit scale)
+BOOT_BACK_DIP=.022  # the collar dips this far at the heel, so a deeply bent knee folds the calf clear of it
+
+def work_boot(m,label,lx,side,s,colors,child=False,leg=None):
     """Chunky work boot: one lofted surface split into an upper, a toe cap and an outsole.
 
     The outsole is the lower band of the same surface: it shares its rim vertices with
@@ -424,7 +427,8 @@ def work_boot(m,label,lx,side,s,colors,child=False):
     and has a planar tread at y=0 whose heel and toe vertices are the gait's pivots.
     Nothing flares past the upper's outline. A shaft rises from inside the upper to
     mid-shin with a padded cuff seated round its rim, laces climb the vamp and the shaft
-    front, and tread lugs stud the sole's sidewall above the ground plane.
+    front, and tread lugs stud the sole's sidewall above the ground plane. Given the leg loft
+    it wraps, the shaft above the ankle and the cuff widen to clear a broad calf at rest.
     """
     stations=[]
     for k in range(7):
@@ -460,6 +464,17 @@ def work_boot(m,label,lx,side,s,colors,child=False):
     band(label+'-boot-toe-cap',toe,len(rings)-1,upper_loop,colors['toe'],.62)
     band(label+'-outsole',0,len(rings)-1,sole_loop,colors['sole'],.9)
     SHAFT=[(boot_height(y,child),rx,rz) for y,rx,rz in BOOT_SHAFT]; CUFF=[(boot_height(y,child),rx,rz) for y,rx,rz in BOOT_CUFF]
+    if leg:
+        # Radii that hold the leg section inside the boot with clearance, about the shaft's own axis.
+        calf=BodySurface({'leg':leg})
+        def need(y):
+            _,u,v,ru,rv=calf.section('leg',y*s)
+            return (abs(u/s-lx/s)+ru/s+BOOT_CLEARANCE,abs(v/s-BOOT_SHAFT_Z)+rv/s+BOOT_CLEARANCE)
+        # Rows above the ankle widen to clear it; the cuff keeps its padding over the widened rim.
+        above=lambda y: y>=leg[0][0]/s+.02
+        SHAFT=[(y,max(rx,need(y)[0]),max(rz,need(y)[1])) if above(y) else (y,rx,rz) for y,rx,rz in SHAFT]
+        kx,kz=SHAFT[-1][1]/BOOT_SHAFT[-1][1],SHAFT[-1][2]/BOOT_SHAFT[-1][2]
+        CUFF=[(y,max(rx*kx,need(y)[0]),max(rz*kz,need(y)[1])) for y,rx,rz in CUFF]
     shaft=lambda rows: [(y*s,(lx/s)*s,BOOT_SHAFT_Z*s,rx*s,rz*s) for y,rx,rz in rows]
     m.rings(label+'-boot-shaft',shaft(SHAFT),colors['color'])
     m.parts[-1]['roughness']=.7
@@ -480,6 +495,14 @@ def work_boot(m,label,lx,side,s,colors,child=False):
     loop_tube(m,label+'-boot-welt',seam,.0045*s,shade(colors['color'],.8))
     m.rings(label+'-boot-cuff',shaft(CUFF),colors['collar'])
     m.parts[-1]['roughness']=.85
+    # Shaft and collar dip toward the heel above the ankle, as a work boot's padded collar does.
+    low,top=SHAFT[2][0],CUFF[-1][0]
+    for part in [p for p in m.parts if p['name'] in (label+'-boot-shaft',label+'-boot-cuff')]:
+        dipped=[]
+        for x,y,z in part['vertices']:
+            back=max(0,(BOOT_SHAFT_Z*s-z)/(max(r[2] for r in CUFF)*s))**2
+            dipped.append((x,y-BOOT_BACK_DIP*s*back*min(1,max(0,(y/s-low)/(top-low))),z))
+        part['vertices']=dipped
     # Tread lugs: blocks on the sole's sidewall, clear of the planar tread the gait pivots on.
     start=len(m.parts)
     def lug(x,z):
@@ -746,7 +769,7 @@ def geometry(values=None,meshes=None):
         lx=side*dims['leg_x']; knee_y=hip_y*.53
         m.rings(label+'-leg',leg_ease(girth([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)],.3,.4,below=hip_y-.02*s)),trouser)
         if not costume: m.ellipsoid(label+'-knee-panel',(lx,knee_y,.081*s),(.047*s,.063*s,.013*s),accent)
-        work_boot(m,label,lx,side,s,boots,child)
+        work_boot(m,label,lx,side,s,boots,child,m.lofts[label+'-leg'])
         # Tapered sleeve contours include deltoid, elbow and forearm.
         wrist_y=hip_y+.095*s; elbow_y=mix(wrist_y,shoulder_y,.49)
         sx=shoulder_w*.49; wx=sx+.092*s

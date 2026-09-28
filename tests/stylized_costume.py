@@ -222,11 +222,13 @@ class WorkBoots(unittest.TestCase):
         for config in self.CONFIGS:
             by_name=parts(config);s=character.landmarks(config)['s']
             shaft=by_name['left-boot-shaft']['vertices'];cuff=by_name['left-boot-cuff']['vertices']
+            # Compare the rows over the front half, where the collar does not dip toward the heel.
+            front=lambda points:[v for v in points if v[2]>=character.BOOT_SHAFT_Z*s-1e-9]
             with self.subTest(config=config):
                 self.assertGreater(max(v[1] for v in cuff),.25*s)
-                # The cuff's lower rim tucks inside the shaft wall, all the way round.
-                lo=min(v[1] for v in cuff);rim=[v for v in cuff if v[1]<lo+1e-9]
-                shaft_top=[v for v in shaft if abs(v[1]-max(w[1] for w in shaft))<1e-9]
+                # The cuff's lower rim tucks inside the shaft wall.
+                lo=min(v[1] for v in front(cuff));rim=[v for v in front(cuff) if v[1]<lo+1e-9]
+                shaft_top=[v for v in front(shaft) if abs(v[1]-max(w[1] for w in shaft))<1e-9]
                 cx=sum(v[0] for v in shaft_top)/len(shaft_top);cz=sum(v[2] for v in shaft_top)/len(shaft_top)
                 reach=lambda points:max(math.hypot(v[0]-cx,v[2]-cz) for v in points)
                 self.assertLess(reach(rim),reach(shaft_top))
@@ -240,6 +242,34 @@ class WorkBoots(unittest.TestCase):
             leg=by_name.get('layer-left-leg-hem') or by_name['layer-left-leg-cuff']
             with self.subTest(config=config['height']):
                 self.assertGreater(min(v[1] for v in leg['vertices']),max(v[1] for v in by_name['left-boot-cuff']['vertices'])-.012*s)
+
+    def test_shaft_and_cuff_clear_the_trouser_leg_at_any_build(self):
+        """A broad calf must never push the trouser leg through the shaft or the padded cuff at
+        rest: both wrap the leg loft with a few millimetres to spare wherever the leg reaches."""
+        broad=dict(OREN,build=1.5)
+        for name,config in [('mara',MARA),('oren',OREN),('broad',broad),('tess',TESS),('kit',KIT)]:
+            m=character.Meshes();character.geometry(config,m);s=character.landmarks(config)['s']
+            for side in ['left','right']:
+                leg=character.BodySurface({'leg':m.lofts[side+'-leg']})
+                by_name={p['name']:p for p in m.parts}
+                for piece in ['boot-shaft','boot-cuff']:
+                    ring=[v for v in by_name[side+'-'+piece]['vertices'] if v[1]>=leg.start('leg')+.02*s]
+                    with self.subTest(name=name,side=side,piece=piece):
+                        self.assertTrue(ring)
+                        def clearance(x,y,z):
+                            # Surface clearance past the leg along the ring's radial direction.
+                            _,u,v,ru,rv=leg.section('leg',y);r=math.hypot(x-u,z-v)
+                            return r*(1-1/math.hypot((x-u)/ru,(z-v)/rv))
+                        worst=min(clearance(*p) for p in ring)
+                        self.assertGreater(worst,.003*s)
+
+    def test_collar_dips_at_the_heel(self):
+        """The padded collar sits lower at the back, so a deeply bent knee folds the calf clear of it."""
+        for config in [MARA,KIT]:
+            by_name=parts(config);s=character.landmarks(config)['s'];cuff=by_name['left-boot-cuff']['vertices']
+            heel=min(v[2] for v in cuff);top=lambda vs:max(v[1] for v in vs)
+            with self.subTest(config=config['height']):
+                self.assertGreater(top(cuff)-top([v for v in cuff if v[2]<heel+.002*s]),.015*s)
 
     def test_boot_details(self):
         for config,laces in [({},True),(MARA,True),({'vacuum':True},False)]:

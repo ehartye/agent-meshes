@@ -3,7 +3,7 @@
  * glTF coordinates: Y up, meters, the figure faces +Z. A `thigh` bone pivots at y = 1 under a
  * `pelvis` bone and flexes forward in the `jog` clip, peaking at mid-clip.
  */
-import { AnimationClip, Bone, BoxGeometry, BufferGeometry, Float32BufferAttribute, Group, Matrix4, MeshStandardMaterial, PlaneGeometry, Quaternion, SphereGeometry, QuaternionKeyframeTrack, Scene, Skeleton, SkinnedMesh, Uint16BufferAttribute, Vector3 } from 'three';
+import { AnimationClip, Bone, BoxGeometry, BufferGeometry, CylinderGeometry, Float32BufferAttribute, Group, Matrix4, MeshStandardMaterial, PlaneGeometry, Quaternion, SphereGeometry, QuaternionKeyframeTrack, Scene, Skeleton, SkinnedMesh, Uint16BufferAttribute, Vector3 } from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ensureFileReader } from '../../src/node-file-reader.ts';
@@ -19,11 +19,13 @@ export interface DressedOptions {
   sheet?: boolean;
   /** Add one part of small separate beads (like boot eyelets) riding the thigh, which never fold. */
   beads?: boolean;
+  /** Add a closed boot shaft of this radius round the leg's lower end, riding the thigh with it. */
+  shaft?: number;
 }
 
 export async function dressedGLB(options: DressedOptions = {}): Promise<Uint8Array> {
   ensureFileReader();
-  const { flex = 80, belt = [1.01, 1.06], fold = false, sheet = false, beads = false } = options;
+  const { flex = 80, belt = [1.01, 1.06], fold = false, sheet = false, beads = false, shaft } = options;
   const root = new Bone(); root.name = 'root';
   const pelvis = new Bone(); pelvis.name = 'pelvis'; pelvis.position.set(0, 1, 0); root.add(pelvis);
   const thigh = new Bone(); thigh.name = 'thigh'; pelvis.add(thigh);
@@ -51,6 +53,8 @@ export async function dressedGLB(options: DressedOptions = {}): Promise<Uint8Arr
     const pieces = [0, 1, 2, 3].map(k => new SphereGeometry(0.0055, 32, 24).translate(-0.02 + k * 0.015, 0.6, 0.11));
     skinned('boot-eyelets', mergeGeometries(pieces.map(g => g.deleteAttribute('normal').deleteAttribute('uv'))), () => 1);
   }
+  // The leg box's faces sit 0.1 m off its axis and its corners 0.141 m: a narrower shaft crosses it.
+  if (shaft) skinned('left-boot-shaft', new CylinderGeometry(shaft, shaft, 0.25, 32, 4).translate(0, 0.575, 0), () => 1);
   if (sheet) {
     const plane = new PlaneGeometry(0.3, 0.3).translate(-1, 1, 0.3);
     const mesh = new SkinnedMesh(plane, material); mesh.name = 'hair-card';

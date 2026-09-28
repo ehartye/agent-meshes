@@ -9,7 +9,9 @@ import { readGLB } from './gltf-read.ts';
  * was outside another closed part at rest, and is inside it by more than the tolerance at a
  * sampled phase, is an intrusion: a leg punching through a belt, a hand sinking into a hip, a
  * pouch shearing into a jacket hem. Overlaps that exist at rest (a garment's inner face embedded
- * in the body it is seated on) are the baseline, never reported.
+ * in the body it is seated on) are the baseline for the clips. The rest pose itself fails when two
+ * parts cross, each hiding surface of the other that faced outward (a trouser leg wider than the
+ * boot shaft round it shows through the shaft in jagged patches): see `restCrossings`.
  *
  * Parts are garments (named by `garments`, default `layer-*`, gloves, boots and outsoles) or body.
  * Garment-vs-garment, garment-vs-body and garment self-folds (a surface folding through its own
@@ -20,7 +22,7 @@ import { readGLB } from './gltf-read.ts';
 export type Vec3 = [number, number, number];
 export const GARMENT_CHECK_FORMAT = 'agent-meshes/garment-check/1';
 export const DEFAULT_GARMENTS = /^layer-|glove|boot|outsole/;
-export type IntrusionKind = 'garment-garment' | 'garment-body' | 'self';
+export type IntrusionKind = 'garment-garment' | 'garment-body' | 'self' | 'rest-crossing';
 
 export interface GarmentCheckOptions {
   /** Clips to sample (default: every clip in the file). */
@@ -34,6 +36,12 @@ export interface GarmentCheckOptions {
   ignore?: RegExp;
   /** Self-folds ignore surface within this rest distance of the vertex, meters (default 0.03). */
   selfRadius?: number;
+  /**
+   * Two garments cross at rest when each buries at least this many of the other's outward-facing
+   * vertices deeper than `crossingDepth` (defaults 8 and 0.004 m): a patch, not a seam or a trim.
+   */
+  crossingVertices?: number;
+  crossingDepth?: number;
   /** List every offending vertex (rest and posed position, depth) on each intrusion. */
   points?: boolean;
 }
@@ -224,8 +232,11 @@ class Volume {
   }
   /** Component of a triangle (its first index into the triangle array). */
   componentOf(t: number): number { return this.component[t / 3]; }
-  /** Distance to the nearest triangle that `keep` accepts, searched out to `cap`; Infinity when none is that close. */
-  distance(x: number, y: number, z: number, cap: number, keep?: (t: number) => boolean): number {
+  /**
+   * Distance to the nearest triangle that `keep` accepts, searched out to `cap`; Infinity when none
+   * is that close. `closest`, when given, receives the nearest surface point.
+   */
+  distance(x: number, y: number, z: number, cap: number, keep?: (t: number) => boolean, closest?: number[]): number {
     const cx = Math.floor(x / this.cell), cy = Math.floor(y / this.cell), cz = Math.floor(z / this.cell);
     const seen = new Set<number>(); let best = Infinity;
     for (let ring = 0; ring * this.cell - this.cell < Math.min(best, cap) && ring <= Math.ceil(cap / this.cell) + 1; ring++) {
@@ -234,7 +245,8 @@ class Volume {
         for (const t of this.cells.get(`${cx + i},${cy + j},${cz + k}`) ?? []) {
           if (seen.has(t)) continue; seen.add(t);
           if (keep && !keep(t)) continue;
-          best = Math.min(best, pointTriangle(x, y, z, this.points, this.triangles[t] * 3, this.triangles[t + 1] * 3, this.triangles[t + 2] * 3));
+          const point: number[] = [], d = pointTriangle(x, y, z, this.points, this.triangles[t] * 3, this.triangles[t + 1] * 3, this.triangles[t + 2] * 3, point);
+          if (d < best) { best = d; if (closest) closest.splice(0, 3, ...point); }
         }
       }
     }
@@ -242,12 +254,15 @@ class Volume {
   }
 }
 
-/** Distance from a point to a triangle (Ericson, Real-Time Collision Detection 5.1.5). */
-function pointTriangle(px: number, py: number, pz: number, p: Float64Array, a: number, b: number, c: number): number {
+/** Distance from a point to a triangle (Ericson, Real-Time Collision Detection 5.1.5); `out` receives the closest point. */
+function pointTriangle(px: number, py: number, pz: number, p: Float64Array, a: number, b: number, c: number, out: number[] = []): number {
   const ab = [p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]], ac = [p[c] - p[a], p[c + 1] - p[a + 1], p[c + 2] - p[a + 2]];
   const ap = [px - p[a], py - p[a + 1], pz - p[a + 2]];
   const dot = (u: number[], v: number[]) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
-  const at = (s: number, t: number) => Math.hypot(p[a] + s * ab[0] + t * ac[0] - px, p[a + 1] + s * ab[1] + t * ac[1] - py, p[a + 2] + s * ab[2] + t * ac[2] - pz);
+  const at = (s: number, t: number) => {
+    out[0] = p[a] + s * ab[0] + t * ac[0]; out[1] = p[a + 1] + s * ab[1] + t * ac[1]; out[2] = p[a + 2] + s * ab[2] + t * ac[2];
+    return Math.hypot(out[0] - px, out[1] - py, out[2] - pz);
+  };
   const d1 = dot(ab, ap), d2 = dot(ac, ap);
   if (d1 <= 0 && d2 <= 0) return at(0, 0);
   const bp = [px - p[b], py - p[b + 1], pz - p[b + 2]], d3 = dot(ab, bp), d4 = dot(ac, bp);
@@ -288,6 +303,9 @@ export async function checkGarments(bytes: Uint8Array, options: GarmentCheckOpti
   const samples = options.samples ?? 16, tolerance = options.tolerance ?? 0.002, selfRadius = options.selfRadius ?? 0.03;
   if (!Number.isInteger(samples) || samples < 1 || samples > 240) throw Object.assign(new Error('samples must be an integer from 1 to 240'), { code: 'CLI_ARGUMENT_ERROR' });
   if (!Number.isFinite(tolerance) || tolerance < 0) throw Object.assign(new Error('tolerance must be a nonnegative number of meters'), { code: 'CLI_ARGUMENT_ERROR' });
+  const crossingDepth = options.crossingDepth ?? 0.004, crossingVertices = options.crossingVertices ?? 8;
+  if (!Number.isFinite(crossingDepth) || crossingDepth < 0) throw Object.assign(new Error('crossingDepth must be a nonnegative number of meters'), { code: 'CLI_ARGUMENT_ERROR' });
+  if (!Number.isInteger(crossingVertices) || crossingVertices < 1) throw Object.assign(new Error('crossingVertices must be a positive integer'), { code: 'CLI_ARGUMENT_ERROR' });
   const gltf = await new GLTFLoader().parseAsync(geometryOnly(bytes), '');
   const scene = gltf.scene; scene.updateMatrixWorld(true);
   const available = gltf.animations.map(clip => clip.name);
@@ -324,7 +342,8 @@ export async function checkGarments(bytes: Uint8Array, options: GarmentCheckOpti
     }
     pairs.push({ a: i, b: j, kind, inside });
   }));
-  const mixer = new AnimationMixer(scene), intrusions: Intrusion[] = [];
+  const intrusions: Intrusion[] = restCrossings(parts, restVolumes, restNormals, crossingDepth, crossingVertices);
+  const mixer = new AnimationMixer(scene);
   for (const clip of clips) {
     const action = mixer.clipAction(clip); action.play();
     for (let k = 0; k < samples; k++) {
@@ -379,7 +398,51 @@ export async function checkGarments(bytes: Uint8Array, options: GarmentCheckOpti
   };
 }
 
+/** A buried surface counts as covered when the way out of its container runs along its own normal. */
+const COVER_ALIGN = 0.5;
+
+/**
+ * Garment pairs already showing through each other at rest. A vertex of one part inside another is
+ * covered when the shortest way out runs along its own outward normal: that surface faced the viewer
+ * and the other part now hides it. Layering covers one way only (a hem tucked in a shaft, a pocket
+ * over a leg); a slab's embedded back face points inward and never counts. When each part covers a
+ * patch of the other, they cross, and the inner one pokes out through the outer in jagged patches.
+ * The report names the part with more of its surface covered first, and gives the smaller of the
+ * two buried patches and depths. Body parts are left out: a hand leaving a glove is design.
+ */
+function restCrossings(parts: Part[], volumes: (Volume | null)[], normals: Float64Array[], deeper: number, patch: number): Intrusion[] {
+  const covered = (i: number, j: number) => {
+    const points = parts[i].rest, n = normals[i], volume = volumes[j]!, closest: number[] = [];
+    let count = 0, depth = 0, at: Vec3 = [0, 0, 0];
+    for (let v = 0; v < parts[i].sources.length; v++) {
+      const x = points[v * 3], y = points[v * 3 + 1], z = points[v * 3 + 2];
+      if (!volume.near(x, y, z)) continue;
+      const within = volume.contains(x, y, z);
+      if (!within.length) continue;
+      const d = volume.distance(x, y, z, DEPTH_CAP, t => within.includes(volume.componentOf(t)), closest);
+      if (d <= deeper || d === Infinity) continue;
+      const out = ((closest[0] - x) * n[v * 3] + (closest[1] - y) * n[v * 3 + 1] + (closest[2] - z) * n[v * 3 + 2]) / d;
+      if (out < COVER_ALIGN) continue;
+      count++;
+      if (d > depth) { depth = d; at = [x, y, z]; }
+    }
+    return { count, depth, at };
+  };
+  const found: Intrusion[] = [];
+  parts.forEach((a, i) => parts.forEach((b, j) => {
+    if (j <= i || !a.closed || !b.closed || !a.garment || !b.garment) return;
+    const ab = covered(i, j); if (ab.count < patch) return;
+    const ba = covered(j, i); if (ba.count < patch) return;
+    const [inner, outer, hidden] = ab.count / a.sources.length >= ba.count / b.sources.length ? [a, b, ba] : [b, a, ab];
+    const kind: IntrusionKind = 'rest-crossing';
+    found.push({ clip: 'rest', phase: 0, kind, part: inner.name, into: outer.name, vertices: Math.min(ab.count, ba.count), depth: Math.min(ab.depth, ba.depth), at: hidden.at, from: hidden.at });
+  }));
+  return found;
+}
+
 /** One line per offending pair, deepest first, for a terminal. */
 export function garmentSummary(report: GarmentReport): string[] {
-  return report.pairs.map(pair => `${pair.kind}: ${pair.part} into ${pair.into}, ${(pair.depth * 1000).toFixed(1)} mm deep, up to ${pair.vertices} vertices, ${pair.clips.join('/')} phases ${pair.phases.map(p => +p.toFixed(4)).join(', ')}`);
+  return report.pairs.map(pair => pair.kind === 'rest-crossing'
+    ? `rest-crossing: ${pair.part} and ${pair.into} show through each other at rest, each hiding ${pair.vertices}+ outward-facing vertices of the other up to ${(pair.depth * 1000).toFixed(1)} mm deep`
+    : `${pair.kind}: ${pair.part} into ${pair.into}, ${(pair.depth * 1000).toFixed(1)} mm deep, up to ${pair.vertices} vertices, ${pair.clips.join('/')} phases ${pair.phases.map(p => +p.toFixed(4)).join(', ')}`);
 }
