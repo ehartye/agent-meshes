@@ -126,6 +126,41 @@ then inspect side-view frames. Pure joint targets cannot prove the exported mesh
 follows them. The Space to Grow consumer keeps these checks in `scripts/check-motion.mjs`
 and tests playback controls in `scripts/check-walk-ui.mjs`.
 
+## Living faces
+
+`stylized_face.py` gives these characters an `arkit-face/1` face. A definition with `face: 'arkit'` leaves the
+static study face out of `build_character`, and `add_face(objects, definition)` adds the living one to the rigged
+character, on the rig's `head` bone:
+
+```python
+definition = {'height': 1.82, 'age': 'adult', 'presentation': 'male', 'face': 'arkit',
+              'face_shape': {'years': 38, 'jaw_width': 1.3, 'brow': 1.6, 'beard': 'beard', 'beard_color': '#4a3222'}}
+objects = add_face(rig_character(build_character(definition), landmarks(definition), duration=1.1), definition)
+```
+
+The head is MakeHuman's CC0 hm08 head (see `agent_meshes_hm08` in `scripts/blender_lib/README.md`), shaped by age,
+presentation, the committed stylize target and `face_shape`. The face is cropped under the chin and grafted onto the
+body's neck, so the body, garments, gait rig and helmet fit are untouched. `face_shape` accepts:
+
+- `years`, `stylize`;
+- `eye_size`, `eye_spacing`, `eye_tilt`;
+- `nose`, `nose_length`, `nose_width`, `nose_bridge`;
+- `mouth_width`, `lips`, `smile`;
+- `jaw_width`, `chin`, `chin_width`, `cheeks`, `brow`;
+- `beard` (`none`, `stubble`, `beard`) and `beard_color`.
+
+`SHAPE_RANGES` gives the ranges. Children default to 7 (female) and 9 (male) years. The first face of a character
+takes 15 to 90 seconds to build, because a search picks the lid settings that close its eyes cleanly. Run
+`python tests/stylized_face.py` for:
+
+- parameter effects;
+- smoothness at rest and in every morph;
+- under-eye volume, blink closure and no flips;
+- the open jaw's rounded D and the closed-lip smile;
+- the beard.
+
+The design is `docs/design/parametric-head.md`.
+
 ## Botanical kit
 
 `botanical_kit.mjs` exports `foliageOperations({family, world, stage, seed, scale})`.

@@ -157,6 +157,28 @@ normalized exported weights, actual deformed vertices, pinned root vertices,
 changed rendered pixels and return to rest. Screenshots and measurements are
 written under ignored `.agent-meshes/skin-proof/`.
 
+## The hm08 base head (`agent_meshes_hm08`)
+
+`agent_meshes_hm08` loads MakeHuman's CC0 hm08 head as plain data. It is pure numpy, needs no Blender, and uses
+no MPFB or GPL code.
+
+- **Data.** `data/hm08/hm08_head.npz` holds the head crop and 316 sparse targets: macros, features and the
+  `faceunits01` ARKit shapes. `SOURCES.json` pins the sources and their SHA-256. To regenerate it, run
+  `python scripts/hm08-vendor.py`.
+- **Stylize target.** `data/hm08/stylize01.target` is derived once from Blender Studio's CC0 stylized head. To
+  regenerate it, run `python scripts/hm08-stylize.py --blender <blender>`.
+- **Loading and shaping.** `load_head()` returns an `Hm08Head`. `head_shape(years, gender, stylize, shape)` composes
+  the macros (`macro_weights`), the features (`feature_weights`, over the `FEATURES` controls) and the stylize target.
+  `to_blender`/`from_blender` convert between hm08's frame and Blender's.
+- **Measuring.** `face_landmarks(vertices, faces, hm08_eyes(head, vertices))` measures the eyes, profile, mouth and
+  outline. `depth_map`, `eyeball_shows`, `eye_crease_folds` and `flipped` are the checks the face build uses.
+- **Building a face.** `character_face(years, gender, center, radii, shape, neck_z='chin', neck=...)` fits the head
+  to an envelope, crops and grafts the neck, and returns the vertices, the triangles and every ARKit morph. The
+  lids are rebuilt by `lid_morphs`, the jaw by `RigidJaw`, and `unfold_morphs` removes flips. It also returns the
+  eyes, landmarks, mouth-interior faces and jaw.
+
+`recipes/stylized_face.py` is the consumer. The design is `docs/design/parametric-head.md`.
+
 ## Face-rig helpers (`arkit-face/1`)
 
 `agent_meshes_face` holds the helpers every talking head needs, so no head source
