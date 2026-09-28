@@ -1344,22 +1344,23 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         cap = np.array([[b, a, hub, -1] for a, b in zip(loop, loop[1:] + loop[:1])])
         faces = np.vstack([faces, cap])
         inside = np.append(inside, np.ones(len(cap), dtype=bool))
-    # Below the mouth the pocket stays in front of the body's neck (which rises inside the head: its front wall would
-    # show through the open mouth), at rest and with the jaw open: its depth past the lips is squashed (smoothly, so
-    # nothing folds) to end short of the neck's front.
+    # With the jaw open, the pocket below the mouth stays in front of the body's neck (which rises inside the head: its
+    # front wall would show through the open mouth, under the head's cropped edge): the open pocket's depth is squashed
+    # (smoothly, so nothing folds) to end short of the neck's front. At rest nothing sees it, and it stays as it is.
     if neck is not None:
         seen = set(np.unique(faces[~inside][faces[~inside] >= 0]).tolist())
         deep = np.array(sorted(set(np.unique(faces[inside][faces[inside] >= 0]).tolist()) - seen), dtype=np.int64)
-        start = marks['stomion'][1] + .01 * scale[1]
+        # (only the pocket's far end is squashed, into the last 1.5 cm before the neck: nearer, it lies just behind
+        # the lips and chin, and pulling it forward would push it through them)
         limit = center[1] - neck[1] - .006 * scale[1]
+        start = limit - .015 * scale[1]
         if len(deep):
             t = np.clip((mouth_z - .002 * scale[2] - V[deep, 2]) / (.01 * scale[2]), 0, 1)
             w = t * t * (3 - 2 * t)
-            reach = max(float(Q[deep, 1].max()) for Q in [V] + list(morphs.values())) - start
-            f = min(1.0, (limit - start) / max(reach, 1e-9))
-            for Q in [V] + list(morphs.values()):
-                y = Q[deep, 1]
-                Q[deep, 1] = np.where(y > start, y + w * (f - 1) * (y - start), y)
+            Q = morphs['jawOpen']
+            f = min(1.0, (limit - start) / max(float(Q[deep, 1].max()) - start, 1e-9))
+            y = Q[deep, 1]
+            Q[deep, 1] = np.where(y > start, y + w * (f - 1) * (y - start), y)
 
     # Triangles, split along each quad's flatter diagonal: the morph checks below hold for exactly the triangles the
     # GLB carries (an exporter's own split of a folded quad at the lips' corners can turn over).

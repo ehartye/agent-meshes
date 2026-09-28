@@ -319,6 +319,19 @@ class CartoonFace(unittest.TestCase):
         self.assertGreater(opening.sum(), 200)
         self.assertLess(light.sum(), .01 * opening.sum())
 
+    def test_the_dark_pocket_never_shows_through_the_closed_face(self):
+        m, k, V, F, inside = self.marks, self.k, self.V, self.F, self.face['mouth_inside']
+        hw = abs(m['mouth_corner_L'][0])
+        # (the face over the mouth's width, down to the chin: the pocket's far end hangs below and beside it, inside
+        # the body's neck)
+        box, pixel = (-1.2 * hw, 1.2 * hw, m['menton'][2] + .002 * k, m['nasion'][2]), .0004 * k
+        dark, skin = hm.depth_map(V, F[inside], box, pixel), hm.depth_map(V, F[~inside], box, pixel)
+        shows = np.isfinite(dark) & (dark < skin - .0002 * k)
+        zs = box[2] + pixel * np.arange(dark.shape[0])
+        # (the closed lips' line may show a sliver of it; nothing else may)
+        off_line = shows & (np.abs(zs - m['stomion'][2]) > .002 * k)[:, None]
+        self.assertEqual(int(off_line.sum()), 0)
+
     def test_the_open_jaw_shows_the_upper_teeth(self):
         m, k, J = self.marks, self.k, self.M['jawOpen']
         teeth = face.teeth_layout(self.layout)
