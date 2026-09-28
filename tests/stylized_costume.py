@@ -202,7 +202,7 @@ class WorkBoots(unittest.TestCase):
                         self.assertLessEqual(max(v[axis] for v in sole),max(v[axis] for v in upper)+1e-9)
                         self.assertGreaterEqual(min(v[axis] for v in sole),min(v[axis] for v in upper)-1e-9)
                     # Chunky: a shaft above the ankle and a broad forefoot.
-                    self.assertGreater(max(v[1] for v in by_name[side+'-boot-shaft']['vertices']),.25*s)
+                    self.assertGreater(max(v[1] for v in by_name[side+'-boot-shaft']['vertices']),.23*s)
                     self.assertGreater(max(v[0] for v in upper)-min(v[0] for v in upper),.11*s)
 
     def test_sole_wraps_toe_and_heel_with_a_heel_block(self):
@@ -223,7 +223,7 @@ class WorkBoots(unittest.TestCase):
             by_name=parts(config);s=character.landmarks(config)['s']
             shaft=by_name['left-boot-shaft']['vertices'];cuff=by_name['left-boot-cuff']['vertices']
             with self.subTest(config=config):
-                self.assertGreater(max(v[1] for v in cuff),.28*s)
+                self.assertGreater(max(v[1] for v in cuff),.25*s)
                 # The cuff's lower rim tucks inside the shaft wall, all the way round.
                 lo=min(v[1] for v in cuff);rim=[v for v in cuff if v[1]<lo+1e-9]
                 shaft_top=[v for v in shaft if abs(v[1]-max(w[1] for w in shaft))<1e-9]

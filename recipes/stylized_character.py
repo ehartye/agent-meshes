@@ -395,6 +395,10 @@ BOOT_SHAFT_Z=-.016
 BOOT_SHAFT=[(.105,.05,.062),(.135,.061,.078),(.19,.062,.078),(.262,.067,.084)]
 BOOT_CUFF=[(.25,.066,.083),(.258,.076,.093),(.284,.076,.093),(.292,.069,.086)]
 BOOT_TOP_Y=BOOT_CUFF[-1][0]
+CHILD_SHAFT=.8  # a child's shaft rises 80% as far above the ankle, clearing a short thigh in the jog kick
+def boot_height(y,child=False):
+    """Shaft heights above the ankle shorten for a child's shorter shin (unit scale)."""
+    return y if not child or y<=.135 else .135+(y-.135)*CHILD_SHAFT
 BOOT_TOE_CAP=.168
 
 def boot_section(z):
@@ -412,7 +416,7 @@ def boot_top_point(z,x):
     slope=(boot_section(z+.002)[2]-boot_section(z-.002)[2])/.004
     return (x,y,z),vunit((0,1,-slope))
 
-def work_boot(m,label,lx,side,s,colors):
+def work_boot(m,label,lx,side,s,colors,child=False):
     """Chunky work boot: one lofted surface split into an upper, a toe cap and an outsole.
 
     The outsole is the lower band of the same surface: it shares its rim vertices with
@@ -455,8 +459,9 @@ def work_boot(m,label,lx,side,s,colors):
     band(label+'-boot',0,toe,upper_loop,colors['color'],.7)
     band(label+'-boot-toe-cap',toe,len(rings)-1,upper_loop,colors['toe'],.62)
     band(label+'-outsole',0,len(rings)-1,sole_loop,colors['sole'],.9)
+    SHAFT=[(boot_height(y,child),rx,rz) for y,rx,rz in BOOT_SHAFT]; CUFF=[(boot_height(y,child),rx,rz) for y,rx,rz in BOOT_CUFF]
     shaft=lambda rows: [(y*s,(lx/s)*s,BOOT_SHAFT_Z*s,rx*s,rz*s) for y,rx,rz in rows]
-    m.rings(label+'-boot-shaft',shaft(BOOT_SHAFT),colors['color'])
+    m.rings(label+'-boot-shaft',shaft(SHAFT),colors['color'])
     m.parts[-1]['roughness']=.7
     # A stitched welt runs round the seam where the shaft meets the upper, hiding the join.
     def inside_upper(x,y,z):
@@ -465,15 +470,15 @@ def work_boot(m,label,lx,side,s,colors):
         return sole<=y<=boot_top_point(z,x)[0][1]
     seam=[]
     for k in range(40):
-        phi=k*math.tau/40; y=BOOT_SHAFT[-1][0]
-        while y>BOOT_SHAFT[0][0]:
-            rx=_profile([(r[0],r[1]) for r in BOOT_SHAFT],y); rz=_profile([(r[0],r[2]) for r in BOOT_SHAFT],y)
+        phi=k*math.tau/40; y=SHAFT[-1][0]
+        while y>SHAFT[0][0]:
+            rx=_profile([(r[0],r[1]) for r in SHAFT],y); rz=_profile([(r[0],r[2]) for r in SHAFT],y)
             x,z=rx*math.cos(phi),BOOT_SHAFT_Z+rz*math.sin(phi)
             if inside_upper(x-(-side*.010*smooth01(.08,BOOT_TOE,z)),y,z): break
             y-=.001
         seam.append(((lx/s+x*1.03)*s,y*s,(BOOT_SHAFT_Z+(z-BOOT_SHAFT_Z)*1.03)*s))
     loop_tube(m,label+'-boot-welt',seam,.0045*s,shade(colors['color'],.8))
-    m.rings(label+'-boot-cuff',shaft(BOOT_CUFF),colors['collar'])
+    m.rings(label+'-boot-cuff',shaft(CUFF),colors['collar'])
     m.parts[-1]['roughness']=.85
     # Tread lugs: blocks on the sole's sidewall, clear of the planar tread the gait pivots on.
     start=len(m.parts)
@@ -491,14 +496,14 @@ def work_boot(m,label,lx,side,s,colors):
     m.parts[-1]['roughness']=.95
     if colors['laces']:
         def shaft_front(y,x):
-            rx,rz=[_profile([(r[0],r[1]) for r in BOOT_SHAFT],y),_profile([(r[0],r[2]) for r in BOOT_SHAFT],y)]
+            rx,rz=[_profile([(r[0],r[1]) for r in SHAFT],y),_profile([(r[0],r[2]) for r in SHAFT],y)]
             return ((lx/s+x)*s,y*s,(BOOT_SHAFT_Z+rz*math.sqrt(max(0,1-(x/rx)**2))+.004)*s)
         def eyelet(z,x):
             point,normal=boot_top_point(z,x)
             return vscale(vadd((lx/s+point[0],point[1],point[2]),vscale(normal,.004)),s)
         # Eyelet stations: up the vamp, then up the shaft front to just under the cuff.
         stations=[lambda x,z=z: eyelet(z,x) for z in [mix(.124,.064,k/3) for k in range(4)]]
-        stations+=[lambda x,y=y: shaft_front(y,x) for y in [.172,.2,.228]]
+        stations+=[lambda x,y=y: shaft_front(y,x) for y in [boot_height(v,child) for v in [.172,.2,.228]]]
         start=len(m.parts)
         for k in range(len(stations)-1):
             for x0 in [-.021,.021]:
@@ -659,10 +664,11 @@ def dress(m,costume,d):
             ring_band('layer-'+label+'-cargo-pocket',shade(bottom['color'],.93),label+'-leg',y0,y1,.011,t0=t0-.5,t1=t0+.5,rim=.35)
             ring_band('layer-'+label+'-cargo-flap',shade(bottom['color'],.8),label+'-leg',mix(y0,y1,.7),y1+.008*s,.004,t0=t0-.53,t1=t0+.53,lift=.009*s)
         # Trouser legs end on the boot cuff: a rolled cuff or a hem rests on its top.
+        boot_top=boot_height(BOOT_TOP_Y,d['child'])
         if bottom['cuffs']:
-            ring_band('layer-'+label+'-leg-cuff',bottom['cuffs'],label+'-leg',(BOOT_TOP_Y-.004)*s,(BOOT_TOP_Y+.042)*s,.013,rim=.6)
+            ring_band('layer-'+label+'-leg-cuff',bottom['cuffs'],label+'-leg',(boot_top-.004)*s,(boot_top+.042)*s,.013,rim=.6)
         else:
-            ring_band('layer-'+label+'-leg-hem',shade(bottom['color'],.9),label+'-leg',(BOOT_TOP_Y-.004)*s,(BOOT_TOP_Y+.024)*s,.008,rim=.6)
+            ring_band('layer-'+label+'-leg-hem',shade(bottom['color'],.9),label+'-leg',(boot_top-.004)*s,(boot_top+.024)*s,.008,rim=.6)
     belt=costume.get('belt')
     if belt:
         # A belt rides over an overalls waistband; its pouches hang in front of the belt.
@@ -740,7 +746,7 @@ def geometry(values=None,meshes=None):
         lx=side*dims['leg_x']; knee_y=hip_y*.53
         m.rings(label+'-leg',leg_ease(girth([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)],.3,.4,below=hip_y-.02*s)),trouser)
         if not costume: m.ellipsoid(label+'-knee-panel',(lx,knee_y,.081*s),(.047*s,.063*s,.013*s),accent)
-        work_boot(m,label,lx,side,s,boots)
+        work_boot(m,label,lx,side,s,boots,child)
         # Tapered sleeve contours include deltoid, elbow and forearm.
         wrist_y=hip_y+.095*s; elbow_y=mix(wrist_y,shoulder_y,.49)
         sx=shoulder_w*.49; wx=sx+.092*s
