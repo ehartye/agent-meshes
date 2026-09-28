@@ -217,7 +217,7 @@ def skin_weights(name,vertices,d):
                 # The hip blends over most of the upper thigh, so a lifted thigh eases the cloth
                 # below the waist forward instead of driving through it; the crotch shares both
                 # thighs, so the inseam never tears open between them.
-                pelvis=w_smooth(hip-.26*s,hip+.005*s,y)
+                pelvis=w_smooth(hip-.26*s,hip-.015*s,y)
                 right=w_smooth(-.06*s,.06*s,x)
                 # The back of the knee blends wider (by direction round the leg, so layers standing
                 # proud of the cloth take the same weights as the cloth under them), so a deep swing flexion folds the cloth

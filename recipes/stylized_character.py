@@ -380,9 +380,14 @@ def _profile(points,z):
 # Work boot in unit-height metres (x half width, heel -z, toe +z, sole at y=0).
 BOOT_HEEL,BOOT_TOE,BOOT_HEEL_ROUND,BOOT_TOE_ROUND=-.105,.245,.05,.075
 BOOT_WIDTH=[(-.105,.054),(-.06,.058),(0,.059),(.07,.061),(.15,.067),(.20,.064),(.245,.058)]
-BOOT_TOP=[(-.105,.085),(-.092,.15),(-.078,.19),(-.058,.205),(.058,.205),(.083,.172),(.112,.132),(.15,.108),(.195,.098),(.225,.088),(.245,.068)]
+BOOT_TOP=[(-.105,.08),(-.092,.112),(-.078,.135),(-.058,.158),(.03,.18),(.058,.176),(.083,.158),(.112,.132),(.15,.108),(.195,.098),(.225,.088),(.245,.068)]
 BOOT_SOLE=[(-.105,.056),(-.088,.047),(-.06,.042),(-.03,.040),(0,.033),(.08,.030),(.15,.032),(.2,.040),(.232,.050),(.245,.054)]
-BOOT_ARCH=[(-.105,0),(-.036,0),(-.024,.007),(.07,.006),(.108,0),(.245,0)]
+BOOT_ARCH=[(-.105,0),(-.034,0),(-.024,.011),(.07,.009),(.105,0),(.245,0)]
+# Shaft over the ankle and a padded cuff round its top: y, half width, half depth (unit scale).
+BOOT_SHAFT_Z=-.016
+BOOT_SHAFT=[(.085,.046,.058),(.125,.061,.078),(.19,.060,.074),(.262,.064,.076)]
+BOOT_CUFF=[(.25,.063,.075),(.258,.073,.085),(.284,.073,.085),(.292,.066,.078)]
+BOOT_TOP_Y=BOOT_CUFF[-1][0]
 BOOT_TOE_CAP=.168
 
 def boot_section(z):
@@ -406,7 +411,9 @@ def work_boot(m,label,lx,side,s,colors):
     The outsole is the lower band of the same surface: it shares its rim vertices with
     the upper, wraps up the heel and toe, carries a heel block ahead of a recessed arch
     and has a planar tread at y=0 whose heel and toe vertices are the gait's pivots.
-    Nothing flares past the upper's outline. The shaft reaches above the ankle.
+    Nothing flares past the upper's outline. A shaft rises from inside the upper to
+    mid-shin with a padded cuff seated round its rim, laces climb the vamp and the shaft
+    front, and tread lugs stud the sole's sidewall above the ground plane.
     """
     stations=[]
     for k in range(7):
@@ -441,27 +448,45 @@ def work_boot(m,label,lx,side,s,colors):
     band(label+'-boot',0,toe,upper_loop,colors['color'],.7)
     band(label+'-boot-toe-cap',toe,len(rings)-1,upper_loop,colors['toe'],.62)
     band(label+'-outsole',0,len(rings)-1,sole_loop,colors['sole'],.9)
-    # Padded collar hugs the shaft opening where the leg enters.
-    collar=[]
-    for k in range(28):
-        t=k*math.tau/28; z=-.007+.066*math.sin(t); width,_,top,_,_=boot_section(z)
-        collar.append(((lx/s+(width-.005)*math.cos(t))*s,(min(top,.205)-.004)*s,z*s))
-    loop_tube(m,label+'-boot-collar',collar,.013*s,colors['collar'])
+    shaft=lambda rows: [(y*s,(lx/s)*s,BOOT_SHAFT_Z*s,rx*s,rz*s) for y,rx,rz in rows]
+    m.rings(label+'-boot-shaft',shaft(BOOT_SHAFT),colors['color'])
+    m.parts[-1]['roughness']=.7
+    m.rings(label+'-boot-cuff',shaft(BOOT_CUFF),colors['collar'])
+    m.parts[-1]['roughness']=.85
+    # Tread lugs: blocks on the sole's sidewall, clear of the planar tread the gait pivots on.
+    start=len(m.parts)
+    def lug(x,z):
+        # A squared block standing 3 mm off the sidewall, 4 mm clear of the ground.
+        sign=1 if x>0 else -1; x0,x1=sorted([x-sign*.004,x+sign*.003]); y0,y1,z0,z1=.004,.022,z-.007,z+.007
+        corners=[(a,b,c) for a in (x0,x1) for b in (y0,y1) for c in (z0,z1)]
+        faces=[(0,1,3,2),(4,6,7,5),(0,4,5,1),(2,3,7,6),(0,2,6,4),(1,5,7,3)]
+        m.mesh(label+'-lug',[((lx/s+a)*s,b*s,c*s) for a,b,c in corners],faces,colors['sole'])
+    for z in [mix(BOOT_HEEL+.016,BOOT_TOE-.024,k/10) for k in range(11)]:
+        width=min(boot_section(z-.007)[0],boot_section(z+.007)[0])
+        if width<.03: continue
+        for side_x in [-1,1]: lug(side_x*width,z)
+    merge_parts(m,start,label+'-boot-tread')
+    m.parts[-1]['roughness']=.95
     if colors['laces']:
-        rows=[mix(.064,.124,k/4) for k in range(5)]
+        def shaft_front(y,x):
+            rx,rz=[_profile([(r[0],r[1]) for r in BOOT_SHAFT],y),_profile([(r[0],r[2]) for r in BOOT_SHAFT],y)]
+            return ((lx/s+x)*s,y*s,(BOOT_SHAFT_Z+rz*math.sqrt(max(0,1-(x/rx)**2))+.004)*s)
         def eyelet(z,x):
             point,normal=boot_top_point(z,x)
             return vscale(vadd((lx/s+point[0],point[1],point[2]),vscale(normal,.004)),s)
+        # Eyelet stations: up the vamp, then up the shaft front to just under the cuff.
+        stations=[lambda x,z=z: eyelet(z,x) for z in [mix(.124,.064,k/3) for k in range(4)]]
+        stations+=[lambda x,y=y: shaft_front(y,x) for y in [.172,.2,.228]]
         start=len(m.parts)
-        for k in range(4):
+        for k in range(len(stations)-1):
             for x0 in [-.021,.021]:
-                a,b=eyelet(rows[k],x0),eyelet(rows[k+1],-x0)
-                m.tube(label+'-lace-'+str(k)+str(x0),[a,vadd(vscale(vadd(a,b),.5),(0,.002*s,.002*s)),b],[.0042*s]*3,colors['laces'])
-        m.tube(label+'-lace-bar',[eyelet(rows[0],-.021),eyelet(rows[0],0),eyelet(rows[0],.021)],[.0042*s]*3,colors['laces'])
+                a,b=stations[k](x0),stations[k+1](-x0)
+                m.tube(label+'-lace-'+str(k)+str(x0),[a,vadd(vscale(vadd(a,b),.5),(0,0,.002*s)),b],[.0042*s]*3,colors['laces'])
+        m.tube(label+'-lace-bar',[stations[0](-.021),stations[0](0),stations[0](.021)],[.0042*s]*3,colors['laces'])
         merge_parts(m,start,label+'-boot-laces')
         start=len(m.parts)
-        for z in rows:
-            for x0 in [-.024,.024]: m.ellipsoid(label+'-eyelet',eyelet(z,x0),(.0055*s,.0055*s,.0055*s),'#b9bec4')
+        for station in stations:
+            for x0 in [-.024,.024]: m.ellipsoid(label+'-eyelet',station(x0),(.0055*s,.0055*s,.0055*s),'#b9bec4')
         merge_parts(m,start,label+'-boot-eyelets'); m.parts[-1].update(roughness=.35,metalness=.7)
 
 def dress(m,costume,d):
@@ -515,7 +540,8 @@ def dress(m,costume,d):
     if jacket:
         # The shirt shows in the open front and rises to the neck ring.
         neckline=lambda y: min(opening(y)+.012*s,body.section('tailored-torso',y)[3]*.62)
-        front_patch('layer-shirt-front',costume['shirt']['color'],hem-.004*s,sh+.052*s,lambda y:-neckline(y),neckline,.003)
+        # Lifted clear of the voxel-fused jacket under it, so its thin edges never flicker.
+        front_patch('layer-shirt-front',costume['shirt']['color'],hem-.004*s,sh+.052*s,lambda y:-neckline(y),neckline,.003,lift=.0025*s)
     if overalls:
         bib=lambda y: mix(hw*.27,sw*.17,smooth01(hip,bib_top,y))
         front_patch('layer-bib',overalls['color'],hip+.014*s,bib_top,lambda y:-bib(y),bib,.005,lift=.004*s)
@@ -584,10 +610,11 @@ def dress(m,costume,d):
             y0,y1=mix(knee,hip,.22),mix(knee,hip,.58)
             ring_band('layer-'+label+'-cargo-pocket',shade(bottom['color'],.93),label+'-leg',y0,y1,.011,t0=t0-.5,t1=t0+.5,rim=.35)
             ring_band('layer-'+label+'-cargo-flap',shade(bottom['color'],.8),label+'-leg',mix(y0,y1,.7),y1+.008*s,.004,t0=t0-.53,t1=t0+.53,lift=.009*s)
+        # Trouser legs end on the boot cuff: a rolled cuff or a hem rests on its top.
         if bottom['cuffs']:
-            ring_band('layer-'+label+'-leg-cuff',bottom['cuffs'],label+'-leg',.2*s,.238*s,.011,rim=.6)
+            ring_band('layer-'+label+'-leg-cuff',bottom['cuffs'],label+'-leg',(BOOT_TOP_Y-.004)*s,(BOOT_TOP_Y+.042)*s,.013,rim=.6)
         else:
-            ring_band('layer-'+label+'-leg-hem',shade(bottom['color'],.9),label+'-leg',.195*s,.225*s,.006,rim=.6)
+            ring_band('layer-'+label+'-leg-hem',shade(bottom['color'],.9),label+'-leg',(BOOT_TOP_Y-.004)*s,(BOOT_TOP_Y+.024)*s,.008,rim=.6)
     belt=costume.get('belt')
     if belt:
         # A belt rides over an overalls waistband; its pouches hang in front of the belt.
@@ -598,7 +625,8 @@ def dress(m,costume,d):
         for k,t in enumerate([math.pi/2-.95,math.pi/2+.95,-math.pi/2+.95,-math.pi/2-.95][:belt['pouches']]):
             # Tool pouches hang from the belt onto the upper thigh.
             ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s+under,rim=.3)
-            ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.034*s,.006,t0=t-.28,t1=t+.28,lift=.03*s+under,rim=.9)
+            # The flap folds over the pouch mouth: it stands clear of the pouch top and rises past it.
+            ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.04*s,.006,t0=t-.29,t1=t+.29,lift=.036*s+under,rim=.9)
     pack=costume.get('backpack')
     if pack:
         for side,label in [(-1,'left'),(1,'right')]:

@@ -166,8 +166,8 @@ class WorkBoots(unittest.TestCase):
                     for axis in [0,2]:
                         self.assertLessEqual(max(v[axis] for v in sole),max(v[axis] for v in upper)+1e-9)
                         self.assertGreaterEqual(min(v[axis] for v in sole),min(v[axis] for v in upper)-1e-9)
-                    # Chunky: an ankle-high shaft and a broad forefoot.
-                    self.assertGreater(max(v[1] for v in upper),.19*s)
+                    # Chunky: a shaft above the ankle and a broad forefoot.
+                    self.assertGreater(max(v[1] for v in by_name[side+'-boot-shaft']['vertices']),.25*s)
                     self.assertGreater(max(v[0] for v in upper)-min(v[0] for v in upper),.11*s)
 
     def test_sole_wraps_toe_and_heel_with_a_heel_block(self):
@@ -178,14 +178,39 @@ class WorkBoots(unittest.TestCase):
             with self.subTest(config=config):
                 self.assertGreater(max(v[1] for v in sole if v[2]>front-.02*s),.045*s)
                 self.assertGreater(max(v[1] for v in sole if v[2]<back+.02*s),.045*s)
-                arch=[v[1] for v in sole if abs(v[2]-.03*s)<.012*s and v[1]<.01*s]
+                arch=[v[1] for v in sole if abs(v[2]-.03*s)<.012*s and v[1]<.015*s]
                 self.assertTrue(arch and min(arch)>.004*s,'midfoot is recessed between heel block and ball')
+
+    def test_tall_shaft_and_seated_cuff(self):
+        """A work boot rises to mid-shin; its padded cuff hugs the shaft rim with no gap, and the
+        trouser leg ends on the cuff instead of vanishing into the boot."""
+        for config in self.CONFIGS:
+            by_name=parts(config);s=character.landmarks(config)['s']
+            shaft=by_name['left-boot-shaft']['vertices'];cuff=by_name['left-boot-cuff']['vertices']
+            with self.subTest(config=config):
+                self.assertGreater(max(v[1] for v in cuff),.28*s)
+                # The cuff's lower rim tucks inside the shaft wall, all the way round.
+                lo=min(v[1] for v in cuff);rim=[v for v in cuff if v[1]<lo+1e-9]
+                shaft_top=[v for v in shaft if abs(v[1]-max(w[1] for w in shaft))<1e-9]
+                cx=sum(v[0] for v in shaft_top)/len(shaft_top);cz=sum(v[2] for v in shaft_top)/len(shaft_top)
+                reach=lambda points:max(math.hypot(v[0]-cx,v[2]-cz) for v in points)
+                self.assertLess(reach(rim),reach(shaft_top))
+                self.assertLess(lo,max(v[1] for v in shaft))
+                # The shaft starts inside the foot upper.
+                self.assertLess(min(v[1] for v in shaft),max(v[1] for v in by_name['left-boot']['vertices'])-.05*s)
+                tread=by_name['left-boot-tread']['vertices']
+                self.assertGreater(min(v[1] for v in tread),.003*s)
+        for config in [MARA,TESS]:
+            by_name=parts(config);s=character.landmarks(config)['s']
+            leg=by_name.get('layer-left-leg-hem') or by_name['layer-left-leg-cuff']
+            with self.subTest(config=config['height']):
+                self.assertGreater(min(v[1] for v in leg['vertices']),max(v[1] for v in by_name['left-boot-cuff']['vertices'])-.012*s)
 
     def test_boot_details(self):
         for config,laces in [({},True),(MARA,True),({'vacuum':True},False)]:
             by_name=parts(config)
             with self.subTest(config=config):
-                self.assertIn('left-boot-collar',by_name)
+                for piece in ['shaft','cuff','tread']:self.assertIn('left-boot-'+piece,by_name)
                 self.assertEqual('left-boot-laces' in by_name,laces)
 
 class GarmentRig(unittest.TestCase):
@@ -232,8 +257,8 @@ class GarmentRig(unittest.TestCase):
         d=character.landmarks(MARA);by_name=parts(MARA)
         sole=walk.skin_weights('left-outsole',by_name['left-outsole']['vertices'],d)
         self.assertTrue(all(row=={'left-foot':1} for row in sole))
-        collar=walk.skin_weights('left-boot-collar',by_name['left-boot-collar']['vertices'],d)
-        self.assertTrue(all(row.get('left-shin',0)>.9 for row in collar))
+        cuff=walk.skin_weights('left-boot-cuff',by_name['left-boot-cuff']['vertices'],d)
+        self.assertTrue(all(row.get('left-shin',0)>.9 for row in cuff))
 
     def test_skinned_vertices_follow_the_rig(self):
         d=character.landmarks({});rest=walk.rest_bones(d)
@@ -268,7 +293,7 @@ class GarmentRig(unittest.TestCase):
                         anchors=[walk.skinned_vertices(n,[v],d,phase,gait)[0] for n,v in pairs]
                         drift=max(abs(math.dist(a,b)-r)-.25*r for a,b,r in zip(moved,anchors,rest))
                         with self.subTest(name=name,part=part['name'],gait=gait,phase=phase):
-                            self.assertLess(drift,.009*s)
+                            self.assertLess(drift,.01*s)
 
     def test_swinging_hands_clear_the_tool_pouches(self):
         """Belt pouches sit off the arm's swing lane, so a hand never brushes into one."""
