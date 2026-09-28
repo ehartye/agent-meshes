@@ -97,7 +97,7 @@ def neck_head_share(z, d):
     return t * t * (3 - 2 * t)
 
 
-def head_spec(values=None):
+def head_spec(values=None, head=None):
     """What `agent_meshes_hm08.character_face` needs for this character: age in years, gender (0 female, 1 male), the
     envelope (center, radii (x, y, z)), the head's shape controls, the stylize weight and the neck height where the
     head is cropped (where the neck rides the head alone, so the crop never parts from the body's neck)."""
@@ -115,19 +115,25 @@ def head_spec(values=None):
         center=(0.0, 0.0, d['head_y']), radii=(d['rx'], d['rz'], d['ry']),
         shape={k: shape[k] for k in HEAD_FEATURES if shape[k] != NEUTRAL.get(k, 1.0)},
         stylize=shape['stylize'], cartoon=shape['cartoon'], neck_z='chin', neck=neck,
+    ) if head is None else dict(
+        # A sculpted body's own head: its cranium envelope and its neck's half width and depth under the chin.
+        years=shape['years'], gender=1.0 if p['presentation'] == 'male' else 0.0,
+        center=tuple(float(v) for v in head['center']), radii=tuple(float(v) for v in head['radii']),
+        shape={k: shape[k] for k in HEAD_FEATURES if shape[k] != NEUTRAL.get(k, 1.0)},
+        stylize=shape['stylize'], cartoon=shape['cartoon'], neck_z='chin', neck=tuple(float(v) for v in head['neck']),
     )
 
 
 _FACES = {}
 
 
-def face_layout(values=None):
+def face_layout(values=None, head=None):
     """The character's face (`agent_meshes_hm08.character_face`, cached) and where its features are: `eye_left`,
     `eye_right`, `eye_radius`, `mouth_z`, `mouth_front`, `mouth_half_width`, `center`, `radii`, `scale` (the head's
     size against a realistic one) and the landmarks."""
     import json
     from agent_meshes_hm08 import character_face
-    spec = head_spec(values)
+    spec = head_spec(values, head)
     key = json.dumps(spec, sort_keys=True)
     if key not in _FACES:
         _FACES[key] = character_face(spec['years'], spec['gender'], spec['center'], spec['radii'], shape=spec['shape'],
@@ -265,12 +271,13 @@ def _hex(linear):
     return '#' + ''.join(f'{channel(v):02x}' for v in linear)
 
 
-def add_face(objects, values=None):
+def add_face(objects, values=None, head=None):
     """Give a rigged stylized character (`rig_character`'s objects) a living arkit-face/1 face on its `head` bone.
 
     Returns the objects (less the recipe's simple ears: the hm08 head has its own) plus the face mesh and the two
     eyeballs. The rig's extras declare the face contract with `skeleton='body'`. The character must have been built
-    with `face='arkit'`; its `face_shape` sets the features.
+    with `face='arkit'`; its `face_shape` sets the features. `head` (center, radii (x, y, z), neck (half width,
+    half depth)) fits the face to a sculpted body's own cranium instead of the recipe's head.
     """
     import bpy
     import numpy as np
@@ -284,7 +291,7 @@ def add_face(objects, values=None):
     rigs = [obj for obj in objects if getattr(obj, 'type', None) == 'ARMATURE']
     if len(rigs) != 1: raise ValueError(f'add_face needs exactly one armature among the objects (found {len(rigs)}): run rig_character first')
     rig = rigs[0]
-    L = face_layout(p)
+    L = face_layout(p, head)
     face, marks, k = L['face'], L['landmarks'], L['scale']
     shape = face_shape_values(p)
     eye_left, eye_right, radius = L['eye_left'], L['eye_right'], L['eye_radius']
