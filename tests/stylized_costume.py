@@ -279,6 +279,12 @@ class WorkBoots(unittest.TestCase):
             with self.subTest(config=config['height']):
                 self.assertGreater(top(cuff)-top([v for v in cuff if v[2]<heel+.002*s]),.015*s)
 
+    def test_tread_lugs_stay_off_the_heel_and_toe_curves(self):
+        """Seen from behind the heel is one rounded sole: no lug block stands off its curve."""
+        by_name=parts(TESS);s=character.landmarks(TESS)['s'];tread=by_name['left-boot-tread']['vertices']
+        self.assertGreaterEqual(min(v[2] for v in tread),(character.BOOT_HEEL+character.BOOT_HEEL_ROUND)*s-1e-9)
+        self.assertLessEqual(max(v[2] for v in tread),(character.BOOT_TOE-character.BOOT_TOE_ROUND)*s+1e-9)
+
     def test_boot_details(self):
         for config,laces in [({},True),(MARA,True),({'vacuum':True},False)]:
             by_name=parts(config)

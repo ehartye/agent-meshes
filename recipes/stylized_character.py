@@ -517,7 +517,8 @@ def work_boot(m,label,lx,side,s,colors,child=False,leg=None):
         corners=[(a,b,c) for a in (x0,x1) for b in (y0,y1) for c in (z0,z1)]
         faces=[(0,1,3,2),(4,6,7,5),(0,4,5,1),(2,3,7,6),(0,2,6,4),(1,5,7,3)]
         m.mesh(label+'-lug',[((lx/s+a)*s,b*s,c*s) for a,b,c in corners],faces,colors['sole'])
-    for z in [mix(BOOT_HEEL+.016,BOOT_TOE-.024,k/10) for k in range(11)]:
+    # Lugs stud the straight sidewall only: on the heel and toe curves a block would stand off the sole.
+    for z in [mix(BOOT_HEEL+BOOT_HEEL_ROUND+.007,BOOT_TOE-BOOT_TOE_ROUND-.007,k/8) for k in range(9)]:
         width=min(boot_section(z-.007)[0],boot_section(z+.007)[0])
         if width<.03: continue
         for side_x in [-1,1]: lug(side_x*width,z)
