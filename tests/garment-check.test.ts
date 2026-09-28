@@ -36,6 +36,24 @@ describe('garment penetration check', () => {
     expect(self.every(hit => hit.part === hit.into)).toBe(true);
   });
 
+  it('measures a self intrusion from the cloth it entered, however near that cloth was at rest', async () => {
+    // The back prong's face 20 cm below the bridge swings about 7 mm into the front prong, whose facing
+    // side sat 1 cm away in space but 40 cm away along the cloth: the fold is that deep, not a prong deep.
+    const report = await checkGarments(await dressedGLB({ flex: 5, prongs: true, belt: [1.5, 1.55] }), { samples: 8, points: true });
+    const hit = report.intrusions.find(hit => hit.part === 'layer-prongs' && hit.kind === 'self' && hit.phase === 0.5)!;
+    const pressed = hit.points!.filter(point => Math.abs(point.from[1] - 0.8) < 1e-6);
+    expect(pressed.length).toBeGreaterThan(0);
+    for (const point of pressed) { expect(point.depth).toBeGreaterThan(0.004); expect(point.depth).toBeLessThan(0.01); }
+  });
+
+  it('measures a pinch by the cloth over it, never deeper than the cloth is thick', async () => {
+    // Folded shut, the flap's halves press together at the hinge, cloth over cloth right beside it.
+    const report = await checkGarments(await dressedGLB({ flex: 185, flap: true, belt: [1.5, 1.55] }), { samples: 8, points: true });
+    const hits = report.intrusions.filter(hit => hit.part === 'layer-flap' && hit.kind === 'self');
+    expect(hits.length).toBeGreaterThan(0);
+    for (const hit of hits) expect(hit.depth).toBeLessThanOrEqual(0.011);
+  });
+
   it('never reports folds in small pieces that only ride the bones', async () => {
     const report = await checkGarments(await dressedGLB({ beads: true, flex: 4 }), { samples: 8 });
     expect(report.intrusions.filter(hit => hit.part === 'boot-eyelets')).toEqual([]);

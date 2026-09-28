@@ -34,7 +34,7 @@ export interface GarmentCheckOptions {
   garments?: RegExp;
   /** Parts left out of the check entirely. */
   ignore?: RegExp;
-  /** Self-folds ignore surface within this rest distance of the vertex, meters (default 0.03). */
+  /** Self-folds ignore surface within this distance of the vertex along the rest surface, meters (default 0.03). */
   selfRadius?: number;
   /**
    * Two garments cross at rest when each buries at least this many of the other's outward-facing
@@ -153,6 +153,35 @@ function collectParts(scene: Object3D, garments: RegExp, ignore: RegExp | undefi
   return parts.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Vertices within `radius` of vertex `v` along the part's rest surface (edge-path Dijkstra), cached per part. */
+const neighbourhoods = new WeakMap<Part, { edges: [number, number][][]; balls: Map<number, Set<number>> }>();
+function nearby(part: Part, v: number, radius: number): Set<number> {
+  let cache = neighbourhoods.get(part);
+  if (!cache) {
+    const edges: [number, number][][] = part.sources.map(() => []), r = part.rest;
+    const link = (a: number, b: number) => {
+      const length = Math.hypot(r[a * 3] - r[b * 3], r[a * 3 + 1] - r[b * 3 + 1], r[a * 3 + 2] - r[b * 3 + 2]);
+      edges[a].push([b, length]); edges[b].push([a, length]);
+    };
+    for (let k = 0; k < part.triangles.length; k += 3) for (let e = 0; e < 3; e++) link(part.triangles[k + e], part.triangles[k + (e + 1) % 3]);
+    cache = { edges, balls: new Map() }; neighbourhoods.set(part, cache);
+  }
+  let ball = cache.balls.get(v);
+  if (ball) return ball;
+  const best = new Map<number, number>([[v, 0]]), open = [v]; ball = new Set();
+  while (open.length) {
+    // Balls hold tens of vertices: a linear scan for the nearest open vertex is cheap enough.
+    let at = 0; for (let k = 1; k < open.length; k++) if (best.get(open[k])! < best.get(open[at])!) at = k;
+    const u = open.splice(at, 1)[0]; if (ball.has(u)) continue; ball.add(u);
+    for (const [w, length] of cache.edges[u]) {
+      const d = best.get(u)! + length;
+      if (d <= radius && d < (best.get(w) ?? Infinity)) { best.set(w, d); open.push(w); }
+    }
+  }
+  cache.balls.set(v, ball);
+  return ball;
+}
+
 function pose(mesh: Mesh, index: number, target: Vector3): Vector3 {
   if ((mesh as SkinnedMesh).isSkinnedMesh) (mesh as SkinnedMesh).getVertexPosition(index, target);
   else target.fromBufferAttribute(mesh.geometry.getAttribute('position'), index);
@@ -229,6 +258,37 @@ class Volume {
     }
     if (!mixed) return count % 2 === 1 ? [first] : [];
     return [...crossings].filter(([, n]) => n % 2 === 1).map(([component]) => component);
+  }
+  /**
+   * Distance along a unit direction to the first triangle that `keep` accepts, out to `cap`;
+   * Infinity when the ray meets none. Cells are gathered along the ray, then each triangle is hit
+   * tested (Moller-Trumbore).
+   */
+  ray(x: number, y: number, z: number, dx: number, dy: number, dz: number, cap: number, keep?: (t: number) => boolean): number {
+    const seen = new Set<number>(), p = this.points; let best = Infinity;
+    for (let s = 0; s <= cap + this.cell && s <= best; s += this.cell * 0.5) {
+      const cx = Math.floor((x + dx * s) / this.cell), cy = Math.floor((y + dy * s) / this.cell), cz = Math.floor((z + dz * s) / this.cell);
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let k = -1; k <= 1; k++) {
+        for (const t of this.cells.get(`${cx + i},${cy + j},${cz + k}`) ?? []) {
+          if (seen.has(t)) continue; seen.add(t);
+          if (keep && !keep(t)) continue;
+          const a = this.triangles[t] * 3, b = this.triangles[t + 1] * 3, c = this.triangles[t + 2] * 3;
+          const e1 = [p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]], e2 = [p[c] - p[a], p[c + 1] - p[a + 1], p[c + 2] - p[a + 2]];
+          const h = [dy * e2[2] - dz * e2[1], dz * e2[0] - dx * e2[2], dx * e2[1] - dy * e2[0]];
+          const det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2];
+          if (Math.abs(det) < 1e-12) continue;
+          const f = 1 / det, o = [x - p[a], y - p[a + 1], z - p[a + 2]];
+          const u = f * (o[0] * h[0] + o[1] * h[1] + o[2] * h[2]);
+          if (u < 0 || u > 1) continue;
+          const q = [o[1] * e1[2] - o[2] * e1[1], o[2] * e1[0] - o[0] * e1[2], o[0] * e1[1] - o[1] * e1[0]];
+          const v = f * (dx * q[0] + dy * q[1] + dz * q[2]);
+          if (v < 0 || u + v > 1) continue;
+          const d = f * (e2[0] * q[0] + e2[1] * q[1] + e2[2] * q[2]);
+          if (d > 0 && d < best) best = d;
+        }
+      }
+    }
+    return best <= cap ? best : Infinity;
   }
   /** Component of a triangle (its first index into the triangle array). */
   componentOf(t: number): number { return this.component[t / 3]; }
@@ -363,14 +423,17 @@ export async function checkGarments(bytes: Uint8Array, options: GarmentCheckOpti
           // A self-fold stays within one connected piece; merged pieces may overlap each other.
           const within = volume.contains(x, y, z, self ? own[v] : undefined);
           if (!within.length) continue;
-          // Depth is to the containing pieces' surface; a fold's, to surface not already next to the vertex at rest.
-          const keep = (t: number) => within.includes(volume.componentOf(t)) && (!self || [0, 1, 2].every(e => {
-            const w = triangles[t + e] * 3;
-            return Math.hypot(rest[w] - rest[v * 3], rest[w + 1] - rest[v * 3 + 1], rest[w + 2] - rest[v * 3 + 2]) > selfRadius;
-          }));
+          // Depth is to the containing pieces' surface; a fold's, to surface not next to the vertex along the
+          // cloth. Cloth near in space but far along the surface (an arm against the torso side) still counts.
+          const local = self ? nearby(parts[pair.a], v, selfRadius) : undefined;
+          const keep = (t: number) => within.includes(volume.componentOf(t)) && (!local || [0, 1, 2].every(e => !local.has(triangles[t + e])));
           // No surface of its own far enough away: a small piece cannot fold through itself.
           let d = volume.distance(x, y, z, DEPTH_CAP, keep);
           if (d === Infinity && self) continue;
+          // A pinch folds cloth over cloth right beside it, which the neighbourhood leaves out: the way
+          // out along the vertex's own normal, through any surface but its own corner, also bounds the fold.
+          if (self) d = Math.min(d, volume.ray(x, y, z, n[v * 3], n[v * 3 + 1], n[v * 3 + 2], DEPTH_CAP,
+            t => within.includes(volume.componentOf(t)) && triangles[t] !== v && triangles[t + 1] !== v && triangles[t + 2] !== v));
           d = Math.min(d, DEPTH_CAP);
           if (d <= tolerance) continue;
           count++;

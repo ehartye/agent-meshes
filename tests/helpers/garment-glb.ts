@@ -3,7 +3,7 @@
  * glTF coordinates: Y up, meters, the figure faces +Z. A `thigh` bone pivots at y = 1 under a
  * `pelvis` bone and flexes forward in the `jog` clip, peaking at mid-clip.
  */
-import { AnimationClip, Bone, BoxGeometry, BufferGeometry, CylinderGeometry, Float32BufferAttribute, Group, Matrix4, MeshStandardMaterial, PlaneGeometry, Quaternion, SphereGeometry, QuaternionKeyframeTrack, Scene, Skeleton, SkinnedMesh, Uint16BufferAttribute, Vector3 } from 'three';
+import { AnimationClip, Bone, BoxGeometry, BufferGeometry, CylinderGeometry, ExtrudeGeometry, Float32BufferAttribute, Group, Matrix4, MeshStandardMaterial, PlaneGeometry, Quaternion, SphereGeometry, QuaternionKeyframeTrack, Scene, Skeleton, Shape, SkinnedMesh, Uint16BufferAttribute, Vector2, Vector3 } from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { ensureFileReader } from '../../src/node-file-reader.ts';
@@ -19,13 +19,17 @@ export interface DressedOptions {
   sheet?: boolean;
   /** Add one part of small separate beads (like boot eyelets) riding the thigh, which never fold. */
   beads?: boolean;
+  /** Add a closed garment of two prongs a centimetre apart, joined at the top; the back prong swings into the front one. */
+  prongs?: boolean;
+  /** Add a thin flap hinged at the pivot, which a flex past 180 degrees folds shut on itself. */
+  flap?: boolean;
   /** Add a closed boot shaft of this radius round the leg's lower end, riding the thigh with it. */
   shaft?: number;
 }
 
 export async function dressedGLB(options: DressedOptions = {}): Promise<Uint8Array> {
   ensureFileReader();
-  const { flex = 80, belt = [1.01, 1.06], fold = false, sheet = false, beads = false, shaft } = options;
+  const { flex = 80, belt = [1.01, 1.06], fold = false, sheet = false, beads = false, prongs = false, flap = false, shaft } = options;
   const root = new Bone(); root.name = 'root';
   const pelvis = new Bone(); pelvis.name = 'pelvis'; pelvis.position.set(0, 1, 0); root.add(pelvis);
   const thigh = new Bone(); thigh.name = 'thigh'; pelvis.add(thigh);
@@ -55,6 +59,17 @@ export async function dressedGLB(options: DressedOptions = {}): Promise<Uint8Arr
   }
   // The leg box's faces sit 0.1 m off its axis and its corners 0.141 m: a narrower shaft crosses it.
   if (shaft) skinned('left-boot-shaft', new CylinderGeometry(shaft, shaft, 0.25, 32, 4).translate(0, 0.575, 0), () => 1);
+  // A 1 cm flap hinged across the thigh's pivot: its front half rides the thigh and a flex past 180
+  // degrees shuts it like a book, pressing the halves into each other right at the hinge.
+  if (flap) skinned('layer-flap', new BoxGeometry(0.2, 0.01, 0.2, 4, 1, 40).translate(-1, 1, 0), p => Math.min(1, Math.max(0, p.z / 0.01)));
+  if (prongs) {
+    // Prongs 4 cm thick from y 0.7 to 1, 1 cm apart along Z, bridged above: their facing sides are
+    // near in space but far along the cloth, so a prong pressed into the other is a shallow intrusion.
+    const outline = [[-0.045, 0.7], [-0.005, 0.7], [-0.005, 0.8], [-0.005, 1], [0.005, 1], [0.005, 0.8], [0.005, 0.7], [0.045, 0.7], [0.045, 1.04], [-0.045, 1.04], [-0.045, 0.8]];
+    const shape = new Shape(outline.map(([u, v]) => new Vector2(u, v)));
+    const geometry = new ExtrudeGeometry(shape, { depth: 0.1, steps: 4, bevelEnabled: false }).rotateY(-Math.PI / 2).translate(-0.95, 0, 0);
+    skinned('layer-prongs', geometry, p => (p.z < 0 ? Math.min(1, Math.max(0, (0.98 - p.y) / 0.18)) : 0));
+  }
   if (sheet) {
     const plane = new PlaneGeometry(0.3, 0.3).translate(-1, 1, 0.3);
     const mesh = new SkinnedMesh(plane, material); mesh.name = 'hair-card';
