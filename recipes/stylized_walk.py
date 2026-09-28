@@ -216,7 +216,11 @@ def skin_weights(name,vertices,d):
                 edge=(d['hip_w']*.5+(d['shoulder_w']*.46-d['hip_w']*.5)*w_smooth(hip,d['chest_y'],y))*1.04+.018*s
                 edge+=s*(1-w_smooth(hip+.06*s,hip+.085*s,y))
                 arm=w_smooth(min(sx+.015*s-shoulder_blend*.075*s,edge),min(sx+.07*s-shoulder_blend*.055*s,edge+.025*s),abs(x))
-                forearm=1-w_smooth(elbow-.045*s,elbow+.045*s,y)
+                # The inner elbow blends wider (by direction round the arm, as the knee does), so a
+                # bent arm rolls the sleeve into a crease instead of folding it through itself.
+                front=(z-.012*s)/max(1e-9,math.hypot(abs(x)-(sx+.077*s),z-.012*s))
+                reach=s*(.045+.075*w_smooth(-.2,.8,front))
+                forearm=1-w_smooth(elbow-reach,elbow+reach,y)
                 torso=w_smooth(hip+.065*s,hip+.20*s,y)
                 row={'pelvis':(1-arm)*(1-torso),'spine':(1-arm)*torso,side+'-upper-arm':arm*(1-forearm),side+'-forearm':arm*forearm}
             else:
@@ -224,7 +228,9 @@ def skin_weights(name,vertices,d):
                 # below the waist forward instead of driving through it; the crotch shares both
                 # thighs, so the inseam never tears open between them.
                 pelvis=w_smooth(hip-.26*s,hip-.015*s,y)
-                right=w_smooth(-.06*s,.06*s,x)
+                # Below the crotch the legs part, and each inseam binds its own thigh alone.
+                crotch=.06*s*w_smooth(hip-.42*s,hip-.3*s,y)+1e-6
+                right=w_smooth(-crotch,crotch,x)
                 # The back of the knee blends wider (by direction round the leg, so layers standing
                 # proud of the cloth take the same weights as the cloth under them), so a deep swing flexion folds the cloth
                 # into a crease instead of driving the calf through the thigh.

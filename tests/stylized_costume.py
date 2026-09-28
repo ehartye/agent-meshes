@@ -331,6 +331,24 @@ class GarmentRig(unittest.TestCase):
                 self.assertTrue(all(row==rows[0] for row in rows))
                 self.assertFalse(any('thigh' in bone for bone in rows[0]))
 
+    def test_inseam_below_the_crotch_binds_its_own_thigh(self):
+        """Only the crotch shares both thighs: an inner knee never follows the other leg's swing."""
+        d=character.landmarks(OREN);s=d['s'];hip=d['hip_y']
+        inner=walk.skin_weights('layer-bottom',[(-.03*s,hip-.43*s,-.02*s)],d)[0]
+        self.assertEqual(inner.get('right-thigh',0),0)
+        crotch=walk.skin_weights('layer-bottom',[(-.03*s,hip-.12*s,0)],d)[0]
+        self.assertGreater(crotch.get('right-thigh',0),.03)
+
+    def test_inner_elbow_blends_wider_than_the_point_of_the_elbow(self):
+        """A bent arm rolls the sleeve into a crease at the inner elbow instead of folding it through itself."""
+        d=character.landmarks(MARA);s=d['s'];hip=d['hip_y'];wrist=hip+.095*s;elbow=(wrist+d['shoulder_y'])/2
+        x=d['shoulder_w']*.49+.092*s-.015*s
+        def forearm(z,dy):return walk.skin_weights('layer-top',[(x,elbow+dy,z)],d)[0].get('right-forearm',0)
+        front,back=.012*s+.05*s,.012*s-.05*s
+        # Well above the joint the inner side still eases toward the forearm; the point of the elbow does not.
+        self.assertGreater(forearm(front,.07*s),.05)
+        self.assertEqual(forearm(back,.07*s),0)
+
     def test_boot_shaft_follows_the_shin_and_sole_the_foot(self):
         d=character.landmarks(MARA);by_name=parts(MARA)
         sole=walk.skin_weights('left-outsole',by_name['left-outsole']['vertices'],d)
