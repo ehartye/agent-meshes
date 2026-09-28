@@ -551,15 +551,21 @@ def dress(m,costume,d):
             button=surface_point(around(torso(hip+.022*s),hip+.022*s,math.pi/2-side*math.pi/2),.006*s)
             m.ellipsoid('layer-overalls-side-button-'+label,button,(.007*s,.011*s,.011*s),overalls['buttons'])
             m.parts[-1].update(roughness=.35,metalness=.6)
+        if not jacket:
+            # Back bib: a panel rising from the waistband that the shoulder straps button to.
+            back_top=hip+.12*s; back_bib=lambda y: mix(hw*.3,sw*.13,smooth01(hip,back_top,y))
+            front_patch('layer-back-bib',overalls['color'],hip+.014*s,back_top,lambda y:-back_bib(y),back_bib,.005,back=True,lift=.004*s)
         front_patch('layer-bib-pocket',shade(overalls['color'],.9),mix(hip,bib_top,.5),mix(hip,bib_top,.86),lambda y:-sw*.075,lambda y:sw*.075,.004,lift=.009*s)
         for side,label in [(-1,'left'),(1,'right')]:
             if jacket:
-                # Straps rise from the bib and run under the open jacket's lapel.
-                end=bib_top+.09*s; x0=strap_x
-                centre=lambda y,side=side: side*mix(x0,opening(end)+.02*s,smooth01(bib_top,end,y))
-                front_patch('layer-strap-'+label,overalls['color'],bib_top-.02*s,end,lambda y,c=centre:c(y)-sw*.035,lambda y,c=centre:c(y)+sw*.035,.004,lift=.004*s)
+                # Straps rise from the bib up the open front, over the shirt, and slip under
+                # the jacket's lapels at the collarbone.
+                end=sh+.004*s; x0=strap_x
+                centre=lambda y,side=side: side*min(mix(x0,opening(sh)-sw*.035-.008*s,smooth01(bib_top,end,y)),opening(y)-sw*.02)
+                front_patch('layer-strap-'+label,overalls['color'],bib_top-.02*s,end,lambda y,c=centre:c(y)-sw*.035,lambda y,c=centre:c(y)+sw*.035,.004,lift=.006*s)
             else:
-                over_shoulder('layer-strap-'+label,overalls['color'],side*strap_x,side*sw*.23,side*sw*.12,bib_top-.02*s,hip+.08*s,sw*.07,.004,.004)
+                # Straps cross the shoulder and meet the back bib's top corners.
+                over_shoulder('layer-strap-'+label,overalls['color'],side*strap_x,side*sw*.23,side*sw*.1,bib_top-.02*s,back_top-.012*s,sw*.07,.004,.004)
             button=surface_point(facing(bib_top-.014*s,side*strap_x),.006*s)
             m.ellipsoid('layer-bib-button-'+label,button,(.011*s,.011*s,.007*s),overalls['buttons'])
             m.parts[-1].update(roughness=.35,metalness=.6)
@@ -567,7 +573,7 @@ def dress(m,costume,d):
         for side,label in [(-1,'left'),(1,'right')]:
             inner=lambda y,side=side: side*opening(y); outer=lambda y,side=side: side*(opening(y)+.03*s)
             front_patch('layer-jacket-lapel-'+label,shade(jacket['color'],.94),hem,sh+.012*s,
-                        (outer if side<0 else inner),(inner if side<0 else outer),.006,lift=.005*s)
+                        (outer if side<0 else inner),(inner if side<0 else outer),.006,lift=.008*s)
         # Turned collar on the shoulder slope, rising behind the neck.
         points=[]
         _,_,_,ru,_=body.section('tailored-torso',sh+.02*s); end=math.acos(min(1,(opening(sh)+.018*s)/ru))
@@ -631,6 +637,11 @@ def dress(m,costume,d):
     if pack:
         for side,label in [(-1,'left'),(1,'right')]:
             over_shoulder('layer-pack-strap-'+label,pack['straps'],side*sw*.2,side*sw*.25,side*sw*.17,mix(hip,sh,.42),mix(hip,sh,.6),sw*.075,.007,.012)
+            # The strap's lower half runs from its front end under the arm to the pack's side.
+            y=mix(hip,sh,.42)+.012*s; _,u,v,ru,rv=body.section(torso(y),y)
+            front=math.acos(max(-1,min(1,(side*sw*.2-u)/ru))); rear=-math.acos(max(-1,min(1,(side*sw*.26-u)/ru)))
+            t0,t1=(front,rear+math.tau) if side<0 else (rear,front)
+            ring_band('layer-pack-strap-'+label+'-lower',pack['straps'],torso,y-.018*s,y+.018*s,.006,t0=t0,t1=t1,lift=.012*s,rim=.7)
         # A pack rides below a lowered hood so the hood still reads from behind.
         y0,y1=mix(hip,sh,.22),min(mix(hip,sh,.92),sh-.1*s if hoodie else 9); back=surface_point(facing(mix(y0,y1,.5),0,back=True))[2]
         width=sw*.3; depth=.11*s; c=back-depth*.5+.012*s
