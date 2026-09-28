@@ -401,7 +401,7 @@ def margin_vertices():
             'upper': [nearest(p) for p in contour[:, 0]], 'lower': [nearest(p) for p in contour[:, 1]]}
 
 
-def eyeball_shows(vertices, faces, center, radius, rays=30, pitch=0.0, band=None):
+def eyeball_shows(vertices, faces, center, radius, rays=48, pitch=0.0, band=None):
     """How many of a grid of rays across an eyeball (a sphere) reach it before the skin: from the front, or seen from
     `pitch` degrees above (+) or below (-); `band` (eyeball radii) counts only rays that near the center's height."""
     c, r = np.asarray(center), float(radius)
@@ -1046,8 +1046,9 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         closed = [{'eyeBlink': 1}, {'eyeBlink': 1, 'eyeSquint': 1}, {'eyeBlink': 1, 'eyeWide': 1}, {'eyeBlink': 1, 'eyeSquint': 1, 'eyeWide': 1}]
         tris = flat_triangles(pushed, faces)[0]   # the triangles the GLB will carry
         folds = sum(len(flipped(pushed, pose(mix), tris)) for mix in mixes)
-        shows = sum(eyeball_shows(pose(mix), faces, c, r) for mix in closed)
-        shows += sum(eyeball_shows(pose(mix), faces, c, r, pitch=p, band=.6) for mix in closed for p in (-25, -15, 15))
+        # (a little stricter than the contract, which samples coarser and from fewer pitches: a margin for its grid)
+        shows = sum(eyeball_shows(pose(mix), faces, c, r, rays=64) for mix in closed)
+        shows += sum(eyeball_shows(pose(mix), faces, c, r, rays=64, pitch=p, band=.7) for mix in closed for p in (-30, -25, -20, -15, -10, 15, 20))
         above, below = eye_crease_folds(pushed, faces, c, r)
         return folds + 5 * max(0, above - 1) + 5 * max(0, below - 1), shows
     # A few lid shapes, gentlest first: the first that folds nothing and hides the eyeball when closed wins (a round
@@ -1168,11 +1169,11 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
                 m = np.linalg.norm(morphs[f'eyeBlink{side}'] - V, axis=1)
                 pinned |= m > threshold * m.max()
             trial, _ = unfold_morphs(V, faces, {n: morphs[n] for n in lids}, [{n: .5} for n in lids], pinned=pinned, calm=False, iterations=60)
-            closed_ok = all(eyeball_shows(V + sum(trial[f'{n}{side}'] - V for n in combo), faces, eye_c, eye_r, pitch=p,
-                                          band=None if p == 0 else .6) == 0
+            closed_ok = all(eyeball_shows(V + sum(trial[f'{n}{side}'] - V for n in combo), faces, eye_c, eye_r, rays=64, pitch=p,
+                                          band=None if p == 0 else .7) == 0
                             for side, (eye_c, eye_r) in (('Left', eyes[0]), ('Right', eyes[1]))
                             for combo in (('eyeBlink',), ('eyeBlink', 'eyeWide'), ('eyeBlink', 'eyeSquint', 'eyeWide'))
-                            for p in (0, -25, -15, 15))
+                            for p in (0, -30, -25, -20, -15, -10, 15, 20))
             if closed_ok and not any(len(flipped(V, trial[n], faces)) for n in lids):
                 morphs.update(trial)
                 break
