@@ -273,6 +273,16 @@ class CartoonFace(unittest.TestCase):
             return (m['upper_lip'][1] - m['nose_tip'][1]) / h, (m['nose_tip'][2] - m['subnasale'][2]) / h
         for small, plain in zip(nose(self.layout), nose(self.plain)): self.assertLess(small, .8 * plain)
 
+    def test_the_lids_rest_lowered_onto_the_iris_and_still_close(self):
+        # (the same ray grid across each eyeball: the share of it the open lids show)
+        def showing(L):
+            f = L['face']
+            (eye, r), _ = f['eyes']
+            return hm.eyeball_shows(f['vertices'], f['faces'], eye, r) / (48 * 48 * math.pi / 4)
+        self.assertLess(showing(self.layout), .85 * showing(self.plain))
+        for (eye, r), side in zip(self.face['eyes'], ('Left', 'Right')):
+            self.assertEqual(hm.eyeball_shows(self.M[f'eyeBlink{side}'], self.F, eye, r), 0, side)
+
     def test_the_smile_lifts_the_corners_up_and_back_and_a_smooth_cheek(self):
         m, V = self.marks, self.V
         hw = abs(m['mouth_corner_L'][0])

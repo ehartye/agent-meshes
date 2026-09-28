@@ -794,6 +794,8 @@ CARTOON_TARGETS = {
 # on a realistic head, scaled with the head): the lip lifts only below the gum, where arkit-face/1 lets it move.
 UPPER_GUM = .0065
 LIP_LIFT = .0024
+# How far a cartoon face's lids rest toward closed (a share of the blink).
+REST_LIDS = .2
 # How much larger the eyes are at cartoon 1 (the boards' eyes are about 1.4 times a stylized realistic head's).
 CARTOON_EYES = .4
 
@@ -1411,6 +1413,16 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
                 morphs.update(trial)
                 break
 
+
+    # A cartoon face rests with its lids a little lowered, the upper lid on the iris (the boards' warm eyes, not a stare):
+    # the rest shape takes a share of the blink, and every other morph moves with it (the blink still closes to the
+    # same line).
+    if cartoon:
+        for side in ('Left', 'Right'):
+            lowered = REST_LIDS * min(1.0, cartoon) * (morphs[f'eyeBlink{side}'] - V)
+            for name in morphs:
+                if name != f'eyeBlink{side}': morphs[name] = morphs[name] + lowered
+            V = V + lowered
 
     # The lash line: the upper lid's margin rows (the vertices blink moves at least 85% as far as its margin).
     lash = set()
