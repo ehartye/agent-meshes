@@ -45,6 +45,16 @@ GPL/AGPL code runs or ships. Research: wiki "Parametric Human Base Mesh", "MPFB2
      nostrils and lips are excluded, so they keep hm08's loops;
    - a screened-Laplacian relax of the displacement, then delta smoothing.
 
+4. **Cartoon.** `cartoon` (a `face_shape` value, 0 to 1.5) goes past the stylize target toward the boards:
+   - `CARTOON_TARGETS`: no eye bags, a smaller nose, a rounder head and a shorter, softer chin;
+   - in the fitted head, `lens` grows each eye by `CARTOON_EYES` (1.4 times at 1), scaling about a point in front of
+     the eye so it grows into its socket, then `relax_surround` (Taubin, so nothing shrinks) smooths the ring round
+     the eye and the nose into a button. The nose relax backs off when it would flatten the crease the lip landmarks
+     read;
+   - a little of the stylized smile at rest, and the lids resting `REST_LIDS` of the way to closed (every other morph
+     moves with the rest, so the blink still closes to the same line);
+   - in `stylized_face`, level, thicker, arched brows and wider irises.
+
 ## Fitting and graft: `character_face`
 
 - `fit_to_envelope` scales the head into the character's head envelope, which is what the hair, ears and helmet fit to.
@@ -71,14 +81,24 @@ The 52 `faceunits01` shapes load as ARKit shape keys. The eye and jaw morphs are
     folds and no crease. The checks use a finer ray grid and more pitches than the contract. A relax-only unfold then
     runs with the margins pinned.
   - The right eye mirrors the left through hm08's mirror table.
+- **Smile and frown** are our own (`stylized_mouth`), not the face units' (theirs crease the cheeks and pinch the
+  corners). Smooth ellipsoidal fields lift the corner up and back, widen the mouth and raise a round cheek below the
+  eye (the frown turns the corner down). Both lips at a corner move alike, so the lips stay closed.
 - **jawOpen:**
   - The face unit's jaw is scaled so the chin drops 11% of the head height (gain .6 to 1.5).
-  - The skin above the mouth line holds.
+  - The skin above the mouth line holds. The upper lip is the face unit's own rows (full lips dip its middle under
+    the mouth line), and below the gum line (`UPPER_GUM`) it lifts `LIP_LIFT` so the upper teeth show.
   - The mouth bag swings rigidly with the jaw (`RigidJaw`, a Kabsch fit on the chin). The lower teeth follow it.
   - A relax-only unfold keeps the jaw core pinned, so the lips part in a rounded D with no V-chin.
 - `unfold_morphs` relaxes any morph, or any emotion preset mix, that turns a triangle over. It checks the triangles
-  the GLB will actually carry (`flat_triangles` splits each quad along its flatter diagonal).
-- Faces hidden at rest, and faces in the open jaw's aperture, get the dark `mouth_cavity` material.
+  the GLB will actually carry (`flat_triangles` splits each quad along its flatter diagonal). The stylized smile and
+  frown are never calmed (halved): what still turns over with them is fixed by the coherent pass.
+- **The mouth's inside** is the whole pocket: every face hidden at rest from the front and from behind that connects
+  to the mouth's middle, palate and throat included. It gets the near-black `mouth_cavity` material. A dark cap closes
+  the throat where the crop cut the bag. With the jaw open, the pocket below the mouth is squashed to end short of the
+  body's neck, and `add_face` gives the part of the neck inside the head the cavity material. So the open mouth shows
+  only teeth, tongue and dark (arkit-face/1's mouth-open check now fails any light surface there, luminance over
+  0.03).
 
 ## Integration
 
