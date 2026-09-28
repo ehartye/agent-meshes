@@ -11,12 +11,12 @@ import stylized_walk as walk
 MARA={'height':1.82,'presentation':'female','costume':{
     'shirt':{'color':'#e8e2d0'},'jacket':{'color':'#c8672e','badge':'#5d8a52'},
     'overalls':{'color':'#3a6f86','cargo':True},'belt':{'pouches':3},'gloves':{},'boots':{},'neck_ring':{}}}
-OREN={'height':1.88,'presentation':'male','costume':{
-    'shirt':{'color':'#ece6d6'},'jacket':{'color':'#b8612f'},'trousers':{'color':'#2e6b7c','cargo':True},
-    'belt':{},'backpack':{},'gloves':{}}}
-TESS={'height':1.22,'age':'child','costume':{
-    'shirt':{'color':'#e9c25a'},'overalls':{'color':'#4d7fa0','cuffs':'#86b3c9','buttons':'#d9a441'}}}
-KIT={'height':1.19,'age':'child','presentation':'male','costume':{
+OREN={'height':1.88,'presentation':'male','build':1.3,'costume':{
+    'shirt':{'color':'#ece6d6'},'jacket':{'color':'#b8612f','badge':'#5d8a52'},'trousers':{'color':'#2e6b7c','cargo':True,'pockets':True},
+    'belt':{'pouches':1},'backpack':{},'gloves':{}}}
+TESS={'height':1.14,'age':'child','costume':{
+    'shirt':{'color':'#e9c25a'},'overalls':{'color':'#3b6a86','cuffs':'#86b3c9','buttons':'#d9a441','cargo':True,'pockets':True}}}
+KIT={'height':1.36,'age':'child','presentation':'male','costume':{
     'hoodie':{'color':'#5c7d4a'},'trousers':{'color':'#2f4a73','cargo':True},'backpack':{}}}
 CAST={'mara':MARA,'oren':OREN,'tess':TESS,'kit':KIT}
 BODY=['tailored-torso','left-sleeve','right-sleeve','trouser-yoke','left-leg','right-leg']
@@ -28,7 +28,7 @@ def fused_name(name):return 'layer-top' if name in BODY[:3] else 'layer-bottom'
 class CostumeParameters(unittest.TestCase):
     def test_slots_fill_defaults_and_stay_idempotent(self):
         p=character.parameters(TESS)
-        self.assertEqual(p['costume']['overalls']['cargo'],False)
+        self.assertEqual(character.parameters({'costume':{'shirt':{},'overalls':{}}})['costume']['overalls']['cargo'],False)
         self.assertIn('color',p['costume']['shirt'])
         self.assertEqual(character.parameters(p),p)
         self.assertIsNone(character.parameters({})['costume'])
@@ -37,7 +37,7 @@ class CostumeParameters(unittest.TestCase):
         bad=[{'cape':{}},{'shirt':{'colour':'#ffffff'},'trousers':{}},{'shirt':{'color':'red'},'trousers':{}},
              {'shirt':{},'trousers':{},'belt':{'pouches':5}},{'shirt':{},'trousers':{},'belt':{'pouches':True}},
              {'jacket':{},'trousers':{}},{'shirt':{},'jacket':{},'hoodie':{},'trousers':{}},
-             {'shirt':{}},{'shirt':{},'trousers':{},'overalls':{}},{'shirt':{},'trousers':{'cargo':'yes'}},
+             {'shirt':{}},{'shirt':{},'trousers':{},'overalls':{}},{'shirt':{},'trousers':{'cargo':'yes'}},{'shirt':{},'trousers':{'pockets':1}},
              {'shirt':{},'trousers':{'color':None}},'jacket',{}]
         for costume in bad:
             with self.subTest(costume=costume),self.assertRaises(ValueError):
@@ -45,19 +45,32 @@ class CostumeParameters(unittest.TestCase):
         with self.assertRaises(ValueError):
             character.parameters({'vacuum':True,'costume':{'shirt':{},'trousers':{}}})
 
+class BodyBuild(unittest.TestCase):
+    def test_build_broadens_the_frame_and_rejects_out_of_range(self):
+        """A broad build (the board's Adult Reference) has wider shoulders, a deeper chest and thicker limbs."""
+        base={'height':1.88,'presentation':'male'};broad=dict(base,build=1.3)
+        a,b=character.landmarks(base),character.landmarks(broad)
+        self.assertGreater(b['shoulder_w'],a['shoulder_w']*1.08)
+        span=lambda config,name,axis:(lambda v:max(p[axis] for p in v)-min(p[axis] for p in v))(parts(config)[name]['vertices'])
+        self.assertGreater(span(broad,'tailored-torso',2),span(base,'tailored-torso',2)*1.12)
+        self.assertGreater(span(broad,'left-leg',0),span(base,'left-leg',0)*1.05)
+        self.assertEqual(character.geometry(dict(base,build=1.0)),character.geometry(base))
+        for bad in [.5,2,True,'big']:
+            with self.subTest(build=bad),self.assertRaises(ValueError):character.parameters({'build':bad})
+
 class GarmentLayers(unittest.TestCase):
     def test_board_layers_and_props_are_present(self):
         expected={
             'mara':['layer-top','layer-bottom','layer-shirt-front','layer-jacket-lapel-left','layer-jacket-lapel-right',
                     'layer-jacket-collar','layer-jacket-hem','layer-bib','layer-strap-left','layer-strap-right',
                     'layer-belt','layer-buckle','layer-pouch-0','layer-pouch-2','layer-left-cargo-pocket',
-                    'layer-jacket-badge','left-hand-glove','right-hand-glove','layer-neck-plate'],
-            'oren':['layer-shirt-front','layer-jacket-lapel-left','layer-belt','layer-buckle','layer-backpack',
+                    'layer-left-sleeve-patch','layer-jacket-chest-pocket-left','left-hand-glove','right-hand-glove','layer-neck-plate'],
+            'oren':['layer-left-hip-pocket','layer-right-sleeve-patch','layer-shirt-front','layer-jacket-lapel-left','layer-belt','layer-buckle','layer-backpack',
                     'layer-pack-strap-left','layer-pack-strap-right','left-hand-glove','layer-right-cargo-pocket'],
-            'tess':['layer-bib','layer-strap-left','layer-bib-pocket','layer-left-leg-cuff','layer-right-leg-cuff',
+            'tess':['layer-left-hip-pocket','layer-right-cargo-pocket','layer-back-bib','layer-bib','layer-strap-left','layer-bib-pocket','layer-left-leg-cuff','layer-right-leg-cuff',
                     'layer-left-sleeve-cuff','layer-bib-button-left'],
             'kit':['layer-hood','layer-hoodie-zip','layer-hoodie-pocket','layer-hoodie-drawstring-left',
-                   'layer-hoodie-hem','layer-backpack','layer-pack-strap-left','layer-left-cargo-pocket'],
+                   'layer-hoodie-hem','layer-hood-lining','layer-backpack','layer-pack-strap-left','layer-left-cargo-pocket'],
         }
         for name,config in CAST.items():
             by_name=parts(config)
@@ -68,6 +81,28 @@ class GarmentLayers(unittest.TestCase):
                 self.assertEqual(len(by_name),len(character.geometry(config)))
         self.assertNotIn('layer-strap-left',parts({**OREN}))
         self.assertNotIn('left-hand-glove',parts(TESS))
+
+    def test_straps_reach_their_anchors(self):
+        """Shoulder straps never end in mid-air: pack straps continue under the arm to the pack,
+        and bib-overall straps meet a back bib at the waistband."""
+        for name in ['oren','kit']:
+            config=CAST[name];by_name=parts(config)
+            pack=by_name['layer-backpack']['vertices']
+            for label in ['left','right']:
+                lower=by_name['layer-pack-strap-'+label+'-lower']['vertices']
+                with self.subTest(name=name,side=label):
+                    self.assertGreater(max(v[2] for v in lower),min(v[2] for v in by_name['layer-pack-strap-'+label]['vertices'])-.001)
+                    # Its rear end reaches the pack's side.
+                    rear=min(lower,key=lambda v:v[2])
+                    self.assertLess(abs(rear[0]),max(abs(v[0]) for v in pack))
+                    self.assertTrue(min(v[1] for v in pack)<rear[1]<max(v[1] for v in pack))
+                    self.assertLess(rear[2],max(v[2] for v in pack)+.02)
+        d=character.landmarks(TESS);s=d['s'];by_name=parts(TESS)
+        bib=by_name['layer-back-bib']['vertices'];top=max(v[1] for v in bib)
+        self.assertLess(min(v[1] for v in bib),d['hip_y']+.036*s)
+        for label in ['left','right']:
+            strap=by_name['layer-strap-'+label]['vertices'];back=[v for v in strap if v[2]<0]
+            self.assertLess(min(v[1] for v in back),top)
 
     def test_hood_and_tool_pouches_read_at_lineup_size(self):
         """A hoodie's hood lies on the upper back above the pack; tool pouches hang onto the thigh."""

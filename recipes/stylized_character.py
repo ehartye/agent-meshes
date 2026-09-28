@@ -11,7 +11,7 @@ import re
 VERSION = 1
 DEFAULTS = dict(height=1.82, age='adult', presentation='female', species='human',
                 vacuum=False, skin='#b97d57', hair='#363544', accent='#d47d48',
-                eyes='#507d76', costume=None)
+                eyes='#507d76', costume=None, build=1.0)
 
 def parameters(values):
     if not isinstance(values, dict) or set(values) - set(DEFAULTS):
@@ -22,6 +22,8 @@ def parameters(values):
     for key, choices in [('age', ('adult','child')), ('presentation', ('female','male')), ('species', ('human','alien'))]:
         if p[key] not in choices: raise ValueError(f'{key} must be one of {choices}')
     if not isinstance(p['vacuum'], bool): raise ValueError('vacuum must be a boolean')
+    if isinstance(p['build'], bool) or not isinstance(p['build'], (int,float)) or not .8 <= p['build'] <= 1.5:
+        raise ValueError('build must be a number in 0.8..1.5 (1 is the default frame)')
     for key in ['skin','hair','accent','eyes']:
         if not isinstance(p[key], str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',p[key]):
             raise ValueError(f'{key} must be a six-digit hex color')
@@ -220,8 +222,11 @@ def landmarks(values=None):
     shoulder_w=(.405 if p['presentation']=='female' else .445)*s
     if child: shoulder_w*=.94
     hip_w=(.35 if p['presentation']=='female' else .335)*s
+    # build broadens the frame: shoulders most, hips a little; girth follows in geometry().
+    bulk=lambda k: 1+k*(p['build']-1)
+    shoulder_w*=bulk(.3); hip_w*=bulk(.15)
     chest_y=mix(hip_y,shoulder_y,.72); waist_y=mix(hip_y,shoulder_y,.28)
-    return dict(h=h,s=s,child=child,alien=alien,rx=rx,ry=ry,rz=rz,head_y=head_y,shoulder_y=shoulder_y,hip_y=hip_y,shoulder_w=shoulder_w,hip_w=hip_w,chest_y=chest_y,waist_y=waist_y)
+    return dict(h=h,s=s,child=child,alien=alien,build=p['build'],rx=rx,ry=ry,rz=rz,head_y=head_y,shoulder_y=shoulder_y,hip_y=hip_y,shoulder_w=shoulder_w,hip_w=hip_w,chest_y=chest_y,waist_y=waist_y)
 
 # --- Garment layers and work boots -------------------------------------------
 # A costume dresses the same body in layered clothes. Slots are optional except
@@ -232,8 +237,8 @@ COSTUME_SLOTS=dict(
     shirt=dict(color='#e8e2d0'),
     jacket=dict(color='#c8672e',badge=None),
     hoodie=dict(color='#5c7d4a',trim='#e0873a',badge=None),
-    overalls=dict(color='#3a6f86',cuffs=None,cargo=False,buttons='#c9ccd0'),
-    trousers=dict(color='#263b51',cuffs=None,cargo=False),
+    overalls=dict(color='#3a6f86',cuffs=None,cargo=False,pockets=False,buttons='#c9ccd0'),
+    trousers=dict(color='#263b51',cuffs=None,cargo=False,pockets=False),
     belt=dict(color='#4a3426',buckle='#b9bec4',pouches=0,pouch='#6a5638'),
     backpack=dict(color='#3a3a3e',straps='#2d2a2c'),
     gloves=dict(color='#3a3436',trim=None),
@@ -254,7 +259,7 @@ def costume_parameters(value):
         layer=dict(schema,**fields)
         for key,v in layer.items():
             if key=='pouches': ok=isinstance(v,int) and not isinstance(v,bool) and 0<=v<=4
-            elif key=='cargo': ok=isinstance(v,bool)
+            elif key in ('cargo','pockets'): ok=isinstance(v,bool)
             else: ok=(v is None and schema[key] is None) or (isinstance(v,str) and re.fullmatch(r'#[0-9a-fA-F]{6}',v))
             if not ok: raise ValueError(f'costume {slot}.{key} is invalid')
         result[slot]=layer
@@ -526,6 +531,12 @@ def dress(m,costume,d):
                 row.append(((x+mix(-width/2,width/2,i/3),origin_y,0),(0,math.sin(phi),math.cos(phi))))
             rays.append(row)
         layer_patch(m,body,name,color,rays,thickness*s,lift=lift*s)
+    def sleeve_patch(side_label,color,y0,t0,radius):
+        """Round sewn patch on the upper sleeve with a darker stitched border under it."""
+        piece=side_label+'-sleeve'; R=body.section(piece,y0)[3]
+        for suffix,r,fill,lift,thick in [('-rim',radius*1.14,shade(color,.62),0,.003),('',radius,color,.002*s,.0035)]:
+            rays=[[around(piece,y0+r*(.02+.98*j/5)*math.sin(i*math.tau/20),t0+r*(.02+.98*j/5)*math.cos(i*math.tau/20)/R) for j in range(6)] for i in range(20)]
+            layer_patch(m,body,'layer-'+side_label+'-sleeve-patch'+suffix,fill,rays,thick*s,lift=lift,wrap=True,rim=1)
     def surface_point(ray,offset=0):
         p=body.cast(*ray); return vadd(p,vscale(body.normal(p),offset))
     # Neck ring plate: every settler wears the tech collar.
@@ -585,17 +596,26 @@ def dress(m,costume,d):
         _,u,v,ru,rv=body.section('tailored-torso',hem+.02*s); gap=math.acos(min(1,(opening(hem)+.02*s)/ru))
         ring_band('layer-jacket-hem',shade(jacket['color'],.9),torso,hem,hem+.035*s,.007,t0=math.pi-gap,t1=math.tau+gap,lift=.006*s)
         if jacket['badge']:
-            m.ellipsoid('layer-jacket-badge',surface_point(around('left-sleeve',sh-.085*s,math.pi-.45)),(.006*s,.026*s,.024*s),jacket['badge'])
+            for side,label in [(-1,'left'),(1,'right')]:
+                sleeve_patch(label,jacket['badge'] if side<0 else shade(jacket['color'],.72),sh-.1*s,math.pi/2-side*(math.pi/2-.5),.03*s)
+        # Flapped chest pockets outside the lapels, off the arm's swing lane.
+        for side,label in [(-1,'left'),(1,'right')]:
+            lo,hi=sorted([side*(opening(chest)+.025*s),side*(opening(chest)+.08*s)])
+            front_patch('layer-jacket-chest-pocket-'+label,shade(jacket['color'],.93),chest-.035*s,chest+.03*s,lambda y,lo=lo:lo,lambda y,hi=hi:hi,.005,lift=.009*s,rim=.6)
+            front_patch('layer-jacket-chest-flap-'+label,shade(jacket['color'],.8),chest+.012*s,chest+.036*s,lambda y,lo=lo:lo-.003*s,lambda y,hi=hi:hi+.003*s,.004,lift=.015*s,rim=.8)
     if hoodie:
         points=[]
         _,_,_,ru,_=body.section('tailored-torso',sh+.02*s); end=math.acos(min(1,sw*.14/ru))
         for k in range(17):
             t=mix(end,-math.pi-end,k/16); back=math.sin(math.pi*k/16)
             points.append(surface_point(((0,sh-.02*s,0),(math.cos(t)*.8,.6-.15*back,math.sin(t)*.8)),.02*s*back+.006*s))
-        m.tube('layer-hood',points,[s*(.012+.03*math.sin(math.pi*k/16)**1.5) for k in range(17)],hoodie['color'])
+        m.tube('layer-hood',points,[s*(.016+.04*math.sin(math.pi*k/16)**1.5) for k in range(17)],hoodie['color'])
+        # The hood's contrast lining shows along its opening, inside the rolled edge.
+        lining=[vadd(p,(0,.012*s*math.sin(math.pi*k/16),0)) for k,p in enumerate(points)]
+        m.tube('layer-hood-lining',lining,[s*(.01+.032*math.sin(math.pi*k/16)**1.5) for k in range(17)],hoodie['trim'])
         # The lowered hood lies folded on the upper back, rounded at its point.
-        hood=lambda y: min(sw*.27*max(.12,smooth01(sh-.145*s,sh-.02*s,y))**.7,body.section(torso(y),y)[3]*.9)
-        front_patch('layer-hood-back',shade(hoodie['color'],.86),sh-.145*s,sh+.03*s,lambda y:-hood(y),hood,.032,back=True,lift=.004*s,rim=.3)
+        hood=lambda y: min(sw*.31*max(.12,smooth01(sh-.17*s,sh-.03*s,y))**.7,body.section(torso(y),y)[3]*.9)
+        front_patch('layer-hood-back',shade(hoodie['color'],.86),sh-.17*s,sh+.03*s,lambda y:-hood(y),hood,.042,back=True,lift=.004*s,rim=.3)
         zip_points=[surface_point(facing(mix(hip+.03*s,sh+.03*s,k/7),0),.0015*s) for k in range(8)]
         m.tube('layer-hoodie-zip',zip_points,[.004*s]*8,shade(hoodie['color'],.55))
         for side,label in [(-1,'left'),(1,'right')]:
@@ -608,9 +628,14 @@ def dress(m,costume,d):
         merge_parts(m,start,'layer-hoodie-pocket')
         ring_band('layer-hoodie-hem',shade(hoodie['color'],.85),torso,hip+.02*s,hip+.06*s,.007,lift=.002*s)
         if hoodie['badge']:
-            m.ellipsoid('layer-hoodie-badge',surface_point(around('left-sleeve',sh-.085*s,math.pi-.45)),(.006*s,.026*s,.024*s),hoodie['badge'])
+            for side,label in [(-1,'left'),(1,'right')]:
+                sleeve_patch(label,hoodie['badge'],sh-.1*s,math.pi/2-side*(math.pi/2-.5),.03*s)
     for side,label in [(-1,'left'),(1,'right')]:
         ring_band('layer-'+label+'-sleeve-cuff',shade(top['color'],.86),label+'-sleeve',wrist+.004*s,wrist+.036*s,.006)
+        if bottom['pockets']:
+            # Front hip pockets: a darker welt panel on the front of each thigh, under the waist.
+            t=math.pi/2-side*.55
+            ring_band('layer-'+label+'-hip-pocket',shade(bottom['color'],.84),label+'-leg',hip-.12*s,hip-.035*s,.004,t0=t-.42,t1=t+.42,lift=.001*s,rim=.7)
         if bottom['cargo']:
             t0=math.pi-.15 if side<0 else .15
             y0,y1=mix(knee,hip,.22),mix(knee,hip,.58)
@@ -639,7 +664,7 @@ def dress(m,costume,d):
             over_shoulder('layer-pack-strap-'+label,pack['straps'],side*sw*.2,side*sw*.25,side*sw*.17,mix(hip,sh,.42),mix(hip,sh,.6),sw*.075,.007,.012)
             # The strap's lower half runs from its front end under the arm to the pack's side.
             y=mix(hip,sh,.42)+.012*s; _,u,v,ru,rv=body.section(torso(y),y)
-            front=math.acos(max(-1,min(1,(side*sw*.2-u)/ru))); rear=-math.acos(max(-1,min(1,(side*sw*.26-u)/ru)))
+            front=math.acos(max(-1,min(1,(side*sw*.2-u)/ru))); rear=-math.acos(max(-1,min(1,(side*sw*.2-u)/ru)))  # tucks under the pack's side
             t0,t1=(front,rear+math.tau) if side<0 else (rear,front)
             ring_band('layer-pack-strap-'+label+'-lower',pack['straps'],torso,y-.018*s,y+.018*s,.006,t0=t0,t1=t1,lift=.012*s,rim=.7)
         # A pack rides below a lowered hood so the hood still reads from behind.
@@ -676,13 +701,17 @@ def geometry(values=None,meshes=None):
     # Across the chest the top gains depth, not width, so its side seam stays under
     # the armpit and off the swinging arm.
     top_ease=(lambda rows: ease(rows,1.04,.008,below=shoulder_y+.03*s,side_below=chest_y-.01*s)) if loose_top else (lambda rows: rows)
+    # A heavier build thickens the torso front to back, the waist, the neck and the limbs.
+    bulk=lambda k: 1+k*(dims['build']-1)
+    def girth(rows,ku,kv,below=9):
+        return [(a,u,v,ru*bulk(ku),rv*bulk(kv)) if a<below else (a,u,v,ru,rv) for a,u,v,ru,rv in rows]
     leg_ease=(lambda rows: ease(rows,1.07,.006,above=.26*s)) if costume else (lambda rows: rows)
-    m.rings('tailored-torso',top_ease([(hip_y+.026*s,0,0,hip_w*.47,.105*s),(hip_y+.04*s,0,0,hip_w*.5,.11*s),(waist_y,0,0,hip_w*.41,.096*s),(chest_y,0,.005*s,shoulder_w*.46,.115*s),(shoulder_y,0,0,shoulder_w*.50,.094*s),(shoulder_y+.065*s,0,0,.075*s,.065*s)]),body)
-    m.rings('neck',[(shoulder_y+.02*s,0,0,.053*s,.051*s),(head_y-ry*.55,0,0,.058*s,.053*s)],skin)
+    m.rings('tailored-torso',top_ease(girth(girth([(hip_y+.026*s,0,0,hip_w*.47,.105*s),(hip_y+.04*s,0,0,hip_w*.5,.11*s),(waist_y,0,0,hip_w*.41,.096*s),(chest_y,0,.005*s,shoulder_w*.46,.115*s),(shoulder_y,0,0,shoulder_w*.50,.094*s),(shoulder_y+.065*s,0,0,.075*s,.065*s)],.45,0,below=chest_y-.01*s),0,.6,below=shoulder_y-.01*s)),body)
+    m.rings('neck',girth([(shoulder_y+.02*s,0,0,.053*s,.051*s),(head_y-ry*.55,0,0,.058*s,.053*s)],.3,.3),skin)
     m.rings('collar',[(shoulder_y+.038*s,0,0,.076*s,.071*s),(shoulder_y+.068*s,0,0,.071*s,.067*s)],ring['color'] if ring else navy)
     if ring: m.parts[-1].update(roughness=.4,metalness=.55)
     if not costume: m.rings('waist-belt',[(hip_y+.02*s,0,0,hip_w*.502,.113*s),(hip_y+.058*s,0,0,hip_w*.488,.112*s)],navy)
-    m.rings('trouser-yoke',[(hip_y-.083*s,0,0,hip_w*.44,.080*s),(hip_y-.015*s,0,0,hip_w*.51,.11*s),(hip_y+.035*s,0,0,hip_w*.49,.109*s)],trouser)
+    m.rings('trouser-yoke',girth([(hip_y-.083*s,0,0,hip_w*.44,.080*s),(hip_y-.015*s,0,0,hip_w*.51,.11*s),(hip_y+.035*s,0,0,hip_w*.49,.109*s)],.2,.45),trouser)
     if not costume:
         # A small rounded control panel is embedded in the fitted flight garment.
         m.ellipsoid('chest-terminal',(-.065*s,chest_y,.115*s),(.049*s,.065*s,.017*s),navy)
@@ -692,13 +721,13 @@ def geometry(values=None,meshes=None):
     if eva: boots=dict(color=ivory,sole=navy,toe=shade(ivory,.9),laces=None,collar=navy)
     for side,label in [(-1,'left'),(1,'right')]:
         lx=side*.096*s; knee_y=hip_y*.53
-        m.rings(label+'-leg',leg_ease([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)]),trouser)
+        m.rings(label+'-leg',leg_ease(girth([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)],.22,.3,below=hip_y-.02*s)),trouser)
         if not costume: m.ellipsoid(label+'-knee-panel',(lx,knee_y,.081*s),(.047*s,.063*s,.013*s),accent)
         work_boot(m,label,lx,side,s,boots)
         # Tapered sleeve contours include deltoid, elbow and forearm.
         wrist_y=hip_y+.095*s; elbow_y=mix(wrist_y,shoulder_y,.49)
         sx=shoulder_w*.49; wx=sx+.092*s
-        m.rings(label+'-sleeve',(lambda rows: ease(rows,1.05,.006) if loose_top else rows)([(wrist_y,side*wx,.055*s,.038*s,.039*s),(elbow_y-.06*s,side*(wx-.009*s),.03*s,.048*s,.047*s),(elbow_y,side*(wx-.015*s),.012*s,.045*s,.047*s),(elbow_y+.1*s,side*(sx+.033*s),0,.062*s,.063*s),(shoulder_y-.022*s,side*sx,0,.073*s,.077*s),(shoulder_y+.026*s,side*(sx-.05*s),0,.06*s,.06*s)]),body)
+        m.rings(label+'-sleeve',(lambda rows: ease(rows,1.05,.006) if loose_top else rows)(girth([(wrist_y,side*wx,.055*s,.038*s,.039*s),(elbow_y-.06*s,side*(wx-.009*s),.03*s,.048*s,.047*s),(elbow_y,side*(wx-.015*s),.012*s,.045*s,.047*s),(elbow_y+.1*s,side*(sx+.033*s),0,.062*s,.063*s),(shoulder_y-.022*s,side*sx,0,.073*s,.077*s),(shoulder_y+.026*s,side*(sx-.05*s),0,.06*s,.06*s)],.3,.3)),body)
         if not costume: m.rings(label+'-wrist-seal',[(wrist_y-.009*s,side*wx,.055*s,.041*s,.043*s),(wrist_y+.025*s,side*wx,.052*s,.042*s,.044*s)],navy)
         hand_color=ivory if eva else skin
         m.rings(label+'-palm',[(wrist_y-.086*s,side*wx,.066*s,.038*s,.02*s),(wrist_y-.052*s,side*wx,.067*s,.043*s,.025*s),(wrist_y+.007*s,side*wx,.055*s,.027*s,.024*s)],hand_color)
