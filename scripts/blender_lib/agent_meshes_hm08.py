@@ -15,6 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
+from agent_meshes_reproportion import tps_apply, tps_fit  # noqa: F401  (shared thin-plate spline)
+
 DATA = Path(__file__).resolve().parent / 'data' / 'hm08'
 KINDS = ('body', 'helper-l-eye', 'helper-r-eye', 'helper-upper-teeth', 'helper-lower-teeth', 'helper-tongue',
          'helper-l-eyelashes-1', 'helper-l-eyelashes-2', 'helper-r-eyelashes-1', 'helper-r-eyelashes-2')
@@ -224,27 +226,6 @@ def similarity(source, target):
     a, b = source - cs, target - ct
     s = (a * b).sum() / (a * a).sum()
     return s, ct - s * cs
-
-
-def tps_fit(points, targets, regularize=1e-4):
-    """A 3-D thin-plate spline (phi(r) = r, plus an affine part) taking `points` to `targets`."""
-    P, Q = np.asarray(points, dtype=np.float64), np.asarray(targets, dtype=np.float64)
-    n = len(P)
-    K = np.linalg.norm(P[:, None] - P[None], axis=2) + regularize * np.eye(n)
-    Pa = np.hstack([np.ones((n, 1)), P])
-    A = np.zeros((n + 4, n + 4)); A[:n, :n] = K; A[:n, n:] = Pa; A[n:, :n] = Pa.T
-    b = np.zeros((n + 4, 3)); b[:n] = Q
-    return P, np.linalg.solve(A, b)
-
-
-def tps_apply(model, points):
-    P, W = model
-    X = np.asarray(points, dtype=np.float64)
-    out = np.empty_like(X)
-    for s in range(0, len(X), 4096):
-        chunk = X[s:s + 4096]
-        out[s:s + 4096] = np.linalg.norm(chunk[:, None] - P[None], axis=2) @ W[:len(P)] + np.hstack([np.ones((len(chunk), 1)), chunk]) @ W[len(P):]
-    return out
 
 
 def closest_points(points, vertices, faces, k=6):
