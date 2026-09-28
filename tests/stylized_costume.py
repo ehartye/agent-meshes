@@ -386,6 +386,17 @@ class GarmentRig(unittest.TestCase):
         cuff=walk.skin_weights('left-boot-cuff',by_name['left-boot-cuff']['vertices'],d)
         self.assertTrue(all(row.get('left-shin',0)>.9 for row in cuff))
 
+    def test_boot_cuff_binds_like_the_hem_beside_it(self):
+        """Round every side of a child's knee blend, a cuff point and the hem point at the same
+        direction round their own axes take the same weights, so the jog never slides one into the other."""
+        d=character.landmarks(KIT);s=d['s'];x0=d['leg_x'];y=character.boot_height(character.BOOT_TOP_Y,True)*s
+        for angle in [k*math.tau/8 for k in range(8)]:
+            c,sn=math.cos(angle),math.sin(angle)
+            hem=walk.skin_weights('layer-right-leg-hem',[(x0+.06*s*c,y,-.006*s+.06*s*sn)],d)[0]
+            cuff=walk.skin_weights('right-boot-cuff',[(x0+.08*s*c,y,character.BOOT_SHAFT_Z*s+.08*s*sn)],d)[0]
+            with self.subTest(angle=angle):
+                for bone in set(hem)|set(cuff):self.assertAlmostEqual(hem.get(bone,0),cuff.get(bone,0),delta=.015)
+
     def test_skinned_vertices_follow_the_rig(self):
         d=character.landmarks({});rest=walk.rest_bones(d)
         for gait in ['walk','jog']:
