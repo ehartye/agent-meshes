@@ -287,8 +287,10 @@ class CartoonFace(unittest.TestCase):
         self.assertGreater(P[near, 2] - V[near, 2], .05 * hw)
         # No crease terraces between the nose and the jaw: the surface there turns no harder than at rest.
         c = V[self.T].mean(axis=1)
+        # (the cheek and chin round the mouth, not the lips' own fold at the corner, which is sharp at rest)
+        fold = np.linalg.norm(c - m['mouth_corner_L'], axis=1) < .4 * hw
         region = (c[:, 0] > .3 * hw) & (c[:, 0] < 1.6 * hw) & (c[:, 2] < m['subnasale'][2]) & (c[:, 2] > m['menton'][2] + .2 * hw) \
-            & (c[:, 1] < m['stomion'][1] + .3 * hw) & ~self.face['mouth_inside']
+            & (c[:, 1] < m['stomion'][1] + .3 * hw) & ~self.face['mouth_inside'] & ~fold
         rest, smile = self.turn(V, region), self.turn(P, region)
         self.assertLess(smile, rest + 8)
         for name in ('mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight'):
