@@ -423,7 +423,7 @@ def boot_top_point(z,x):
     return (x,y,z),vunit((0,1,-slope))
 
 BOOT_CLEARANCE=.006  # the shaft and cuff stand this far off the trouser leg at rest (unit scale)
-BOOT_BACK_DIP=.022  # the collar dips this far at the heel, so a deeply bent knee folds the calf clear of it
+BOOT_BACK_DIP=.03  # the collar dips this far at the heel, so a deeply bent knee folds the calf clear of it
 
 def work_boot(m,label,lx,side,s,colors,child=False,leg=None):
     """Chunky work boot: one lofted surface split into an upper, a toe cap and an outsole.
@@ -775,7 +775,8 @@ def geometry(values=None,meshes=None):
     if eva: boots=dict(color=ivory,sole=navy,toe=shade(ivory,.9),laces=None,collar=navy)
     for side,label in [(-1,'left'),(1,'right')]:
         lx=side*dims['leg_x']; knee_y=hip_y*.53
-        m.rings(label+'-leg',leg_ease(girth([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)],.3,.4,below=hip_y-.02*s)),trouser)
+        # A broad build deepens the thigh more than the calf, so a deep jog knee bend folds the calf clear.
+        m.rings(label+'-leg',leg_ease(girth(girth([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)],.3,.4,below=hip_y-.02*s),0,-.2,below=knee_y-.01*s)),trouser)
         if not costume: m.ellipsoid(label+'-knee-panel',(lx,knee_y,.081*s),(.047*s,.063*s,.013*s),accent)
         work_boot(m,label,lx,side,s,boots,child,m.lofts[label+'-leg'])
         # Tapered sleeve contours include deltoid, elbow and forearm.

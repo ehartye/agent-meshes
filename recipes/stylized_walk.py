@@ -219,7 +219,7 @@ def skin_weights(name,vertices,d):
                 # The inner elbow blends wider (by direction round the arm, as the knee does), so a
                 # bent arm rolls the sleeve into a crease instead of folding it through itself.
                 front=(z-.012*s)/max(1e-9,math.hypot(abs(x)-(sx+.077*s),z-.012*s))
-                reach=s*(.045+.075*w_smooth(-.2,.8,front))
+                reach=s*(.045+.09*w_smooth(-.3,.7,front))
                 forearm=1-w_smooth(elbow-reach,elbow+reach,y)
                 torso=w_smooth(hip+.065*s,hip+.20*s,y)
                 row={'pelvis':(1-arm)*(1-torso),'spine':(1-arm)*torso,side+'-upper-arm':arm*(1-forearm),side+'-forearm':arm*forearm}
@@ -235,8 +235,9 @@ def skin_weights(name,vertices,d):
                 # proud of the cloth take the same weights as the cloth under them), so a deep swing flexion folds the cloth
                 # into a crease instead of driving the calf through the thigh.
                 back=(z-.005*s)/max(1e-9,math.hypot(abs(x)-d.get('leg_x',.096*s),z-.005*s))  # direction round the leg, not depth
-                reach=s*(.12+.095*w_smooth(.35,-.5,back))
-                lower=1-w_smooth(knee-reach,knee+reach,y)
+                # Behind the knee the blend also centres lower, so the crease forms where the calf thins.
+                reach=s*(.12+.095*w_smooth(.35,-.5,back));dip=s*.02*w_smooth(.35,-.5,back)
+                lower=1-w_smooth(knee-dip-reach,knee-dip+reach,y)
                 row={'pelvis':pelvis,'left-thigh':(1-pelvis)*(1-lower)*(1-right),'right-thigh':(1-pelvis)*(1-lower)*right,side+'-shin':(1-pelvis)*lower}
             rows.append({bone:value for bone,value in row.items() if value>0})
         return rows

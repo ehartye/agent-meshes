@@ -55,6 +55,10 @@ class BodyBuild(unittest.TestCase):
         self.assertGreater(span(broad,'tailored-torso',2),span(base,'tailored-torso',2)*1.12)
         self.assertGreater(span(broad,'left-leg',0),span(base,'left-leg',0)*1.05)
         self.assertEqual(character.geometry(dict(base,build=1.0)),character.geometry(base))
+        # The thigh deepens more than the calf, so a deep knee bend in the jog folds the calf clear of the hamstring.
+        m0,m1=character.Meshes(),character.Meshes();character.geometry(base,m0);character.geometry(broad,m1)
+        depth=lambda m,i:m.lofts['left-leg'][i][4]
+        self.assertGreater(depth(m1,4)/depth(m0,4),depth(m1,1)/depth(m0,1)+.04)
         for bad in [.5,2,True,'big']:
             with self.subTest(build=bad),self.assertRaises(ValueError):character.parameters({'build':bad})
 
