@@ -16,13 +16,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: pip install numpy
       - run: python tests/blender_author_geometry.py
       - run: python tests/blender_author_skin.py
       - run: python tests/stylized_character.py
       - run: python tests/stylized_walk.py
       - run: python tests/stylized_costume.py
+      - run: python tests/stylized_face.py
       - run: node --test tests/botanical-kit.test.mjs
       - run: python tests/blender_face_geometry.py
+      - run: python tests/hm08_head.py
       - run: npm test
       - run: npm run typecheck
       - run: npm run build

@@ -15,13 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blende
 import agent_meshes_author
 from agent_meshes_face import _clip, _quality, _refine, _sharp_edges
 from agent_meshes_face import (
-    DEFAULT_LID_FOLLOW, ATTACH_TOLERANCE, lash_geometry, attach_to_skin, nose_geometry, prune_glb_morphs, sculpt_lips, sculpt_skin, skin_tints, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
+    DEFAULT_LID_FOLLOW, ATTACH_TOLERANCE, lash_geometry, attach_to_skin, follow_skin, nose_geometry, prune_glb_morphs, sculpt_lips, sculpt_skin, skin_tints, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
     ARKIT_GAZE, ARKIT_NAMES, ARKIT_REQUIRED, CANONICAL_EMOTIONS, COVERAGE_STATES, JawHinge, brow_ridge_geometry, chin_drop, cut_faces, cut_hole,
     eye_coverage, eye_coverage_problems, brow_plate_geometry, split_plates, rubber_mouth_geometry,
     ellipsoid_geometry, exposed_teeth_geometry, eyeball_geometry, folded_faces, front_surface, join_geometry,
     face_contract_extras, lid_clearance, lid_geometry, merge_glb_node_extras, mirror_x, mouth_cavity_geometry,
     recommended_gaze, shutter_geometry, socket_geometry, soft_offset, symmetric_offsets, teeth_row_geometry,
-    tongue_geometry, validate_face_contract_extras,
+    tongue_geometry, validate_face_contract_extras, smooth_surface,
 )
 
 CENTER, RADIUS = (.032, -.07, .05), .012
@@ -99,7 +99,7 @@ class ContractConstantsTests(unittest.TestCase):
         self.assertEqual(CANONICAL_EMOTIONS['surprised']['jawOpen'], .6)
 
     def test_author_module_reexports_the_face_helpers(self):
-        for name in ('lid_geometry', 'JawHinge', 'teeth_row_geometry', 'face_contract_extras', 'build_eye', 'face_skeleton', 'add_jaw_open'):
+        for name in ('lid_geometry', 'JawHinge', 'teeth_row_geometry', 'face_contract_extras', 'build_eye', 'face_skeleton', 'add_eye_bones', 'add_jaw_open'):
             self.assertTrue(hasattr(agent_meshes_author, name), name)
 
 
@@ -784,6 +784,26 @@ class AttachTests(unittest.TestCase):
         far = attach_to_skin(self.nostril(center), dict(skin, morphs={'browInnerUp': soft_offset(skin['vertices'], (0, -.08, .2), .02, (0, 0, .004))}))
         self.assertEqual(far['morphs'], {})
 
+    def test_follow_skin_carries_a_tucked_part_with_the_skin_fading_out_behind_it(self):
+        skin, center = self.skin()
+        # A bag behind the skin: its rim 3 mm behind the swelling skin, its back 40 mm deep.
+        bag = mouth_cavity_geometry((center[0], center[1] + .003, center[2]), .02, .012, .04)
+        skin = dict(skin, morphs=dict(skin['morphs'], jawOpen=soft_offset(skin['vertices'], center, .03, (0, 0, -.01))))
+        followed = follow_skin(bag, skin, reach=.02, skip=['jawOpen'])
+        self.assertEqual(sorted(followed['morphs']), ['noseSneerLeft'])
+        rest, target = followed['vertices'], followed['morphs']['noseSneerLeft']
+        rim = [target[i][1] - rest[i][1] for i in bag['rim']]
+        back = target[-1][1] - rest[-1][1]
+        # The rim rides the skin's swell almost fully; the deep back of the bag stays put.
+        self.assertLess(min(rim), -.0015)
+        self.assertAlmostEqual(back, 0, delta=1e-9)
+        self.assertEqual(followed['faces'], bag['faces'])
+        # A part with its own morph of a name keeps it and adds the skin's delta on top.
+        own = follow_skin(dict(bag, morphs={'noseSneerLeft': [(x, y, z + .001) for x, y, z in bag['vertices']]}), skin, reach=.02)
+        self.assertAlmostEqual(own['morphs']['noseSneerLeft'][-1][2] - bag['vertices'][-1][2], .001)
+        self.assertIn('jawOpen', own['morphs'])
+        with self.assertRaises(ValueError): follow_skin(bag, skin, reach=0)
+
     def test_skin_contact_measures_a_floating_part(self):
         skin, center = self.skin()
         lifted = self.nostril((center[0], center[1] - .0052, center[2]))  # its back 3 mm in front of the skin
@@ -1005,6 +1025,17 @@ class ContractExtrasTests(unittest.TestCase):
         self.assertTrue(any('exposedTeeth' in e for e in errors))
         with self.assertRaises(ValueError):
             face_contract_extras(list(ARKIT_REQUIRED)[1:], yaw_max=25, pitch_max=15)
+
+
+    def test_a_full_body_character_declares_its_body_skeleton(self):
+        face = face_contract_extras(list(ARKIT_REQUIRED), yaw_max=25, pitch_max=15, skeleton='body')['arkitFace']
+        self.assertEqual(face['skeleton'], 'body')
+        self.assertNotIn('skeleton', face_contract_extras(list(ARKIT_REQUIRED), yaw_max=25, pitch_max=15)['arkitFace'])
+        with self.assertRaises(ValueError):
+            face_contract_extras(list(ARKIT_REQUIRED), yaw_max=25, pitch_max=15, skeleton='torso')
+        extras = face_contract_extras(list(ARKIT_REQUIRED), yaw_max=25, pitch_max=15)
+        extras['arkitFace']['skeleton'] = 'legs'
+        self.assertTrue(any('skeleton' in e for e in validate_face_contract_extras(extras)))
 
 
 class GlbExtrasTests(unittest.TestCase):
@@ -1272,6 +1303,32 @@ class EyeHoleTests(unittest.TestCase):
         for index in right['wall']: self.assertTrue(all(cut['vertices'][i][0] < 0 for i in cut['faces'][index]))
         with self.assertRaises(ValueError): eye_holes(blank['vertices'], blank['faces'], (-.026, -.07, .15), .017)
         with self.assertRaisesRegex(ValueError, 'midline'): eye_holes(blank['vertices'], blank['faces'], (.018, -.07, .15), .017)
+
+    def test_the_socket_dips_meet_smoothly_on_the_midline(self):
+        # P1 round 1: each half took only its own eye's socket dip, so where the dip still reached the midline (large
+        # eyes set close) the mirrored halves met in a crease that shaded as a seam down the forehead and nose.
+        from agent_meshes_face import eye_holes
+        blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=72, segments=96)
+        for style in ('continuous', 'shells'):
+            options = {} if style == 'continuous' else {'style': 'shells'}
+            cut = eye_holes(blank['vertices'], blank['faces'], (.038, -.066, .142), .019, opening=(45, 32, 28), **options)
+            vertices, faces = cut['vertices'], cut['faces']
+            normals = [[0.0, 0.0, 0.0] for _ in vertices]
+            for f in faces:
+                a, b, c = (vertices[i] for i in f[:3])
+                u, v = [b[k] - a[k] for k in range(3)], [c[k] - a[k] for k in range(3)]
+                n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+                for i in f:
+                    for k in range(3): normals[i][k] += n[k]
+            unit = lambda n: [c / (math.sqrt(sum(x * x for x in n)) or 1) for c in n]
+            # Beside the midline between the eyes the skin's normal turns no faster than it does a little way out.
+            near, out = [], []
+            for i, p in enumerate(vertices):
+                if not (0 < abs(p[0]) < .012 and p[1] < -.05 and .125 < p[2] < .16): continue
+                turn = abs(unit(normals[i])[0]) / abs(p[0])
+                (near if abs(p[0]) < .002 else out if abs(p[0]) > .004 else []).append(turn)
+            near_mean, out_mean = sum(near) / len(near), sum(out) / len(out)
+            self.assertLess(near_mean, 2 * out_mean, f'{style}: the midline creases (normal turns {near_mean:.0f}/m beside it, {out_mean:.0f}/m out)')
 
     def test_the_bevel_turns_evenly_round_the_rim(self):
         # Round 5: each rim vertex took its bevel from its own irregular clipped triangles, so neighbours' bevels turned
@@ -2259,6 +2316,69 @@ class SdfBlankTests(unittest.TestCase):
     def test_rejects_a_field_the_center_is_not_inside(self):
         from agent_meshes_face import sdf_blank
         with self.assertRaisesRegex(ValueError, 'inside'): sdf_blank(self.field, (0, 0, .5))
+
+def grid(n=12, size=.06):
+    """A square grid of quads in the x-z plane at y = 0 (the face's front), n cells a side."""
+    step = size / n
+    vertices = [(i * step - size / 2, 0.0, j * step - size / 2) for j in range(n + 1) for i in range(n + 1)]
+    faces = [(j * (n + 1) + i, j * (n + 1) + i + 1, (j + 1) * (n + 1) + i + 1, (j + 1) * (n + 1) + i) for j in range(n) for i in range(n)]
+    return vertices, faces
+
+
+class SmoothSurface(unittest.TestCase):
+    def test_smoothing_flattens_a_crease_and_keeps_unweighted_vertices_still(self):
+        vertices, faces = grid()
+        # A sharp ridge along one row (a crease like the lid patch's rim), the grid's border held still.
+        creased = [(x, -.003 if abs(z) < 1e-9 else 0.0, z) for x, _, z in vertices]
+        border = lambda v: abs(abs(v[0]) - .03) < 1e-9 or abs(abs(v[2]) - .03) < 1e-9
+        weights = [0.0 if border(v) else 1.0 for v in creased]
+        smooth = smooth_surface(creased, faces, weights, iterations=20)
+        # The crease's sharpness (how far the ridge row stands from the rows either side) falls to a fraction.
+        n, step = 12, .005
+        def sharpness(points, i): return abs(points[i][1] - (points[i - n - 1][1] + points[i + n + 1][1]) / 2)
+        ridge = [i for i, v in enumerate(creased) if abs(v[2]) < 1e-9 and abs(v[0]) < .02]
+        self.assertLess(max(sharpness(smooth, i) for i in ridge), .25 * min(sharpness(creased, i) for i in ridge))
+        for i, v in enumerate(creased):
+            if weights[i] == 0: self.assertEqual(smooth[i], v)
+
+    def test_smoothing_is_linear_so_morphs_smoothed_alike_still_blend(self):
+        vertices, faces = grid(8)
+        bumpy = [(x, .002 * math.sin(40 * x) * math.cos(50 * z), z) for x, _, z in vertices]
+        moved = [(x + .001, y + .004 * math.exp(-(x * x + z * z) / .0002), z) for x, y, z in bumpy]
+        weights = [.5 + .5 * math.cos(20 * v[0]) for v in bumpy]
+        a, b = smooth_surface(bumpy, faces, weights), smooth_surface(moved, faces, weights)
+        half = smooth_surface([tuple((p + q) / 2 for p, q in zip(u, v)) for u, v in zip(bumpy, moved)], faces, weights)
+        for u, v, h in zip(a, b, half):
+            for k in range(3): self.assertAlmostEqual(h[k], (u[k] + v[k]) / 2, places=12)
+
+    def test_smoothing_keeps_a_rounded_surface_from_shrinking(self):
+        sphere = ellipsoid_geometry((0, 0, 0), (.02, .02, .02), rings=16, segments=24)
+        smooth = smooth_surface(sphere['vertices'], sphere['faces'], [1.0] * len(sphere['vertices']), iterations=10)
+        radii = [math.dist(v, (0, 0, 0)) for v in smooth]
+        self.assertGreater(min(radii), .0195)
+        self.assertLess(max(radii), .0205)
+
+    def test_smoothing_without_numpy_matches(self):
+        import builtins
+        from unittest.mock import patch
+        vertices, faces = grid(6)
+        bumpy = [(x, .002 * math.sin(40 * x) * math.cos(50 * z), z) for x, _, z in vertices]
+        weights = [.5 + .5 * math.cos(20 * v[0]) for v in bumpy]
+        fast = smooth_surface(bumpy, faces, weights, iterations=4)
+        real = builtins.__import__
+        def no_numpy(name, *args, **kwargs):
+            if name == 'numpy': raise ImportError(name)
+            return real(name, *args, **kwargs)
+        with patch('builtins.__import__', side_effect=no_numpy):
+            slow = smooth_surface(bumpy, faces, weights, iterations=4)
+        for a, b in zip(fast, slow):
+            for k in range(3): self.assertAlmostEqual(a[k], b[k], places=12)
+
+    def test_smoothing_rejects_bad_weights(self):
+        vertices, faces = grid(2)
+        for bad in ([1.0], [2.0] * len(vertices), [-.1] * len(vertices)):
+            with self.assertRaises(ValueError): smooth_surface(vertices, faces, bad)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -12,7 +12,7 @@ import re
 VERSION = 1
 DEFAULTS = dict(height=1.82, age='adult', presentation='female', species='human',
                 vacuum=False, skin='#b97d57', hair='#363544', accent='#d47d48',
-                eyes='#507d76', costume=None, build=1.0)
+                eyes='#507d76', costume=None, build=1.0, face='static', face_shape={})
 
 def parameters(values):
     if not isinstance(values, dict) or set(values) - set(DEFAULTS):
@@ -25,6 +25,12 @@ def parameters(values):
     if not isinstance(p['vacuum'], bool): raise ValueError('vacuum must be a boolean')
     if isinstance(p['build'], bool) or not isinstance(p['build'], (int,float)) or not .8 <= p['build'] <= 1.5:
         raise ValueError('build must be a number in 0.8..1.5 (1 is the default frame)')
+    # 'arkit' leaves the face's features to the rigged arkit-face/1 face (stylized_face.add_face).
+    if p['face'] not in ('static','arkit'): raise ValueError("face must be 'static' or 'arkit'")
+    if p['face']=='arkit' and p['species']=='alien': raise ValueError('The arkit face is for human faces; aliens keep the static face')
+    # face_shape tunes the living face's features (stylized_face.face_shape validates its keys and ranges).
+    if not isinstance(p['face_shape'], dict): raise ValueError('face_shape must be a dict of living-face shape values')
+    if p['face_shape'] and p['face']!='arkit': raise ValueError("face_shape shapes the living face: set face='arkit'")
     for key in ['skin','hair','accent','eyes']:
         if not isinstance(p[key], str) or not re.fullmatch(r'#[0-9a-fA-F]{6}',p[key]):
             raise ValueError(f'{key} must be a six-digit hex color')
@@ -118,7 +124,17 @@ def face_shape(x,y,rx,ry,rz):
     relief+=.075*gauss(X,Y,0,-.67,.36,.18)           # chin
     return base+rz*relief
 
-def anatomy_head(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,style,alien=False):
+def _face_recipe():
+    """The living-face recipe: this file's own globals when stylized_face is embedded after it, else the sibling module."""
+    if 'face_layout' in globals(): return globals()
+    import stylized_face
+    return vars(stylized_face)
+
+def anatomy_head(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,style,alien=False,features=True):
+    if features: static_face(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,alien)
+    head_dressing(m,cx,cy,cz,rx,ry,rz,skin,hair,style,alien)
+
+def static_face(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,alien=False):
     verts=[]; faces=[]; n=96; count=64
     for i in range(count+1):
         lat=-math.pi/2+math.pi*(.0001+.9998*i/count)
@@ -187,6 +203,10 @@ def anatomy_head(m,cx,cy,cz,rx,ry,rz,skin,hair,eye_color,style,alien=False):
     for side,name in [(-1,'left'),(1,'right')]:
         nostril=[surface(side*rx*(.095+.06*i/6),ry*(-.155+.012*math.sin(i*math.pi/6)),.001) for i in range(7)]
         m.tube(name+'-nostril',nostril,[rx*.009]*7,'#714c49' if not alien else '#65526e')
+
+def head_dressing(m,cx,cy,cz,rx,ry,rz,skin,hair,style,alien=False):
+    """Ears, hair or fronds: the parts round a head that do not move with the face."""
+    for side,name in [(-1,'left'),(1,'right')]:
         # Ear body and raised helix, with an inset concha.
         m.ellipsoid(name+'-ear',(cx+side*rx*.96,cy-.012,cz),(rx*.24,ry*.29,rz*.24),skin)
         m.ellipsoid(name+'-ear-concha',(cx+side*rx*1.065,cy-.012,cz+rz*.17),(rx*.115,ry*.18,.008),'#a26758' if not alien else '#748780')
@@ -1052,24 +1072,36 @@ def geometry(values=None,meshes=None):
             m.tube(label+'-finger-'+str(finger),[hand(fwd,wrist_y-.063*s,.005*s),hand(fwd,wrist_y-.09*s-length*.45,.021*s),hand(fwd,wrist_y-.08*s-length,.033*s)],[.010*s,.009*s,.006*s],hand_color)
         m.tube(label+'-thumb',[hand(.024*s,wrist_y-.035*s,.006*s),hand(.052*s,wrist_y-.053*s,.018*s),hand(.056*s,wrist_y-.083*s,.026*s)],[.019*s,.013*s,.008*s],hand_color)
     head_start=len(m.parts)
-    anatomy_head(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['eyes'],p['presentation'],alien)
+    # face='arkit' leaves the features to the living face (stylized_face.add_face), which joins after the rig.
+    anatomy_head(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['eyes'],p['presentation'],alien,features=p['face']=='static')
     for part in m.parts[head_start:]:part['head']=True  # what a helmet must hold
     if eva:
         # The bubble is fitted to this head's face, eyes, hair and ears, with room for the jaw to open.
-        points=[v for part in m.parts[head_start:] for v in part['vertices']]
-        chin=[(x,y-.12*ry,z) for part in m.parts[head_start:] if part['name']=='face' for x,y,z in part['vertices'] if y<head_y-.3*ry and z>0]
-        fit=helmet_fit(points+chin,neck_radius=.075*s)
-        colors=dict(FIELDWORK,pod=FIELDWORK['pad'])
         held=m.parts[head_start:]
+        points=[v for part in held for v in part['vertices']]
+        names=[part['name'] for part in held]
+        if p['face']=='arkit':
+            # The living face's hm08 head (Blender Z up, facing -Y), and its open jaw, are what the glass must hold.
+            # add_face swaps the recipe's ears for the head's own and joins the features into `face`.
+            face=_face_recipe()['face_layout'](p)['face']
+            def recipe_point(v):return (float(v[0]),float(v[2]),-float(v[1]))
+            skin_points=[recipe_point(v) for v in face['vertices']]
+            chin=[recipe_point(v) for v in face['morphs'].get('jawOpen',())]
+            names=[n for n in names if '-ear' not in n]+['face','eyeball_L','eyeball_R']
+        else:
+            skin_points=[]
+            chin=[(x,y-.12*ry,z) for part in held if part['name']=='face' for x,y,z in part['vertices'] if y<head_y-.3*ry and z>0]
+        fit=helmet_fit(points+skin_points+chin,neck_radius=.075*s)
+        colors=dict(FIELDWORK,pod=FIELDWORK['pad'])
         # The window shows the face, eyes and ears: every non-hair vertex from the back of the ears forward.
         ears=[v[2] for part in held if 'ear' in part['name'] for v in part['vertices']]
         back=min(ears) if ears else 0
-        show=[v for part in held if 'hair' not in part['name'] for v in part['vertices'] if v[2]>=back]
+        show=[v for part in held if 'hair' not in part['name'] for v in part['vertices'] if v[2]>=back]+[v for v in skin_points if v[2]>=back]
         vacuum_helmet(m,fit,s,colors,show=show)
         # The build's enclosure check poses every clip and morph and fails if any of these comes within 1.5 cm of
         # the bubble (glass or shell), or if the bubble is more than 4 cm from all of them.
         glass=next(part for part in m.parts if part['name']=='helmet-glass')
-        glass['extras']={'encloses':{'parts':[part['name'] for part in held],'with':['helmet-shell'],'clearance':.015,'maxClearance':.04}}
+        glass['extras']={'encloses':{'parts':names,'with':['helmet-shell'],'clearance':.015,'maxClearance':.04}}
         cut=fit['cut_y'];opening=fit['opening_radius']
         m.rings('helmet-neck-seal',[(shoulder_y+.035*s,0,0,opening*1.02,opening*.92),(mix(shoulder_y,cut,.5),0,0,opening*.98,opening*.9),(cut-.002*s,0,fit['center'][2]*.5,opening*.97,opening*.9)],FIELDWORK['strap'])
         fieldwork_suit(m,dims,colors)

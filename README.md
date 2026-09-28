@@ -461,7 +461,7 @@ def build():
 | `mouth-parts` | a tongue or mouth-cavity primitive is not moved at least 1 mm by `jawOpen` |
 | `puppet-jaw` | at `jawOpen` = 1 the face's lowest point (the chin) drops by less than 10% of the face height. This is E3 of the talking-heads bar, measured against chin to crown, which is stricter than chin to brow. A hole opening in a fixed face fails |
 | `upper-lip` | `jawOpen` moves face skin above the upper teeth's gum line (their highest point) by more than 0.5 mm: the upper lip must stay on the skull |
-| `mouth-open` | at `jawOpen` = 1, a front view halfway between the teeth rows (at the mouth center and a third of the way to each side) hits skin, such as an upper lip hanging like a curtain, before it hits teeth, tongue or mouth cavity; passes the teeth and hits nothing or only the inside of the head (see-through: add a mouth cavity); or the rows still overlap |
+| `mouth-open` | at `jawOpen` = 1, a front view halfway between the teeth rows (at the mouth center and a third of the way to each side) hits skin, such as an upper lip hanging like a curtain, before it hits teeth, tongue or mouth cavity; passes the teeth and hits nothing or only the inside of the head (see-through: add a mouth cavity); the rows still overlap; or, over a 5 by 3 grid of front rays across the opening, anything past the teeth and tongue is lighter than luminance 0.03 (base color times vertex color: the cavity, and whatever shows through it, must be near black) |
 
 The verifier identifies parts by convention, in contract terms:
 

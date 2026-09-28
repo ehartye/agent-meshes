@@ -1,0 +1,2302 @@
+{
+ "description": "Pinned CC0 sources of the vendored MakeHuman hm08 head data (hm08_head.npz). Rebuild with python scripts/hm08-vendor.py.",
+ "sources": {
+  "mpfb2": {
+   "repository": "https://github.com/makehumancommunity/mpfb2",
+   "commit": "3edf9df0551765be43563d047888cf7877eb89b4",
+   "license": "Assets CC0-1.0 (LICENSE.ASSETS.md); code GPL-3.0, none of which is used"
+  },
+  "extra-targets": {
+   "repository": "https://github.com/makehumancommunity/extra-targets",
+   "commit": "7eaba3453134385bb5ea9811ef0b33b85b4b556d",
+   "license": "CC0-1.0 (faceunits01, ARKit face units by Mika Suominen)"
+  }
+ },
+ "files": [
+  {
+   "name": "base.obj",
+   "role": "mesh",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/3dobjs/base.obj",
+   "sha256": "8e761e6624b8f54536409135d1636da63b32486a90d4897f84e121d144f6fb4c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "basemesh_vertex_groups.json",
+   "role": "mesh",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/mesh_metadata/basemesh_vertex_groups.json",
+   "sha256": "8cb1417bc55ae5ec8aa99f90734e81ed5fbb556511ff6a2c00e0534b70911444",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "hm08.mirror",
+   "role": "mesh",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/mesh_metadata/hm08.mirror",
+   "sha256": "679f80f101d89b3d9dbebef7c12b4e0498c8f0eb2adcb7ed4dae849ed245149e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/l-cheek-bones-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/l-cheek-bones-decr.target.gz",
+   "sha256": "109d88ec6394cb3455073ae9f2a6038b8b4d6b57feeaf4633611bc60f27ed212",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/l-cheek-bones-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/l-cheek-bones-incr.target.gz",
+   "sha256": "ea5aa60abcc2926e61cdabf5d40701c2b23b3f8027f949cea0b80bcbc55df301",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/l-cheek-inner-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/l-cheek-inner-decr.target.gz",
+   "sha256": "2ae02220b2f5d94bdc0a8295211b3b3872bbc636d7e9f7ec5d121fd80a470196",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/l-cheek-inner-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/l-cheek-inner-incr.target.gz",
+   "sha256": "aa88894b5e89617c98c8738ffa61aab79f450a5420570d4c2ee8e97ae6a70c3e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/l-cheek-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/l-cheek-trans-down.target.gz",
+   "sha256": "3da1a241d0599719329e9e3154b4028bfaf173cc6945005fa0e0f1841da37643",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/l-cheek-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/l-cheek-trans-up.target.gz",
+   "sha256": "d5a1b1a2aa277717077837ad430a0fc0b5081a002359cb316ada43782e428f82",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/l-cheek-volume-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/l-cheek-volume-decr.target.gz",
+   "sha256": "202ff036e39abea154e0896ad34641184c5e8b77610dca9e1e8e4ce4a5db1bc4",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/l-cheek-volume-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/l-cheek-volume-incr.target.gz",
+   "sha256": "75bf330b96d0036c46f779ed003782c7380c77dd06c14fd80f1fa20a5093fee1",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/r-cheek-bones-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/r-cheek-bones-decr.target.gz",
+   "sha256": "f128fdcf1d91769a907dc2c74056edac427196c1900f875c34c03b01dee5b7af",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/r-cheek-bones-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/r-cheek-bones-incr.target.gz",
+   "sha256": "c608528b9e5e1c670179cfb502dab3d9478a77bb942f7c8186cd072a7369e9b9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/r-cheek-inner-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/r-cheek-inner-decr.target.gz",
+   "sha256": "4878a5ba766a4de2347bb7506e46a53936ede0a2d52cbbb6fee8cb58dac92dec",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/r-cheek-inner-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/r-cheek-inner-incr.target.gz",
+   "sha256": "db0700f0785acc72c2c91665d8ae9502b959e28c60e8fbd1d4b1a2bc94d11199",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/r-cheek-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/r-cheek-trans-down.target.gz",
+   "sha256": "f321b6fb273141f809916bbedd4c9cfb2e081725ba59f3c480ca14734d02d36c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/r-cheek-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/r-cheek-trans-up.target.gz",
+   "sha256": "b355fbef52aa458e392b0cd8f16638d157fa7194a549ad9f5bf4fa61f426e37d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/r-cheek-volume-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/r-cheek-volume-decr.target.gz",
+   "sha256": "ea12455c7a85e7b3b5e6e4882b4b68823a00bcaef4ea048cc49be452a139c1bc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "cheek/r-cheek-volume-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/cheek/r-cheek-volume-incr.target.gz",
+   "sha256": "4df3e61e843c2d3381ef534e90d347b6b8ea763428d69eba8ef2ed5ab0affb8c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-bones-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-bones-decr.target.gz",
+   "sha256": "88613903c211706f31de1868318bfb88d51bd23791a11e1a4488266a88083396",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-bones-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-bones-incr.target.gz",
+   "sha256": "72c76aeb7956fb083aaf0d5efa00b2cdfa0f328eefc01d5e28f4610719de50c3",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-cleft-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-cleft-decr.target.gz",
+   "sha256": "57a4517afa3855450dad512999b9c56c0b3a2aac49d6a37af10bfcec3da231e5",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-cleft-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-cleft-incr.target.gz",
+   "sha256": "223f3f1f56ec2b441f3aa637f0d088bdb3570fe13c1778cdfc514868a15b555a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-height-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-height-decr.target.gz",
+   "sha256": "1f4196d330b418d576e9400a754cb99d7e60b069ee8fdef645713f84db984e0c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-height-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-height-incr.target.gz",
+   "sha256": "4f05b61b39266801b0a333c208d274ff109250fe9e4512c486a455806878e15c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-jaw-drop-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-jaw-drop-decr.target.gz",
+   "sha256": "9176198f2ddcbb48d21d26b5c61e646bb656c6fc96508d4406272efa2aeab40c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-jaw-drop-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-jaw-drop-incr.target.gz",
+   "sha256": "b750b941a75badd7281db378356438dd8647ef043e3470f9e34bbf873e711e71",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-prognathism-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-prognathism-decr.target.gz",
+   "sha256": "1eb94c408292e35d27ef1547733908df5c59cf046ad5901ab9387a65e73e4225",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-prognathism-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-prognathism-incr.target.gz",
+   "sha256": "d5453730848d4d3ad12680532c1e1d649194de652eba115fa733e2fb784167e3",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-prominent-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-prominent-decr.target.gz",
+   "sha256": "4ed14cb51e7ea7b3ecd469a537733924353c683f3cfe545be182d18a220dcb4e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-prominent-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-prominent-incr.target.gz",
+   "sha256": "e0d5ec5e213b88719def0f43ddaa7107796fc02f7447e2b2f140d9fe513a6ac8",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-triangle",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-triangle.target.gz",
+   "sha256": "284db04ac8024df839240b91d9bec56db3f96be41e188baef50974670746ff02",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-width-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-width-decr.target.gz",
+   "sha256": "6c3aaca074630e89951184130a4a158b6f62c9d0cf57cf8eb828c445ff40c21a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "chin/chin-width-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/chin/chin-width-incr.target.gz",
+   "sha256": "68764b6ec7c923597beaaf643f71c41f00c93639d9bb522c169c279db2ad299e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyebrows/eyebrows-angle-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyebrows/eyebrows-angle-down.target.gz",
+   "sha256": "2c45c5f65406f0e987c586b03d5c07953d375fa19b38ffc7775edc160a7596df",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyebrows/eyebrows-angle-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyebrows/eyebrows-angle-up.target.gz",
+   "sha256": "87bcf04d2bc5aad60d5a403c00eda5ec567141fc38fe6a19f8c65994ba7633b5",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyebrows/eyebrows-trans-backward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyebrows/eyebrows-trans-backward.target.gz",
+   "sha256": "afb3800c65cc2a2159091fbf44cd758e003fa73a4c9b9bd3a6c6b9c09527a058",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyebrows/eyebrows-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyebrows/eyebrows-trans-down.target.gz",
+   "sha256": "9f5bbb848e40d3a320492dd08ef8d1a926b50c7fd1ca279cf8f573e0f0cdd589",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyebrows/eyebrows-trans-forward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyebrows/eyebrows-trans-forward.target.gz",
+   "sha256": "7bc54f886d3c2776829e47a7ed8b26d1e730ee473424fde7f3ff35137990f949",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyebrows/eyebrows-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyebrows/eyebrows-trans-up.target.gz",
+   "sha256": "fdaf3fb2ee5d1790202ede605d097e7666567237f1ab62a90729f72df0c16c52",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-bag-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-bag-decr.target.gz",
+   "sha256": "fda7aefa804aa2b27f4aac3eee02f43e1d874d79d3fa0a37b901bc654e139abb",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-bag-height-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-bag-height-decr.target.gz",
+   "sha256": "08bd538bbfeeb01aa69cc14d47e75bc5a792e24aaf9bc5fd63820ecb67b5441d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-bag-height-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-bag-height-incr.target.gz",
+   "sha256": "96defc8aecfbeb8a27c1fddd87980867c2cad1c27845662847705d878cb3ee5a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-bag-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-bag-in.target.gz",
+   "sha256": "5c2322fe6d468187b4dd09bfaaec53b8cd70e973556898aec7ed0c1efab3bb27",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-bag-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-bag-incr.target.gz",
+   "sha256": "45bd5a9415b7da13e42fb1b8f33e8023d2948cdfa27e40cf393496e827d754b4",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-bag-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-bag-out.target.gz",
+   "sha256": "df25d17a15bc8b55ec3efb33ab1e99030e96cc5bf1ab47105d022a467fb43953",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-corner1-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-corner1-down.target.gz",
+   "sha256": "10b4b9941795dd58c132b68c4632d84aeddb42a2fbe561df887bc09f387d8e88",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-corner1-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-corner1-up.target.gz",
+   "sha256": "d5457c638d76baeeb3b921bff1af2a8f142c1ae495c4d6510e3d94651aef48c9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-corner2-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-corner2-down.target.gz",
+   "sha256": "33b0a44e47f35f510c296dbdc2d14d58c82e0bf13c3d5d782bf0223ccdf3eb09",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-corner2-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-corner2-up.target.gz",
+   "sha256": "6ea4c8f018c1a54822d10f3abf68e112365541dce1d0e81ef7db01b189c28b29",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-epicanthus-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-epicanthus-in.target.gz",
+   "sha256": "0dd894060ea9f420c7db57599d228e5df59f8836f794eb3172668c02dd4ef7ef",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-epicanthus-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-epicanthus-out.target.gz",
+   "sha256": "10e7b41eef926e8e76bf44c2eaecb59e39ca9d1ef980da58e723a508d696e76d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-eyefold-angle-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-eyefold-angle-down.target.gz",
+   "sha256": "c3b247d6df2a8536481fdb237bb7a2ea9eaf90b48e7a1bda9b20a5f638bb5e24",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-eyefold-angle-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-eyefold-angle-up.target.gz",
+   "sha256": "98ab23c879cdea6fdbd5c560869b23caf5b519845ac5ffaf4020c70a0ce65ec7",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-eyefold-concave",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-eyefold-concave.target.gz",
+   "sha256": "1892d819bbcdfdc24f1ffe0368b73a9a0de999e3c94314058f04c34f08ffeae2",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-eyefold-convex",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-eyefold-convex.target.gz",
+   "sha256": "bf3e444656cb86343f77c3fab2046a561e5dafd49312cb469e50bc882bfbf607",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-eyefold-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-eyefold-down.target.gz",
+   "sha256": "b7b1589f224ed9f12bbb8ece904144023fde8ffe85355304299d24f5f6d292e5",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-eyefold-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-eyefold-up.target.gz",
+   "sha256": "fe10ce78fe291be9790f9d44a1653f39bc8f329497fa79719dbd93a998c33989",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-height1-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-height1-decr.target.gz",
+   "sha256": "158f7407a8a6fc031f5af3dbcf6bfd410d1f67c0160456db8f126c86d0214a43",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-height1-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-height1-incr.target.gz",
+   "sha256": "73292502793b0e5b5fd5fd9538dcf6862381a9c9403c549429af5a6fe33c5db5",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-height2-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-height2-decr.target.gz",
+   "sha256": "516b10048290ce14704b8ff372f1e2f2367545ccdd2057c7b4f97f166fd2ff55",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-height2-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-height2-incr.target.gz",
+   "sha256": "2ad24113bdd67f07870cb0298d0b0732ab5185b11f890946212c4cbb19845e34",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-height3-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-height3-decr.target.gz",
+   "sha256": "3c0d2c74d47bb661ad2d6ec014cab0260b0214592253364783614c4e1fd4e2c7",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-height3-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-height3-incr.target.gz",
+   "sha256": "30767b78e068bbeb40523487aa1372100e3e4e05b98a666cb8ddfe02b7a592ef",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-push1-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-push1-in.target.gz",
+   "sha256": "80658fd1ec6967bed34f04be1dcb2fa5cbabb8a17fdae2427e0735ff3474906d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-push1-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-push1-out.target.gz",
+   "sha256": "8cfbc0783524a37e2df497d816befea8518c426b75f700e7649e05867011c035",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-push2-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-push2-in.target.gz",
+   "sha256": "ba69b575b665c3912b835395b08c5fec554cee481891a1375c978379062d11d8",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-push2-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-push2-out.target.gz",
+   "sha256": "aff0667ab4f163d4692405dc59d50ec506c415a99c3593baa4215a04d94938dd",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-scale-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-scale-decr.target.gz",
+   "sha256": "ef7be84caabecc9c0e4d937b68b4438ce3719f4a197a7ec3298f67faea7c5dbc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-scale-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-scale-incr.target.gz",
+   "sha256": "2d2d2d088931ce206eb6dad91e26318f045c7e4e6b6580acc812750b0f18f4bc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-trans-down.target.gz",
+   "sha256": "d4c5c982b6a62a357b155d8475475e1d2b0b8ff031d4a687993d525be8cdb9d9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-trans-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-trans-in.target.gz",
+   "sha256": "2129b8e5ea7b3875f32f7a50733eb4f61ea313f7dcc7e38491573b0cbd2cddc0",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-trans-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-trans-out.target.gz",
+   "sha256": "b74b2e4266f3db6122baaad9a4f793b81285cb2ac405f9fa4163bc72e72e56fc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/l-eye-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/l-eye-trans-up.target.gz",
+   "sha256": "47b00a443ae2783774a56e8a5065b9f210377ac3e3e0afdecdfe87b156f0a575",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-bag-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-bag-decr.target.gz",
+   "sha256": "c2c8b58210122cbe5e0effbc4d4a1f5a23dbea800f0a34af48fb16d52aff4b05",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-bag-height-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-bag-height-decr.target.gz",
+   "sha256": "87cdc0acab059b70422e502abedc9a29431fc881fda5cb9547246137dfc44215",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-bag-height-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-bag-height-incr.target.gz",
+   "sha256": "c45c25e34839745e7d80352d89ec2db8f41ea2c74bbe0a06dc046837e456c74d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-bag-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-bag-in.target.gz",
+   "sha256": "907fbb36d3664c6ebbf6dc4bae58a3118b02ed9c6acc963f316afe8b23e6eedf",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-bag-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-bag-incr.target.gz",
+   "sha256": "552483d9b4cd846d5bc864e6866d8bc9db79fdf44233cb30be2d084e5d4373d0",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-bag-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-bag-out.target.gz",
+   "sha256": "b386545972385770960967919f4c76970c0153d52df177d51c3a4282f21cda50",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-corner1-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-corner1-down.target.gz",
+   "sha256": "c2564d573be01ec4e4eee568200a441adf8a784e73847f50615aa70faa45d724",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-corner1-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-corner1-up.target.gz",
+   "sha256": "c8d410a2b33f42cbbbe6483bf51766a9148f672a1409954fb7addc95b8415d3d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-corner2-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-corner2-down.target.gz",
+   "sha256": "89e20b2779fb0144008c357c4335732befa14afbf988136683644b6c2b863193",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-corner2-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-corner2-up.target.gz",
+   "sha256": "a295f78da108875885ace05e059e5949cd67aeb4cfca7524950ed2b6e77d1682",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-epicanthus-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-epicanthus-in.target.gz",
+   "sha256": "ec5e5b256e6529b0791cae2d7dc29f1aedaf381b6930d1d38c01c72643276bcc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-epicanthus-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-epicanthus-out.target.gz",
+   "sha256": "9fbfb5d1cf20bd3a8d762a662248993b54d5c4a9a370ca7c07a4d346fc9ebd39",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-eyefold-angle-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-eyefold-angle-down.target.gz",
+   "sha256": "056ce661f694c236e4ec072276a40b828c0744a244e5cf74fa039038dc006e9a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-eyefold-angle-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-eyefold-angle-up.target.gz",
+   "sha256": "0c991b1f26ac7f006a3089e8a688ef0c166e56e0bf429ba6fa3f78cc22406cb1",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-eyefold-concave",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-eyefold-concave.target.gz",
+   "sha256": "1ea63b71458091dd1ad112cf1d67ac0d385bfbcda628d885390e872998d950e9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-eyefold-convex",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-eyefold-convex.target.gz",
+   "sha256": "578f61ea332d891d10f4fa65d8c6e0296ac9bee282fe1b3cc38e20869211d3fb",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-eyefold-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-eyefold-down.target.gz",
+   "sha256": "a9225e4841241ef7a2d1f4db3b65d9caf09e23287f169f2d657a4bf9a95ff690",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-eyefold-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-eyefold-up.target.gz",
+   "sha256": "902d0936322f5f18aaea3d37ba996f453040a55223e55c56aebff654832a0f97",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-height1-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-height1-decr.target.gz",
+   "sha256": "f35d03cb95a67301fac7622ea24945d6b529dcc1cff84f3a36e464b42865a5ac",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-height1-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-height1-incr.target.gz",
+   "sha256": "1d6a7c7ee52419f42fdd1cf41a8d19f9589793342203f86fad6c5d786c0f15bc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-height2-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-height2-decr.target.gz",
+   "sha256": "b53bacabd4b07a5fbe90e28dcb09b4a8f8f727682bdd27dfb124db5211d3cf89",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-height2-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-height2-incr.target.gz",
+   "sha256": "22fce2f25e349ab9f2beff8e3a4b54bda757535169afcfa0b4d022548f14494e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-height3-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-height3-decr.target.gz",
+   "sha256": "f93dcf201ac4a75412fca4694b298005ea4bbf132ffe0131aad452566afee5ad",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-height3-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-height3-incr.target.gz",
+   "sha256": "6888a776a01512f1c9fd229cfe1bc16d79f899897869286fe37c284002b3bb31",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-push1-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-push1-in.target.gz",
+   "sha256": "7667d6d4ecfd2bec4f44ea842da3a849ca506378715fffcf39c380ae59d0582a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-push1-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-push1-out.target.gz",
+   "sha256": "d35d15f68d31937bbd2d4a3fe3f29ca96749a53b823b21ea27fa8cbfbe98a9b1",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-push2-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-push2-in.target.gz",
+   "sha256": "41d685c9c07af049bcfe6bf8cce18dd4156c0c9abbccc8e1f178780bde9eac7d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-push2-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-push2-out.target.gz",
+   "sha256": "7482b7b5c834215e0addb72701df331a4d5058cc067fda4af3c7d4cbda424b8b",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-scale-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-scale-decr.target.gz",
+   "sha256": "2ea82bce144a084c7c86c3e2b6b23b0c3f45293f6762fec4afba53e5c3684675",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-scale-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-scale-incr.target.gz",
+   "sha256": "af556b9a6f930ce74f86d64f32b2f801bb5f4bb91f49c3ed37225b7d0413c5af",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-trans-down.target.gz",
+   "sha256": "f71785746b3cf2d171cb7f024d944d05af707e839908768425c66edd294c3318",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-trans-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-trans-in.target.gz",
+   "sha256": "5c0fbc8e74ac1450aa517a98f5522855a73d67dad2b759ebc2f9a3001bb7d5af",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-trans-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-trans-out.target.gz",
+   "sha256": "1fc70679c7c086d10adc405b57be80d757417e925f1884625d6bc24b6a9fd05d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "eyes/r-eye-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/eyes/r-eye-trans-up.target.gz",
+   "sha256": "7fa48e3d1790d148347629beca6a6a1087c3c804625a8bf853ad66bf52efde5d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "forehead/forehead-nubian-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/forehead/forehead-nubian-decr.target.gz",
+   "sha256": "81404292a47493787e5277de9ad2e7e3f47c3a7bd55a8a8cae7e140baf063a22",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "forehead/forehead-nubian-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/forehead/forehead-nubian-incr.target.gz",
+   "sha256": "5039c1af5309eb9cf12333d9a37dc0e3a189a6fcf6d10316df0b34ab043f5baf",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "forehead/forehead-scale-vert-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/forehead/forehead-scale-vert-decr.target.gz",
+   "sha256": "fae28eab9836b529c8a9a8a46ec2aae4181791239ac0d5737f525591e0eafaaf",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "forehead/forehead-scale-vert-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/forehead/forehead-scale-vert-incr.target.gz",
+   "sha256": "af68b78524f49e4b02976ff0006cb27db55d680c02fc1345945043de42a48bd0",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "forehead/forehead-temple-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/forehead/forehead-temple-decr.target.gz",
+   "sha256": "5d14ac1b6b557a019f047a36af2685e03891c1d8e79ffd00030285bb45ecbdab",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "forehead/forehead-temple-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/forehead/forehead-temple-incr.target.gz",
+   "sha256": "78d577f63b0e481a4ab6fd76316887c4ec71f39fdc97764c89b92891790fe2c7",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "forehead/forehead-trans-backward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/forehead/forehead-trans-backward.target.gz",
+   "sha256": "1cb13b58f4c8f2482ad997528407b4b59ddd6db7e8e78c6130d6b3504e1d45fc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "forehead/forehead-trans-forward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/forehead/forehead-trans-forward.target.gz",
+   "sha256": "9add6a61672d0d9361ce1927c9096dfb718450fa679033ddad5b033b3cd914d1",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-age-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-age-decr.target.gz",
+   "sha256": "9952127abdd162c8d5a3cee5d368fa0bbdc6aab21fec799e9e8be84aa2351472",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-age-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-age-incr.target.gz",
+   "sha256": "ea5b7b9404daa1f6b8ea14a11a0e8ae6a082e98d0d65f63cc2150057a168e396",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-angle-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-angle-in.target.gz",
+   "sha256": "ecd14c95ab3ccf5a2d34ac8eaf63cae32eb3b06299b7058d8d71d6d8a8bda4de",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-angle-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-angle-out.target.gz",
+   "sha256": "69145fb76b5818580266e956b34282589bfea606b67a6d5444f4cf5a689ded81",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-back-scale-depth-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-back-scale-depth-decr.target.gz",
+   "sha256": "86a1c69526aae30b4c307366d9e13157f9f2d5541b18205fbef2072b2bbf5470",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-back-scale-depth-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-back-scale-depth-incr.target.gz",
+   "sha256": "2d37e5cc84c8431a98e1ff4ce66d725207b303aaacb0c97f52f3721ec234d0dd",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-diamond",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-diamond.target.gz",
+   "sha256": "758e9bfce5b08be49725ddb16cad426db4475d30619ca5c41a7f18a87c808a61",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-fat-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-fat-decr.target.gz",
+   "sha256": "6ef17a5ba87b23aa11746ac8c539fef70be5a8f89cae4abb2c2f3f32a9c6cc57",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-fat-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-fat-incr.target.gz",
+   "sha256": "28494dfd84ee8677000ef0a8d8e3b38dff0674d16c54103997b7bbe0de943a1a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-invertedtriangular",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-invertedtriangular.target.gz",
+   "sha256": "70ba80d2c8da216be56c6edaaa8386d5390aa92094859bf83096fb3acb33f12a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-oval",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-oval.target.gz",
+   "sha256": "057eea7c5535c325493b9107228052b03c78fac1bcb24905313fae6351179cb8",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-rectangular",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-rectangular.target.gz",
+   "sha256": "a4ff15dbcda4164e823c7a6f00c234cc62cb136b1c568198c7980bf9f2d358f2",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-round",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-round.target.gz",
+   "sha256": "9c5661568155231f4c5f13b0d332c09b0c27452cafc02f5685ff4d7c69010f50",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-scale-depth-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-scale-depth-decr.target.gz",
+   "sha256": "2bc2c4906b12000800c10e938bcab102814a33c2db0fbe021b3bba1be4c356bf",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-scale-depth-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-scale-depth-incr.target.gz",
+   "sha256": "2e7eb5bf8cf73c780ff66610cb15d97a2496c5c2855612bbf6c6f8fcf36c7ddd",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-scale-horiz-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-scale-horiz-decr.target.gz",
+   "sha256": "ddec139b27d1f9b7a90f6474450c56897a4e417334af083e87e988fdf94ca343",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-scale-horiz-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-scale-horiz-incr.target.gz",
+   "sha256": "671542640aec14d1740c1263deb0e274f3044edec761e6d4171329f0419be084",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-scale-vert-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-scale-vert-decr.target.gz",
+   "sha256": "64e86d59a469eeeb0201026880bcd6ebb0cbd590a74b179f58efa879b3772f6c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-scale-vert-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-scale-vert-incr.target.gz",
+   "sha256": "be8b270ec67817578128396433d6e8ab9d530c9d81ea21db92cd1b9627a8110b",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-square",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-square.target.gz",
+   "sha256": "94b484ae145970e5368706d4f42711f50e18fcbf7d9f1ee800572c3fa69f855a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-trans-backward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-trans-backward.target.gz",
+   "sha256": "f295b73314ecd709456167226ab4ebc4da4e8ee4688b091e4de56dadc42dfbd5",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-trans-down.target.gz",
+   "sha256": "99a62012abdd2709ebaa2a5846eda2dba8fc8329ef71b6fde2cb971ac83dcba1",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-trans-forward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-trans-forward.target.gz",
+   "sha256": "a523a246ebb6f353e6a7602dde185dc5ed8add2af9f0f32e5580ce6f1f21dd89",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-trans-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-trans-in.target.gz",
+   "sha256": "d65dcd31356c18fc505116a02db3c9b17c6c6451403952cd5bb601de2d51445e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-trans-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-trans-out.target.gz",
+   "sha256": "6c62af4cbe60a3242426554f2d3d79cb77112f6b62bb2597cf2c03cb35afacfc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-trans-up.target.gz",
+   "sha256": "a6bb16b9b972514f900ebb9804e5b983ce3e1a5ace5660d8359e8485b31dda91",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "head/head-triangular",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/head/head-triangular.target.gz",
+   "sha256": "4fed43891a15d76507b8062e69ebf8482438ecbf281e3f6f9876407ea98ee308",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/african-female-baby",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/african-female-baby.target.gz",
+   "sha256": "599de515efcd75069fe5186621c489d630c0a2d91a46ba1cc97966f98aae271e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/african-female-child",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/african-female-child.target.gz",
+   "sha256": "71478670a8285dc6469e10e74e4746c75fef0592190e4eb3a63130178e4fd865",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/african-female-young",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/african-female-young.target.gz",
+   "sha256": "1147ae55ecb0f66bade3f45176b3af187e265878322db172ad1090e9f3108e84",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/african-male-baby",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/african-male-baby.target.gz",
+   "sha256": "e1000bed670bad91be11a6bbd3783975b3e9303ce85852635a5964078d52e339",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/african-male-child",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/african-male-child.target.gz",
+   "sha256": "578c3aad252de0868da7445d095f5acd8925b182c80812154065a37687c29b72",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/african-male-young",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/african-male-young.target.gz",
+   "sha256": "05ed84d6df36e788cdfa8da0be15376850524b960cf2f17f3e592b9cf7d21c85",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/asian-female-baby",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/asian-female-baby.target.gz",
+   "sha256": "4edf83ee2a3c103fce63756e1ed24571841d40dc2dc1bfbc6213e2e93d14003a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/asian-female-child",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/asian-female-child.target.gz",
+   "sha256": "3791c73a4a0e05e475d88341ce32f29a6eeefb054217e900497a1723e89bf70d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/asian-female-young",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/asian-female-young.target.gz",
+   "sha256": "ee17da733288434e5b6fa120497f1fa6e72bf7faad5d694b0431d7275139170d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/asian-male-baby",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/asian-male-baby.target.gz",
+   "sha256": "1cf994fc7a23aa2ab369aa3dcb1a48b36f7db6c46f47e72558907b1d3f76e2b9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/asian-male-child",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/asian-male-child.target.gz",
+   "sha256": "f2a9d1ba67aa79b613ff4ce245787b1ff2c7420f34d63bc7cfb5df2950b623e2",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/asian-male-young",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/asian-male-young.target.gz",
+   "sha256": "0928ed8b9f08f60afb9884cf9e9f33a939ed3a85d7f136de9ccc88a76981d6d7",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/caucasian-female-baby",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/caucasian-female-baby.target.gz",
+   "sha256": "400eecd4da943ce1018e0bd008d46249f7f1aca1280737d13fe13bc4ef819fcc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/caucasian-female-child",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/caucasian-female-child.target.gz",
+   "sha256": "ad1ce6b7955e4d610b75648ebdcc456cc8aa7e9e46af399f65265164ea39c844",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/caucasian-female-young",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/caucasian-female-young.target.gz",
+   "sha256": "e9d6212373ac5f1e2c596fa145e363385f4d169c3c6c88ede3bab93b681af041",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/caucasian-male-baby",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/caucasian-male-baby.target.gz",
+   "sha256": "b8806d6636653b72da0514321f939061d224d90237c6bf758e4198daef805abb",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/caucasian-male-child",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/caucasian-male-child.target.gz",
+   "sha256": "18188350f6cfca20725f4057ba207ac5c7c759bfcc5badb212edabfd8563a544",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "macrodetails/caucasian-male-young",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/macrodetails/caucasian-male-young.target.gz",
+   "sha256": "ffe69537e53148edff2776204ba48cf3bf1f3cbc72966592c8a562ab80b07333",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-angles-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-angles-down.target.gz",
+   "sha256": "5c760f5bd32c6f7a0c3298840dcad2bc4a20eaf5dd167a7a548553d5c0e1f5d5",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-angles-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-angles-up.target.gz",
+   "sha256": "81fb84776356e4f1f1f99bd6f7d16707f385568ed585df4d1826de8ff76e778f",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-cupidsbow-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-cupidsbow-decr.target.gz",
+   "sha256": "69de11f939c169eb8d779332779039c88f12eddf2b617eb7470fa84f9ad2fd7e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-cupidsbow-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-cupidsbow-incr.target.gz",
+   "sha256": "b8d7bfcdb811d56ab47d5a0c87c5de083695670a59126bb3e792cb8a0d760813",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-cupidsbow-width-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-cupidsbow-width-decr.target.gz",
+   "sha256": "a74e37cd9e5b64cb06fcd770508fc44d37f3407f712a77c664b2065ea1421e18",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-cupidsbow-width-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-cupidsbow-width-incr.target.gz",
+   "sha256": "8c5021454c49d5426c60f0e9dbd9cc8a3309cb83de287d9117f9aa34422191ad",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-dimples-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-dimples-in.target.gz",
+   "sha256": "34dfeac497331292d5895c03863459c6b07a7bc34c1aee14088aac7767585479",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-dimples-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-dimples-out.target.gz",
+   "sha256": "2b924409c3e2ccac947f36b8d61f53be5f18a3846b3ad874d0fdc40e00a199dc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-laugh-lines-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-laugh-lines-in.target.gz",
+   "sha256": "2151f7c8dc19be3b8ac015a06b312edc657ebe92f6df6870555c43cf729b3c7f",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-laugh-lines-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-laugh-lines-out.target.gz",
+   "sha256": "f37954bccb4d39c3e6c6054d91e88326c66cc274e262cc3001ba124588de7b96",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-ext-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-ext-down.target.gz",
+   "sha256": "699f92339739da02492177fb18bd664969b491d556e5816167d3b4b7700cd11c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-ext-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-ext-up.target.gz",
+   "sha256": "d43f4bd02628f543ce880af9c1166671cd580cad3be42e6cfa826d528570d111",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-height-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-height-decr.target.gz",
+   "sha256": "34a975ddaee05a6ea08d508e1c41099db97df400b58ed970f9ff57b186231bb5",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-height-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-height-incr.target.gz",
+   "sha256": "13f667854a83f0c3a4481ec266bbe4d5f1dba6a403c884c1b6b44606cb41f513",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-middle-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-middle-down.target.gz",
+   "sha256": "9e366f7cf297365a36ed3b465761de8b3d1380b40d79454800c871cb2dba191c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-middle-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-middle-up.target.gz",
+   "sha256": "3af85468bdd098424b04b1fddb5444b8c5eb598a1f440ebe55f99449ee4e0dc9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-volume-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-volume-decr.target.gz",
+   "sha256": "01d4f0c2889b43d3b97e4c7c6179d1217214a7caa0073db36d09b2b4b6edcf18",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-volume-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-volume-incr.target.gz",
+   "sha256": "6eefdf010318ac86aa59aeefffdf1f7e566f280a04e9843003b0543b4dc99179",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-width-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-width-decr.target.gz",
+   "sha256": "da63edfc45b55451e4d9d6d69ff2e3287d011b5a2f60f25cd9483a6ebc265092",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-lowerlip-width-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-lowerlip-width-incr.target.gz",
+   "sha256": "d9089437f196725eee9331f8e37cfb943de1662fbe458b06f63cc13a0b688811",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-philtrum-volume-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-philtrum-volume-decr.target.gz",
+   "sha256": "0a5f8f760c824d1998c26f56607be61a19a8b5e2d72ecced7e175d8ac2a7249f",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-philtrum-volume-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-philtrum-volume-incr.target.gz",
+   "sha256": "17c101012d90e60e1e58a942589d2c40bd9b6d92e19b08be9dc961353992c8ef",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-scale-depth-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-scale-depth-decr.target.gz",
+   "sha256": "ab2943ece483d3472360e08ce025c05a45e210b7a5c05d205c8445746deb9a0a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-scale-depth-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-scale-depth-incr.target.gz",
+   "sha256": "94f7be59e2a999c4be0f8d88d73664ae86db95b9e149510e39aa630dade3499d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-scale-horiz-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-scale-horiz-decr.target.gz",
+   "sha256": "aed1a3c27224d12828de1ffc3fe9c2895f4389417d016016dd4f1fefccdbc6c9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-scale-horiz-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-scale-horiz-incr.target.gz",
+   "sha256": "3bd6ff8195f77f0bcb586f3efec0eea1ae615eecba516e4d121025e40ed0ead2",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-scale-vert-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-scale-vert-decr.target.gz",
+   "sha256": "0b1fdda3c01093fadefcb0f12da363ede8a90fb5aaa5791088b732802031fc4d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-scale-vert-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-scale-vert-incr.target.gz",
+   "sha256": "b7dc2db32e60a0cf01d7ae6b64ba812a7a508b49d1ef4704933887eb880d4ee9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-trans-backward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-trans-backward.target.gz",
+   "sha256": "2dab6b7ec52c47ee09c7eed0a469e55e1cbcad254a877de10e7d6d2feb17be47",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-trans-down.target.gz",
+   "sha256": "3f8810e0cc8d97c1dcdc5d28efedd2f9cff3ca1faa8a9c5f1661f5fc70f24f49",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-trans-forward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-trans-forward.target.gz",
+   "sha256": "d9ff6e5d30bea3b7fdd20a47f2d39a97c635462dcb15b8a6609249234195ecb7",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-trans-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-trans-in.target.gz",
+   "sha256": "fcac26e7e3facfcd636f306539bfa7c47635b0d688fb5ece80378c721ab91d6c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-trans-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-trans-out.target.gz",
+   "sha256": "1996dc86997daf379768125f51d4bb75b5ab54fd4673155700f7c6b7bb583405",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-trans-up.target.gz",
+   "sha256": "9b67400e12688a236a88319ce8fa10b1668def63f0fa3cba0e7279cfaaae56c9",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-ext-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-ext-down.target.gz",
+   "sha256": "01f9b280ce36b78804fc8ed70643513ec9a05b8cb22548378054aae37ddcb0db",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-ext-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-ext-up.target.gz",
+   "sha256": "33f822cdf57e6bc63f36d592011b2a70386e90898ec412eb3808f93f69868ad1",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-height-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-height-decr.target.gz",
+   "sha256": "4fc144cee0d3fe91d69fc4192903e17f108eab99950685815be1ebb52ab69bbc",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-height-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-height-incr.target.gz",
+   "sha256": "4c221c1f99e6f7c253cea0b2a3bc29d44751932928693006b352fc7ece95f6d6",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-middle-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-middle-down.target.gz",
+   "sha256": "769782ce9aa46300980866f13641a479526549066ad82cb1d6595241f83afee3",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-middle-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-middle-up.target.gz",
+   "sha256": "b68b79808d10934db641649251b15ce18553bbcfd8c3d9f2e2cd6b4bc50fcb9d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-volume-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-volume-decr.target.gz",
+   "sha256": "b2f940f8187112ee233ddfcdfb4a025fa01ee878b17dc44c64971c96583e7caf",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-volume-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-volume-incr.target.gz",
+   "sha256": "e11c109910b3941d5b6c809f6a1c28c12bf08f67f5c126d109002c1aacd43ef6",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-width-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-width-decr.target.gz",
+   "sha256": "9915b24e1bb09f2b66ee7106e8f39746cf84941a8afdaeef0ed09bf1b52498cd",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "mouth/mouth-upperlip-width-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/mouth/mouth-upperlip-width-incr.target.gz",
+   "sha256": "6d1ab3f6db37f2d7c2a1c6e23e2433ffcc77d15f29b6aed2117e0a4400856538",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/measure-neck-circ-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/measure-neck-circ-decr.target.gz",
+   "sha256": "dd21174568f6b9c5914cf7978ab046cd15425f5d5feb853fa281c39c2a59c21d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/measure-neck-circ-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/measure-neck-circ-incr.target.gz",
+   "sha256": "17c6cd87a9de589706ea5fc3047aead3e28d1d7ffdd13788ef7546cdb7df741e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/measure-neck-height-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/measure-neck-height-decr.target.gz",
+   "sha256": "a52bc3df37722ffb1cb4b9ab5e57a0d760d8ff3fc8c32047c79dac291b82ae6b",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/measure-neck-height-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/measure-neck-height-incr.target.gz",
+   "sha256": "a8a742d8752e29df405aa92c06be6288c8de28aa68e5a5a6e051fa863d4da0af",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-back-scale-depth-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-back-scale-depth-decr.target.gz",
+   "sha256": "319d6e6cb59a4b4b15d341d35f812ac63643f1018fa73ccae38e925ca1cfe1c0",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-back-scale-depth-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-back-scale-depth-incr.target.gz",
+   "sha256": "ee81c54012be3e1c5bedbfefbb9fbf8d720fee266edd37d576fa4f35457e5456",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-double-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-double-decr.target.gz",
+   "sha256": "78ad59b1a7dadbf02de2f19245383b181cc7ba1e95ece78cb5b164705bf70a33",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-double-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-double-incr.target.gz",
+   "sha256": "cbdf3ac1e7f27d0a7f0fcc6e9aec9e9ac09de41dfcc77e1dd9b8f0f303b16e2a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-scale-depth-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-scale-depth-decr.target.gz",
+   "sha256": "861805375b59cca7ef40d66277e99748b51149093838abaa19d6a50442a8be50",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-scale-depth-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-scale-depth-incr.target.gz",
+   "sha256": "c80de7e4c766b51a0a20f732f9153114686c4fe79adb4846d0aec00f7ea16883",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-scale-horiz-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-scale-horiz-decr.target.gz",
+   "sha256": "64a6cff62244705a3ea3f005889dfb56641e8ed43389e2e1cb0b8bed0660dc53",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-scale-horiz-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-scale-horiz-incr.target.gz",
+   "sha256": "8428be2a7c0e1554dbf6bb516e6ffbdfa564a8cc94d6a9ff08580c0127e44aeb",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-scale-vert-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-scale-vert-decr.target.gz",
+   "sha256": "7b7f52b377bd40cebcb83b5f86939422fb7aba6b096ca376ecf38ae6a43b2e3c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-scale-vert-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-scale-vert-incr.target.gz",
+   "sha256": "b455098e117b0e0266758a8b3c79a7a21556da8e0efd7ee9e7c92330a82ac88e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-trans-backward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-trans-backward.target.gz",
+   "sha256": "28c0284c0da67913ee648d097c74440298a5cd40fc12acad8ccaaf114761253f",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-trans-down.target.gz",
+   "sha256": "393806306d97f3b0c1ef23fae4b47cebcbfa17d655ca9be1f1e4481dba3dcdae",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-trans-forward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-trans-forward.target.gz",
+   "sha256": "41e6972f6801635d2a414638888fbe0bf0934c7e02a7558fa1f99411e32efa2b",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-trans-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-trans-in.target.gz",
+   "sha256": "a248f4a8a183e6a6ff342a41a7757dfa8742ac29d3e3bf767ea94ba03fe4a001",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-trans-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-trans-out.target.gz",
+   "sha256": "6326a0e87fe3c86ff7ab501e32aef10385c64f236006702adfa39598ebe79515",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "neck/neck-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/neck/neck-trans-up.target.gz",
+   "sha256": "216c68ab82403a3a30a70dc9090759e097158f2b767270e16f531fc2eb2c4586",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-base-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-base-down.target.gz",
+   "sha256": "d7672a1bb3412ba0a55d0a92e87c36cc1625baf56a78dc931c642e4f92f69768",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-base-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-base-up.target.gz",
+   "sha256": "b2ad49cc3a6793372fb0f4faa8dedb6fb2f536962432e96b7f0b4d1c15652a85",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-compression-compress",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-compression-compress.target.gz",
+   "sha256": "2101c4f237ba7a3d9b75a69b89468092a406c438c0d7373f00a35af937bea1cd",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-compression-uncompress",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-compression-uncompress.target.gz",
+   "sha256": "e071e78dfff8d33645488378dcfb269c2ab67e84a47f947d83c5e29a2981c835",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-curve-concave",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-curve-concave.target.gz",
+   "sha256": "2103807fe041cc36c881d706e86bd65ac9d8a9bdce0b1c37b41e5911ecab753c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-curve-convex",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-curve-convex.target.gz",
+   "sha256": "7c9232bd988ab0ed6373e994ac566623d3affac65c645aee78487a1e47a3253e",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-flaring-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-flaring-decr.target.gz",
+   "sha256": "6cd73545abc05e00aef9a21cc49772c030a521a333042bf8d56f98460ce0e476",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-flaring-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-flaring-incr.target.gz",
+   "sha256": "36413e04c15c2672d1b158621381c793c6fc2228ea4626cec70afbbf746528a2",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-greek-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-greek-decr.target.gz",
+   "sha256": "dbbf961e2ec0a24476c73b1783d6a363d37b96ba148686ce80f9ae1142800253",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-greek-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-greek-incr.target.gz",
+   "sha256": "af337919c0f0a0f5eb30a51f7d6031b05c0bef1009b65d1378f7be6a397544b3",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-hump-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-hump-decr.target.gz",
+   "sha256": "f24247d606ad4a9b3f15f6afa187009865cfadcd1669d79d30876a8085cadb53",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-hump-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-hump-incr.target.gz",
+   "sha256": "ca6649d78752cca02fdb37f10804e021713b4fbfe2f85136e12b5787cc654aa6",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-nostrils-angle-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-nostrils-angle-down.target.gz",
+   "sha256": "01e88f10c24d1ecbdf2e764b929d0ff100ebf70691085790626d9eae57c93214",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-nostrils-angle-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-nostrils-angle-up.target.gz",
+   "sha256": "1ff92fef08a0236c7d75eb848f93c58d544cbfe011cd9bee0530486b5c566842",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-nostrils-width-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-nostrils-width-decr.target.gz",
+   "sha256": "7c08d53d08ad0d397853d8ecdef5df200c697dc9afee8bf09a73f94a8287664f",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-nostrils-width-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-nostrils-width-incr.target.gz",
+   "sha256": "bc3d4108a0d10e8ef7dea5ebc7cbdc89da476285ff8413f58bcb4401bf2b122b",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-point-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-point-down.target.gz",
+   "sha256": "58498fbb0b77572e90bf4fd50ca30f4cb6c402a5720b0161b26a8497f897ded6",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-point-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-point-up.target.gz",
+   "sha256": "9ae8812270208a7c4da68bbe1e480430d1d674efcb8394e83b5c4d937fb3287d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-point-width-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-point-width-decr.target.gz",
+   "sha256": "920cd53d57b8797414af73b59e54d34547ef2e1c79fa0a19ca55dbddc0aa7365",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-point-width-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-point-width-incr.target.gz",
+   "sha256": "bf5f782b014675be57aba4c840261308cc0d408660ecdfd22a42d47a756a016c",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-scale-depth-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-scale-depth-decr.target.gz",
+   "sha256": "0842aa0f4265fef85b6e708cdd0b0665e9a951c08a1c768dc285206f0ae4c7ad",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-scale-depth-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-scale-depth-incr.target.gz",
+   "sha256": "49f63b72f04f637ed38061acce579c0948d29175d949bf21e6bfed354c0a10bf",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-scale-horiz-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-scale-horiz-decr.target.gz",
+   "sha256": "95d8dc4a3589bbb6105191abc6e3cae47c3c424ce189b5f0a611dc098806060d",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-scale-horiz-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-scale-horiz-incr.target.gz",
+   "sha256": "ba550cc15c894a4412bb368acc92bd6ad94bbb63d0135c561fe30230ef6344bd",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-scale-vert-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-scale-vert-decr.target.gz",
+   "sha256": "3eea81bc82ddca8e20c8fc4279092eb2c8540d05e0c2aacf868af5da4ebac108",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-scale-vert-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-scale-vert-incr.target.gz",
+   "sha256": "63d297c237e7054a1ea700b83454ef508bf5f42ba8f2eb6bc1eb747ad261f34b",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-septumangle-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-septumangle-decr.target.gz",
+   "sha256": "975cb99787b88754ec2c22b5fc224f3d3f7c8926c38f69c2f6877ae9e58f3d3b",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-septumangle-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-septumangle-incr.target.gz",
+   "sha256": "f219b45a439b86b798798f54752d5f692ecabbc999ca28a96a51b7c8e25c2fe7",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-trans-backward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-trans-backward.target.gz",
+   "sha256": "eec7b6953d995066afc08032dc74e8e2475b70d12c7844f33d242e1429ab0ea1",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-trans-down",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-trans-down.target.gz",
+   "sha256": "37948d9b27095dda7c768ef40767649bef72f49a7d23b86d48b55468258c8d83",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-trans-forward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-trans-forward.target.gz",
+   "sha256": "cce0ba778feb8d2262bf2fe29fe1ceb6ce87f32e8ab6295c9f718412a47868a5",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-trans-in",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-trans-in.target.gz",
+   "sha256": "e924be14d90e532a1454613fc96bdae52b04588f1263c4c982b214b93d6074d2",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-trans-out",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-trans-out.target.gz",
+   "sha256": "a6227d4b8135a1eb05c381cd5096bb5934d9f08a3794a49f2788bfe8c1ecb8d6",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-trans-up",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-trans-up.target.gz",
+   "sha256": "90aeb775bf8d94f15b92be0059ec43d35b933621981df262d5277d164adcc9de",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-volume-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-volume-decr.target.gz",
+   "sha256": "7ef86294767b4813388c409541475684d6dec94711dde063154b49c9520a57bd",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-volume-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-volume-incr.target.gz",
+   "sha256": "52c8b7528e3a817a21a17c6d5f9a0fb1c3a1b980d685024f90489386c037cc21",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-width1-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-width1-decr.target.gz",
+   "sha256": "2810435d8aa494ddfbfebb69fa04cdf0f3e4587129c8aa051c9364c00849ce7f",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-width1-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-width1-incr.target.gz",
+   "sha256": "6818e340a06a968a51fb52a32c749dff0ec69fefbfc80a67c118d5e1f26ccb97",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-width2-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-width2-decr.target.gz",
+   "sha256": "31a68afb926715ed352b870168c88932c281cf85523dffd2492f6e213738d2cd",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-width2-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-width2-incr.target.gz",
+   "sha256": "c33140385195e670d434e43861621eb477cfba4e438cdc4762d9a3c8371cb65a",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-width3-decr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-width3-decr.target.gz",
+   "sha256": "2b9f96444fcc2817b42703860050ddc0c9efd105fd99c43b254d1a56aca0e0f0",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "nose/nose-width3-incr",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/mpfb2/3edf9df0551765be43563d047888cf7877eb89b4/src/mpfb/data/targets/nose/nose-width3-incr.target.gz",
+   "sha256": "6a6ae8f5dcf5b72e12fa9a79539b9ae44b53565f687040efead2b73189eb8a4b",
+   "license": "CC0-1.0"
+  },
+  {
+   "name": "faceunits/browDownLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/browDownLeft.target",
+   "sha256": "095b8e45fc918aa17f845ea6490561644e10d83d3a5aa42790488a6806b2ccf1",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/browDownRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/browDownRight.target",
+   "sha256": "f092d3c8446b9e1bdf523b039465796e629b6cf9e20ac3f8fb853f98e890f105",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/browInnerUp",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/browInnerUp.target",
+   "sha256": "84c8be8c1cade46a51486786244c1a80dfbf6e1915bf1f5a72b74ef8eb951f6d",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/browOuterUpLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/browOuterUpLeft.target",
+   "sha256": "9821d5a8279c0ba8751d4595e0333ef5d1a041fad6d85ffffdae7b5044908fa0",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/browOuterUpRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/browOuterUpRight.target",
+   "sha256": "770fd5cb608adbeb778e17ab39e085f9472191d65056cebe0df5f3e4d6cab364",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/cheekPuff",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/cheekPuff.target",
+   "sha256": "fb99e2ab7e923be84cf2387a10d198d410b6b4135a14d58a1111b55edd624894",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/cheekSquintLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/cheekSquintLeft.target",
+   "sha256": "2ec68e1aca9ecd24019db58af53d7998f10e4964dda2729fd0f319597f734d75",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/cheekSquintRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/cheekSquintRight.target",
+   "sha256": "7daf855b7d23d2b95ae4e75ed0994b4951d8d9ec6d82a9a6aec8742df033bdbc",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeBlinkLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeBlinkLeft.target",
+   "sha256": "53d35e0a8357140d4e37277a674f211bdaf97be011b61cfcdff618f0bfea0ec8",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeBlinkRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeBlinkRight.target",
+   "sha256": "00d159a70fad650b336eb6f739a1a6a47f916da4331ef9848fb0eef989ca5cc5",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeLookDownLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeLookDownLeft.target",
+   "sha256": "df824a8a46447e95bc465b198ea9e49f10db8429c94531568dfbc512811f3f07",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeLookDownRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeLookDownRight.target",
+   "sha256": "568da82dd1a31eb5eb6a46025d56dbf13e6e9a9cb7950f0546111af0781d3f4c",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeLookInLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeLookInLeft.target",
+   "sha256": "d0774cb36def532a3be8576fc62cc23ad10bcc6f668365fcf387fe52a83155a0",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeLookInRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeLookInRight.target",
+   "sha256": "de9123797cbca735fa2d12853723dc1eb88d9ad435033465b713dc5e64511a28",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeLookOutLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeLookOutLeft.target",
+   "sha256": "9dd01ff6424676eb3abd4cfcd13ecfa3ffe87ea4feb8eeb252fd06aeb441be1e",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeLookOutRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeLookOutRight.target",
+   "sha256": "c25852238d3833d9f8977d7fac66942f810e4a24b0c90f584894d3c76c626ae7",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeLookUpLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeLookUpLeft.target",
+   "sha256": "3c8b3e2ac2bb82561f72deb94bb3d58e3876675cd3b87262967df812bcd6acb9",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeLookUpRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeLookUpRight.target",
+   "sha256": "4b91cf96e42c527179e8b7f60f0c69ae9d3dec0abe4ce475ceca0c95f8cd9cc0",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeSquintLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeSquintLeft.target",
+   "sha256": "4f7298dec327d91f53fe9525bf07ef17cf02776c4228da8baaef4b19079fd311",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeSquintRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeSquintRight.target",
+   "sha256": "f8563d6a34269f97110b1b0513b79bf98153125a7d179135f1ef206d0b0f2504",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeWideLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeWideLeft.target",
+   "sha256": "40c1f1ba32e511609828e1da2280158db4e515fa0294892c08b4a6a863f08fab",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/eyeWideRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/eyeWideRight.target",
+   "sha256": "be06515fd73d078639871d33ae4770a61bee41ffacd06d619913319054832839",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/jawForward",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/jawForward.target",
+   "sha256": "c87b4893f82e6908601cb766e5362d0534a73310f1c072ea4041ad2f1cc9d39e",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/jawLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/jawLeft.target",
+   "sha256": "21cf8350d2310e237ac0cf941a1928f67589c9166d71ae254d3a0d1079f25426",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/jawOpen",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/jawOpen.target",
+   "sha256": "2439e703e434f999b58a1d26cffdb6b2fd5f30941b8ff19cac70b75392d4de6f",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/jawRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/jawRight.target",
+   "sha256": "8473c887d979b98b4d5f37f034028a246d03131d6350ce76a338951f99dd5794",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthClose",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthClose.target",
+   "sha256": "965135637c90019c9f91ddd7540405124da7274b3a5b6b6a2201fa97956773f5",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthDimpleLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthDimpleLeft.target",
+   "sha256": "8d36c4877b39adffefd0f29ec19e9aae56ab3fe69733bf569b9c8c5c900062f7",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthDimpleRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthDimpleRight.target",
+   "sha256": "3aa3934cc294b9c6666ab9f6034b569ea9cc111cf7342aa7442918f33fc82ab0",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthFrownLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthFrownLeft.target",
+   "sha256": "39d0c7cc1305ac62bdf989522f00f1b820ade8e1762a738f7398926bf6f91cd4",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthFrownRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthFrownRight.target",
+   "sha256": "a14b45427d3f78ddb8a05604b6c353bddcda49376588097809797c4a51714767",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthFunnel",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthFunnel.target",
+   "sha256": "b273e870938c798357b314dac22f388b4030d9f4b782fd2179991c9f7831d32a",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthLeft.target",
+   "sha256": "0a90cd34d70f1b858d029189ed00a134566053a92d78e681b75c46027ed9deeb",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthLowerDownLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthLowerDownLeft.target",
+   "sha256": "493600ee77f3c8f06113d49e7b6d9cda75fb1fe9dfd9df602e7f90f55b5477eb",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthLowerDownRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthLowerDownRight.target",
+   "sha256": "08be0c2158339981e6bf9533666c734cf030c08fa7bed2a931aa965d01aaff44",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthPressLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthPressLeft.target",
+   "sha256": "00613a25981f172decf2f95f0871dda1cb775bfcba65088e9e0978b441ca5b5a",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthPressRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthPressRight.target",
+   "sha256": "27d1cf1610d2565be0fb99e1ff2e96dc8e58531e05309a69f961a638fa1a39a2",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthPucker",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthPucker.target",
+   "sha256": "3d90b495088fac29e5db4022842860d0b0f10f875e201670d559e37db4da67ae",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthRight.target",
+   "sha256": "170b71c2fe038248e7edd50e417dda4096f3cf620fec75a0f5b66b4c04edd69f",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthRollLower",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthRollLower.target",
+   "sha256": "69cff9c045c3c461eee4be855883c2f1b79ddb645ca7bf499c35a95b3adbb055",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthRollUpper",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthRollUpper.target",
+   "sha256": "c5965de076f01d5b227d28d233be58e40180ed63a302fb9869e74ab6f93d1fb7",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthShrugLower",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthShrugLower.target",
+   "sha256": "0948e2b311179b563692c24d64435e1770bb9e6c60bd8df63ca284d349a57739",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthShrugUpper",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthShrugUpper.target",
+   "sha256": "2991fcd27cf7ca215e222d30c31a23c79c6ee744a59501e336ea063a280b5b47",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthSmileLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthSmileLeft.target",
+   "sha256": "11cabf2fa6f9664c4d0b9f8f0cadaf4b2a1a9625b72c7593262465ce8d4cb9a2",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthSmileRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthSmileRight.target",
+   "sha256": "70578981892db13c02512455583c2f9743683d5c571c1e2624b09638cf37bedd",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthStretchLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthStretchLeft.target",
+   "sha256": "0b3622bfc1d922c9d686523800babd217e06d865338cb979485c2b22efd63c4d",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthStretchRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthStretchRight.target",
+   "sha256": "b866286fc0b607b07c6191c36c458c6f197ad19ce26c66218b8df37c1a283b38",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthUpperUpLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthUpperUpLeft.target",
+   "sha256": "db4e4f0d22b5488c139a6a6434e0ba1599e30211fbd577796b071a409a19b075",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/mouthUpperUpRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/mouthUpperUpRight.target",
+   "sha256": "5919a0772f665cb275097e0d291d3e7a9269ee2ffd3a4340e8f1c3093b78e6c4",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/noseSneerLeft",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/noseSneerLeft.target",
+   "sha256": "c205f9972e41f5147525b74d543b7617e51bba80dbfe601456711cb2f265b9c8",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/noseSneerRight",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/noseSneerRight.target",
+   "sha256": "51039beca77f3ccaf505645ec9db19438b96102ddd3fba6cbd72ec9280dee685",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  },
+  {
+   "name": "faceunits/tongueOut",
+   "role": "target",
+   "url": "https://raw.githubusercontent.com/makehumancommunity/extra-targets/7eaba3453134385bb5ea9811ef0b33b85b4b556d/assets/faceunits01/targets/faceunits/tongueOut.target",
+   "sha256": "d153f31b458c309671cab9222652d60d238218561695dfc8b3678ab3e8482e19",
+   "license": "CC0-1.0",
+   "author": "Mika Suominen"
+  }
+ ]
+}

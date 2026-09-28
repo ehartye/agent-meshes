@@ -1,7 +1,7 @@
 ---
 name: mesh-build
-description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, the optional Blender refine stage, and the headless Unreal import check.
-when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, smooth and feather a model in Blender, or check that a GLB imports into Unreal with its morphs and bones intact.
+description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, fast Workbench previews of Blender-authored sources (matcap, wire, cavity, posed shape keys) with an optional persistent worker, the optional Blender refine stage, and the headless Unreal import check.
+when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, smooth and feather a model in Blender, preview a Blender-authored model quickly (matcap, wireframe, blink or jaw poses) without a full build, or check that a GLB imports into Unreal with its morphs and bones intact.
 ---
 
 # Mesh build and delivery
@@ -68,6 +68,40 @@ the PNGs but skips the 1 MB preview page when your own page embeds the GLB. The 
 is replaced only when it is marked as owned by that config, so never point `output` at a
 directory holding other work. A failed build leaves the previous output in place; after a crash,
 confirm the process is gone before removing the adjacent `.agent-meshes.lock`.
+
+## Fast Blender previews while iterating
+
+`mesh preview <build.json|source.py>` runs a Blender-authored source's `build()` headlessly and
+renders Workbench PNGs from fixed cameras in the same run. It exports no GLB and starts no browser,
+so use it for every look while you shape a model, and keep the full build for final checks.
+
+```bash
+mesh preview asset-src/mara/build.json --views head --shading matcap,wire,cavity   --pose rest --pose blink:eyeBlinkLeft=1,eyeBlinkRight=1 --pose jaw:jawOpen=1 --sheet
+```
+
+- **Views.** `front`, `q34`, `side`, `below`, `above`, `close` (eyes to mouth), `eyes`, `mouth`, `mouth-q34`
+  and `back` frame the head, which is the mesh with face shape keys, or `--target <pattern>`. `body-front`, `body-q34`,
+  `body-side` and `body-back` frame everything. `head` and `body` are aliases for those sets.
+- **Shadings.**
+  - `matcap` shows lumps and ripples.
+  - `zebra` shows a reflection-stripe matcap; kinks in the stripes are curvature breaks.
+  - `wire` shows edge flow over the matcap.
+  - `cavity` shows creases and ridges.
+  - `color` shows material colors.
+  - `all` renders every shading.
+- **Poses.** `--pose name:key=w,...` sets shape-key weights and can be repeated. `--shape` adds
+  weights to every pose. Armatures stay in the rest pose unless you pass `--posed`.
+- **Other options.** `--hide 'hair*'` leaves meshes out. `--size` sets the square size in pixels.
+  `--sheet` adds `sheet.png`, with one row per pose.
+- **Output.** Files are named `<pose>-<view>-<shading>.png`, plus a `preview.json` manifest, in
+  `--out` (default `preview/` beside the source).
+
+`mesh preview --worker` keeps one headless Blender running and waits on a queue folder. Later
+`mesh preview` calls hand their job to it and skip Blender's startup, which is slow through the
+Store launcher, and edited helper modules are re-read for each job. `--no-worker-use` forces a fresh
+Blender run, and `mesh preview --stop-worker` stops the worker after its current job. Without a
+worker, every preview runs a one-shot Blender. The build time of the source itself is not saved: a
+character's face construction still takes its minute.
 
 ## Optional Blender refine
 

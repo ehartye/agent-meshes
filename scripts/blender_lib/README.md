@@ -167,6 +167,28 @@ normalized exported weights, actual deformed vertices, pinned root vertices,
 changed rendered pixels and return to rest. Screenshots and measurements are
 written under ignored `.agent-meshes/skin-proof/`.
 
+## The hm08 base head (`agent_meshes_hm08`)
+
+`agent_meshes_hm08` loads MakeHuman's CC0 hm08 head as plain data. It is pure numpy, needs no Blender, and uses
+no MPFB or GPL code.
+
+- **Data.** `data/hm08/hm08_head.npz` holds the head crop and 316 sparse targets: macros, features and the
+  `faceunits01` ARKit shapes. `SOURCES.json` pins the sources and their SHA-256. To regenerate it, run
+  `python scripts/hm08-vendor.py`.
+- **Stylize target.** `data/hm08/stylize01.target` is derived once from Blender Studio's CC0 stylized head. To
+  regenerate it, run `python scripts/hm08-stylize.py --blender <blender>`.
+- **Loading and shaping.** `load_head()` returns an `Hm08Head`. `head_shape(years, gender, stylize, shape)` composes
+  the macros (`macro_weights`), the features (`feature_weights`, over the `FEATURES` controls) and the stylize target.
+  `to_blender`/`from_blender` convert between hm08's frame and Blender's.
+- **Measuring.** `face_landmarks(vertices, faces, hm08_eyes(head, vertices))` measures the eyes, profile, mouth and
+  outline. `depth_map`, `eyeball_shows`, `eye_crease_folds` and `flipped` are the checks the face build uses.
+- **Building a face.** `character_face(years, gender, center, radii, shape, neck_z='chin', neck=...)` fits the head
+  to an envelope, crops and grafts the neck, and returns the vertices, the triangles and every ARKit morph. The
+  lids are rebuilt by `lid_morphs`, the jaw by `RigidJaw`, and `unfold_morphs` removes flips. It also returns the
+  eyes, landmarks, mouth-interior faces and jaw.
+
+`recipes/stylized_face.py` is the consumer. The design is `docs/design/parametric-head.md`.
+
 ## Face-rig helpers (`arkit-face/1`)
 
 `agent_meshes_face` holds the helpers every talking head needs, so no head source
@@ -684,7 +706,16 @@ push the skin near `center` by `offset`, fading smoothly to zero at `radius` (on
 distance, or an (x, y, z) triple for an ellipsoid). `symmetric_offsets(...)`
 returns the (Left, Right) pair, mirrored across x = 0; `mirror_x(point)` mirrors
 one point. Brows, cheeks and mouth shapes are usually one or two of these per
-side. `ellipsoid_geometry(center, radii)` is a closed head blank, and
+side. `smooth_surface(vertices, faces, weights, iterations=6)` smooths a surface
+(Taubin: each iteration shrinks toward the neighbours' mean and inflates back, so
+round forms keep their size); a vertex's weight (0..1) scales its motion and 0
+holds it still. It is linear in the positions, so `smooth_skin(obj, weights,
+iterations)` smooths a skin's rest shape and every shape key alike and the morphs
+still blend: run it after the shape keys, before `join_face_parts`, with weights 0
+on the lid margins, the eye holes and the mouth's seam, to soften the creases a
+construction leaves (a lid patch's rim, the bridge between two eye holes).
+`keep=['jawOpen']` carries the named keys' motion unsmoothed on the smoothed rest
+(a jaw whose motion, smoothed, would spread above the upper gum line). `ellipsoid_geometry(center, radii)` is a closed head blank, and
 `cut_faces(vertices, faces, remove)` drops the faces whose centroid
 `remove(centroid)` accepts (a hair cap's front, a chin plate) and reindexes the
 rest. **It returns a 3-tuple** `(vertices, faces, mapping)`, where `mapping[old]`
@@ -899,6 +930,14 @@ nose = mesh_from_geometry('nostrils', join_geometry(beads), [nostril_material])
 for name, targets in join_geometry(beads)['morphs'].items(): shape_key(nose, name, targets)
 parts.append(nose)                             # then join_face_parts as usual
 ```
+
+`follow_skin(part, skin, reach, skip=())` is its counterpart for parts tucked
+*behind* the skin, such as a mouth cavity's rim behind the lips: each vertex within
+`reach` of the skin takes the skin's delta at its nearest point, fully near the skin
+and fading to none at `reach`, so the deep back of the bag stays put. A smile that
+draws the mouth corners back no longer pushes the skin through a still cavity rim
+(a dark line round the corners). Skip the `jawOpen` a `JawHinge` already gives it:
+`follow_skin(mouth_cavity_geometry(...), head, reach=.03, skip=['jawOpen'])`.
 
 A chin wart rides `jawOpen` the same way. A part can sit on another attached part:
 `attach_to_skin(bead, ball)` seats a nostril on a nose ball that was itself
