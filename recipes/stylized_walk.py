@@ -174,7 +174,6 @@ def skin_weights(name,vertices,d):
     s=d['s'];hip=d['hip_y'];knee=hip*.53;shoulder=d['shoulder_y'];wrist=hip+.095*s;elbow=(wrist+shoulder)/2;sx=d['shoulder_w']*.49
     side='left' if name.startswith('left-') else 'right'
     def rigid(bone):return [{bone:1} for _ in vertices]
-    if name.startswith('layer-pouch'):return rigid('pelvis')  # belt-hung pouches ride the hips
     if name.startswith('layer-'):
         # Garment layers follow the body under them: the jacket rule above the hip, trousers below.
         # Torso-hung layers (belts, hems, straps) never follow the arms; sleeve cuffs and badges do.
@@ -215,9 +214,18 @@ def skin_weights(name,vertices,d):
                 torso=w_smooth(hip+.065*s,hip+.20*s,y)
                 row={'pelvis':(1-arm)*(1-torso),'spine':(1-arm)*torso,side+'-upper-arm':arm*(1-forearm),side+'-forearm':arm*forearm}
             else:
-                pelvis=w_smooth(hip-.15*s,hip-.035*s,y)
-                lower=1-w_smooth(knee-.055*s,knee+.055*s,y)
-                row={'pelvis':pelvis,side+'-thigh':(1-pelvis)*(1-lower),side+'-shin':(1-pelvis)*lower}
+                # The hip blends over most of the upper thigh, so a lifted thigh eases the cloth
+                # below the waist forward instead of driving through it; the crotch shares both
+                # thighs, so the inseam never tears open between them.
+                pelvis=w_smooth(hip-.26*s,hip+.005*s,y)
+                right=w_smooth(-.06*s,.06*s,x)
+                # The back of the knee blends wider (by direction round the leg, so layers standing
+                # proud of the cloth take the same weights as the cloth under them), so a deep swing flexion folds the cloth
+                # into a crease instead of driving the calf through the thigh.
+                back=(z-.005*s)/max(1e-9,math.hypot(abs(x)-.096*s,z-.005*s))  # direction round the leg, not depth
+                reach=s*(.12+.095*w_smooth(.35,-.5,back))
+                lower=1-w_smooth(knee-reach,knee+reach,y)
+                row={'pelvis':pelvis,'left-thigh':(1-pelvis)*(1-lower)*(1-right),'right-thigh':(1-pelvis)*(1-lower)*right,side+'-shin':(1-pelvis)*lower}
             rows.append({bone:value for bone,value in row.items() if value>0})
         return rows
     if name in ['chest-terminal','chest-readout','front-fastener','collar','neck','air-hose'] or name.startswith(('air-tank','tank-band')):return rigid('spine')

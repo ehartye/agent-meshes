@@ -21,6 +21,7 @@ KIT={'height':1.19,'age':'child','presentation':'male','costume':{
 CAST={'mara':MARA,'oren':OREN,'tess':TESS,'kit':KIT}
 BODY=['tailored-torso','left-sleeve','right-sleeve','trouser-yoke','left-leg','right-leg']
 
+def mix(a,b,t):return a+(b-a)*t
 def parts(config):return {p['name']:p for p in character.geometry(config)}
 def fused_name(name):return 'layer-top' if name in BODY[:3] else 'layer-bottom'
 
@@ -211,6 +212,22 @@ class GarmentRig(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertLessEqual(side_arm_weight(config),side_arm_weight(plain)+.05)
 
+    def test_trousers_and_belt_skin_as_one_garment_over_the_hip(self):
+        """The hip blends down the upper thigh, the crotch shares both thighs, and a pouch or
+        pocket takes the weights of the cloth it sits on."""
+        d=character.landmarks(MARA);s=d['s'];hip=d['hip_y']
+        front=walk.skin_weights('layer-bottom',[(.096*s,hip-.12*s,.1*s)],d)[0]
+        self.assertTrue(.2<front['pelvis']<.8,front)
+        crotch=walk.skin_weights('layer-bottom',[(0,hip-.1*s,0)],d)[0]
+        self.assertAlmostEqual(crotch['left-thigh'],crotch['right-thigh'])
+        by_name=parts(MARA);pouch=by_name['layer-pouch-0']['vertices']
+        low=[v for v in pouch if v[1]<hip-.02*s]
+        self.assertTrue(all(row.get('left-thigh',0)+row.get('right-thigh',0)>0 for row in walk.skin_weights('layer-pouch-0',low,d)))
+        # A cargo pocket and the leg under it share weights: standoff does not change the blend.
+        under=(.096*s+.07*s,mix(d['hip_y']*.53,hip,.4),0);proud=(under[0]+.012*s,under[1],0)
+        a,b=walk.skin_weights('layer-bottom',[under,proud],d)
+        for bone in set(a)|set(b):self.assertAlmostEqual(a.get(bone,0),b.get(bone,0),places=3)
+
     def test_boot_shaft_follows_the_shin_and_sole_the_foot(self):
         d=character.landmarks(MARA);by_name=parts(MARA)
         sole=walk.skin_weights('left-outsole',by_name['left-outsole']['vertices'],d)
@@ -232,7 +249,10 @@ class GarmentRig(unittest.TestCase):
     def test_layers_ride_the_body_through_walk_and_jog(self):
         """Paired layer/body points keep their spacing at 8 phases of each clip (no floating or sinking).
 
-        Thick pieces (pouches) may pivot a little on their seat, in proportion to their standoff."""
+        Thick pieces (pouches) may pivot a little on their seat, in proportion to their standoff.
+        The hip and knee blend over a long reach, so the cloth stretches and the spacing to one
+        sampled body vertex moves a few millimetres; check-garments on the built GLB is the
+        binding penetration test."""
         for name in ['mara','kit']:
             config=CAST[name];d=character.landmarks(config);s=d['s'];by_name=parts(config)
             body=[(fused_name(n),v) for n in BODY for v in by_name[n]['vertices'][::3]]
@@ -248,7 +268,7 @@ class GarmentRig(unittest.TestCase):
                         anchors=[walk.skinned_vertices(n,[v],d,phase,gait)[0] for n,v in pairs]
                         drift=max(abs(math.dist(a,b)-r)-.25*r for a,b,r in zip(moved,anchors,rest))
                         with self.subTest(name=name,part=part['name'],gait=gait,phase=phase):
-                            self.assertLess(drift,.006*s)
+                            self.assertLess(drift,.009*s)
 
     def test_swinging_hands_clear_the_tool_pouches(self):
         """Belt pouches sit off the arm's swing lane, so a hand never brushes into one."""
