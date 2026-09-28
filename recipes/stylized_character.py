@@ -224,9 +224,9 @@ def landmarks(values=None):
     hip_w=(.35 if p['presentation']=='female' else .335)*s
     # build broadens the frame: shoulders most, hips a little; girth follows in geometry().
     bulk=lambda k: 1+k*(p['build']-1)
-    shoulder_w*=bulk(.3); hip_w*=bulk(.15)
+    shoulder_w*=bulk(.4); hip_w*=bulk(.2); leg_x=.096*s*bulk(.3)
     chest_y=mix(hip_y,shoulder_y,.72); waist_y=mix(hip_y,shoulder_y,.28)
-    return dict(h=h,s=s,child=child,alien=alien,build=p['build'],rx=rx,ry=ry,rz=rz,head_y=head_y,shoulder_y=shoulder_y,hip_y=hip_y,shoulder_w=shoulder_w,hip_w=hip_w,chest_y=chest_y,waist_y=waist_y)
+    return dict(h=h,s=s,child=child,alien=alien,build=p['build'],rx=rx,ry=ry,rz=rz,head_y=head_y,shoulder_y=shoulder_y,hip_y=hip_y,shoulder_w=shoulder_w,hip_w=hip_w,leg_x=leg_x,chest_y=chest_y,waist_y=waist_y)
 
 # --- Garment layers and work boots -------------------------------------------
 # A costume dresses the same body in layered clothes. Slots are optional except
@@ -327,20 +327,22 @@ class BodySurface:
             lo=t
         raise ValueError('garment ray never leaves the body')
 
-def layer_patch(m,body,name,color,rays,thickness,lift=0,embed=.004,rim=.45,wrap=False,roughness=.85,metalness=0):
+def layer_patch(m,body,name,color,rays,thickness,lift=0,embed=.004,rim=.45,wrap=False,roughness=.85,metalness=0,level=False):
     """Closed garment slab raycast onto the body; rays[i][j]=(origin,direction).
 
     i runs across the patch and j along it; wrap joins the i ends into a band. The inner
     face sits `embed` inside the skin, so a layer never floats. The outer face stands
     lift+thickness out along the surface normal and eases to `rim` of the thickness at
     open edges, so patches read as sewn cloth rather than cut plates. lift may be a
-    function of (i, j) for layers stacked over other layers.
+    function of (i, j) for layers stacked over other layers. level=True offsets along the
+    horizontal part of the normal, so a thick piece hung at a waist crease stays flat-faced.
     """
     nu=len(rays); nv=len(rays[0]); outer=[]; inner=[]
     for i in range(nu):
         for j in range(nv):
             origin,direction=rays[i][j]
             p=body.cast(origin,direction); n=body.normal(p)
+            if level: n=vunit((n[0],0,n[2]))
             base=lift(i,j) if callable(lift) else lift
             edge=min(j,nv-1-j) if wrap else min(i,nu-1-i,j,nv-1-j)
             outer.append(vadd(p,vscale(n,base+thickness*(rim,.82,1)[min(edge,2)])))
@@ -670,9 +672,9 @@ def dress(m,costume,d):
         front_patch('layer-buckle',belt['buckle'],hip-.001*s,hip+.047*s,lambda y:-.024*s,lambda y:.024*s,.005,lift=.014*s+under,rim=.7,roughness=.35,metalness=.7)
         for k,t in enumerate([math.pi/2-.95,math.pi/2+.95,-math.pi/2+.95,-math.pi/2-.95][:belt['pouches']]):
             # Tool pouches hang from the belt onto the upper thigh.
-            ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s+under,rim=.3)
+            ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s+under,rim=.3,level=True)
             # The flap folds over the pouch mouth: it stands clear of the pouch top and rises past it.
-            ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.04*s,.006,t0=t-.29,t1=t+.29,lift=.036*s+under,rim=.9)
+            ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.047*s,.006,t0=t-.29,t1=t+.29,lift=.036*s+under,rim=.9,level=True)
     pack=costume.get('backpack')
     if pack:
         for side,label in [(-1,'left'),(1,'right')]:
@@ -721,8 +723,8 @@ def geometry(values=None,meshes=None):
     def girth(rows,ku,kv,below=9):
         return [(a,u,v,ru*bulk(ku),rv*bulk(kv)) if a<below else (a,u,v,ru,rv) for a,u,v,ru,rv in rows]
     leg_ease=(lambda rows: ease(rows,1.07,.006,above=.26*s)) if costume else (lambda rows: rows)
-    m.rings('tailored-torso',top_ease(girth(girth([(hip_y+.026*s,0,0,hip_w*.47,.105*s),(hip_y+.04*s,0,0,hip_w*.5,.11*s),(waist_y,0,0,hip_w*.41,.096*s),(chest_y,0,.005*s,shoulder_w*.46,.115*s),(shoulder_y,0,0,shoulder_w*.50,.094*s),(shoulder_y+.065*s,0,0,.075*s,.065*s)],.45,0,below=chest_y-.01*s),0,.6,below=shoulder_y-.01*s)),body)
-    m.rings('neck',girth([(shoulder_y+.02*s,0,0,.053*s,.051*s),(head_y-ry*.55,0,0,.058*s,.053*s)],.3,.3),skin)
+    m.rings('tailored-torso',top_ease(girth(girth([(hip_y+.026*s,0,0,hip_w*.47,.105*s),(hip_y+.04*s,0,0,hip_w*.5,.11*s),(waist_y,0,0,hip_w*.41,.096*s),(chest_y,0,.005*s,shoulder_w*.46,.115*s),(shoulder_y,0,0,shoulder_w*.50,.094*s),(shoulder_y+.065*s,0,0,.075*s,.065*s)],.6,0,below=chest_y-.01*s),0,.6,below=shoulder_y-.01*s)),body)
+    m.rings('neck',girth([(shoulder_y+.02*s,0,0,.053*s,.051*s),(head_y-ry*.55,0,0,.058*s,.053*s)],.45,.45),skin)
     m.rings('collar',[(shoulder_y+.038*s,0,0,.076*s,.071*s),(shoulder_y+.068*s,0,0,.071*s,.067*s)],ring['color'] if ring else navy)
     if ring: m.parts[-1].update(roughness=.4,metalness=.55)
     if not costume: m.rings('waist-belt',[(hip_y+.02*s,0,0,hip_w*.502,.113*s),(hip_y+.058*s,0,0,hip_w*.488,.112*s)],navy)
@@ -735,8 +737,8 @@ def geometry(values=None,meshes=None):
     boots=costume.get('boots',COSTUME_SLOTS['boots']) if costume else COSTUME_SLOTS['boots']
     if eva: boots=dict(color=ivory,sole=navy,toe=shade(ivory,.9),laces=None,collar=navy)
     for side,label in [(-1,'left'),(1,'right')]:
-        lx=side*.096*s; knee_y=hip_y*.53
-        m.rings(label+'-leg',leg_ease(girth([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)],.22,.3,below=hip_y-.02*s)),trouser)
+        lx=side*dims['leg_x']; knee_y=hip_y*.53
+        m.rings(label+'-leg',leg_ease(girth([(.15*s,lx,-.006*s,.04*s,.045*s),(.27*s,lx,-.006*s,.052*s,.06*s),(knee_y-.08*s,lx,-.014*s,.066*s,.068*s),(knee_y,lx,.015*s,.059*s,.061*s),(hip_y-.20*s,lx,0,.083*s,.087*s),(hip_y-.025*s,lx,0,.097*s,.103*s),(hip_y+.035*s,lx,0,.084*s,.084*s)],.3,.4,below=hip_y-.02*s)),trouser)
         if not costume: m.ellipsoid(label+'-knee-panel',(lx,knee_y,.081*s),(.047*s,.063*s,.013*s),accent)
         work_boot(m,label,lx,side,s,boots)
         # Tapered sleeve contours include deltoid, elbow and forearm.

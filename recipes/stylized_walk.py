@@ -116,7 +116,7 @@ def rest_bones(d):
     add('spine',(0,hip+.06*s,0),(0,shoulder+.04*s,0),'pelvis')
     add('head',(0,shoulder+.05*s,0),(0,d['head_y']+d['ry'],0),'spine')
     for side,name in [(-1,'left'),(1,'right')]:
-        x=side*.096*s
+        x=side*d.get('leg_x',.096*s)
         add(name+'-thigh',(x,hip,0),(x,hip*.53,.015*s),'pelvis')
         add(name+'-shin',(x,hip*.53,.015*s),(x,.14*s,0),name+'-thigh')
         add(name+'-foot',(x,.14*s,0),(x,.06*s,.20*s),name+'-shin')
@@ -228,7 +228,7 @@ def skin_weights(name,vertices,d):
                 # The back of the knee blends wider (by direction round the leg, so layers standing
                 # proud of the cloth take the same weights as the cloth under them), so a deep swing flexion folds the cloth
                 # into a crease instead of driving the calf through the thigh.
-                back=(z-.005*s)/max(1e-9,math.hypot(abs(x)-.096*s,z-.005*s))  # direction round the leg, not depth
+                back=(z-.005*s)/max(1e-9,math.hypot(abs(x)-d.get('leg_x',.096*s),z-.005*s))  # direction round the leg, not depth
                 reach=s*(.12+.095*w_smooth(.35,-.5,back))
                 lower=1-w_smooth(knee-reach,knee+reach,y)
                 row={'pelvis':pelvis,'left-thigh':(1-pelvis)*(1-lower)*(1-right),'right-thigh':(1-pelvis)*(1-lower)*right,side+'-shin':(1-pelvis)*lower}
