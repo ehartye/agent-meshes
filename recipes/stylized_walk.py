@@ -33,7 +33,7 @@ def _body_rotate(p,angles):
 # Leg timing, fractions of the cycle or of leg length:
 #   stance: duty factor. A jog below .5 has two flight intervals.
 #   stride: rearward contact travel during stance; center: fore-aft offset of
-#   that travel (fractions of stride). The walk covers about 1.6 leg lengths per
+#   that travel (fractions of stride). The walk covers about 1.8 leg lengths per
 #   cycle: heel strike ahead of the hip, toe-off well behind it.
 #   lift: swing clearance (fractions of leg length), B-spline control points
 #   over swing progress; reach: the same, added to the fore-aft swing path
@@ -56,18 +56,18 @@ def _body_rotate(p,angles):
 #   yaw, chest_yaw: pelvis turn with the forward leg; chest turn against it.
 #   body_phase: delay of the body curves relative to the feet.
 GAITS={
-    'walk':dict(stance=.641,stride=1.034,center=-.114,sway=.018,arm=.32,arm_phase=-.1,bend=.25,curl=.2,
-                lift=[.0659,.1315,.1127,.0793,.0716,.1388,.0809,.0785],
-                reach=[-.0396,.0822,-.0303,-.133,.0198,.138,-.0509,-.2241],
-                heel=-.298,peak=1.45,heel_flat=.172,toe_from=.646,peak_at=.367,flat_at=.745,
-                base=-.0486,bob=.0376,bob_shape=[(2,-.636,-.772)],
+    'walk':dict(stance=.57644,stride=1.0376,center=-.10137,sway=.018,arm=.45,arm_phase=-.1,bend=.25,curl=.2,
+                lift=[.040158,-.01276,.1283,.081405,.059215,.023317,.16055,.10783],
+                reach=[-.026381,-.0097798,.25294,-.028955,-.49587,-.21303,-.088854,-.043437],
+                heel=-.34378,peak=1.3449,heel_flat=.17174,toe_from=.62934,peak_at=.47736,flat_at=.745,
+                base=-.055575,bob=.031555,bob_shape=[(2,-.636,-.772)],
                 roll=4.5,roll_shape=[(1,.992,.126)],
                 lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
                 head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
                 yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0608),
-    'jog':dict(curl=.75,stance=.221,stride=.448,lift=[.0279,.196,.359,.263,.0686,.265,.16,.264,.501,.336],reach=[-.655,-1.42,-1.93,-2.05,-1.46,-.855,-.56,-.329,-.292,-.254],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
-               heel=-.202,swing_roll=[-.0362,-.00647,.0252,.0425,.0524,.0554,.0145,-.0458,-.0679,-.0765],peak=1.22,heel_flat=.411,toe_from=.729,peak_at=.401,flat_at=.745,
-               base=-.0553,bob=.0741,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
+    'jog':dict(curl=.75,stance=.2206,stride=.4478,center=.01411,lift=[.06921,.1281,.3937,.2584,.1134,.2609,.1937,.2911,.3496,.333],reach=[-.8031,-1.301,-1.973,-2.041,-1.316,-.8062,-.5034,-.4924,-.5876,-.2682],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
+               heel=-.2772,swing_roll=[-.0362,-.00647,.0252,.0425,.0524,.0554,.0145,-.0458,-.0679,-.0765],peak=1.223,heel_flat=.6789,toe_from=.7289,peak_at=.3903,flat_at=.745,
+               base=-.0554,bob=.07658,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
                roll=5.0,roll_shape=[(1,-.888,.473),(3,-.052,-.026)],
                lean=17.3,lumbar=.55,pitch=5.5,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
                head=.5,head_lean=4.0,head_shape=[(2,-.95,.273),(4,-.071,-.046)],

@@ -300,21 +300,21 @@ class NaturalGait(unittest.TestCase):
     def test_walk_strides_out(self):
         import stylized_character as character
         import stylized_walk as walk
-        # A person covers about 1.5 leg lengths (hip to ankle) per walk cycle: Walk_Loop's
+        # A person covers about 1.6 leg lengths (hip to ankle) per walk cycle: Walk_Loop's
         # stride is 0.72 x height. A shorter stride with the same knee curve is a shuffle.
         for values in [{},{'height':1.22,'age':'child'}]:
             d=character.landmarks(values);length=walk.leg_length(d);s=walk.gait_settings('walk')
             stride=length*s['stride']/s['stance']
-            self.assertGreaterEqual(stride/length,1.55,values)
+            self.assertGreaterEqual(stride/length,1.75,values)
             self.assertAlmostEqual(walk.travel_speed(d,'walk',1.0)*1.0,stride)
-        self.assertGreaterEqual(walk.leg_length(character.landmarks({}))*1.55/1.82,.62)
+        self.assertGreaterEqual(walk.leg_length(character.landmarks({}))*1.75/1.82,.7)
 
     def test_grounded_sole_moves_with_the_ground(self):
         import stylized_character as character
         import stylized_walk as walk
         # Every outsole or boot vertex within 1 mm of the floor on two frames in a row
         # moves at travel speed: no heel graze before touchdown, no toe slip at liftoff.
-        for values,seconds in [({},{'walk':1.05,'jog':.75}),({'height':1.22,'age':'child'},{'walk':.9,'jog':.65})]:
+        for values,seconds in [({},{'walk':1.1,'jog':.8}),({'height':1.22,'age':'child'},{'walk':1.0,'jog':.7})]:
             d=character.landmarks(values);rest=walk.rest_bones(d)
             parts={p['name']:p['vertices'] for p in character.geometry(values)}
             sole=[walk.w_sub(v,rest['left-foot']['head']) for n,vs in parts.items() if n.startswith('left-') and any(t in n for t in ['boot','outsole','ankle']) for v in vs]
