@@ -37,6 +37,8 @@ SHAPE_RANGES = {
     'cheeks': (0.0, 2.5),       # how full and round the cheeks are
     'brow': (.5, 2.5),          # brow weight
     'smile': (0.0, 1.0),        # how far the resting mouth turns up (0: straight)
+    'cartoon': (0.0, 1.5),      # how far past the stylize target toward the boards' faces: bigger eyes, a tiny nose, no
+                                # eye bags, a rounder lower face and a warm resting mouth (0: none)
 }
 BEARDS = ('none', 'stubble', 'beard')
 DEFAULT_SHAPE = {
@@ -48,7 +50,7 @@ DEFAULT_SHAPE = {
 # face_shape keys that shape the hm08 head (agent_meshes_hm08.FEATURES); the rest set age, stylize and paint.
 HEAD_FEATURES = ('eye_size', 'eye_spacing', 'eye_tilt', 'nose', 'nose_length', 'nose_width', 'nose_bridge', 'mouth_width', 'lips',
                  'jaw_width', 'chin', 'chin_width', 'cheeks', 'brow', 'smile')
-NEUTRAL = {'eye_tilt': 0.0, 'smile': 0.0}
+NEUTRAL = {'eye_tilt': 0.0, 'smile': 0.0, 'cartoon': 0.0}
 
 
 def _character():
@@ -112,7 +114,7 @@ def head_spec(values=None):
         years=shape['years'], gender=1.0 if p['presentation'] == 'male' else 0.0,
         center=(0.0, 0.0, d['head_y']), radii=(d['rx'], d['rz'], d['ry']),
         shape={k: shape[k] for k in HEAD_FEATURES if shape[k] != NEUTRAL.get(k, 1.0)},
-        stylize=shape['stylize'], neck_z='chin', neck=neck,
+        stylize=shape['stylize'], cartoon=shape['cartoon'], neck_z='chin', neck=neck,
     )
 
 
@@ -129,7 +131,7 @@ def face_layout(values=None):
     key = json.dumps(spec, sort_keys=True)
     if key not in _FACES:
         _FACES[key] = character_face(spec['years'], spec['gender'], spec['center'], spec['radii'], shape=spec['shape'],
-                                     stylize=spec['stylize'], neck_z=spec['neck_z'], neck=spec['neck'])
+                                     stylize=spec['stylize'], cartoon=spec['cartoon'], neck_z=spec['neck_z'], neck=spec['neck'])
     face = _FACES[key]
     marks = face['landmarks']
     (left, r), (right, _) = face['eyes']
@@ -137,6 +139,16 @@ def face_layout(values=None):
                 eye_left=tuple(float(v) for v in left), eye_right=tuple(float(v) for v in right), eye_radius=float(r),
                 mouth_z=float(marks['stomion'][2]), mouth_front=float(marks['stomion'][1]),
                 mouth_half_width=float(abs(marks['mouth_corner_L'][0])), spec=spec)
+
+
+def teeth_layout(layout):
+    """Where the tooth rows sit for a face layout (`face_layout`): per row ('upper', 'lower') the arch's front middle at
+    the gum line (`center`), `half_width`, `depth` and tooth `height`. The upper row's edge sits just under the lip line,
+    so the closed lips hide it and the open jaw (which lifts the upper lip) shows it. Pure."""
+    from agent_meshes_hm08 import UPPER_GUM
+    k, hw, mz, front = layout['scale'], layout['mouth_half_width'], layout['mouth_z'], layout['mouth_front']
+    return {'upper': dict(center=(0.0, front + .0065 * k, mz + UPPER_GUM * k), half_width=.72 * hw, depth=.01 * k, height=(UPPER_GUM + .0008) * k),
+            'lower': dict(center=(0.0, front + .011 * k, mz - .0075 * k), half_width=.6 * hw, depth=.01 * k, height=.005 * k)}
 
 
 def linear_color_of(hex_color):
@@ -299,7 +311,8 @@ def add_face(objects, values=None):
 
     skin_hex, hair_hex = p['skin'], p['hair']
     skin = material('skin', skin_hex, roughness=.55)
-    dark = material('mouth_cavity', '#1e0709', roughness=1.0)
+    # Near black and matte: an open mouth reads as a dark cavity in any light.
+    dark = material('mouth_cavity', '#0a0304', roughness=1.0)
     dark.use_backface_culling = False
     V, F = face['vertices'], face['faces']
     lash_set = set(face['lash'])
@@ -307,6 +320,24 @@ def add_face(objects, values=None):
     head = mesh_from_geometry('head_skin', {'vertices': [tuple(v) for v in V], 'faces': [[int(i) for i in f if i >= 0] for f in F],
                                             'material_indices': indices}, [skin, dark])
     for name, targets in face['morphs'].items(): shape_key(head, name, [tuple(v) for v in targets])
+    # The body's neck rises inside the head, where only the open mouth sees it: that part is the mouth's dark too.
+    from agent_meshes_hm08 import boundary_loops
+    rim = min(boundary_loops(F), key=lambda loop: float(np.mean(V[loop, 2])))
+    inside_from = float(V[rim, 2].max())
+    for obj in objects:
+        if getattr(obj, 'type', None) != 'MESH' or obj.name != 'neck': continue
+        import bmesh
+        from mathutils import Vector
+        local = obj.matrix_world.inverted()
+        bm = bmesh.new(); bm.from_mesh(obj.data)
+        cut = local @ Vector((0.0, 0.0, inside_from))
+        normal = (local.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=cut, plane_no=normal)
+        obj.data.materials.append(dark)
+        slot = len(obj.data.materials) - 1
+        for f in bm.faces:
+            if min((obj.matrix_world @ v.co).z for v in f.verts) > inside_from - 1e-6: f.material_index = slot
+        bm.to_mesh(obj.data); bm.free()
 
     # Paint: warm cheeks, tinted lips and a darker lash line.
     base = linear_color(skin_hex)
@@ -335,10 +366,10 @@ def add_face(objects, values=None):
     parts = [head]
     # Teeth behind the lips and a tongue on the mouth's floor; the lower row and the tongue ride the jaw.
     teeth = '#eeeae0'
-    upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, front + .007 * k, mz + .0085 * k), .72 * hw,
-                               .01 * k, 8, .0062 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
-    lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, front + .011 * k, mz - .0075 * k), .6 * hw,
-                               .01 * k, 8, .005 * k, row='lower'), [material('teeth_lower', teeth, roughness=.3)])
+    rows = teeth_layout(L)
+    upper, lower = (mesh_from_geometry(f'teeth_{row}', teeth_row_geometry('rounded', rows[row]['center'], rows[row]['half_width'],
+                                       rows[row]['depth'], 8, rows[row]['height'], row=row), [material(f'teeth_{row}', teeth, roughness=.3)])
+                    for row in ('upper', 'lower'))
     jaw = face['jaw']
     add_jaw_open(lower, jaw, rigid=True)
     tongue_hex = _hex(_mix(linear_color('#b24c55'), (base[0] * .5, base[1] * .2, base[2] * .2), .25))
@@ -362,8 +393,10 @@ def add_face(objects, values=None):
     eye_mats = [material('eye_white', '#efece4', roughness=.2), material('eye_iris', p['eyes'], roughness=.25),
                 material('eye_pupil', '#0b0908', roughness=.15)]
     eyeballs = []
+    toon = min(1.0, shape['cartoon'])
     for side, center in (('L', eye_left), ('R', eye_right)):
-        ball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris=38, pupil=17), eye_mats)
+        # (the boards' eyes are mostly dark iris: the cartoon strength widens it)
+        ball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris=38 + 12 * toon, pupil=17 + 5 * toon), eye_mats)
         bind_rigid(ball, rig, f'eye_{side}')
         eyeballs.append(ball)
 
@@ -371,9 +404,11 @@ def add_face(objects, values=None):
     brow_mat = material('brow', _hex(_mix(linear_color(hair_hex), (.01, .008, .007), .75)), roughness=.7)
     w = abs(marks['eye_outer_L'][0] - marks['eye_inner_L'][0])
     top = marks['eye_upper_L'][2]
-    inner, outer = (marks['eye_inner_L'][0] + .02 * w, top + .42 * w), (marks['eye_outer_L'][0] + .08 * w, top + .3 * w)
-    h = .11 * w * shape['brow'] ** .5
-    brows = [skin_brow_geometry(head, side, inner=inner, outer=outer, height=h, thickness=.2 * h, arch=.15 * h,
+    # A realistic brow's inner end sits higher (a worried look on a cartoon face); the cartoon strength levels the brow,
+    # thickens it and gives it a soft arch, as the boards draw them: relaxed and warm.
+    inner, outer = (marks['eye_inner_L'][0] + .02 * w, top + (.42 - .15 * toon) * w), (marks['eye_outer_L'][0] + .08 * w, top + .3 * w)
+    h = .11 * w * shape['brow'] ** .5 * (1 + .35 * toon)
+    brows = [skin_brow_geometry(head, side, inner=inner, outer=outer, height=h, thickness=.2 * h, arch=(.15 + .45 * toon) * h,
                                 down=.25 * h, inner_up=.3 * h, outer_up=.3 * h, pinch=.12 * h) for side in 'LR']
     from agent_meshes_author import join_geometry
     bgeo = join_geometry(brows)

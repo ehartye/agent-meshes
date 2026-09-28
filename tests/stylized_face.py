@@ -237,6 +237,99 @@ class LivingFace(unittest.TestCase):
         self.assertLess(gap(P), gap(self.V) + .0005)
 
 
+class CartoonFace(unittest.TestCase):
+    """The cartoon strength pushes the head toward the boards' big-eyed, simple, warm faces, and its mouth moves like
+    theirs: a smile that lifts round cheeks, a dark open mouth with both tooth rows."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.plain = face.face_layout(dict(CAST['adult-female'], face='arkit'))
+        cls.layout = face.face_layout(dict(CAST['adult-female'], face='arkit', face_shape={'cartoon': 1.0}))
+        cls.face = cls.layout['face']
+        cls.V, cls.F, cls.M = cls.face['vertices'], cls.face['faces'], cls.face['morphs']
+        cls.marks, cls.k = cls.face['landmarks'], cls.layout['scale']
+        cls.T = cls.F[:, :3]
+
+    def pose(self, **weights):
+        return self.V + sum(w * (self.M[n] - self.V) for n, w in weights.items())
+
+    normals, turn = LivingFace.normals, LivingFace.turn
+
+    def test_cartoon_is_a_validated_face_shape_value(self):
+        for invalid in (-.1, 1.6, True):
+            with self.assertRaises(ValueError): face.face_shape_values(dict(CAST['girl'], face='arkit', face_shape={'cartoon': invalid}))
+        self.assertEqual(face.head_spec(dict(CAST['girl'], face='arkit', face_shape={'cartoon': .7}))['cartoon'], .7)
+
+    def test_cartoon_eyes_are_much_larger_and_the_nose_smaller(self):
+        def eye(L):
+            m = L['landmarks']
+            return (m['eye_outer_L'][0] - m['eye_inner_L'][0]) / (m['crown'][2] - m['menton'][2])
+        self.assertGreater(eye(self.layout), 1.3 * eye(self.plain))
+        self.assertGreater(self.layout['eye_radius'] / self.layout['radii'][2], 1.3 * self.plain['eye_radius'] / self.plain['radii'][2])
+
+        def nose(L):   # how far the nose stands out past the upper lip, and how tall its tip is over the nostrils
+            m = L['landmarks']
+            h = m['crown'][2] - m['menton'][2]
+            return (m['upper_lip'][1] - m['nose_tip'][1]) / h, (m['nose_tip'][2] - m['subnasale'][2]) / h
+        for small, plain in zip(nose(self.layout), nose(self.plain)): self.assertLess(small, .8 * plain)
+
+    def test_the_smile_lifts_the_corners_up_and_back_and_a_smooth_cheek(self):
+        m, V = self.marks, self.V
+        hw = abs(m['mouth_corner_L'][0])
+        corner = int(np.argmin(np.linalg.norm(V - m['mouth_corner_L'], axis=1)))
+        P = self.pose(mouthSmileLeft=1)
+        self.assertGreater(P[corner, 2] - V[corner, 2], .15 * hw)   # up
+        self.assertGreater(P[corner, 1] - V[corner, 1], .05 * hw)   # and back, into the cheek
+        # The cheek below the eye rides up with it.
+        cheek = np.array([m['mouth_corner_L'][0] + .3 * hw, 0, (m['mouth_corner_L'][2] + m['eye_lower_L'][2]) / 2])
+        front = np.abs(V[:, 1] - V[:, 1].min()) < .5 * (V[:, 1].max() - V[:, 1].min())
+        near = int(np.argmin(np.where(front, np.hypot(V[:, 0] - cheek[0], V[:, 2] - cheek[2]), np.inf)))
+        self.assertGreater(P[near, 2] - V[near, 2], .05 * hw)
+        # No crease terraces between the nose and the jaw: the surface there turns no harder than at rest.
+        c = V[self.T].mean(axis=1)
+        region = (c[:, 0] > .3 * hw) & (c[:, 0] < 1.6 * hw) & (c[:, 2] < m['subnasale'][2]) & (c[:, 2] > m['menton'][2] + .2 * hw) \
+            & (c[:, 1] < m['stomion'][1] + .3 * hw) & ~self.face['mouth_inside']
+        rest, smile = self.turn(V, region), self.turn(P, region)
+        self.assertLess(smile, rest + 8)
+        for name in ('mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight'):
+            self.assertEqual(len(hm.flipped(V, self.M[name], self.F)), 0, name)
+
+    def test_the_frown_turns_the_corners_down(self):
+        m, V = self.marks, self.V
+        corner = int(np.argmin(np.linalg.norm(V - m['mouth_corner_L'], axis=1)))
+        self.assertLess(self.pose(mouthFrownLeft=1)[corner, 2] - V[corner, 2], -.08 * abs(m['mouth_corner_L'][0]))
+
+    def test_the_open_mouth_shows_only_its_dark_inside(self):
+        m, k = self.marks, self.k
+        J, inside, F, V = self.M['jawOpen'], self.face['mouth_inside'], self.F, self.V
+        hw = abs(m['mouth_corner_L'][0])
+        # Skin the front cannot see at rest is the mouth's interior (round 3 showed it pale through the open jaw).
+        rest_box, pixel = (-1.5 * hw, 1.5 * hw, V[:, 2].min(), m['nasion'][2]), .0004 * k
+        D = hm.depth_map(V, F, rest_box, pixel)
+        cen = V[F[:, :3]].mean(axis=1)
+        i = np.clip(((cen[:, 0] - rest_box[0]) / pixel).astype(int), 0, D.shape[1] - 1)
+        j = np.clip(((cen[:, 2] - rest_box[2]) / pixel).astype(int), 0, D.shape[0] - 1)
+        hidden = ~inside & (np.abs(cen[:, 0]) < 1.5 * hw) & np.isfinite(D[j, i]) & (cen[:, 1] > D[j, i] + .002 * k)
+        box = (-hw, hw, m['menton'][2] - .02 * k, m['subnasale'][2])
+        dark = hm.depth_map(J, F[inside], box, pixel)
+        interior = hm.depth_map(J, F[hidden], box, pixel)
+        outside = hm.depth_map(J, F[~inside & ~hidden], box, pixel)
+        opening = np.isfinite(dark) & (dark < outside) & (dark <= interior)
+        light = np.isfinite(interior) & (interior < outside) & (interior < dark)
+        self.assertGreater(opening.sum(), 200)
+        self.assertLess(light.sum(), .01 * opening.sum())
+
+    def test_the_open_jaw_shows_the_upper_teeth(self):
+        m, k, J = self.marks, self.k, self.M['jawOpen']
+        teeth = face.teeth_layout(self.layout)
+        edge = teeth['upper']['center'][2] - teeth['upper']['height']
+        # The upper lip's lowest point over the teeth once the jaw opens.
+        lip = (np.abs(self.V[:, 0]) < .3 * abs(m['mouth_corner_L'][0])) & (self.V[:, 2] > m['stomion'][2] + .0003 * k)             & (self.V[:, 2] < m['subnasale'][2]) & (self.V[:, 1] < m['stomion'][1] + .002 * k)
+        self.assertLess(edge, J[lip, 2].min() - .0015 * k)
+        # And the teeth stand behind the upper lip's front, not through it.
+        self.assertGreater(teeth['upper']['center'][1], m['upper_lip'][1] + .002 * k)
+
+
 class Beard(unittest.TestCase):
     def test_a_beard_covers_the_jaw_and_chin_but_not_the_lips_eyes_or_forehead(self):
         L = face.face_layout(dict(CAST['adult-female'], face='arkit'))

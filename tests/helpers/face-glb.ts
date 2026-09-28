@@ -389,7 +389,8 @@ export function encodeHead(head: SynthHead): Uint8Array {
   const binary = Buffer.concat(chunks);
   const document = {
     asset: { version: '2.0', generator: 'agent-meshes synthetic face' }, scene: 0, scenes: [{ nodes: [0] }], nodes, meshes, skins,
-    materials: materials.map(name => ({ name, pbrMetallicRoughness: { baseColorFactor: [0.8, 0.6, 0.5, 1], metallicFactor: 0, roughnessFactor: 0.5 }, ...head.materialProps?.[name] })),
+    // (a mouth's cavity is near black, as the contract requires; everything else a mid skin tone)
+    materials: materials.map(name => ({ name, pbrMetallicRoughness: { baseColorFactor: name === 'mouth_cavity' ? [0.01, 0.003, 0.003, 1] : [0.8, 0.6, 0.5, 1], metallicFactor: 0, roughnessFactor: 0.5 }, ...head.materialProps?.[name] })),
     accessors, bufferViews, buffers: [{ byteLength: binary.length + ((4 - binary.length % 4) % 4) }],
   };
   let json = Buffer.from(JSON.stringify(document));

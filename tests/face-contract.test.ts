@@ -44,6 +44,9 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(result.measurements.chinDropRatio).toBeCloseTo(JAW_DROP / 0.22, 4);
     expect(result.measurements.upperLipMove).toBe(0);
     expect(result.measurements.mouthOpen).toMatchObject({ hits: ['face[mouth_cavity]', 'face[mouth_cavity]', 'face[mouth_cavity]'] });
+    // Every front ray through the open mouth lands on teeth, tongue or something near black.
+    expect(result.measurements.mouthOpen!.rays).toBeGreaterThanOrEqual(15);
+    expect(result.measurements.mouthOpen!.lightest).toBeLessThan(0.03);
     expect(result.measurements.inversionCombos).toBeGreaterThan(REQUIRED.length * 2);
     expect(result.measurements.height).toBeCloseTo(0.22, 3);
     expect(result.warnings.filter(w => /height/.test(w))).toEqual([]);
@@ -105,6 +108,7 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     ['puppet-jaw', 'a hole opening in a fixed face (only a lip band drops; the chin stays)', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; jaw.positions = face.positions.map((p, i) => jaw.positions[i][1] < p[1] && p[1] > MOUTH_Y - 0.0151 ? [p[0], p[1] - 0.01, p[2]] as Vec3 : p); }],
     ['upper-lip', 'skin above the mouth line dropping with the jaw', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; jaw.positions = face.positions.map((p, i) => p[1] >= MOUTH_Y && p[1] <= MOUTH_Y + 0.0151 && Math.abs(p[0]) <= 0.03 ? [p[0], p[1] - 0.006, p[2]] as Vec3 : jaw.positions[i]); }],
     ['mouth-open', 'an upper-lip seam carried by the jaw (the lip hangs like a curtain over the open mouth)', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; for (const i of upperSeam()) jaw.positions[i] = [face.positions[i][0], face.positions[i][1] - JAW_DROP, face.positions[i][2]]; }],
+    ['mouth-open', 'a light, skin-coloured mouth cavity (an open mouth must read as a dark hole)', head => { head.materialProps = { mouth_cavity: { pbrMetallicRoughness: { baseColorFactor: [0.8, 0.6, 0.5, 1], metallicFactor: 0, roughnessFactor: 1 } } }; }],
     ['mouth-open', 'an open mouth that sees through the head (no teeth, tongue or cavity behind the lips)', head => { head.groups!.face = head.groups!.face.filter(n => n !== 'mouth_cavity'); head.meshes = head.meshes.filter(m => m.name !== 'mouth_cavity' && m.name !== 'skull'); }],
     ['puppet-jaw', 'a fixed face with only the teeth dropping', head => { const face = mesh(head, 'face'); face.targets = face.targets.map(t => t.name === 'jawOpen' ? { name: 'jawOpen', positions: face.positions.map((p, i) => i === 0 ? [p[0], p[1] + 0.002, p[2]] as Vec3 : p) } : t); }],
   ];

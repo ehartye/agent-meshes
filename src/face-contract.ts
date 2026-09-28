@@ -49,6 +49,9 @@ export const MIN_MORPH_MOTION = 0.001;
 export const MIN_CHIN_DROP_RATIO = 0.1;
 /** The upper lip and the face above it may move at most this much under jawOpen = 1. */
 export const UPPER_LIP_TOLERANCE = 0.0005;
+/** The lightest an open mouth may look past its teeth and tongue: relative luminance of the base color times any vertex
+ * color (a near-black, matte cavity; a skin-coloured inside reads as a pale hole). */
+export const MAX_MOUTH_LUMINANCE = 0.03;
 /** Rays per eyeball width for the eye-coverage check (about 0.5 mm apart on a 12 mm eye). */
 export const COVERAGE_GRID = 48;
 /**
@@ -148,7 +151,9 @@ export interface FaceContractReport {
     /** Largest jawOpen motion of face skin above the upper teeth's gum line (the upper lip and everything above it). */
     upperLipMove: number | null;
     /** What a front view hits first between the teeth rows at jawOpen = 1, at the mouth center and to each side. */
-    mouthOpen: { height: number; xs: number[]; hits: string[] } | null;
+    /** The middle rays' hits, and over a grid of front rays through the open mouth the lightest luminance seen past
+     * the teeth and tongue. */
+    mouthOpen: { height: number; xs: number[]; hits: string[]; rays: number; lightest: number } | null;
     /** Front rays over the teeth rows at rest: how many land on teeth before anything else (declared exposedTeeth may show). */
     restTeeth: { samples: number; visible: number } | null;
     eyes: Partial<Record<'L' | 'R', EyeMeasure>>; teeth: { upperMove: number | null; lowerDrop: number | null };
@@ -163,6 +168,8 @@ interface Instance {
   transparent: string | null; morphMesh: boolean;
   rest: Float64Array; targets: Map<string, Float64Array>; triangles: Uint32Array;
   influence: (vertex: number, joint: number) => number;
+  /** Each vertex's albedo as relative luminance: the material's base color factor times COLOR_0 (textures not read). */
+  luminance: Float64Array;
 }
 
 const round = (value: number, digits = 6) => Number(value.toFixed(digits));
@@ -267,7 +274,14 @@ function instances(doc: GLTFDocument, graph: ReturnType<typeof sceneGraph>): Ins
         joints.forEach((set, s) => { for (let k = 0; k < 4; k++) { const w = weights[s][vertex * 4 + k]; total += w; if (set[vertex * 4 + k] === joint) on += w; } });
         return total > 0 ? on / total : 0;
       };
-      result.push({ label, names, skinned, skin: node.skin, count, rest, targets, triangles: triangles(doc, primitive, count), influence, transparent: seeThrough(materialJson), morphMesh: targetNames.length > 0 });
+      const base = (materialJson?.pbrMetallicRoughness?.baseColorFactor as number[] | undefined) ?? [1, 1, 1, 1];
+      const colors = primitive.attributes.COLOR_0 === undefined ? null : readAccessor(doc, primitive.attributes.COLOR_0);
+      const luminance = new Float64Array(count);
+      for (let v = 0; v < count; v++) {
+        const tint = (k: number) => base[k] * (colors ? colors.data[v * colors.size + k] : 1);
+        luminance[v] = 0.2126 * tint(0) + 0.7152 * tint(1) + 0.0722 * tint(2);
+      }
+      result.push({ label, names, skinned, skin: node.skin, count, rest, targets, triangles: triangles(doc, primitive, count), influence, transparent: seeThrough(materialJson), morphMesh: targetNames.length > 0, luminance });
     });
   }
   return result;
@@ -1099,12 +1113,30 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
         depths.push(best);
         return hit;
       });
-      measurements.mouthOpen = { height: round(height), xs: xs.map(x => round(x)), hits: hits.map(h => h?.label ?? '(nothing)') };
+      // A grid of front rays across the opening: past the teeth and tongue, everything they see must be near black.
+      let lightest = 0, rays = 0, light: { x: number; y: number; label: string; value: number } | null = null;
+      for (const fx of [-0.6, -0.3, 0, 0.3, 0.6]) for (const fy of [0.25, 0.5, 0.75]) {
+        const x = middle + fx * span, y = lowTop + fy * (bite - lowTop);
+        let best = -Infinity, owner: Instance | undefined, value = 0;
+        for (const { instance, points } of scene) {
+          const t = instance.triangles;
+          for (let k = 0; k < t.length; k += 3) {
+            const z = rayZ(points, t[k], t[k + 1], t[k + 2], x, y);
+            if (z !== null && z > best) { best = z; owner = instance; value = (instance.luminance[t[k]] + instance.luminance[t[k + 1]] + instance.luminance[t[k + 2]]) / 3; }
+          }
+        }
+        rays++;
+        if (!owner || upperTeeth(owner.names) || lowerTeeth(owner.names) || tongue(owner.names)) continue;
+        if (value > lightest) { lightest = value; light = { x, y, label: owner.label, value }; }
+      }
+      measurements.mouthOpen = { height: round(height), xs: xs.map(x => round(x)), hits: hits.map(h => h?.label ?? '(nothing)'), rays, lightest: round(lightest) };
       const problems = hits.flatMap((hit, k) => hit && mouthPart(hit.names) ? [] : [!hit
         ? `jawOpen=1 opens a see-through mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, hits nothing (add a dark mouth cavity behind the lips)`
         : depths[k] < teethBack
           ? `jawOpen=1 opens a see-through mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, passes the teeth and hits the inside of ${hit.label} ${mm(teethBack - depths[k])} behind them (add a dark mouth cavity behind the lips)`
           : `jawOpen=1 does not open the mouth: a front view at x ${mm(xs[k])}, halfway between the teeth rows, hits ${hit.label} before any teeth, tongue or mouth cavity (skin such as the upper lip covers the opening)`]);
+      // (only for an opening that is otherwise sound: a see-through mouth is that first)
+      if (!problems.length && light && light.value > MAX_MOUTH_LUMINANCE) problems.push(`jawOpen=1 shows a light mouth inside: a front view at x ${mm(light.x)}, height ${mm(light.y)} sees ${light.label} at luminance ${light.value.toFixed(3)} (at most ${MAX_MOUTH_LUMINANCE}): give the cavity, and anything seen through it, a near-black matte material`);
       check('mouth-open', problems, `jawOpen=1 shows ${[...new Set(hits.map(h => h?.label ?? '(nothing)'))].join(', ')} between the lips`);
     }
   } else check('mouth-open', [], '', 'the upper or lower teeth were not found');

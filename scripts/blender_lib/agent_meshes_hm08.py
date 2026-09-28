@@ -304,6 +304,30 @@ def smooth_deltas(deltas, edges, iterations=10, amount=.5):
     return d
 
 
+def boundary_loops(faces):
+    """The open edges' loops of a quad/triangle mesh (-1 pads triangles), each in its faces' winding order."""
+    nxt = {}
+    count = {}
+    for f in faces:
+        c = [int(i) for i in f if i >= 0]
+        for a, b in zip(c, c[1:] + c[:1]):
+            key = (min(a, b), max(a, b)); count[key] = count.get(key, 0) + 1
+            nxt.setdefault(a, []).append(b)
+    open_next = {}
+    for f in faces:
+        c = [int(i) for i in f if i >= 0]
+        for a, b in zip(c, c[1:] + c[:1]):
+            if count[(min(a, b), max(a, b))] == 1: open_next[a] = b
+    loops, seen = [], set()
+    for start in open_next:
+        if start in seen: continue
+        loop, v = [], start
+        while v not in seen and v in open_next:
+            seen.add(v); loop.append(v); v = open_next[v]
+        if len(loop) > 2: loops.append(loop)
+    return loops
+
+
 def _corner_triangles(faces):
     """Every triangle a quad can split into (both diagonals), so a check holds whichever way an exporter splits it."""
     f = np.asarray(faces)
@@ -420,24 +444,29 @@ def eyeball_shows(vertices, faces, center, radius, rays=48, pitch=0.0, band=None
     return int((inside & (front < D - 1e-7)).sum())
 
 
-def flipped(rest, moved, faces, triangles_=None):
-    """Triangles (of both splits of every quad) that turn over, or collapse, between rest and moved positions."""
+def flipped(rest, moved, faces, triangles_=None, margin=0.0):
+    """Triangles (of both splits of every quad) that turn over, or collapse, between rest and moved positions. With a
+    `margin` (0..1), triangles that turn nearly edge-on (their normals' cosine under it) count too."""
     T = _corner_triangles(faces) if triangles_ is None else triangles_
     n0 = np.cross(rest[T[:, 1]] - rest[T[:, 0]], rest[T[:, 2]] - rest[T[:, 0]])
     n1 = np.cross(moved[T[:, 1]] - moved[T[:, 0]], moved[T[:, 2]] - moved[T[:, 0]])
     a0 = np.linalg.norm(n0, axis=1)
     ok = a0 > 1e-14
     dot = (n0 * n1).sum(1)
-    bad = ok & ((dot <= 0) | (np.linalg.norm(n1, axis=1) < .02 * a0))
+    a1 = np.linalg.norm(n1, axis=1)
+    bad = ok & ((dot <= margin * a0 * a1) | (a1 < .02 * a0))
     return T[bad]
 
 
-def unfold_morphs(rest, faces, morphs, mixes=(), iterations=200, amount=.7, keep=(), pinned=None, calm=True, coherent=False):
+def unfold_morphs(rest, faces, morphs, mixes=(), iterations=200, amount=.7, keep=(), pinned=None, calm=True, coherent=False,
+                  margin=0.0, uncalmed=()):
     """Relax each morph's motion where it turns faces over: the flipped faces' vertices (and their neighbours) take
     their neighbours' mean motion and give up 3% of it, step by step, until nothing flips, alone and in each weighted
     mix of `mixes` ({morph: weight} dicts). Returns the morphs (new arrays) and how many of them and of the mixes still
     turn a face over. Morphs named in `keep` are left as they are, and vertices in `pinned` (a boolean mask: the lid
-    margins, whose closure the contract checks) keep their motion."""
+    margins, whose closure the contract checks) keep their motion. A `margin` (see `flipped`) relaxes faces that turn
+    nearly edge-on too, so other morphs mixed in later have room to move them. Morphs named in `uncalmed` are never
+    halved: what still turns over with them is left to the coherent pass (their motion shared across the face)."""
     rest = np.asarray(rest, dtype=np.float64)
     T = _corner_triangles(faces)
     edges = edges_of(faces)
@@ -470,7 +499,7 @@ def unfold_morphs(rest, faces, morphs, mixes=(), iterations=200, amount=.7, keep
         # Kept morphs in a mix count toward what flips; only the others give way.
         for _ in range(iterations):
             moved = rest + sum(w * ((out[n] if n in out else kept[n]) - rest) for n, w in zip(names, weights))
-            bad = flipped(rest, moved, faces, T)
+            bad = flipped(rest, moved, faces, T, margin)
             if not len(bad): return True
             relax([n for n in names if n in out], bad)
         return False
@@ -492,7 +521,7 @@ def unfold_morphs(rest, faces, morphs, mixes=(), iterations=200, amount=.7, keep
         verts |= {n for v in list(verts) for n in neighbours[v]}
         idx = np.array(sorted(v for v in verts if free[v]), dtype=np.int64)
         if not len(idx): break
-        for n in involved:
+        for n in involved - set(uncalmed):
             d = out[n] - rest
             d[idx] *= .5
             out[n] = rest + d
@@ -753,11 +782,30 @@ def feature_weights(shape, head=None):
     return {k: v for k, v in weights.items() if v}
 
 
-def head_shape(years, gender, stylize=1.0, shape=None, races=None, head=None):
-    """The hm08 head (MakeHuman units) for an age, gender (0 female, 1 male), stylize weight and shape controls."""
+# The hm08 targets the cartoon strength adds at 1 (scaled with it): no eye bags, a small soft nose, a rounder head and a
+# shorter, softer chin. The eyes grow by `eye_lens`, not a target (hm08's eye scale moves the lids, not the eyeball).
+CARTOON_TARGETS = {
+    'eyes/l-eye-bag-decr': 1.0, 'eyes/r-eye-bag-decr': 1.0, 'eyes/l-eye-bag-height-decr': .6, 'eyes/r-eye-bag-height-decr': .6,
+    'nose/nose-volume-decr': 1.0, 'nose/nose-scale-horiz-decr': .6, 'nose/nose-scale-vert-decr': .5, 'nose/nose-scale-depth-decr': .8,
+    'nose/nose-point-width-decr': .5, 'nose/nose-flaring-decr': .5,
+    'head/head-round': .5, 'chin/chin-height-decr': .4, 'chin/chin-prominent-decr': .5,
+}
+# The upper teeth's gum line above the mouth line, and how far the open jaw lifts the upper lip off them (both in meters
+# on a realistic head, scaled with the head): the lip lifts only below the gum, where arkit-face/1 lets it move.
+UPPER_GUM = .0065
+LIP_LIFT = .0024
+# How much larger the eyes are at cartoon 1 (the boards' eyes are about 1.4 times a stylized realistic head's).
+CARTOON_EYES = .4
+
+
+def head_shape(years, gender, stylize=1.0, shape=None, races=None, head=None, cartoon=0.0):
+    """The hm08 head (MakeHuman units) for an age, gender (0 female, 1 male), stylize weight, shape controls and cartoon
+    strength (CARTOON_TARGETS; the eyes grow later, in the fitted head)."""
     head = head or load_head()
     weights = macro_weights(years, gender, races)
-    weights.update(feature_weights(shape or {}, head))
+    for name, value in feature_weights(shape or {}, head).items(): weights[name] = weights.get(name, 0.0) + value
+    for name, value in CARTOON_TARGETS.items():
+        if cartoon: weights[name] = weights.get(name, 0.0) + cartoon * value
     out = head.compose(weights)
     if stylize:
         index, delta = stylize_target(head)
@@ -964,8 +1012,84 @@ class RigidJaw:
         return [self.move(v, w) if w > 0 else tuple(v) for v, w in zip(vertices, weights)]
 
 
+def lens(points, centers, radius, factor, reach=2.6, plateau=.45, seat=.6):
+    """Points with the region round each center magnified (or, below 1, shrunk) by `factor`: everything within
+    `plateau` of `reach` radii of a center scales by the full factor, easing to none at `reach`. The scaling is about a
+    point `seat` radii in front of the center (negative: behind), so an eye grows back into its socket and out to the
+    sides rather than bulging forward, and a nose shrinks toward the face. The radial map stays monotonic for factors
+    up to about 1.6, so no surface folds. `centers` are (3,) points (Blender frame: the face looks down -Y)."""
+    P = np.asarray(points, dtype=np.float64)
+    out = P.copy()
+    for c in centers:
+        c = np.asarray(c, dtype=np.float64)
+        u = np.linalg.norm(P - c, axis=1) / (reach * radius)
+        t = np.clip((u - plateau) / (1 - plateau), 0, 1)
+        w = 1 - t * t * (3 - 2 * t)
+        origin = c - np.array([0.0, seat * radius, 0.0])
+        out += (factor - 1) * w[:, None] * (P - origin)
+    return out
+
+
+def relax_surround(points, edges, centers, radius, strength, near=1.25, far=2.6, iterations=30):
+    """Points with the skin round each eye (from `near` to `far` eye radii from its center, easing in and out) relaxed
+    by Taubin smoothing (which does not shrink): the boards' faces have no bags or folds round the eyes. The lid
+    margins (inside `near`) stay put. `strength` 0..1 scales the relax."""
+    P = np.asarray(points, dtype=np.float64).copy()
+    d = np.min([np.linalg.norm(P - np.asarray(c), axis=1) / radius for c in centers], axis=0)
+    t_in = np.clip((d - near) / .35, 0, 1)
+    t_out = np.clip((far - d) / .6, 0, 1)
+    w = (strength * (t_in * t_in * (3 - 2 * t_in)) * (t_out * t_out * (3 - 2 * t_out)))[:, None]
+    degree = np.maximum(np.bincount(edges.ravel(), minlength=len(P)), 1).astype(np.float64)[:, None]
+    for _ in range(iterations):
+        for factor in (.5, -.53):
+            around = np.zeros_like(P)
+            np.add.at(around, edges[:, 0], P[edges[:, 1]]); np.add.at(around, edges[:, 1], P[edges[:, 0]])
+            P += factor * w * (around / degree - P)
+    return P
+
+
+def _field(P, center, radii, power=3):
+    """A smooth bump (1 at `center`, 0 past the ellipsoid of `radii`), flat at both ends: (1 - u^2)^power."""
+    u2 = np.sum(((P - center) / radii) ** 2, axis=1)
+    return np.clip(1 - u2, 0, 1) ** power
+
+
+def stylized_mouth(P, marks, eye_radius, edges=None):
+    """The left side's smile and frown for a stylized face, as whole-head targets. The boards smile with the whole
+    lower face: the corner lifts up and back into the cheek, the mouth widens, and a round cheek mass rises under the
+    eye. Every part is a smooth ellipsoidal field, so the lips stay together (both lips at a corner move alike) and
+    nothing creases between the nose and the jaw. The frown turns the corner down and a little forward.
+    Returns {'smile': targets, 'frown': targets} (Blender frame)."""
+    c = np.asarray(marks['mouth_corner_L'], dtype=np.float64)
+    hw, mz, sy = abs(c[0]), marks['stomion'][2], marks['stomion'][1]
+    lid = marks['eye_lower_L'][2]
+    # Only the face's front half (and the mouth's inside just behind the lips) moves.
+    front = np.clip((sy + 1.2 * hw - P[:, 1]) / (.4 * hw), 0, 1)[:, None]
+    inward = np.where(P[:, 0] < c[0], 1.15, .9) * hw   # the corner's field reaches further across the mouth than out
+    radii = np.stack([inward, np.full(len(P), .75 * hw), np.full(len(P), .8 * hw)], axis=1)
+    corner = _field(P, c, radii)[:, None]
+    # The mouth widens from the middle: the left half's lips stretch out.
+    side = np.clip(P[:, 0] / (.5 * hw) + .5, 0, 1)
+    side = (side * side * (3 - 2 * side))[:, None]
+    mouth = _field(P, np.array([0.0, sy, mz]), np.array([1.5 * hw, .9 * hw, .7 * hw]), power=2)[:, None]
+    widen = np.stack([.12 * P[:, 0], np.zeros(len(P)), np.zeros(len(P))], axis=1) * mouth * side
+    # The cheek's apple, halfway up to the lower lid and a little out, rises and fills forward; it fades out before the
+    # lower lid (the lids have their own squint).
+    apple = np.array([c[0] + .25 * hw, marks['cheek_L'][1] if 'cheek_L' in marks else sy, mz + .55 * (lid - mz)])
+    cheek = _field(P * [1, 0, 1], apple * [1, 0, 1], np.array([.85 * hw, 1.0, .7 * (lid - mz)]), power=2)[:, None]
+    below_lid = np.clip((lid - .35 * eye_radius - P[:, 2]) / (.6 * eye_radius), 0, 1)[:, None]
+    smile = corner * np.array([.1 * hw, .14 * hw, .3 * hw]) + widen + cheek * below_lid * np.array([.03 * hw, -.06 * hw, .17 * hw])
+    frown = corner * np.array([.04 * hw, -.03 * hw, -.3 * hw])
+    out = {}
+    for name, d in (('smile', smile), ('frown', frown)):
+        d = d * front
+        if edges is not None: d = smooth_deltas(d, edges, iterations=4, amount=.5)
+        out[name] = P + d
+    return out
+
+
 def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z=None, neck=None, races=None, units=FACE_UNITS,
-                   almond=.6, eye_scale=.95):
+                   almond=.6, eye_scale=.95, cartoon=0.0):
     """A stylized character's living face on the hm08 head in Blender's frame: the head fitted to the envelope
     (center, radii (x, y, z)) and cropped at `neck_z`, with its face-unit morphs (lids refitted to the stylized eyes).
 
@@ -977,7 +1101,7 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     'mouth_inside': face mask, 'mouth_box': (low, high) of the mouth's inside, 'lash': vertex ids, 'jaw': RigidJaw,
     'scale': (3,)}."""
     head = load_head()
-    mh = head_shape(years, gender, stylize, shape, races, head)
+    mh = head_shape(years, gender, stylize, shape, races, head, cartoon)
     V = to_blender(mh)
     faces = head.kind_faces('body')
     marks = face_landmarks(V, faces, hm08_eyes(head, V))
@@ -999,6 +1123,20 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     flip = np.array([-1.0, 1.0, 1.0])
     P = .5 * (P + P[partner] * flip)
     marks = face_landmarks(P, faces, hm08_eyes(head, P))
+    skin_edges = edges_of(faces)
+    helper = lambda Q: (lambda q: ((q.min(0) + q.max(0)) / 2, float(np.mean((q.max(0) - q.min(0)) / 2))))(Q[head.kind_vertices('helper-l-eye')])
+    if cartoon:
+        # The boards' big eyes: each eye's region magnified (the eyeball helpers with it), and a warm resting mouth (a
+        # little of the stylized smile, both sides).
+        (c, r) = helper(P)
+        P = lens(P, [c, c * flip], r, 1 + CARTOON_EYES * cartoon)
+        (c, r) = helper(P)
+        P = relax_surround(P, skin_edges, [c, c * flip], r, min(1.0, cartoon))
+        P = .5 * (P + P[partner] * flip)
+        marks = face_landmarks(P, faces, hm08_eyes(head, P))
+        warm = stylized_mouth(P, marks, helper(P)[1], skin_edges)['smile'] - P
+        P = P + .3 * min(1.0, cartoon) * (warm + warm[partner] * flip)
+        marks = face_landmarks(P, faces, hm08_eyes(head, P))
 
     # The eyes: centers and sizes from hm08's eyeball helpers, as spheres just inside the lids resting on them.
     eyes, skin_ids = [], head.kind_vertices('body')
@@ -1014,7 +1152,6 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
 
     # Lids refitted to the stylized openings.
     morphs = {}
-    skin_edges = edges_of(faces)
     (c, r) = eyes[0]
     lid_ids = margin_vertices()
     margin_of = lambda Q: {'inner': Q[lid_ids['inner']], 'outer': Q[lid_ids['outer']],
@@ -1068,6 +1205,11 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     morphs.update(lids)
     for unit in units:
         if unit not in morphs: morphs[unit] = P + deltas[unit]
+    # The smile and frown are our own (the face units' realistic ones crease the cheeks and pinch the corners).
+    mouth = stylized_mouth(P, marks, r, skin_edges)
+    for name, key in (('mouthSmile', 'smile'), ('mouthFrown', 'frown')):
+        if f'{name}Left' in units: morphs[f'{name}Left'] = mouth[key]
+        if f'{name}Right' in units: morphs[f'{name}Right'] = P + (mouth[key] - P)[partner] * flip
 
     # jawOpen: the face unit's own jaw (it knows which rows are the lower lip), opened further (a puppet's chin
     # drops a tenth of the face), with the upper lip and everything above the mouth line held still. The rigid mouth
@@ -1081,6 +1223,12 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     drop = P[kept, 2].min() - (P + jaw)[kept, 2].min()
     jaw *= float(np.clip(.11 * height / max(drop, 1e-9), .6, 1.5))
     hold = np.clip((P[:, 2] - mouth_z - .002 * scale[2]) / (.004 * scale[2]), 0, 1)
+    # The upper lip is the face unit's own: rows it barely moves, even where full lips dip the upper lip's middle just
+    # under the mouth line.
+    unit_move = np.linalg.norm(jaw, axis=1)
+    upper_row = (unit_move < .1 * unit_move.max()) & (np.abs(P[:, 2] - mouth_z) < .002 * scale[2]) \
+        & (np.abs(P[:, 0]) < .5 * abs(marks['mouth_corner_L'][0]))
+    hold = np.maximum(hold, upper_row)
     jaw *= (1 - hold)[:, None]
     morphs['jawOpen'] = P + jaw
     move = np.linalg.norm(jaw, axis=1)
@@ -1093,13 +1241,19 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     w = np.where(bag, t * t * (3 - 2 * t), 0.0)[:, None]
     swung = np.array([rigid.move(p) for p in P])
     morphs['jawOpen'] = morphs['jawOpen'] * (1 - w) + swung * w
-    # The upper lip's inner edge (the rows just above the mouth line, in front) follows a little, so the faces that
-    # close the lips' crack stretch open instead of turning over.
+    # The upper lip lifts a little off the teeth as the jaw drops, so the upper row shows (the boards' open mouths show
+    # both rows): full over the lip's lower half, easing out under the gum line and toward the corners.
+    lip_top = mouth_z + (UPPER_GUM - .0008) * scale[2]
+    rise = np.clip((lip_top - P[:, 2]) / (.5 * (lip_top - mouth_z)), 0, 1) * ((P[:, 2] > mouth_z - .0002 * scale[2]) | upper_row)
+    rise = rise * np.clip(1 - (P[:, 0] / (1.15 * cx0)) ** 2, 0, 1) ** 2 * (P[:, 1] < marks['stomion'][1] + .01 * scale[1])
+    # Toward the corners, where it does not lift, the upper lip's inner edge (the rows just above the mouth line, in
+    # front) follows the jaw a little, so the faces that close the lips' crack stretch open instead of turning over.
     edge = (P[:, 2] > mouth_z - .001 * scale[2]) & (P[:, 1] < marks['stomion'][1] + .008 * scale[1])         & (np.abs(P[:, 0]) < 1.1 * cx0)
     near_line = np.clip(1 - (P[:, 2] - mouth_z) / (.0025 * scale[2]), 0, 1)
-    follow = np.where(edge, .12 * near_line, 0.0)[:, None]
+    follow = np.where(edge, .12 * near_line * (1 - rise), 0.0)[:, None]
     moved = np.linalg.norm(morphs['jawOpen'] - P, axis=1)[:, None] > 1e-9
     morphs['jawOpen'] = np.where(moved & (follow == 0), morphs['jawOpen'], morphs['jawOpen'] * (1 - follow) + swung * follow)
+    morphs['jawOpen'][:, 2] += LIP_LIFT * scale[2] * rise
 
     # Crop at the neck, keeping the mouth's bag (it hangs down inside the neck).
     if neck_z is not None:
@@ -1115,6 +1269,7 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     faces = np.where(faces >= 0, remap[np.maximum(faces, 0)], -1)
     V = P[used]
     morphs = {k: v[used] for k, v in morphs.items()}
+    rise = rise[used]
 
     # The mouth's inside: faces the front cannot see at rest (behind the lips, deeper than the skin in front of them),
     # and faces the open jaw shows between the lips (inside the opening, well behind the lips' front).
@@ -1131,6 +1286,34 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         i, j = int((cen[k, 0] - box[0]) / pixel), int((cen[k, 2] - box[2]) / pixel)
         if 0 <= j < D.shape[0] and 0 <= i < D.shape[1] and np.isfinite(D[j, i]): behind[k] = cen[k, 1] - D[j, i]
     inside = region & (behind > .002 * scale[1])
+    # The whole pocket behind the lips is the mouth's inside: the faces hidden at rest that connect (edge to edge,
+    # through hidden faces) to its deepest face, however far up the palate or down the throat they reach. A nostril's
+    # inside is hidden too, but it joins the mouth only across visible skin.
+    pocket = (cen[:, 1] > marks['stomion'][1] + .001 * scale[1]) & (np.abs(cen[:, 0]) < 1.6 * cx)
+    # (hidden from the front and from behind: the nape lies behind the face too, but the back sees it)
+    hidden = np.zeros(len(faces), dtype=bool)
+    full_box = (-1.7 * cx, 1.7 * cx, V[:, 2].min(), marks['nasion'][2])
+    D_front = depth_map(V, faces, full_box, pixel)
+    D_back = -depth_map(V * [1, -1, 1], faces, full_box, pixel)
+    for kk in np.nonzero(pocket)[0]:
+        i, j = int((cen[kk, 0] - full_box[0]) / pixel), int((cen[kk, 2] - full_box[2]) / pixel)
+        if 0 <= j < D_front.shape[0] and 0 <= i < D_front.shape[1] and np.isfinite(D_front[j, i]):
+            hidden[kk] = cen[kk, 1] - D_front[j, i] > .0015 * scale[1] and D_back[j, i] - cen[kk, 1] > .0015 * scale[1]
+    inside &= hidden
+    if inside.any():
+        by_edge = {}
+        for kk, cs in enumerate(corners):
+            for a, b in zip(cs, cs[1:] + cs[:1]): by_edge.setdefault((min(a, b), max(a, b)), []).append(kk)
+        near = [[] for _ in corners]
+        for ks in by_edge.values():
+            for a in ks: near[a] += [b for b in ks if b != a]
+        # (from the inside face nearest the middle of the mouth, a little behind the lips)
+        seed = int(np.argmin(np.where(inside, np.linalg.norm(cen - (np.asarray(marks['stomion']) + [0, .01 * scale[1], 0]), axis=1), np.inf)))
+        reached, stack = {seed}, [seed]
+        while stack:
+            for nb in near[stack.pop()]:
+                if nb not in reached and hidden[nb] and pocket[nb]: reached.add(nb); stack.append(nb)
+        inside[list(reached)] = True
     opened = morphs['jawOpen']
     lower = np.argmin(np.linalg.norm(V - (np.asarray(marks['stomion']) - [0, 0, .002 * scale[2]]), axis=1))
     low_z = opened[lower, 2]
@@ -1144,10 +1327,39 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     inside |= gap & (behind > .0005 * scale[1])
     edges = edges_of(faces)
     for name in morphs:
-        if name == 'jawOpen' or name.startswith('eye'): continue
+        if name == 'jawOpen' or name.startswith(('eye', 'mouthSmile', 'mouthFrown')): continue
         d = morphs[name] - V
         d[inner] = .5 * smooth_deltas(d, edges, iterations=8)[inner]
         morphs[name] = V + d
+    # The throat: an open edge of the mouth's pocket (where the crop cut its bag) is capped with dark faces, so the open
+    # mouth never shows the neck through it.
+    dark_vertices = set(np.unique(faces[inside][faces[inside] >= 0]).tolist())
+    for loop in boundary_loops(faces):
+        # (the throat's edge is deep in the pocket; the lips' parted edges are not)
+        if not all(v in dark_vertices for v in loop) or V[loop, 1].mean() < marks['stomion'][1] + .01 * scale[1]: continue
+        hub = len(V)
+        V = np.vstack([V, V[loop].mean(0)])
+        morphs = {n: np.vstack([t, t[loop].mean(0)]) for n, t in morphs.items()}
+        rise = np.append(rise, 0.0)
+        cap = np.array([[b, a, hub, -1] for a, b in zip(loop, loop[1:] + loop[:1])])
+        faces = np.vstack([faces, cap])
+        inside = np.append(inside, np.ones(len(cap), dtype=bool))
+    # Below the mouth the pocket stays in front of the body's neck (which rises inside the head: its front wall would
+    # show through the open mouth), at rest and with the jaw open: its depth past the lips is squashed (smoothly, so
+    # nothing folds) to end short of the neck's front.
+    if neck is not None:
+        seen = set(np.unique(faces[~inside][faces[~inside] >= 0]).tolist())
+        deep = np.array(sorted(set(np.unique(faces[inside][faces[inside] >= 0]).tolist()) - seen), dtype=np.int64)
+        start = marks['stomion'][1] + .01 * scale[1]
+        limit = center[1] - neck[1] - .006 * scale[1]
+        if len(deep):
+            t = np.clip((mouth_z - .002 * scale[2] - V[deep, 2]) / (.01 * scale[2]), 0, 1)
+            w = t * t * (3 - 2 * t)
+            reach = max(float(Q[deep, 1].max()) for Q in [V] + list(morphs.values())) - start
+            f = min(1.0, (limit - start) / max(reach, 1e-9))
+            for Q in [V] + list(morphs.values()):
+                y = Q[deep, 1]
+                Q[deep, 1] = np.where(y > start, y + w * (f - 1) * (y - start), y)
 
     # Triangles, split along each quad's flatter diagonal: the morph checks below hold for exactly the triangles the
     # GLB carries (an exporter's own split of a folded quad at the lips' corners can turn over).
@@ -1161,11 +1373,14 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         mixes += [{f'eyeBlink{side}': 1.0, f'eyeWide{side}': 1.0}, {f'eyeBlink{side}': 1.0, f'eyeSquint{side}': 1.0, f'eyeWide{side}': 1.0}]
     # The jaw unfolds too, but only by relaxing its edges: the lips and chin (half its motion or more) keep theirs.
     jaw_move = np.linalg.norm(morphs['jawOpen'] - V, axis=1)
-    unfolded, _ = unfold_morphs(V, faces, {'jawOpen': morphs['jawOpen']}, pinned=jaw_move > .85 * jaw_move.max(), calm=False, iterations=80,
+    unfolded, _ = unfold_morphs(V, faces, {'jawOpen': morphs['jawOpen']}, pinned=(jaw_move > .85 * jaw_move.max()) | (rise > .3), calm=False, iterations=80,
                                 coherent=True)
     morphs.update(unfolded)
     lids = [n for n in morphs if n.startswith(('eyeBlink', 'eyeSquint', 'eyeWide'))]
-    morphs, _ = unfold_morphs(V, faces, morphs, mixes, keep=lids + ['jawOpen'])
+    # (the stylized smile and frown are shaped as a whole: where a preset with the open jaw turns their corner over, the
+    # face moves as one rather than losing the corner's lift)
+    stylized = [n for n in morphs if n.startswith(('mouthSmile', 'mouthFrown'))]
+    morphs, _ = unfold_morphs(V, faces, morphs, mixes, keep=lids + ['jawOpen'], coherent=True, uncalmed=stylized)
     # Lids that still turn a face over (a twist in the inner corner's pocket) relax there, their margins pinned: the
     # first pin that leaves nothing turned over and the closed eye covered wins.
     if any(len(flipped(V, morphs[n], faces)) for n in lids):
