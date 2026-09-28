@@ -937,8 +937,9 @@ def dress(m,costume,d):
         ring_band('layer-belt',belt['color'],torso,hip+.004*s,hip+.042*s,.007,rim=.8,roughness=.6,bridge=True,
                   lift=lambda i,j: under+s*(.003+.007*max(0,math.sin(i*math.tau/24))**2))
         front_patch('layer-buckle',belt['buckle'],hip,hip+.046*s,lambda y:-.024*s,lambda y:.024*s,.005,lift=.019*s+under,rim=.7,roughness=.35,metalness=.7,bridge=True,level=True)
-        for k,t in enumerate([math.pi/2-.95,math.pi/2+.95,-math.pi/2+.95,-math.pi/2-.95][:belt['pouches']]):
-            # Tool pouches hang from the belt onto the upper thigh.
+        for k,t in enumerate([math.pi/2-.85,math.pi/2+.85,-math.pi/2+.95,-math.pi/2-.95][:belt['pouches']]):
+            # Tool pouches hang from the belt onto the upper thigh; the front pair sits forward of
+            # the jog's forward hand swing, whose loose fist passes just outside the hip.
             ring_band('layer-pouch-'+str(k),belt['pouch'],torso,hip-.05*s,hip+.034*s,.028,t0=t-.27,t1=t+.27,lift=.006*s+under,rim=.3,level=True,bridge=True)
             # The flap folds over the pouch mouth: it stands clear of the pouch top and rises past it.
             ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.047*s,.006,t0=t-.29,t1=t+.29,lift=.036*s+under,rim=.9,level=True,bridge=True)
