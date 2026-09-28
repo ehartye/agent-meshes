@@ -787,7 +787,6 @@ def feature_weights(shape, head=None):
 CARTOON_TARGETS = {
     'eyes/l-eye-bag-decr': 1.0, 'eyes/r-eye-bag-decr': 1.0, 'eyes/l-eye-bag-height-decr': .6, 'eyes/r-eye-bag-height-decr': .6,
     'nose/nose-volume-decr': 1.0, 'nose/nose-scale-horiz-decr': .6, 'nose/nose-scale-vert-decr': .6, 'nose/nose-scale-depth-decr': 1.0,
-    'nose/nose-trans-backward': .5,
     'nose/nose-point-width-decr': .5, 'nose/nose-flaring-decr': .5,
     'head/head-round': .5, 'chin/chin-height-decr': .4, 'chin/chin-prominent-decr': .5,
 }
