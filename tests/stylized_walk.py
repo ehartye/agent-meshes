@@ -18,15 +18,17 @@ class WalkContract(unittest.TestCase):
             if name=='stylized_character':raise ModuleNotFoundError(name)
             return original_import(name,*args,**kwargs)
         with patch('builtins.__import__',side_effect=import_without_sibling):
-            self.assertEqual(len(namespace['jog_pose'](namespace['landmarks']({}),.1)),16)
+            self.assertEqual(len(namespace['jog_pose'](namespace['landmarks']({}),.1)),20)
 
     def test_foot_roll_internal_joins_are_smooth(self):
         import stylized_character as character
         import stylized_walk as walk
-        d=character.landmarks({});eps=1e-5
+        # A C2 join leaves only jerk * eps between the one-sided second differences;
+        # the fitted foot roll is brisk, so the step is fine enough to separate the two.
+        d=character.landmarks({});eps=1e-6
         for gait in ['walk','jog']:
-            stance=walk.gait_settings(gait)['stance']
-            for p in [stance*.23,stance*.60,stance+(1-stance)*.22,stance+(1-stance)*.72]:
+            settings=walk.gait_settings(gait);stance=settings['stance']
+            for p in [stance*settings['heel_flat'],stance*settings['toe_from'],stance+(1-stance)*settings['peak_at'],stance+(1-stance)*settings['flat_at']]:
                 for endpoint in [0,1]:
                     def point(t):return walk.gait_pose(d,t,gait)['left-foot'][endpoint]
                     a,b,c,e,f=[point(p+k*eps) for k in [-2,-1,0,1,2]]
@@ -76,8 +78,16 @@ class WalkContract(unittest.TestCase):
             for p in [0,stance,1]:
                 a,b,c=point(p-eps),point(p),point(p+eps)
                 self.assertLess(math.dist(tuple((y-x)/eps for x,y in zip(a,b)),tuple((y-x)/eps for x,y in zip(b,c))),.005)
-                # Sole roll also has zero angular acceleration at these joins.
-                self.assertLess(math.hypot(*( (x-2*y+z)/eps**2 for x,y,z in zip(a,b,c))),.08)
+                # Acceleration is continuous too: the toe roll carries through toe-off. A
+                # smooth join leaves jerk * h between the one-sided differences, so h is small.
+                h=2e-6;f=lambda t:point(p+t)
+                before=tuple((x-2*y+z)/h**2 for x,y,z in zip(f(-2*h),f(-h),f(0)))
+                after=tuple((x-2*y+z)/h**2 for x,y,z in zip(f(0),f(h),f(2*h)))
+                if p==stance and walk.gait_settings(gait).get('push'):
+                    # The jog's push-off lifts the toe with an upward acceleration; fore-aft stays smooth.
+                    self.assertGreater(after[1]-before[1],0)
+                    before,after=(before[0],before[2]),(after[0],after[2])
+                self.assertLess(math.dist(before,after),.05*max(1,math.hypot(*before)))
 
     def test_jog_and_walk_anatomy_sweep(self):
         import stylized_character as character
@@ -117,7 +127,7 @@ class WalkContract(unittest.TestCase):
                         foot=pose[side+'-foot'][0];p=(phase+offset)%1
                         _,angle=walk.foot_target(layout,p)
                         minimum=min(foot[1]+walk.w_rotate_x(walk.w_mul(v,layout['s']),angle)[1] for v in walk._sole_pivots())
-                        if p<.6:self.assertAlmostEqual(minimum,0,places=6)
+                        if p<walk.gait_settings('walk')['stance']:self.assertAlmostEqual(minimum,0,places=6)
                         self.assertGreaterEqual(minimum,-1e-7)
 
     def test_weights_and_determinism(self):
@@ -136,6 +146,21 @@ class WalkContract(unittest.TestCase):
         # The hem follows the same pelvis as the belt and trouser yoke.
         self.assertEqual(walk.skin_weights('flight-jacket',[(.17,layout['hip_y']+.04,0)],layout),[{'pelvis':1}])
 
+    def test_every_vertex_keeps_one_to_four_influences(self):
+        # glTF skins carry at most four joints per vertex. On a short torso the pelvis,
+        # lumbar and chest blends overlap the elbow blend, so a jacket vertex can touch five.
+        import stylized_character as character
+        import stylized_walk as walk
+        for values in [{},{'height':1.12,'age':'child','species':'alien'},{'height':1.19,'age':'child'},{'height':.7,'age':'child'}]:
+            d=character.landmarks(values);s=d['s']
+            grid=[(x*s,y*d['h'],0) for x in [-.3+.005*i for i in range(121)] for y in [.3+.0025*j for j in range(221)]]
+            # A remeshed jacket vertex of the 1.12 m alien child that reached five joints.
+            grid.append((-.14977,.60209,.03855))
+            for name in ['flight-jacket','trousers','front-fastener','neck']:
+                for row in walk.skin_weights(name,grid,d):
+                    self.assertTrue(1<=len(row)<=4,(values,name,row))
+                    self.assertAlmostEqual(sum(row.values()),1)
+
     def test_articulation_and_attached_torso(self):
         import stylized_character as character
         import stylized_walk as walk
@@ -144,8 +169,10 @@ class WalkContract(unittest.TestCase):
             bends=[]
             for i in range(100):
                 phase=i/100;pose=walk.gait_pose(d,phase,gait);rotations=walk.gait_rotations(phase,gait)
-                self.assertAlmostEqual(rotations['pelvis'][0],-rotations['spine'][0])
-                for bone in ['pelvis','spine','head','left-thigh','right-thigh','left-upper-arm','right-upper-arm']:
+                # The chest turns against the pelvis; the lumbar splits the difference.
+                self.assertLessEqual(rotations['pelvis'][0]*rotations['chest'][0],0)
+                self.assertAlmostEqual(rotations['spine'][0],(rotations['pelvis'][0]+rotations['chest'][0])/2)
+                for bone in ['pelvis','spine','chest','neck','head','left-thigh','right-thigh','left-upper-arm','right-upper-arm']:
                     parent=rest[bone]['parent']
                     expected=walk.w_add(pose[parent][0],walk._body_rotate(walk.w_sub(rest[bone]['head'],rest[parent]['head']),rotations[parent]))
                     self.assertLess(math.dist(expected,pose[bone][0]),1e-9)
@@ -154,5 +181,164 @@ class WalkContract(unittest.TestCase):
                 bends.append(math.acos(max(-1,min(1,walk.w_dot(upper,lower)))))
             self.assertGreater(max(bends)-min(bends),.1)
             if gait=='jog':self.assertGreater(min(bends),.8)
+
+class ClipFrames(unittest.TestCase):
+    def test_clips_key_both_contacts_on_frames(self):
+        import stylized_walk as walk
+        # The rig-right foot lands half a cycle after the left: an even frame count keys
+        # both touchdowns, so the mirrored legs are sampled alike. Ties round up.
+        self.assertEqual([walk.clip_frames(t) for t in [.75,.9,1.1,1.35,1.2]],[46,54,66,82,72])
+        self.assertEqual(walk.clip_frames(.75,30),22)
+
+class Hands(unittest.TestCase):
+    def test_declared_hand_frames_match_the_authored_hands(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        for values in [{},{'age':'child','height':1.1},{'vacuum':True}]:
+            d=character.landmarks(values);parts={p['name']:p['vertices'] for p in character.geometry(values)}
+            frames=walk.hand_frames(d)
+            for side,label in [(-1,'left'),(1,'right')]:
+                palm,thumb=frames[label+'-hand']['palm'],frames[label+'-hand']['thumb']
+                # Palms face the thigh and thumbs point forward at rest.
+                self.assertEqual(palm,(-side,0,0));self.assertEqual(thumb,(0,0,1))
+                def centroid(points):return tuple(sum(v[k] for v in points)/len(points) for k in range(3))
+                def extent(points,k):return max(v[k] for v in points)-min(v[k] for v in points)
+                hand=parts[label+'-palm'];center=centroid(hand)
+                # The palm is thin across the palm normal and broad front to back.
+                self.assertLess(extent(hand,0),extent(hand,2)*.7)
+                # The thumb sits forward of the palm, and toward the palm side.
+                offset=walk.w_sub(centroid(parts[label+'-thumb']),center)
+                self.assertGreater(walk.w_dot(offset,thumb),.02*d['s'])
+                self.assertGreater(walk.w_dot(offset,palm),0)
+                # Fingers stand in a row front to back, index forward, and curl toward the palm.
+                knuckles=[parts[label+'-finger-'+str(i)][:12] for i in range(4)]
+                tips=[parts[label+'-finger-'+str(i)][-12:] for i in range(4)]
+                rows=[walk.w_dot(centroid(k),thumb) for k in knuckles]
+                self.assertEqual(rows,sorted(rows,reverse=True))
+                for knuckle,tip in zip(knuckles,tips):
+                    self.assertGreater(walk.w_dot(walk.w_sub(centroid(tip),centroid(knuckle)),palm),.008*d['s'])
+
+class Fingers(unittest.TestCase):
+    def test_fingers_curl_loosely_and_more_in_the_jog(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        d=character.landmarks({});rest=walk.rest_bones(d);s=d['s']
+        parts={p['name']:p['vertices'] for p in character.geometry({})}
+        for side,label in [(-1,'left'),(1,'right')]:
+            fingers=rest[label+'-fingers'];self.assertEqual(fingers['parent'],label+'-hand')
+            # Fingertips ride the finger joint; the palm and the thumb's root stay on the hand.
+            tip=parts[label+'-finger-1'][-1];root=parts[label+'-thumb'][0];palm=parts[label+'-palm'][-1]
+            rows=walk.skin_weights(label+'-hand',[tip,root,palm],d)
+            self.assertGreater(rows[0].get(label+'-fingers',0),.99)
+            self.assertEqual(rows[1],{label+'-hand':1});self.assertEqual(rows[2],{label+'-hand':1})
+            curls={}
+            for gait in ['walk','jog']:
+                values=[]
+                for i in range(24):
+                    phase=i/24;pose=walk.gait_pose(d,phase,gait);turn=walk.arm_rotations(phase,gait)[label+'-hand']
+                    straight=walk.w_unit(turn(walk.w_sub(fingers['tail'],fingers['head'])))
+                    bent=walk.w_unit(walk.w_sub(*reversed(pose[label+'-fingers'])))
+                    # The fingers bend toward the palm, which faces the thigh.
+                    self.assertGreater(walk.w_dot(walk.w_sub(bent,straight),turn((-side,0,0))),0)
+                    values.append(math.acos(max(-1,min(1,walk.w_dot(straight,bent)))))
+                    self.assertLess(math.dist(pose[label+'-fingers'][0],walk.w_add(pose[label+'-hand'][0],turn(walk.w_sub(fingers['head'],rest[label+'-hand']['head'])))),1e-9)
+                curls[gait]=min(values)
+            self.assertGreater(curls['walk'],.05);self.assertGreater(curls['jog'],.45)
+
+def _gait_measures(walk,d,gait,n=120):
+    """Body measures as agent-meshes' gait command takes them from the exported bones."""
+    settings=walk.gait_settings(gait);rows=[];deg=180/math.pi;scale=1.75/d['h']
+    for i in range(n):
+        phase=i/n;pose=walk.gait_pose(d,phase,gait);rot=walk.gait_rotations(phase,gait)
+        hips=walk.w_sub(pose['right-thigh'][0],pose['left-thigh'][0]);shoulders=walk.w_sub(pose['right-upper-arm'][0],pose['left-upper-arm'][0])
+        trunk=walk.w_sub(pose['neck'][0],pose['pelvis'][0])
+        def pitch(name):u=walk._body_rotate((0,1,0),rot[name]);return math.atan2(u[2],u[1])*deg
+        row=dict(head=pose['head'][0][1]*scale,roll=math.atan2(hips[1],hips[0])*deg,pelvis_yaw=math.atan2(-hips[2],hips[0])*deg,
+                 shoulder_yaw=math.atan2(-shoulders[2],shoulders[0])*deg,lean=math.atan2(trunk[2],trunk[1])*deg,chest=pitch('chest'),head_pitch=pitch('head'))
+        for side in ['left','right']:
+            hip,knee,ankle=(pose[side+b][0] for b in ['-thigh','-shin','-foot'])
+            a,b=walk.w_sub(knee,hip),walk.w_sub(ankle,knee)
+            row[side+'_knee']=math.acos(max(-1,min(1,walk.w_dot(a,b)/math.hypot(*a)/math.hypot(*b))))*deg
+            line=walk.w_sub(ankle,hip);off=walk.w_sub(a,walk.w_mul(line,walk.w_dot(a,line)/walk.w_dot(line,line)))
+            row[side+'_forward_knee']=off[2]>=-1e-9
+            arm=walk.w_sub(pose[side+'-forearm'][0],pose[side+'-upper-arm'][0])
+            row[side+'_arm']=math.atan2(arm[2],-arm[1]);row[side+'_leg']=math.atan2(a[2],-a[1])
+            row[side+'_planted']=(phase+(0 if side=='left' else .5))%1<settings['stance']
+        rows.append(row)
+    return rows
+
+def _pearson(a,b):
+    ma=sum(a)/len(a);mb=sum(b)/len(b)
+    return sum((x-ma)*(y-mb) for x,y in zip(a,b))/math.sqrt(sum((x-ma)**2 for x in a)*sum((y-mb)**2 for y in b))
+
+class NaturalGait(unittest.TestCase):
+    """The walk and jog meet the natural-gait ranges agent-meshes' gait checks apply to exported clips."""
+    def test_body_moves_like_a_person_in_both_gaits(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        ranges={'walk':dict(bob=(.025,.06),lean=(3,8),counter=8),'jog':dict(bob=(.05,.10),lean=(8,15),counter=12)}
+        for values in [{},{'height':1.22,'age':'child'},{'height':1.88,'presentation':'male'}]:
+            d=character.landmarks(values)
+            for gait,r in ranges.items():
+                rows=_gait_measures(walk,d,gait);col=lambda k:[row[k] for row in rows]
+                span=lambda k:max(col(k))-min(col(k))
+                with self.subTest(values=values,gait=gait):
+                    self.assertTrue(r['bob'][0]<=span('head')<=r['bob'][1],span('head'))
+                    head=col('head');low=min(head);peaks=sum(1 for i in range(len(head)) if head[i]>head[i-1] and head[i]>=head[(i+1)%len(head)] and head[i]-low>.5*span('head'))
+                    self.assertEqual(peaks,2)
+                    self.assertTrue(.3<=span('head_pitch')/span('chest')<=.7)
+                    lean=sum(col('lean'))/len(rows);self.assertTrue(r['lean'][0]<=lean<=r['lean'][1],lean)
+                    relative=[a-b for a,b in zip(col('shoulder_yaw'),col('pelvis_yaw'))]
+                    self.assertGreaterEqual(max(relative)-min(relative),r['counter'])
+                    self.assertLess(_pearson(col('shoulder_yaw'),col('pelvis_yaw')),0)
+                    # Swing-side hip drops in single support: the +X hip is low while only the -X foot is down.
+                    left_only=[row['roll'] for row in rows if row['left_planted'] and not row['right_planted']]
+                    right_only=[-row['roll'] for row in rows if row['right_planted'] and not row['left_planted']]
+                    for drops in [left_only,right_only]:self.assertTrue(3<=max(-v for v in drops)<=7,drops)
+                    for side in ['left','right']:
+                        self.assertTrue(all(col(side+'_forward_knee')),'knee bends backward')
+                        self.assertLess(_pearson(col(side+'_arm'),col(side+'_leg')),-.5)
+                    both_up=any(not row['left_planted'] and not row['right_planted'] for row in rows)
+                    self.assertEqual(both_up,gait=='jog')
+
+    def test_walk_strides_out(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        # A person covers about 1.6 leg lengths (hip to ankle) per walk cycle: Walk_Loop's
+        # stride is 0.72 x height. A shorter stride with the same knee curve is a shuffle.
+        for values in [{},{'height':1.22,'age':'child'}]:
+            d=character.landmarks(values);length=walk.leg_length(d);s=walk.gait_settings('walk')
+            stride=length*s['stride']/s['stance']
+            self.assertGreaterEqual(stride/length,1.75,values)
+            self.assertAlmostEqual(walk.travel_speed(d,'walk',1.0)*1.0,stride)
+        self.assertGreaterEqual(walk.leg_length(character.landmarks({}))*1.75/1.82,.7)
+
+    def test_grounded_sole_moves_with_the_ground(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        # Every outsole or boot vertex within 1 mm of the floor on two frames in a row
+        # moves at travel speed: no heel graze before touchdown, no toe slip at liftoff.
+        for values,seconds in [({},{'walk':1.1,'jog':.8}),({'height':1.22,'age':'child'},{'walk':1.0,'jog':.75})]:
+            d=character.landmarks(values);rest=walk.rest_bones(d)
+            parts={p['name']:p['vertices'] for p in character.geometry(values)}
+            sole=[walk.w_sub(v,rest['left-foot']['head']) for n,vs in parts.items() if n.startswith('left-') and any(t in n for t in ['boot','outsole','ankle']) for v in vs]
+            for gait,duration in seconds.items():
+                frames=walk.clip_frames(duration);dt=duration/frames;speed=walk.travel_speed(d,gait,frames/60)
+                def posed(phase):
+                    a,b=walk.gait_pose(d,phase,gait)['left-foot'];u=walk.w_sub(b,a)
+                    angle=math.atan2(u[2],u[1])-math.atan2(.20,-.08)
+                    return [walk.w_add(a,walk.w_rotate_x(v,angle)) for v in sole]
+                shots=[posed(k/frames) for k in range(frames+1)];worst=0
+                for k in range(frames):
+                    for p,q in zip(shots[k],shots[k+1]):
+                        if p[1]<.001 and q[1]<.001:worst=max(worst,math.hypot((q[2]-p[2])/dt+speed,(q[0]-p[0])/dt)/speed)
+                with self.subTest(values=values,gait=gait):self.assertLessEqual(worst,.1)
+
+    def test_walk_straightens_the_stance_knee(self):
+        import stylized_character as character
+        import stylized_walk as walk
+        # Mid-stance knee is nearly straight; Walk_Loop's never bends less than 17 degrees.
+        rows=_gait_measures(walk,character.landmarks({}),'walk')
+        self.assertLess(min(row['left_knee'] for row in rows if row['left_planted']),15)
 
 if __name__=='__main__':unittest.main()

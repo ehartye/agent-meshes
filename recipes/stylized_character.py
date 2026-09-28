@@ -251,11 +251,15 @@ def geometry(values=None):
         m.rings(label+'-sleeve',[(wrist_y,side*wx,.055*s,.038*s,.039*s),(elbow_y-.06*s,side*(wx-.009*s),.03*s,.048*s,.047*s),(elbow_y,side*(wx-.015*s),.012*s,.045*s,.047*s),(elbow_y+.1*s,side*(sx+.033*s),0,.062*s,.063*s),(shoulder_y-.022*s,side*sx,0,.073*s,.077*s),(shoulder_y+.026*s,side*(sx-.05*s),0,.06*s,.06*s)],body)
         m.rings(label+'-wrist-seal',[(wrist_y-.009*s,side*wx,.055*s,.041*s,.043*s),(wrist_y+.025*s,side*wx,.052*s,.042*s,.044*s)],navy)
         hand_color=ivory if eva else skin
-        m.rings(label+'-palm',[(wrist_y-.086*s,side*wx,.066*s,.038*s,.02*s),(wrist_y-.052*s,side*wx,.067*s,.043*s,.025*s),(wrist_y+.007*s,side*wx,.055*s,.027*s,.024*s)],hand_color)
+        # Relaxed hand: the palm faces the thigh, the thumb points forward, and the
+        # fingers stand front to back (index forward), curling toward the palm.
+        # hand(forward, y, palmward) offsets from the wrist axis.
+        def hand(fwd,y,palm):return (side*(wx-palm),y,.058*s+fwd)
+        m.rings(label+'-palm',[(wrist_y-.086*s,side*(wx-.004*s),.058*s,.02*s,.038*s),(wrist_y-.052*s,side*(wx-.005*s),.058*s,.025*s,.043*s),(wrist_y+.007*s,side*wx,.055*s,.024*s,.027*s)],hand_color)
         for finger in range(4):
-            fx=side*(wx+(-1.5+finger)*.020*s); length=[.051,.067,.062,.045][finger]*s
-            m.tube(label+'-finger-'+str(finger),[(fx,wrist_y-.063*s,.067*s),(fx,wrist_y-.093*s-length*.45,.081*s),(fx,wrist_y-.086*s-length,.084*s)],[.010*s,.009*s,.006*s],hand_color)
-        m.tube(label+'-thumb',[(side*(wx-.022*s),wrist_y-.035*s,.068*s),(side*(wx-.057*s),wrist_y-.053*s,.09*s),(side*(wx-.055*s),wrist_y-.083*s,.103*s)],[.019*s,.013*s,.008*s],hand_color)
+            fwd=(1.5-finger)*.020*s; length=[.051,.067,.062,.045][finger]*s
+            m.tube(label+'-finger-'+str(finger),[hand(fwd,wrist_y-.063*s,.005*s),hand(fwd,wrist_y-.09*s-length*.45,.021*s),hand(fwd,wrist_y-.08*s-length,.033*s)],[.010*s,.009*s,.006*s],hand_color)
+        m.tube(label+'-thumb',[hand(.024*s,wrist_y-.035*s,.006*s),hand(.052*s,wrist_y-.053*s,.018*s),hand(.056*s,wrist_y-.083*s,.026*s)],[.019*s,.013*s,.008*s],hand_color)
     if not eva:
         anatomy_head(m,0,head_y,0,rx,ry,rz,skin,p['hair'],p['eyes'],p['presentation'],alien)
     else:

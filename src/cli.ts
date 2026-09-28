@@ -138,6 +138,51 @@ export async function main(args = process.argv): Promise<void> {
     process.stdout.write(`${options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2)}\n`);
     if (!report.ok) process.exitCode = 1;
   });
+  program.command('gait <file>').description('Sample a biped clip of a skinned GLB into per-phase body curves and locomotion metrics, optionally scored against reference curves')
+    .requiredOption('--clip <name>', 'Clip to analyze')
+    .option('--samples <count>', 'Curve samples per cycle', '64')
+    .option('--height <meters>', 'Body height for scaled metrics (default: declared gait extras, else skinned mesh bounds)')
+    .option('--travel-speed <mps>', 'Speed the in-place loop travels at (default: declared gait extras, else planted-foot median)')
+    .option('--forward <x,y,z>', 'Travel direction (default: detected from planted feet)')
+    .option('--reference <file>', 'Reference curves JSON to score against; repeatable', (value: string, list: string[]) => [...list, value], [] as string[])
+    .option('--compare <file>', 'Reference curves JSON scored for information only; --gait does not require them; repeatable', (value: string, list: string[]) => [...list, value], [] as string[])
+    .option('--out <file>', 'Write the curves JSON here and print only a summary')
+    .option('--gait <kind>', 'Check the report against natural walk or jog ranges; exits 1 on a failed check')
+    .option('--curve-score <kind>', 'Reference scores the --gait check uses: raw or symmetric', 'raw')
+    .option('--commit <sha>', 'Provenance: source commit').option('--license <id>', 'Provenance: source license').option('--source-url <url>', 'Provenance: source URL')
+    .action(async (file, options) => {
+    const { analyzeGait, evaluateGait, loadGait } = await import('./gait-analysis.ts');
+    if (options.gait !== undefined && !['walk', 'jog'].includes(options.gait)) throw Object.assign(new Error('--gait must be walk or jog'), { code: 'CLI_ARGUMENT_ERROR' });
+    if (!['raw', 'symmetric'].includes(options.curveScore)) throw Object.assign(new Error('--curve-score must be raw or symmetric'), { code: 'CLI_ARGUMENT_ERROR' });
+    const { createHash } = await import('node:crypto');
+    const { basename } = await import('node:path');
+    const number = (value: string | undefined, label: string) => {
+      if (value === undefined) return undefined;
+      const n = Number(value); if (!Number.isFinite(n) || n <= 0) throw Object.assign(new Error(`${label} must be a positive number`), { code: 'CLI_ARGUMENT_ERROR' });
+      return n;
+    };
+    const forward = options.forward ? String(options.forward).split(',').map(Number) : undefined;
+    if (forward && (forward.length !== 3 || forward.some(v => !Number.isFinite(v)))) throw Object.assign(new Error('--forward must be x,y,z'), { code: 'CLI_ARGUMENT_ERROR' });
+    const referencePaths = [...options.reference as string[], ...options.compare as string[]];
+    const references = await Promise.all(referencePaths.map(async path => JSON.parse(await readFile(path, 'utf8'))));
+    const bytes = await readFile(file);
+    const report = analyzeGait(await loadGait(bytes), {
+      clip: String(options.clip), samples: Math.round(number(options.samples, '--samples')!),
+      height: number(options.height, '--height'), travelSpeed: number(options.travelSpeed, '--travel-speed'),
+      ...(forward ? { forward: forward as [number, number, number] } : {}),
+      references, referenceLabels: referencePaths.map(path => basename(path)),
+      referenceRequired: referencePaths.map((_, i) => i < (options.reference as string[]).length),
+    });
+    report.source = { file: basename(file), sha256: createHash('sha256').update(bytes).digest('hex'),
+      ...(options.commit ? { commit: String(options.commit) } : {}), ...(options.license ? { license: String(options.license) } : {}), ...(options.sourceUrl ? { url: String(options.sourceUrl) } : {}) };
+    const evaluation = options.gait ? evaluateGait(report, options.gait, { curveScore: options.curveScore }) : undefined;
+    if (options.out) {
+      const output = resolve(options.out); await mkdir(dirname(output), { recursive: true });
+      await writeFile(output, `${JSON.stringify(report, null, 2)}\n`);
+      print({ output, clip: report.clip, metrics: report.metrics, ...(report.comparisons ? { comparisons: report.comparisons } : {}), ...(evaluation ? { evaluation } : {}) });
+    } else print({ ...report, ...(evaluation ? { evaluation } : {}) });
+    if (evaluation && !evaluation.ok) process.exitCode = 1;
+  });
   program.command('refine <input> <output>').description('Optional Blender stage: subdivide, smooth and displace a GLB, keeping bones and clips')
     .option('--subdivide <levels>', 'Subdivision surface levels', '1')
     .option('--noise <strength>', 'Displacement strength from a clouds texture, in meters', '0')
