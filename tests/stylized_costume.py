@@ -100,6 +100,10 @@ class GarmentLayers(unittest.TestCase):
                     rear=min(lower,key=lambda v:v[2])
                     self.assertLess(abs(rear[0]),max(abs(v[0]) for v in pack))
                     self.assertTrue(min(v[1] for v in pack)<rear[1]<max(v[1] for v in pack))
+                    # It meets the pack low, at its bottom corner, as a sweep rather than a level stub.
+                    self.assertLess(rear[1],min(v[1] for v in pack)+.3*(max(v[1] for v in pack)-min(v[1] for v in pack)))
+                    front_end=max(lower,key=lambda v:v[2])
+                    self.assertGreater(front_end[1]-rear[1],.05*character.landmarks(config)['s'])
                     self.assertLess(rear[2],max(v[2] for v in pack)+.02)
         d=character.landmarks(TESS);s=d['s'];by_name=parts(TESS)
         bib=by_name['layer-back-bib']['vertices'];top=max(v[1] for v in bib)

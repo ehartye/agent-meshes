@@ -714,16 +714,22 @@ def dress(m,costume,d):
             ring_band('layer-pouch-'+str(k)+'-flap',shade(belt['pouch'],.78),torso,hip-.01*s,hip+.047*s,.006,t0=t-.29,t1=t+.29,lift=.036*s+under,rim=.9,level=True,bridge=True)
     pack=costume.get('backpack')
     if pack:
+        # A broad pack rides low on the back, below a lowered hood so the hood still reads from behind.
+        y0,y1=mix(hip,sh,.12),min(mix(hip,sh,.92),sh-.1*s if hoodie else 9); back=surface_point(facing(mix(y0,y1,.5),0,back=True))[2]
+        width=sw*.36; depth=.14*s; c=back-depth*.5+.012*s
+        strap_end=mix(hip,sh,.3)
         for side,label in [(-1,'left'),(1,'right')]:
-            over_shoulder('layer-pack-strap-'+label,pack['straps'],side*sw*.2,side*sw*.25,side*sw*.17,mix(hip,sh,.42),mix(hip,sh,.6),sw*.075,.007,.012)
-            # The strap's lower half runs from its front end under the arm to the pack's side.
-            y=mix(hip,sh,.42)+.012*s; _,u,v,ru,rv=body.section(torso(y),y)
+            over_shoulder('layer-pack-strap-'+label,pack['straps'],side*sw*.2,side*sw*.25,side*sw*.17,strap_end,mix(hip,sh,.6),sw*.075,.007,.012)
+            # The strap's lower half sweeps from its front end, down under the arm, to the pack's bottom corner.
+            y=strap_end+.012*s; _,u,v,ru,rv=body.section(torso(y),y)
             front=math.acos(max(-1,min(1,(side*sw*.2-u)/ru))); rear=-math.acos(max(-1,min(1,(side*sw*.2-u)/ru)))  # tucks under the pack's side
             t0,t1=(front,rear+math.tau) if side<0 else (rear,front)
-            ring_band('layer-pack-strap-'+label+'-lower',pack['straps'],torso,y-.018*s,y+.018*s,.006,t0=t0,t1=t1,lift=.012*s,rim=.7)
-        # A pack rides below a lowered hood so the hood still reads from behind.
-        y0,y1=mix(hip,sh,.22),min(mix(hip,sh,.92),sh-.1*s if hoodie else 9); back=surface_point(facing(mix(y0,y1,.5),0,back=True))[2]
-        width=sw*.3; depth=.11*s; c=back-depth*.5+.012*s
+            low=y0+.05*s; along=lambda t: smooth01(0,1,(t1-t)/(t1-t0) if side>0 else (t-t0)/(t1-t0))  # 0 at the front end, 1 at the pack
+            nu=12; rays=[]
+            for i in range(nu):
+                ti=mix(t0,t1,i/(nu-1)); yc=mix(y,low,along(ti))
+                rays.append([around(torso(yc),yc+w,ti) for w in [mix(-.018*s,.018*s,j/3) for j in range(4)]])
+            layer_patch(m,body,'layer-pack-strap-'+label+'-lower',pack['straps'],rays,.006*s,lift=.012*s,rim=.7)
         m.rings('layer-backpack',[(y0,0,c+.01*s,width*.72,depth*.38),(y0+.035*s,0,c,width,depth*.5),(y1-.05*s,0,c,width*.97,depth*.5),(y1,0,c+.012*s,width*.7,depth*.34)],pack['color'])
         m.ellipsoid('layer-backpack-pocket',(0,mix(y0,y1,.32),c-depth*.5+.004*s),(width*.62,(y1-y0)*.2,.02*s),shade(pack['color'],.85))
     gloves=costume.get('gloves')
