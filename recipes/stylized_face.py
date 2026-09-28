@@ -180,33 +180,61 @@ def beard_shell(face, k, thickness=.006, weight=beard_weight):
     from agent_meshes_hm08 import vertex_normals
     V, F, marks = face['vertices'], face['faces'], face['landmarks']
     w = np.array([weight(v, marks, k) for v in V])
-    chosen = [f for f in F if min(w[i] for i in f if i >= 0) > .08]
-    if not chosen: return None
-    used = sorted({int(i) for f in chosen for i in f if i >= 0})
-    remap = {old: new for new, old in enumerate(used)}
-    normals = vertex_normals(V, F)[used]
-    ww = w[used]
+    # The beard's edge is the weight field's contour at `edge`, cut through the skin's triangles (each edge that
+    # crosses it gets a point where the weight is exactly `edge`), so the rim runs as a smooth line, not a staircase of
+    # whole faces. Every shell point is a blend of two skin vertices: (a, b, t) = a + t (b - a).
+    edge = .2
+    points, index, faces = [], {}, []
+
+    def point(a, b=None, t=0.0):
+        key = (a, b) if b is not None and a < b else (b, a) if b is not None else (a,)
+        if b is not None and a > b: t = 1 - t
+        if key not in index:
+            index[key] = len(points)
+            points.append((key[0], key[-1], t if b is not None else 0.0))
+        return index[key]
+
+    # (kept to the middle of its edge: a cut near a corner would leave a sliver the morphs turn over)
+    def crossing(a, b): return point(a, b, min(.75, max(.25, (edge - w[a]) / (w[b] - w[a]))))
+    for f in F:
+        c = [int(i) for i in f if i >= 0]
+        for tri in [c[:3]] + ([[c[0], c[2], c[3]]] if len(c) == 4 else []):
+            inside = [w[i] >= edge for i in tri]
+            if all(inside): faces.append([point(i) for i in tri]); continue
+            if not any(inside): continue
+            # Rotate so the odd corner out is first, keeping the winding.
+            odd = inside.index(True) if sum(inside) == 1 else inside.index(False)
+            i0, i1, i2 = tri[odd:] + tri[:odd]
+            if sum(inside) == 1:
+                faces.append([point(i0), crossing(i0, i1), crossing(i0, i2)])
+            else:
+                p1, p2 = crossing(i1, i0), crossing(i2, i0)
+                faces.append([point(i1), point(i2), p2]); faces.append([point(i1), p2, p1])
+    if not faces: return None
+    A = np.array([p[0] for p in points]); B = np.array([p[1] for p in points]); T = np.array([p[2] for p in points])[:, None]
+    blend = lambda X: X[A] + T * (X[B] - X[A])
+    base, ww = blend(V), blend(w[:, None])[:, 0]
+    normals = blend(vertex_normals(V, F))
+    normals /= np.maximum(np.linalg.norm(normals, axis=1, keepdims=True), 1e-12)
     # Fuller on the chin, thinning up the cheeks, and easing to nothing at the edge, where the rim tucks 0.8 mm (scaled)
     # under the skin: the beard grows out of the face instead of sitting on it like a cut-out.
-    fullness = np.clip(1.4 - (V[used, 2] - marks['menton'][2]) / (marks['subnasale'][2] - marks['menton'][2]), .55, 1.0)
-    grow = np.clip((ww - .08) / .5, 0, 1)
+    fullness = np.clip(1.4 - (base[:, 2] - marks['menton'][2]) / (marks['subnasale'][2] - marks['menton'][2]), .55, 1.0)
+    grow = np.clip((ww - edge) / .45, 0, 1)
     grow = grow * grow * (3 - 2 * grow)
-    tuck = 1 - np.clip((ww - .08) / .25, 0, 1)
+    tuck = 1 - np.clip((ww - edge) / .2, 0, 1)
     lift = (thickness * k * fullness * grow - .0008 * k * tuck)[:, None]
-    shell = V[used] + normals * lift
-    faces = [[remap[int(i)] for i in f if i >= 0] for f in chosen]
+    shell = base + normals * lift
     # The shell rides the skin: each vertex takes its skin vertex's motion in every morph, then any face that motion
     # turns over is relaxed (the beard's own mixes, the contract's emotion presets with the jaw).
     from agent_meshes_face import CANONICAL_EMOTIONS
     from agent_meshes_hm08 import unfold_morphs
     morphs = {}
     for name, targets in face['morphs'].items():
-        moved = targets[used] - V[used]
+        moved = blend(targets) - base
         if np.abs(moved).max() < 1e-7: continue
         morphs[name] = shell + moved
-    from agent_meshes_hm08 import flat_triangles
     mixes = [dict(p) for p in CANONICAL_EMOTIONS.values() if p] + [dict(p, jawOpen=1.0) for p in CANONICAL_EMOTIONS.values() if p]
-    tris = flat_triangles(shell, np.array([f + [-1] * (4 - len(f)) for f in faces]))[0]
+    tris = np.array([f + [-1] for f in faces])
     if 'jawOpen' in morphs:
         jaw, _ = unfold_morphs(shell, tris, {'jawOpen': morphs['jawOpen']}, calm=False, iterations=80, coherent=True)
         morphs.update(jaw)
@@ -308,7 +336,7 @@ def add_face(objects, values=None):
     # Teeth behind the lips and a tongue on the mouth's floor; the lower row and the tongue ride the jaw.
     teeth = '#eeeae0'
     upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('rounded', (0, front + .007 * k, mz + .0085 * k), .72 * hw,
-                               .01 * k, 8, .0075 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
+                               .01 * k, 8, .0062 * k, row='upper'), [material('teeth_upper', teeth, roughness=.3)])
     lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, front + .011 * k, mz - .0075 * k), .6 * hw,
                                .01 * k, 8, .005 * k, row='lower'), [material('teeth_lower', teeth, roughness=.3)])
     jaw = face['jaw']

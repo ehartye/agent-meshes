@@ -802,7 +802,7 @@ LID_CLEARANCE = .0008
 # Lid shapes character_face tries, in order (see lid_morphs): the first that folds no face and hides the eyeball when
 # closed wins.
 LID_CANDIDATES = tuple({'corner': .15, 'inner_corner': i, 'reach': r, 'overlap': o, 'fade': fade, 'proud': proud}
-                       for fade, proud in ((.8, .04), (1.3, .02), (1.8, 0.0)) for r in (1.35, 1.3, 1.4, 1.25, 1.5)
+                       for fade, proud in ((.8, .04), (1.3, .02), (1.8, 0.0)) for r in (1.35, 1.3, 1.4, 1.25, 1.45, 1.5)
                        for o in (.18, .26) for i in (.25, .15))
 
 
@@ -1122,13 +1122,15 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     cx = abs(marks['mouth_corner_L'][0])
     corners = [[i for i in f if i >= 0] for f in faces]
     cen = np.array([V[c].mean(0) for c in corners])
-    region = (np.abs(cen[:, 0]) < 1.6 * cx) & (np.abs(cen[:, 2] - mouth_z) < .8 * iod) & (cen[:, 1] > marks['stomion'][1] + .001 * scale[1])
+    # (below the nose: a nostril's inside stays skin, or its rim would be an open edge the viewer's ink hull shows)
+    region = (np.abs(cen[:, 0]) < 1.6 * cx) & (np.abs(cen[:, 2] - mouth_z) < .8 * iod) & (cen[:, 1] > marks['stomion'][1] + .001 * scale[1])         & (cen[:, 2] < mouth_z + .5 * (marks['subnasale'][2] - mouth_z))
     box, pixel = (-1.7 * cx, 1.7 * cx, mouth_z - .9 * iod, mouth_z + .9 * iod), .0005 * scale[0]
     D = depth_map(V, faces, box, pixel)
-    inside = np.zeros(len(faces), dtype=bool)
+    behind = np.zeros(len(faces))   # how far each face lies behind the skin the front sees at rest
     for k in np.nonzero(region)[0]:
         i, j = int((cen[k, 0] - box[0]) / pixel), int((cen[k, 2] - box[2]) / pixel)
-        if 0 <= j < D.shape[0] and 0 <= i < D.shape[1] and cen[k, 1] > D[j, i] + .002 * scale[1]: inside[k] = True
+        if 0 <= j < D.shape[0] and 0 <= i < D.shape[1] and np.isfinite(D[j, i]): behind[k] = cen[k, 1] - D[j, i]
+    inside = region & (behind > .002 * scale[1])
     opened = morphs['jawOpen']
     lower = np.argmin(np.linalg.norm(V - (np.asarray(marks['stomion']) - [0, 0, .002 * scale[2]]), axis=1))
     low_z = opened[lower, 2]
@@ -1136,10 +1138,10 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     across = np.clip(np.abs(cen_open[:, 0]) / cx, 0, 1)
     floor = low_z + (mouth_z - low_z) * across ** 2
     gap = region & (np.abs(cen_open[:, 0]) < cx) & (cen_open[:, 2] < mouth_z - .001 * scale[2]) & (cen_open[:, 2] > floor + .001 * scale[2])
-    inside |= gap
-
     # Inside the mouth, the expressions' motion is smoothed and halved: the face units crumple the mouth's inner corners.
-    inner = np.unique(faces[inside][faces[inside] >= 0])
+    inner = np.unique(faces[inside | gap][faces[inside | gap] >= 0])
+    # (the dark inside leaves out the lips' own faces the front sees at rest: a closed mouth's corners show no notches)
+    inside |= gap & (behind > .0005 * scale[1])
     edges = edges_of(faces)
     for name in morphs:
         if name == 'jawOpen' or name.startswith('eye'): continue

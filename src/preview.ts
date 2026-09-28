@@ -85,9 +85,9 @@ export function previewJob(source: string, outDir: string, settings: PreviewSett
 export async function resolvePreviewSource(input: string): Promise<string> {
   const path = resolve(input);
   await stat(path);
-  if (extname(path).toLowerCase() === '.py') return path;
+  if (['.py', '.glb', '.gltf'].includes(extname(path).toLowerCase())) return path;
   const config = JSON.parse(await readFile(path, 'utf8')) as { blender?: { script?: unknown } };
-  if (typeof config?.blender?.script !== 'string') fail(`${input} is not a Blender build.json (no blender.script) or a .py source`);
+  if (typeof config?.blender?.script !== 'string') fail(`${input} is not a Blender build.json (no blender.script), a .py source or a .glb/.gltf`);
   const script = resolve(dirname(path), config.blender!.script as string);
   await stat(script);
   return script;

@@ -1,4 +1,5 @@
-"""Render fixed-camera Workbench previews of a trusted build() source inside one Blender run: no GLB, no browser.
+"""Render fixed-camera Workbench previews of a trusted build() source (or a built .glb/.gltf) inside one Blender run:
+no export, no browser.
 
 One job:  blender -b --python scripts/blender-preview.py -- job.json
 Worker:   blender -b --python scripts/blender-preview.py -- --worker <queue directory>
@@ -55,6 +56,11 @@ def forget_modules(roots):
 
 
 def build_objects(source):
+    if source.suffix.lower() in ('.glb', '.gltf'):
+        # A built model, previewed as it is: its shape keys pose it like a source's.
+        bpy.ops.wm.read_factory_settings(use_empty=True)
+        bpy.ops.import_scene.gltf(filepath=str(source))
+        return list(bpy.context.scene.objects)
     sys.path[:0] = [p for p in (str(source.parent), str(LIB)) if p not in sys.path]
     forget_modules([source.parent, LIB])
     bpy.ops.wm.read_factory_settings(use_empty=True)
