@@ -209,7 +209,7 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
 
 
 def rig_from_reference(body, reference, correspondence, clips, directions=None, root='pelvis', leg=('thigh_l', 'foot_l'),
-                       rigid=None, ground=None, limbs=None, smooth=2, regions=None, neutral=None):
+                       rigid=None, ground=None, limbs=None, smooth=2, regions=None, neutral=None, weight_limits=None):
     """Rig `body` (a mesh at rest, Blender frame) from a reference GLB.
 
     correspondence: reference joint name -> body world point (bone heads; 'name:tail' for a bone's tail). At least
@@ -224,6 +224,8 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
     'bones': [subtree roots]} carries those subtrees' motion around the body's own neutral pose instead of copying
     absolute angles (see retarget).
     ground: clip -> 'always' | 'lowest' (see ground_clip).
+    weight_limits: optional restrict_weights keyword dicts (bones, fallback, point, normal, band), applied after
+    region isolation and before rigid overrides. Use anatomical constraints where transferred weights are unreliable.
     Returns (armature, {clip: action}).
     """
     import bpy
@@ -267,6 +269,11 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
         bpy.data.objects.remove(d, do_unlink=True)
     if regions:
         exclusive_regions(body, arm, regions)
+    for limit in weight_limits or []:
+        for name in limit['bones']:
+            if name not in arm.data.bones:
+                raise ValueError(f'Unknown weight-limit bone: {name}')
+        restrict_weights(body, **limit)
     for bone, (point, normal) in (rigid or {}).items():
         make_rigid(body, bone, point, normal)
     body.parent = arm
@@ -491,6 +498,61 @@ def exclusive_regions(body, arm, regions, trust=0.8, core_depth=2):
     bpy.ops.object.vertex_group_limit_total(limit=4)
     bpy.ops.object.vertex_group_normalize_all(lock_active=False)
 
+def _write_limited_weights(body, vertex, weights, protected):
+    """Four exportable influences, preserving the protected/unprotected blend totals."""
+    weights = {n: w for n, w in weights.items() if w > 0}
+    if len(weights) > 4:
+        buckets = [{n: w for n, w in weights.items() if (n in protected) == own} for own in (True, False)]
+        rank = lambda n: (-weights[n], n)
+        # Reserve one slot per nonempty side so a small anatomical blend is not
+        # discarded by the GLB exporter's largest-four truncation.
+        selected = {min(bucket, key=rank) for bucket in buckets if bucket}
+        selected.update(sorted(weights.keys() - selected, key=rank)[:4 - len(selected)])
+        limited = {}
+        for bucket in buckets:
+            kept = sum(w for n, w in bucket.items() if n in selected)
+            if kept:
+                scale = sum(bucket.values()) / kept
+                limited.update({n: w * scale for n, w in bucket.items() if n in selected})
+        weights = limited
+    for g in list(vertex.groups):
+        group = body.vertex_groups[g.group]
+        if group.name not in weights:
+            group.remove([vertex.index])
+    for name, weight in weights.items():
+        body.vertex_groups[name].add([vertex.index], weight, 'REPLACE')
+
+
+def restrict_weights(body, bones, fallback, point, normal, band=0.02):
+    """Past a world-space plane, retain only allowed bones, easing over `band` metres.
+
+    Preserve their relative transferred weights. If none remain, assign `fallback` (one of `bones`). This constrains
+    anatomical ownership without making a multi-bone region rigid; e.g. a chin can follow head/neck, never clavicles.
+    Vertices behind the plane are unchanged. Apply before rigid overrides and clip grounding.
+    """
+    from mathutils import Vector
+    allowed = set(bones)
+    point, normal = Vector(point), Vector(normal)
+    if fallback not in allowed or not math.isfinite(band) or band <= 0:
+        raise ValueError('Weight limit requires an allowed fallback and a positive finite band')
+    if len(point) != 3 or len(normal) != 3 or not all(math.isfinite(x) for x in (*point, *normal)) or normal.length < 1e-8:
+        raise ValueError('Weight limit requires a finite point and a nonzero finite normal')
+    normal.normalize()
+    body.vertex_groups.get(fallback) or body.vertex_groups.new(name=fallback)
+    for v in body.data.vertices:
+        t = min(max(((body.matrix_world @ v.co) - point).dot(normal) / band, 0.0), 1.0)
+        if t <= 0:
+            continue
+        t = t * t * (3 - 2 * t)
+        weights = {body.vertex_groups[g.group].name: g.weight for g in v.groups}
+        total = sum(weights.values())
+        weights = {n: w / total for n, w in weights.items()} if total > 1e-8 else {fallback: 1.0}
+        retained = sum(w for n, w in weights.items() if n in allowed)
+        target = {n: w / retained for n, w in weights.items() if n in allowed} if retained > 1e-8 else {fallback: 1.0}
+        blended = {n: weights.get(n, 0) * (1 - t) + target.get(n, 0) * t for n in weights.keys() | target.keys()}
+        _write_limited_weights(body, v, blended, allowed)
+
+
 def make_rigid(body, bone, point, normal, band=0.02):
     """Vertices past the plane (point, normal) ride `bone` alone, eased in over `band` metres: a big stylized head
     must not take neck weights across the face."""
@@ -502,12 +564,11 @@ def make_rigid(body, bone, point, normal, band=0.02):
         t = min(max(((body.matrix_world @ v.co) - point).dot(normal) / band, 0.0), 1.0)
         if t <= 0:
             continue
-        for g in v.groups:
-            name = body.vertex_groups[g.group].name
-            if name != bone:
-                body.vertex_groups[name].add([v.index], g.weight * (1 - t), 'REPLACE')
-        own = next((g.weight for g in v.groups if body.vertex_groups[g.group].name == bone), 0.0)
-        group.add([v.index], own + (1 - own) * t, 'REPLACE')
+        weights = {body.vertex_groups[g.group].name: g.weight for g in v.groups}
+        own = weights.get(bone, 0)
+        weights = {n: w * (1 - t) for n, w in weights.items() if n != bone}
+        weights[bone] = own + (1 - own) * t
+        _write_limited_weights(body, v, weights, {bone})
     bpy.context.view_layer.objects.active = body
     bpy.ops.object.vertex_group_normalize_all(lock_active=False)
 

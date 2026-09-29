@@ -14,6 +14,23 @@ to contain transferred influences along the skin surface. Region support fades o
 of body extent at attachments, including the trunk, so the spine cannot hold the middle
 of an arm in place. `smooth` controls weight smoothing before region isolation.
 
+Where the donor still transfers weights across anatomy, constrain the allowed bones:
+
+```python
+weight_limits=[{'bones': ['neck_01', 'head'], 'fallback': 'neck_01',
+                'point': (0, 0, 1.27), 'normal': (0, 0, 1), 'band': .02}]
+```
+
+Each limit keeps the allowed bones' relative weights beyond a world-space plane, blending
+over `band` metres with smoothstep. Vertices behind the plane are untouched; vertices with
+no allowed weight use the named fallback. Limits run after region isolation and before
+`rigid` overrides and clip grounding. The standalone helper is
+`restrict_weights(body, bones, fallback, point, normal, band=.02)`. Limits and rigid
+overrides keep at most four influences, preserving their anatomical blend's total share
+so a small corrective weight survives GLB export. Author planes against
+the final sculpt and inspect their boundaries in motion; a flat head plane can cut through
+a forward-projecting chin. This is an explicit anatomical constraint, not automatic anatomy detection.
+
 `neutral={'source': ('Idle_Loop', 0), 'bones': ['upperarm_l', 'upperarm_r'],
 'target': {...}}` adjusts explicitly named target joint directions while carrying the
 reference motion around that neutral. Descendants without an explicit direction retain
