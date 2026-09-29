@@ -40,7 +40,8 @@ try{
  page.on('pageerror',e=>manifest.errors.push(e.message));
  await page.goto(pathToFileURL(join(output,'viewer.html')).href);await page.evaluate(()=>window.ready);
  for(const pose of poses){
-  await page.evaluate(p=>{viewer.resetMorph();viewer.resetPose();if(p.clip){if(!viewer.clips.includes(p.clip))throw Error('Unknown clip: '+p.clip);viewer.play(p.clip);viewer.pause();viewer.seek(viewer.duration*(p.phase??0));}for(const [name,w]of Object.entries(p.morphs??{})){const groups=viewer.morphGroups.filter(g=>viewer.morphTargets(g).includes(name));if(!groups.length)throw Error('Unknown morph: '+name);for(const group of groups)viewer.setMorph(group,name,w);}viewer.sync();},pose);
+  await page.evaluate(p=>{viewer.resetMorph();viewer.resetPose();if(p.clip){if(!viewer.clips.includes(p.clip))throw Error('Unknown clip: '+p.clip);viewer.play(p.clip);viewer.pause();viewer.seek(Math.min(viewer.duration*(p.phase??0),Math.max(0,viewer.duration-1e-7)));}for(const [name,w]of Object.entries(p.morphs??{})){const groups=viewer.morphGroups.filter(g=>viewer.morphTargets(g).includes(name));if(!groups.length)throw Error('Unknown morph: '+name);for(const group of groups)viewer.setMorph(group,name,w);}viewer.sync();},pose);
+  if(!pose.clip)await page.evaluate(()=>{viewer.pause();const root=viewer.root,skeletons=new Set();root.traverse(o=>{if(o.isSkinnedMesh)skeletons.add(o.skeleton);});for(const s of skeletons)s.pose();root.updateMatrixWorld(true);for(const s of skeletons)s.update();});
   const selected=pose.regions===false?[]:regions.filter(r=>!pose.regions||pose.regions.includes(r.name));
   for(const region of [{name:'body'},...selected]){
    const ring=region.angles??pose.angles??angles;
@@ -59,7 +60,7 @@ try{
     },{region,azimuth,elevation});
     const file=`${pose.name}--${region.name}--${azimuth}.png`;
     await writeFile(join(output,file),Buffer.from(result.image.split(',')[1],'base64'));
-    manifest.captures.push({file,pose:pose.name,region:region.name,azimuth,elevation,camera:result.camera,clip:result.clip,time:result.time,morphs:pose.morphs??{}});
+    manifest.captures.push({file,pose:pose.name,region:region.name,azimuth,elevation,camera:result.camera,clip:pose.clip?result.clip:null,time:pose.clip?result.time:0,requestedPhase:pose.phase??null,morphs:pose.morphs??{}});
    }
   }
  }

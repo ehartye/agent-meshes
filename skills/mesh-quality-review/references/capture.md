@@ -44,8 +44,10 @@ bone/object in each pose. `offset` is a world-space displacement from that point
 controls the framing. Check the resulting images: a node origin is not necessarily the center
 of its geometry. A region name must be unique and cannot be `body`, which is captured always.
 
-An optional unanimated rest pose must come first. Later poses require a clip. `phase` is a
-normalized time in [0,1], not a source frame number. `regions: false` captures only the body;
+An optional rest pose must come first; skins are restored from their inverse bind matrices.
+Later poses require a clip. `phase` is a normalized time in [0,1], not a source frame number.
+Phase 1 samples just before the end so looping playback cannot wrap it to frame zero.
+The manifest records the requested phase and actual sample time. `regions: false` captures only the body;
 a list selects named detail regions. Morph overrides apply after sampling the clip.
 
 The output contains individual PNGs, contact sheets, an HTML index, copied references and a
