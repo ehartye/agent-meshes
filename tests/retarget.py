@@ -68,6 +68,22 @@ class Distances(unittest.TestCase):
 
 
 class Labels(unittest.TestCase):
+    def test_region_masks_keep_trunk_weights_only_near_the_attachment(self):
+        V = [(0, 0, z) for z in (0, .02, .04, .06, .08, .10)]
+        edges = [(i, i + 1) for i in range(5)]
+        masks = rt.region_masks(V, edges, [None, None, 0, 0, 0, 0], transition=.05)
+        self.assertEqual(masks[None][0], 1)
+        self.assertGreater(masks[None][2], 0)
+        self.assertLess(masks[None][2], 1)
+        self.assertEqual(masks[None][-1], 0, 'The middle of an arm must not follow the spine')
+        self.assertEqual(masks[0][-1], 1)
+
+    def test_region_masks_do_not_cross_a_gap_between_touching_limbs(self):
+        masks = rt.region_masks([(0, 0, 0), (0, 0, .1), (.001, 0, 0), (.001, 0, .1)],
+                                [(0, 1), (2, 3)], [0, 0, 1, 1], transition=.05)
+        np.testing.assert_array_equal(masks[0], [1, 1, 0, 0])
+        np.testing.assert_array_equal(masks[1], [0, 0, 1, 1])
+
     def test_labels_spread_along_the_surface_not_through_space(self):
         # Two tubes side by side, joined only at their tops by a bridge: a label seeded at the bottom of one tube
         # must not jump the small gap to the other tube's bottom.

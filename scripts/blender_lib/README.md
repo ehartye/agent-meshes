@@ -1,5 +1,32 @@
 # Blender authoring helpers
 
+## Fitting a reference rig
+
+`agent_meshes_retarget.rig_from_reference(body, reference_glb, correspondence, clips, ...)`
+fits a reference skeleton and transfers its skin weights onto a sculpted mesh. Coordinates
+are world-space Blender XYZ, Z up. `correspondence` maps reference bone names to target
+joint heads; `directions` poses the reference limbs to the target's rest stance. `limbs`
+adds matched cross-section rings to the fit. The imported reference is explicitly reset
+to rest before fitting: Blender's initially selected animation must not become the bind pose.
+
+Use `regions=[['clavicle_l'], ['clavicle_r'], ['thigh_l'], ['thigh_r']]` on a humanoid
+to contain transferred influences along the skin surface. Region support fades over 4%
+of body extent at attachments, including the trunk, so the spine cannot hold the middle
+of an arm in place. `smooth` controls weight smoothing before region isolation.
+
+`neutral={'source': ('Idle_Loop', 0), 'bones': ['upperarm_l', 'upperarm_r'],
+'target': {...}}` adjusts explicitly named target joint directions while carrying the
+reference motion around that neutral. Descendants without an explicit direction retain
+the reference's relative articulation, including finger grips. `ground={clip: 'lowest'}`
+uses one vertical offset per clip, preserving the reference's flight phase.
+
+Review the exported skin and the skeleton throughout every clip. The comparison workflow
+in the repository README produces a synchronized, offline review page. Blender regressions
+run with `npx vitest run tests/retarget-blender.test.ts`; the NumPy helpers run with
+`python tests/retarget.py`.
+
+## Creating geometry
+
 The build runner adds this directory to Python's import path. Import the module
 as `agent_meshes_author`. Blender is only needed when creating/exporting objects;
 the sweep geometry function uses the Python standard library.

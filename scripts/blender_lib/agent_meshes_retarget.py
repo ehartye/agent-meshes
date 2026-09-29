@@ -35,6 +35,12 @@ def import_reference(path):
         arm.animation_data.action = None
         for track in list(arm.animation_data.nla_tracks):
             arm.animation_data.nla_tracks.remove(track)
+    # glTF import evaluates the first animation. Unlinking its action/NLA leaves
+    # those pose values behind: reset explicitly before fitting the rest skeleton
+    # or transferring weights (curled fingers otherwise warp into nearby limbs).
+    for bone in arm.pose.bones:
+        bone.matrix_basis.identity()
+    bpy.context.view_layer.update()
     return arm, meshes, actions
 
 
@@ -155,9 +161,9 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
     bone's travel from its rest is scaled by `travel_scale`. Returns the new action.
 
     neutral: {'source': {bone: world 3x3}, 'target': {bone: world 3x3}} for bones whose motion, not absolute
-    angle, should carry over: each frame such a bone takes target @ (its reference orientation relative to the
-    reference's own neutral). A body shaped unlike the reference (a round torso, a big head) keeps its own
-    relaxed arm hang and gets the clip's swing around it."""
+    angle, should carry over: each frame applies the reference's world-space motion delta to the target neutral.
+    Unconfigured descendants inherit their parent's correction and keep their relative animated articulation.
+    A body shaped unlike the reference keeps its own relaxed arm hang without erasing the clip's finger grip."""
     import bpy
     scene = bpy.context.scene
     ref_arm.animation_data_create()
@@ -172,10 +178,19 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
     for frame in range(start, end + 1):
         scene.frame_set(frame)
         worlds = {n: ref_arm.matrix_world @ ref_arm.pose.bones[n].matrix for n in shared}
+        corrected = {}
         for n in shared:                                    # bones order: parents before children
             pb = arm.pose.bones[n]
             if neutral and n in neutral['target']:
                 R = (worlds[n].to_3x3().normalized() @ neutral['source'][n].inverted() @ neutral['target'][n]).to_4x4()
+                corrected[n] = R.to_3x3()
+            elif pb.parent and pb.parent.name in corrected:
+                parent = pb.parent.name
+                # Carry the calibrated parent's change through its descendants;
+                # retain their animated relative articulation (especially grips).
+                R = (corrected[parent] @ worlds[parent].to_3x3().normalized().inverted()
+                     @ worlds[n].to_3x3().normalized()).to_4x4()
+                corrected[n] = R.to_3x3()
             else:
                 R = worlds[n].to_3x3().normalized().to_4x4()
             if n == root:
@@ -276,7 +291,10 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
             pb.matrix_basis.identity()
         # The body's neutral: its limbs turned to the relaxed directions (children follow), then back to rest.
         pose_to_directions(arm, neutral['target'])
-        target = world_frames(arm, names)
+        # Only explicitly requested joints get their own neutral correction. The
+        # remaining descendants inherit it; resetting each finger to its rest
+        # would erase the reference idle's grip from every retargeted clip.
+        target = world_frames(arm, [n for n in names if n in neutral['target']])
         for pb in arm.pose.bones:
             pb.matrix_basis.identity()
         calibration = {'source': source, 'target': target}
@@ -373,6 +391,43 @@ def surface_labels(vertices, edges, seeds):
     return label
 
 
+def region_masks(vertices, edges, labels, transition):
+    """Soft region support measured along the surface, never across a nearby limb.
+
+    Each region (including None, the trunk) owns its interior. Its weights may cross a
+    shared attachment by `transition` metres, fading smoothly to zero beyond it.
+    """
+    import heapq
+    if not math.isfinite(transition) or transition <= 0:
+        raise ValueError('Region transition must be positive and finite')
+    V = np.asarray(vertices, float)
+    neighbors = [[] for _ in V]
+    for a, b in edges:
+        distance = float(np.linalg.norm(V[a] - V[b]))
+        neighbors[a].append((b, distance)); neighbors[b].append((a, distance))
+    masks = {}
+    for region in dict.fromkeys(labels):
+        distances = np.full(len(V), np.inf)
+        queue = []
+        for i, label in enumerate(labels):
+            if label == region:
+                distances[i] = 0
+                queue.append((0.0, i))
+        heapq.heapify(queue)
+        while queue:
+            distance, i = heapq.heappop(queue)
+            if distance > distances[i]:
+                continue
+            for j, length in neighbors[i]:
+                d = distance + length
+                if d < transition and d < distances[j]:
+                    distances[j] = d
+                    heapq.heappush(queue, (d, j))
+        t = np.clip(1 - distances / transition, 0, 1)
+        masks[region] = t * t * (3 - 2 * t)
+    return masks
+
+
 def exclusive_regions(body, arm, regions, trust=0.8, core_depth=2):
     """Keep each vertex's weights inside one limb: `regions` lists subtree roots (e.g. ['clavicle_l'], ['thigh_r']).
 
@@ -381,8 +436,9 @@ def exclusive_regions(body, arm, regions, trust=0.8, core_depth=2):
     dominant transferred weight agree (at least `trust` of it), and every other vertex takes the label of its
     nearest seed over mesh edges (the hand and thigh are far apart along the skin). Only a limb's core bones (its
     root and `core_depth` - 1 levels below: clavicle, upper arm, forearm; thigh, calf) seed labels: a finger bone
-    that a fitted hand rests inside a thigh must not claim the thigh. Each vertex then drops other
-    limbs' weights; one left without weight rides its own limb's nearest bone (the trunk's if unlabeled)."""
+    that a fitted hand rests inside a thigh must not claim the thigh. Each region's weights (including the trunk)
+    fade outside its surface region over 4% of body extent, retaining a blend at attachments but excluding remote
+    influences. A vertex left without weight rides its own region's nearest bone (the trunk's if unlabeled)."""
     import bpy
     member, core = {}, set()
     for i, roots in enumerate(regions):
@@ -411,11 +467,18 @@ def exclusive_regions(body, arm, regions, trust=0.8, core_depth=2):
             seeds[v.index] = geo
     edges = [tuple(e.vertices) for e in body.data.edges]
     labels = surface_labels(V, edges, seeds)
+    # Trunk weights are just as harmful on the middle of a limb as weights from
+    # another limb. Keep blending at attachments, but exclude every remote region.
+    transition = float(np.ptp(V, axis=0).max()) * .04
+    masks = region_masks(V, edges, labels, max(transition, 1e-6))
     for v, home in zip(body.data.vertices, labels):
         for g in list(v.groups):
             r = member.get(names[g.group])
-            if r is not None and r != home:
+            factor = masks[r][v.index] if r in masks else 0.0
+            if factor <= 0:
                 body.vertex_groups[names[g.group]].remove([v.index])
+            elif factor < 1:
+                body.vertex_groups[names[g.group]].add([v.index], g.weight * factor, 'REPLACE')
         if sum(g.weight for g in v.groups) < 1e-6:
             allowed = [k for k, b in enumerate(bones) if member.get(b.name) == home]
             k = allowed[int(np.argmin(D[v.index, allowed]))] if allowed else int(np.argmin(D[v.index]))
