@@ -1137,3 +1137,19 @@ leaves the binary chunk untouched. three.js exposes the result as
 Check the exported head with `node scripts/agent-meshes.mjs verify model.glb
 --contract arkit-face/1`, and look at it with `node scripts/check-face-rig-browser.mjs`
 (see the main README).
+
+## Digitigrade plant-kin anatomy
+
+`agent_meshes_sprout_kin.anatomy(height=1.7, age='adult')` returns measured
+Z-up, -Y-facing landmarks for a pear trunk, S-neck, bulb head, three-digit hands,
+raised hocks, long metatarsals, padded toes and a counterweight tail.
+`geometry(...)` returns deterministic closed source parts without Blender.
+Child proportions enlarge the head relative to height and shorten the limbs;
+the adult crest has five broad fronds and the child's has three.
+
+`build_anatomy(height=..., age=..., skin=..., crest=..., clay=False)` returns
+`(objects, anatomy)` in Blender. It fuses the skin into one closed component and
+keeps eyes, tympana and fronds editable. Geometry generation is parameterized by
+height to the crest tip, before voxel smoothing. Run `python tests/sprout_kin.py`
+for the anatomical contract. This is a static foundation: eye sockets/lids,
+facial animation, skinning, gait and garments are not provided by this helper.
