@@ -1218,3 +1218,26 @@ width and reach. Curved panels, blended attachment vertices, tails, arms and
 inter-frame motion need independent posed-surface checks. Run
 `python tests/cloth_flap.py`, inspect sampled body/garment intersections and review
 motion views before delivery. Keep skinned garments at scene root after binding.
+
+
+## Relaxing garment skin weights
+
+`agent_meshes_skin_relax.relax_weights(vertices, faces, weights, free,
+iterations=150, max_influences=4)` relaxes a named skin-weight field along
+mesh edges. `free` is one boolean per vertex; false rows anchor the iteration.
+Inverse edge-length conductance limits abrupt weight changes on short edges.
+Disconnected surfaces never exchange weights just because they are close.
+The result is normalized and pruned to the requested influence limit, including
+anchor rows; supply already normalized, bounded rows to preserve anchors exactly.
+
+`relax_mesh_weights(mesh, free, iterations=150)` adapts this to a Blender mesh
+with exactly one armature modifier. It changes only deform-bone groups and
+returns vertex count, free count and iteration count. Apply it to the garment's
+single surface **before** adding thickness, so paired cloth layers inherit
+identical weights. Pin rigid regions and attachment boundaries deliberately.
+Run `python tests/skin_weight_relaxation.py` for the pure regression checks.
+
+Relaxation reduces weight discontinuities; it does not repair garment topology
+or guarantee clearance. An offset surface can bridge a narrow arm/torso gap
+before skinning begins. Check rest cross-sections, body contact, cloth self-contact
+and matching motion close-ups independently before delivering a garment.
