@@ -1,5 +1,11 @@
 # Blender authoring helpers
 
+An authoring source may declare `EXPORT_ANIMATION_MODE = 'NLA_TRACKS'` when
+armature and shape-key actions must play together. Give their NLA tracks the
+same clip name: the exporter combines them into one GLB animation. The default
+remains `ACTIONS`. Direct callers can use `export_glb(path, objects,
+animation_mode='NLA_TRACKS')`; other values are rejected.
+
 ## Fitting a reference rig
 
 `agent_meshes_retarget.rig_from_reference(body, reference_glb, correspondence, clips, ...)`
