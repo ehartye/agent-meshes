@@ -143,9 +143,21 @@ def transfer_weights(source, target, smooth=0):
     bpy.ops.object.vertex_group_normalize_all(lock_active=False)
 
 
-def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None):
+def world_frames(arm, names):
+    """World 3x3 orientation of each named pose bone, as posed now."""
+    import bpy
+    bpy.context.view_layer.update()
+    return {n: (arm.matrix_world @ arm.pose.bones[n].matrix).to_3x3().normalized() for n in names}
+
+
+def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, neutral=None):
     """Bake `action` (on ref_arm) onto `arm` by copying every shared bone's world orientation each frame; the root
-    bone's travel from its rest is scaled by `travel_scale`. Returns the new action."""
+    bone's travel from its rest is scaled by `travel_scale`. Returns the new action.
+
+    neutral: {'source': {bone: world 3x3}, 'target': {bone: world 3x3}} for bones whose motion, not absolute
+    angle, should carry over: each frame such a bone takes target @ (its reference orientation relative to the
+    reference's own neutral). A body shaped unlike the reference (a round torso, a big head) keeps its own
+    relaxed arm hang and gets the clip's swing around it."""
     import bpy
     scene = bpy.context.scene
     ref_arm.animation_data_create()
@@ -162,7 +174,10 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None):
         worlds = {n: ref_arm.matrix_world @ ref_arm.pose.bones[n].matrix for n in shared}
         for n in shared:                                    # bones order: parents before children
             pb = arm.pose.bones[n]
-            R = worlds[n].to_3x3().normalized().to_4x4()
+            if neutral and n in neutral['target']:
+                R = (worlds[n].to_3x3().normalized() @ neutral['source'][n].inverted() @ neutral['target'][n]).to_4x4()
+            else:
+                R = worlds[n].to_3x3().normalized().to_4x4()
             if n == root:
                 R.translation = tgt_root_rest + (worlds[n].translation - ref_root_rest) * travel_scale
             else:
@@ -179,7 +194,7 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None):
 
 
 def rig_from_reference(body, reference, correspondence, clips, directions=None, root='pelvis', leg=('thigh_l', 'foot_l'),
-                       rigid=None, ground=None, limbs=None, smooth=2, regions=None):
+                       rigid=None, ground=None, limbs=None, smooth=2, regions=None, neutral=None):
     """Rig `body` (a mesh at rest, Blender frame) from a reference GLB.
 
     correspondence: reference joint name -> body world point (bone heads; 'name:tail' for a bone's tail). At least
@@ -190,6 +205,9 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
     wraps the body's limbs before its weights transfer. smooth: weight smoothing passes after the transfer.
     regions: exclusive limb regions (lists of subtree roots, see exclusive_regions), so a hand resting by a thigh
     never takes the thigh's weights.
+    neutral: {'source': (reference action, frame), 'target': {bone: world direction of the body's relaxed pose},
+    'bones': [subtree roots]} carries those subtrees' motion around the body's own neutral pose instead of copying
+    absolute angles (see retarget).
     ground: clip -> 'always' | 'lowest' (see ground_clip).
     Returns (armature, {clip: action}).
     """
@@ -245,7 +263,24 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
     tgt_leg = (arm.data.bones[leg[0]].head_local - arm.data.bones[leg[1]].head_local).length
     for pb in ref_arm.pose.bones:                           # clips start from the reference's own rest
         pb.matrix_basis.identity()
-    baked = {name: retarget(ref_arm, arm, actions[name], root, tgt_leg / ref_leg) for name in clips}
+    calibration = None
+    if neutral:
+        names = [n for r in neutral['bones'] for n in _subtree(arm, r)]
+        # The reference's neutral: its chosen clip at the chosen frame.
+        src_action, src_frame = neutral['source']
+        ref_arm.animation_data_create(); ref_arm.animation_data.action = actions[src_action]
+        bpy.context.scene.frame_set(int(src_frame))
+        source = world_frames(ref_arm, names)
+        ref_arm.animation_data.action = None
+        for pb in ref_arm.pose.bones:
+            pb.matrix_basis.identity()
+        # The body's neutral: its limbs turned to the relaxed directions (children follow), then back to rest.
+        pose_to_directions(arm, neutral['target'])
+        target = world_frames(arm, names)
+        for pb in arm.pose.bones:
+            pb.matrix_basis.identity()
+        calibration = {'source': source, 'target': target}
+    baked = {name: retarget(ref_arm, arm, actions[name], root, tgt_leg / ref_leg, neutral=calibration) for name in clips}
     for name, action in baked.items():                      # ground each clip on the body's own feet
         mode = (ground or {}).get(name)
         if mode:
