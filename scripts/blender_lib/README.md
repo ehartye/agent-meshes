@@ -1152,4 +1152,25 @@ the adult crest has five broad fronds and the child's has three.
 keeps eyes, tympana and fronds editable. Geometry generation is parameterized by
 height to the crest tip, before voxel smoothing. Run `python tests/sprout_kin.py`
 for the anatomical contract. This is a static foundation: eye sockets/lids,
-facial animation, skinning, gait and garments are not provided by this helper.
+facial animation, gait and garments are not provided by this helper.
+
+`agent_meshes_sprout_rig.rig_anatomy(objects, anatomy, diagnostics=True)` binds
+that anatomy and returns `(objects_including_armature, report)`. The adult has
+50 bones and the child 46: separate spine and neck joints, fingers/thumbs,
+hocks/metatarsals/toes, a two-joint tail, eye bones and two bones per frond.
+`skeleton(anatomy)` and `weight_function(anatomy)` also work outside Blender.
+The latter returns a function accepting a point and named source region.
+
+The fused body is mapped back to its source surfaces before skinning. Weights
+blend along that region's joint chain, smooth along real mesh edges, and retain
+at most four influences. The bulb head stays rigid. Skin meshes export at scene
+root with armature modifiers, avoiding an ordinary parent transform on top of
+skinning. Eye bones are `eye_L`/`eye_R`; mesh names are distinct (`eye_l`/`eye_r`).
+
+Set `EXPORT_ANIMATION_MODE = 'NLA_TRACKS'` in the authoring script to export the
+six two-second diagnostic clips: `check-arms`, `check-legs`, `check-legs-right`,
+`check-spine`, `check-neck-tail`, and `check-hands-crest`. These isolate joint
+deformation; they do not enforce foot contact, balance or locomotion. Pass
+`diagnostics=False` to bind without adding clips. Run
+`python tests/sprout_kin_rig.py` for hierarchy, weight isolation and joint
+continuity checks; inspect rendered sequences as well as the exported skeleton.
