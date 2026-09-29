@@ -66,10 +66,21 @@ def _curve(points,radii,steps=8):
     return out[:,:3],out[:,3:]
 
 
+def hand_point(points,a,side):
+    """Turn the palm toward the thigh about the forearm axis; preserve its center."""
+    j=a['joints'];center=np.array(j['hand_'+side]);axis=np.array(j['wrist_'+side])-j['elbow_'+side]
+    axis=axis/np.linalg.norm(axis);angle=(1 if side=='l' else -1)*math.pi/2
+    v=np.asarray(points)-center
+    return center+v*math.cos(angle)+np.cross(axis,v)*math.sin(angle)+np.sum(v*axis,axis=-1,keepdims=True)*axis*(1-math.cos(angle))
+
+
 def geometry(*,height=1.7,age='adult'):
     a=anatomy(height=height,age=age);s=a['scale'];j={n:np.array(v) for n,v in a['joints'].items()};parts=[]
     def add(name,data,kind='skin'):
-        v,f=data;parts.append({'name':name,'vertices':[tuple(map(float,p)) for p in v],
+        v,f=data
+        if name.startswith(('palm_','finger_','digit-tip_','thumb_','thumb-tip_')):
+            v=hand_point(v,a,name.split('_')[1][0])
+        parts.append({'name':name,'vertices':[tuple(map(float,p)) for p in v],
                               'faces':[tuple(map(int,p)) for p in f],'kind':kind})
     def sphere(name,c,r,kind='skin'):add(name,_sphere(c,r),kind)
     def tube(name,points,radii,kind='skin',normal=None):
@@ -93,10 +104,10 @@ def geometry(*,height=1.7,age='adult'):
             tube('finger_'+side+str(n),[root,root+[0,-.012*s,-.036*s],root+[0,-.025*s,-.064*s]],
                  [.013*s,.011*s,.009*s])
             sphere('digit-tip_'+side+str(n),root+[0,-.025*s,-.064*s],[.009*s]*3)
-        root=hand+np.array([-sign*.02*s,0,.012*s])
-        tube('thumb_'+side,[root,root+[-sign*.029*s,-.013*s,-.013*s],root+[-sign*.025*s,-.034*s,-.027*s]],
+        root=hand+np.array([sign*.02*s,0,.012*s])
+        tube('thumb_'+side,[root,root+[sign*.029*s,-.013*s,-.013*s],root+[sign*.025*s,-.034*s,-.027*s]],
              [.014*s,.012*s,.009*s])
-        sphere('thumb-tip_'+side,root+[-sign*.025*s,-.034*s,-.027*s],[.009*s]*3)
+        sphere('thumb-tip_'+side,root+[sign*.025*s,-.034*s,-.027*s],[.009*s]*3)
         hip,knee,hock,toe=[j[n+'_'+side] for n in ['hip','knee','hock','toe']]
         tube('leg_'+side,[hip,knee,hock,toe],[.066*s,.040*s,.028*s,.025*s])
         sphere('hock_'+side,hock,[.033*s,.031*s,.033*s])

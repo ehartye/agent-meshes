@@ -1174,3 +1174,19 @@ deformation; they do not enforce foot contact, balance or locomotion. Pass
 `diagnostics=False` to bind without adding clips. Run
 `python tests/sprout_kin_rig.py` for hierarchy, weight isolation and joint
 continuity checks; inspect rendered sequences as well as the exported skeleton.
+
+`agent_meshes_sprout_gait.bake_gaits(objects, anatomy, kaiju_reference_glb)` adds
+`walk` and `jog` to the bound rig. It samples Mesh2Motion's CC0 kaiju `Walk`,
+smooths its periodic pelvis/hock curves, and solves the fitted leg lengths toward
+explicit toe trajectories. Stride follows leg length; lift follows body height.
+Foot return begins after ground clearance, with continuous contact velocity.
+The returned report records source SHA-256, reference phase and clip metadata.
+The GLB also receives `agent-meshes/gait/1` contact/travel metadata.
+
+The bake uses 60 fps and retimes existing NLA strips to preserve their duration.
+Natural hand orientation is shared by source geometry and joint positions:
+thumbs point forward and palms curl inward. The gait analyzer recognizes the
+raised-hock `metatarsal_l/r` bones and samples their skinned toe descendants.
+Run `python tests/sprout_kin_gait.py` and `mesh gait model.glb --clip walk
+--gait walk` (also `jog`). Passing movement ranges does not prove reference-curve
+correlation, collision clearance, visual approval or completed facial/clothing work.
