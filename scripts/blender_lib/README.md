@@ -1190,3 +1190,31 @@ raised-hock `metatarsal_l/r` bones and samples their skinned toe descendants.
 Run `python tests/sprout_kin_gait.py` and `mesh gait model.glb --clip walk
 --gait walk` (also `jog`). Passing movement ranges does not prove reference-curve
 correlation, collision clearance, visual approval or completed facial/clothing work.
+
+
+## Hanging cloth flaps
+
+`agent_meshes_cloth_flap.rig_flaps(body, armature, specs, obstacle_bones,
+gap=.008, loop_clips=())` adds kinematic waist-hinge bones and keys them into
+existing single-strip NLA clips. Each spec contains a new `name`, an existing
+`parent`, rest-armature `hinge` XYZ, `length`, `half_width` and `direction`
+(-1 toward -Y/front, +1 toward +Y/back). Coordinates are Blender Z-up.
+Call it after the body motion is baked, before binding the garment. Supply
+cyclic clip names explicitly through `loop_clips`.
+
+Body vertices with more than 30% combined influence from `obstacle_bones`
+provide the clearance envelope. At scene-frame intervals they are transformed
+back through the posed parent into its rest space. A temporal maximum followed
+by a positive convolution smooths the required outward angle without reducing
+sampled clearance. Angles above 85 degrees reject an unsuitable fit. The return
+report records selected vertex count, requested gap and each clip's angle range.
+Body animation tracks remain intact. The caller blends the hanging panel onto
+the new bone below its waist attachment; pockets should inherit the panel's
+weights, not borrow weights from the body beneath it.
+
+This is a hinged garment, not a cloth simulator or a general collision solver.
+The pure clearance function covers points below the hinge within the stated
+width and reach. Curved panels, blended attachment vertices, tails, arms and
+inter-frame motion need independent posed-surface checks. Run
+`python tests/cloth_flap.py`, inspect sampled body/garment intersections and review
+motion views before delivery. Keep skinned garments at scene root after binding.
