@@ -21,12 +21,12 @@ export const DEFAULT_PREVIEW_QUEUE = join(tmpdir(), 'agent-meshes-preview-worker
 /** A worker whose heartbeat is older than this is gone. */
 const HEARTBEAT_SECONDS = 10;
 
-export interface PreviewPose { name: string; shapes: Record<string, number> }
+export interface PreviewPose { name: string; shapes: Record<string, number>; phase?: number }
 export interface PreviewSettings {
-  views: string[]; shadings: string[]; poses: PreviewPose[]; size: number; sheet: boolean; rest: boolean; hide: string[]; target: string | null;
+  views: string[]; shadings: string[]; poses: PreviewPose[]; size: number; sheet: boolean; rest: boolean; hide: string[]; target: string | null; clip: string | null;
 }
 export interface PreviewRawOptions {
-  views?: string; shading?: string; shape?: string; pose?: string[]; size?: string | number; sheet?: boolean; rest?: boolean; hide?: string; target?: string;
+  views?: string; shading?: string; shape?: string; pose?: string[]; size?: string | number; sheet?: boolean; rest?: boolean; hide?: string; target?: string; clip?: string; phases?: string | number;
 }
 export interface PreviewManifest { files: string[]; sheet?: string | null; seconds?: number; blender?: string; worker: boolean; outDir: string; [key: string]: unknown }
 
@@ -59,6 +59,17 @@ export function parsePreviewOptions(raw: PreviewRawOptions): PreviewSettings {
   const shadings = unique(raw.shading === 'all' ? [...PREVIEW_SHADINGS] : raw.shading ? list(raw.shading) : ['matcap'], 'Shading');
   for (const shading of shadings) if (!(PREVIEW_SHADINGS as readonly string[]).includes(shading)) fail(`Unknown shading ${shading}; choose from ${PREVIEW_SHADINGS.join(', ')}, all`);
   const common = raw.shape ? parseShapes(raw.shape) : {};
+  if (raw.clip !== undefined) {
+    // A clip: one posed render per evenly spaced phase (shape keys from --shape apply to every phase).
+    if (!/^[A-Za-z0-9_.-]+$/.test(raw.clip)) fail(`Clip name must be letters, digits, _, . or -, got ${JSON.stringify(raw.clip)}`);
+    if (raw.pose?.length) fail('--pose and --clip are exclusive: a clip renders its own phases (use --shape for shape keys)');
+    const phases = raw.phases === undefined ? 8 : Number(raw.phases);
+    if (!Number.isInteger(phases) || phases < 1 || phases > 64) fail(`Clip phases must be an integer from 1 to 64, got ${raw.phases}`);
+    const size = raw.size === undefined ? 512 : Number(raw.size);
+    if (!Number.isInteger(size) || size < 64 || size > 4096) fail(`Preview size must be an integer from 64 to 4096 pixels, got ${raw.size}`);
+    const clipPoses = Array.from({ length: phases }, (_, k) => ({ name: `${raw.clip}-p${k}`, shapes: { ...common }, phase: k / phases }));
+    return { views, shadings, poses: clipPoses, size, sheet: Boolean(raw.sheet), rest: false, hide: raw.hide ? list(raw.hide) : [], target: raw.target ?? null, clip: raw.clip };
+  }
   const poses = (raw.pose?.length ? raw.pose : ['rest']).map(spec => {
     const colon = spec.indexOf(':');
     const name = colon < 0 ? spec : spec.slice(0, colon);
@@ -68,7 +79,7 @@ export function parsePreviewOptions(raw: PreviewRawOptions): PreviewSettings {
   unique(poses.map(pose => pose.name), 'Pose');
   const size = raw.size === undefined ? 512 : Number(raw.size);
   if (!Number.isInteger(size) || size < 64 || size > 4096) fail(`Preview size must be an integer from 64 to 4096 pixels, got ${raw.size}`);
-  return { views, shadings, poses, size, sheet: Boolean(raw.sheet), rest: raw.rest ?? true, hide: raw.hide ? list(raw.hide) : [], target: raw.target ?? null };
+  return { views, shadings, poses, size, sheet: Boolean(raw.sheet), rest: raw.rest ?? true, hide: raw.hide ? list(raw.hide) : [], target: raw.target ?? null, clip: null };
 }
 
 /** The files a preview writes into its output folder, in render order (pose, then view, then shading), then the sheet. */
@@ -78,7 +89,7 @@ export function previewFiles(settings: PreviewSettings): string[] {
 }
 
 export function previewJob(source: string, outDir: string, settings: PreviewSettings) {
-  return { source, outDir, views: settings.views, shadings: settings.shadings, poses: settings.poses, size: settings.size, sheet: settings.sheet, rest: settings.rest, hide: settings.hide, target: settings.target };
+  return { source, outDir, views: settings.views, shadings: settings.shadings, poses: settings.poses, size: settings.size, sheet: settings.sheet, rest: settings.rest, hide: settings.hide, target: settings.target, clip: settings.clip };
 }
 
 /** A Blender build.json's script, or a .py source itself. */

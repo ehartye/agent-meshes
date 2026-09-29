@@ -229,6 +229,8 @@ export async function main(args = process.argv): Promise<void> {
     .option('--size <pixels>', 'Square image size', '512')
     .option('--sheet', 'Also compose a contact sheet (one row per pose)')
     .option('--posed', 'Keep armatures in their animated pose instead of the rest pose')
+    .option('--clip <name>', 'Render this animation clip posed at evenly spaced phases (one row per phase)')
+    .option('--phases <count>', 'Phases per clip with --clip (default 8)')
     .option('--hide <patterns>', 'Comma-separated mesh name patterns to leave out (e.g. hair*)')
     .option('--target <pattern>', 'Frame head views on this mesh (default: the mesh with face shape keys)')
     .option('--worker', 'Start a persistent headless Blender that serves previews (no input needed)')
@@ -239,7 +241,7 @@ export async function main(args = process.argv): Promise<void> {
     if (options.worker) { print(await preview.startPreviewWorker(options.queue)); return; }
     if (options.stopWorker) { print(await preview.stopPreviewWorker(options.queue)); return; }
     if (!input) throw Object.assign(new Error('preview needs a build.json or .py source'), { code: 'CLI_ARGUMENT_ERROR' });
-    const settings = preview.parsePreviewOptions({ views: options.views, shading: options.shading, shape: options.shape, pose: options.pose, size: options.size, sheet: options.sheet, rest: !options.posed, hide: options.hide, target: options.target });
+    const settings = preview.parsePreviewOptions({ views: options.views, shading: options.shading, shape: options.shape, pose: options.pose, size: options.size, sheet: options.sheet, rest: !options.posed, hide: options.hide, target: options.target, clip: options.clip, phases: options.phases });
     print(await preview.runPreview(input, settings, { outDir: options.out, queue: options.queue, useWorker: options.workerUse }));
   });
   program.command('viewer <file>').description('Write the standalone viewer runtime: one script defining window.MeshViewer.mount()').action(async file => {

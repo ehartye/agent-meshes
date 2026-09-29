@@ -238,12 +238,29 @@ def run_job(job):
     scene.collection.objects.link(camera)
     scene.camera = camera
     poses = job.get('poses') or [{'name': 'rest', 'shapes': {}}]
+    clip = job.get('clip')
+    if clip:
+        # One armature's clip, sampled at each pose's phase (0..1 over the clip's frame range).
+        arms = [o for o in objects if getattr(o, 'type', None) == 'ARMATURE']
+        if not arms: raise ValueError(f'--clip {clip}: no armature to animate')
+        matches = [a for a in bpy.data.actions if a.name == clip] or [a for a in bpy.data.actions if a.name.split('|')[-1].split('_')[0] == clip or a.name.startswith(clip)]
+        if not matches: raise ValueError(f'--clip {clip}: no such clip; clips: {", ".join(a.name for a in bpy.data.actions)}')
+        action = matches[0]
+        for arm in arms:
+            arm.data.pose_position = 'POSE'
+            arm.animation_data_create()
+            for track in list(arm.animation_data.nla_tracks): arm.animation_data.nla_tracks.remove(track)
+            arm.animation_data.action = action
+        clip_start, clip_end = action.frame_range
     set_pose(meshes, {})
     frames = framing(meshes, job.get('target'))
     wires = add_wires(meshes, frames['head'][1] * 2) if 'wire' in shadings else []
     files = []
     for pose in poses:
         set_pose(meshes, pose.get('shapes', {}))
+        if clip and pose.get('phase') is not None:
+            f = clip_start + pose['phase'] * (clip_end - clip_start)
+            scene.frame_set(int(math.floor(f)), subframe=f - math.floor(f))
         bpy.context.view_layer.update()
         for view in views:
             yaw, pitch, zoom, which, *shift = VIEWS[view]
