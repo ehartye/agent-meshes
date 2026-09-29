@@ -24,6 +24,10 @@ Zero errors and warnings is the bar; `UNUSED_OBJECT` infos about `TEXCOORD_0` ar
 every part (the primitives carry UVs that no material samples). `view` renders
 front, side and perspective PNGs plus one contact sheet per clip into a directory; look at them.
 
+For a deliberate delivery review or recurring anatomy/clothing defects, use
+[mesh-quality-review](../mesh-quality-review/SKILL.md) for reference fidelity, a full orbit
+and head-to-toe detail coverage.
+
 **Glass survives every stage.** A part (or Blender `material(..., opacity=.16)`) with opacity below
 1 exports as `alphaMode: BLEND` with the opacity in the base color alpha, `transmission` as
 `KHR_materials_transmission`, `ior` as `KHR_materials_ior`, `doubleSided` as `doubleSided`; the

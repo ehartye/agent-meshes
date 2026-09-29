@@ -55,6 +55,10 @@ a 96-cell shell subdivided once produces tens of thousands of vertices.
 
 ## 6. Verify by looking
 
+For a deliberate delivery review or recurring anatomy/clothing defects, use
+[mesh-quality-review](../mesh-quality-review/SKILL.md): full orbit, reference fidelity and
+head-to-toe close-ups, including both hands and soles.
+
 Structure passes when `verify` reports zero errors. Believability passes when the front, side
 and perspective renders and every contact sheet match the intent, feet contact the ground, and
 nothing floats. If a shape cannot be made believable with these tools, say so and describe the
