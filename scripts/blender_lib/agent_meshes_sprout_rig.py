@@ -116,7 +116,7 @@ def skin_regions(a,include=None):
     return [p for p in parts if p['name'] in names]
 
 
-def anatomy_weights(body,a,regions=None,smooth=5):
+def anatomy_weights(body,a,regions=None,smooth=5,hip_seams=False):
     """Blender mesh weights from selected anatomical source surfaces.
 
     Selection happens before nearest-surface lookup, so adjacent excluded limbs
@@ -153,7 +153,23 @@ def anatomy_weights(body,a,regions=None,smooth=5):
     np.put_along_axis(filtered,keep,np.take_along_axis(W,keep,axis=1),axis=1)
     W=filtered/filtered.sum(axis=1)[:,None]
     rows=[{names[i]:float(w) for i,w in enumerate(row) if w>1e-8} for row in W]
-    return rows,{'sourceRegions':sorted(set(labels)),'vertices':len(W),'maxInfluences':int((W>0).sum(axis=1).max())}
+    report={'sourceRegions':sorted(set(labels)),'vertices':len(W),'maxInfluences':int((W>0).sum(axis=1).max())}
+    if hip_seams:
+        if not {'trunk','leg_l','leg_r'}<=set(labels):raise ValueError('Hip seams require trunk and both leg sources')
+        from agent_meshes_skin_relax import relax_weights
+        hip=a['joints']['hip_l'][2];scale=a['scale']
+        # The fused hip spans distinct source surfaces. A geometric transition
+        # band avoids the abrupt pelvis/thigh switch at their nearest-face seam.
+        # Stop above the knee blend; only pelvic and thigh influences diffuse.
+        free=[label in ('trunk','leg_l','leg_r') and hip-.08*scale<v.co.z<hip+.07*scale
+              for label,v in zip(labels,body.data.vertices)]
+        seam_names={'pelvis','thigh_l','thigh_r'}
+        restricted=[{n:w for n,w in row.items() if n in seam_names} or {'pelvis':1.} for row in rows]
+        fitted=relax_weights([v.co[:] for v in body.data.vertices],
+                             [tuple(p.vertices) for p in body.data.polygons],restricted,free,iterations=500)
+        rows=[fitted[i] if active else rows[i] for i,active in enumerate(free)]
+        report['hipSeamVertices']=int(sum(free))
+    return rows,report
 
 
 def rig_anatomy(objects,a,diagnostics=True):
@@ -164,7 +180,7 @@ def rig_anatomy(objects,a,diagnostics=True):
     from agent_meshes_author import bind_skin
     bones=skeleton(a);weight=weight_function(a)
     body=next(o for o in objects if o.name=='sprout-body')
-    rows,skin_report=anatomy_weights(body,a)
+    rows,skin_report=anatomy_weights(body,a,hip_seams=True)
     data=bpy.data.armatures.new('sprout-skeleton');arm=bpy.data.objects.new('sprout-rig',data)
     bpy.context.scene.collection.objects.link(arm);bpy.context.view_layer.objects.active=arm;arm.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')

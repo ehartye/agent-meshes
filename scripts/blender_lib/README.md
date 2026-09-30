@@ -1251,13 +1251,18 @@ that set; unknown names, eyes and crest surfaces are rejected. `None` selects
 all skin regions used by the body rig. Coordinates use the anatomy's height
 and age; returned surfaces remain in rest-space Blender Z-up coordinates.
 
-`anatomy_weights(mesh, anatomy, regions=None, smooth=5)` queries those selected
+`anatomy_weights(mesh, anatomy, regions=None, smooth=5, hip_seams=False)` queries those selected
 surfaces before evaluating the region's anatomical weight function. It returns
 `(rows, report)` without binding or moving the mesh. The report names the source
 regions actually used, vertex count and maximum influence count. Rows diffuse
 along mesh edges for the requested number of passes, then keep four normalized
 influences. Bulb-head rows stay pinned. The body rig calls the same helper with
-all skin sources, preserving its prior behavior.
+all skin sources. With `hip_seams=True`, a geometric band around the hips blends
+pelvis and thigh weights along connected edges, avoiding the sharp weight switch
+where fused trunk and thigh source surfaces meet. The band stops above the knee
+blend; knee and tail influences do not diffuse into it. This mode requires trunk
+and both leg source regions and reports `hipSeamVertices`. Other body weights,
+rest geometry, bones and clips are unchanged. `rig_anatomy` enables this mode.
 
 For a fitted overall, use `regions=['trunk', 'leg_l', 'leg_r']` so nearby arms,
 neck and tail cannot donate weights. Bind the returned rows to the existing
@@ -1266,3 +1271,7 @@ surfaces; restricting weights cannot repair a cloth envelope that already
 incorporates a neighboring arm. Body/cloth clearance and deformation still
 need independent posed checks. Run `python tests/sprout_region_skin.py` and
 `python tests/sprout_kin_rig.py`; exercise the Blender adapter with a real build.
+`npx vitest run tests/sprout-hip-blender.test.ts` checks the actual adult and child
+body surfaces through both leg diagnostic clips when Blender is available.
+The hip repair does not resolve calf/thigh contact from deeply folded jog poses
+or the separately observed neck folds.
