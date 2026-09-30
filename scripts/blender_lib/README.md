@@ -49,6 +49,26 @@ curves remain unchanged. Gaze uses local Y yaw and local X pitch. Author and
 visually inspect anatomical face membership separately with `mark_face_region`;
 eye rigging does not establish lid coverage, jaw motion or a complete contract.
 
+For a sculpt with an existing mouth pocket, use
+`trace_quad_loop(faces, start, following)` to recover each closed lip/lining
+loop from a directed edge. It rejects boundaries, poles and non-quad or
+non-manifold edges on the route. Author the upper/lower arcs explicitly:
+interlocking lips can put the lower lining above the upper lip in height.
+`sculpt_jaw_weights(vertices, faces, jaw, face_vertices, lower_lip=...,
+upper_lip=..., reach=.02)` fixes upper lip weights at zero, seeds the lower lip
+from `jaw.weight(..., lower_lip=True)`, and solves a local harmonic weight field
+along mesh edges. `reach` is a geodesic distance in the input coordinate units.
+Vertices outside the anatomical face remain fixed; rest geometry is unchanged.
+Use `fixed_vertices` to hold the upper jaw above the teeth's gum line in place.
+The relaxation rejects nonconvergence. Apply the result through `jaw.targets`
+or `add_jaw_open` and check intermediate morph weights and expression combinations
+for folded faces. Include the lining loop behind the lip rim when a narrow fold
+otherwise pulls the upper lining down. This helper does not construct teeth,
+color the mouth, merge skinned meshes or establish the complete face contract.
+`faces_inside_loop(faces, loop, seed_face)` selects the existing mouth pocket on
+the seeded side of its seam loop. It checks that the loop separates that region
+from the exterior before returning polygon indices for material assignment.
+
 ## Cutting weighted clothing
 
 `agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,
