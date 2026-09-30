@@ -1278,6 +1278,29 @@ matrix variation by clip. It rejects static selected clips and restores the
 active action/slot, NLA flags, pose position and frame/subframe. Matrices act on
 rest geometry in armature-local space; reconcile mesh transforms first.
 
+`agent_meshes_garment_partition.partition_surface(vertices, triangles, normals,
+weights, fields, component=None)` cuts the donor and garment on shared vertices.
+It returns `source` (the complete subdivided donor) and `garment` (the positive
+intersection of all fields). Both have vertices, fixed triangle faces, unit
+normals and weights. Replace the donor with `source` **before** fitting the
+garment; keeping the original donor leaves the cut-boundary skinning mismatch.
+New garment vertices use exactly the donor's new positions and weights, so their
+motion agrees after ordinary GLB skinning. The rest surface and original vertices
+are preserved; donor topology and interpolated motion at cuts change.
+
+`source.provenance` maps each new vertex to original vertex coefficients, and
+`source.source_faces` maps each triangle to its input face. Transfer UVs, colors,
+morphs and material assignments through these mappings when present; this pure
+geometry helper does not update Blender objects. `garment.source_vertices` maps
+garment vertices to the subdivided source. Normals supplied by the caller should
+also be carried to the replacement donor for consistent shading. Input triangles
+must have consistently wound manifold edges and one to four influences per vertex.
+Distinct-index seams remain separate. All field boundaries subdivide both sides;
+the donor is never cut away. `component='largest'` selects only the garment patch.
+Near-identical provenance coefficients within 2e-12 share a point, and an edge
+incidence check rejects unresolved cracks. More fields add topology. This fixes
+shared boundary motion, not offset-shell clearance or cloth self-collision.
+
 `agent_meshes_tessellation.triangulate_surface(vertices, faces)` freezes Blender's
 rest loop triangles and returns `faces` plus `source_faces` (one original polygon
 index per triangle). It does not move vertices or change caller data, and removes
