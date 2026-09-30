@@ -115,6 +115,15 @@ sections exclude hands hanging at hip height. Sparse geometry may require a
 larger band or different authored measurements; this is not anatomy detection.
 Inspect the sculpt and fitted skeleton together before accepting joint pivots.
 
+`surface_chord(vertices, triangles, point, direction, tolerance=1e-7)` measures
+the actual surface at an authored landmark, even between sparse vertex rows.
+It returns two triangle intersections on the line through `point`, ordered along
+`direction`. Their midpoint and separation provide depth measurements for placing
+finger joints. Supply the relevant surface in one common coordinate frame; the
+direction need not be normalized. Missed, one-sided, multiple-shell, coplanar or unbracketed
+measurements reject explicitly. A chord midpoint is not automatically an
+anatomical joint center, and this local measurement does not establish mesh closure.
+
 `agent_meshes_retarget.rig_from_reference(body, reference_glb, correspondence, clips, ...)`
 fits a reference skeleton and transfers its skin weights onto a sculpted mesh. Coordinates
 are world-space Blender XYZ, Z up. `correspondence` maps reference bone names to target

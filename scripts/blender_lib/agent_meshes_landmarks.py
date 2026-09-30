@@ -8,6 +8,61 @@ import numpy as np
 from agent_meshes_reproportion import Landmark
 
 
+def surface_chord(vertices, triangles, point, direction, tolerance=1e-7):
+    """Measure two surface crossings bracketing an authored interior landmark.
+
+    Unlike a band of nearby vertices, this intersects the actual triangles at
+    the requested location. The endpoint midpoint measures surface depth; it
+    is not an automatic detector of anatomical joint position. Supply only the
+    relevant surface: missed, one-sided or multiple-shell chords are rejected.
+    This local measurement does not prove the entire mesh is closed.
+    Coordinates and tolerance use the caller's common coordinate frame/units.
+    """
+    v=np.asarray(vertices,float);f=np.asarray(triangles)
+    p=np.asarray(point,float);d=np.asarray(direction,float)
+    if v.ndim!=2 or v.shape[1]!=3 or not len(v) or not np.isfinite(v).all():
+        raise ValueError('vertices must be a nonempty finite Nx3 array')
+    if (f.ndim!=2 or f.shape[1]!=3 or not len(f) or
+            not np.issubdtype(f.dtype,np.integer) or f.min()<0 or f.max()>=len(v)):
+        raise ValueError('triangles must contain valid integer vertex indices')
+    if (p.shape!=(3,) or d.shape!=(3,) or not np.isfinite(p).all() or
+            not np.isfinite(d).all() or not np.isfinite(tolerance) or tolerance<=0):
+        raise ValueError('point, direction and positive tolerance must be finite')
+    length=np.linalg.norm(d)
+    if not np.isfinite(length) or length<=0:
+        raise ValueError('direction must have finite nonzero length')
+    d=d/length
+    a=v[f[:,0]];e1=v[f[:,1]]-a;e2=v[f[:,2]]-a
+    h=np.cross(np.broadcast_to(d,e2.shape),e2);det=np.sum(e1*h,axis=1)
+    scale=np.linalg.norm(e1,axis=1)*np.linalg.norm(e2,axis=1)
+    keep=abs(det)>1e-12*scale
+    # A line lying along the skin has endpoint hits but no usable interior
+    # thickness. Do not silently discard overlapping coplanar triangles.
+    normal=np.cross(e1,e2);area=np.linalg.norm(normal,axis=1)
+    parallel=(~keep)&(area>1e-12*scale)
+    if np.any(parallel):
+        unit=normal[parallel]/area[parallel,None]
+        offsets=v[f[parallel]]-p
+        on_plane=abs(np.sum(offsets[:,0]*unit,axis=1))<=tolerance
+        sides=np.sum(np.cross(d,offsets)*unit[:,None,:],axis=2)
+        overlaps=(sides.min(axis=1)<=tolerance)&(sides.max(axis=1)>=-tolerance)
+        if np.any(on_plane&overlaps):
+            raise ValueError('coplanar surface overlap makes the chord ambiguous')
+    a=a[keep];e1=e1[keep];e2=e2[keep];h=h[keep];det=det[keep]
+    s=p-a;q=np.cross(s,e1)
+    u=np.sum(s*h,axis=1)/det;w=np.sum(q*d,axis=1)/det
+    inside=(u>=-1e-10)&(w>=-1e-10)&(u+w<=1+1e-10)
+    hits=np.sort((np.sum(e2*q,axis=1)/det)[inside])
+    crossings=[]
+    for t in hits:
+        if not crossings or t-crossings[-1]>tolerance:crossings.append(float(t))
+    if len(crossings)!=2:
+        raise ValueError(f'expected two surface crossings, found {len(crossings)}')
+    if not crossings[0]<-tolerance or not crossings[1]>tolerance:
+        raise ValueError('surface crossings must bracket the authored point')
+    return p+crossings[0]*d,p+crossings[1]*d
+
+
 def section(vertices, height, side=0, part='all', half=.008, separation=.02):
     """Take a horizontal band, optionally separating trunk and hanging arm.
 

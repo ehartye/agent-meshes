@@ -6,6 +6,7 @@ import numpy as np
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts/blender_lib'))
 from agent_meshes_landmarks import section, humanoid_landmarks
+import agent_meshes_landmarks as landmarks
 
 
 def figure():
@@ -49,5 +50,51 @@ class Sections(unittest.TestCase):
         v=figure();v[0,0]=np.nan
         with self.assertRaisesRegex(ValueError,'finite'): humanoid_landmarks(v,PROFILE)
 
+
+
+class SurfaceChords(unittest.TestCase):
+    # A tapered prism: at z=.5 its X walls are -.75 and 1.5.
+    def shape(self):
+        v=np.array([[-1,-1,0],[2,-1,0],[2,1,0],[-1,1,0],
+                    [-.5,-1,1],[1,-1,1],[1,1,1],[-.5,1,1]],float)
+        quads=[(0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]
+        f=np.array([(q[0],q[1],q[2]) for q in quads]+[(q[0],q[2],q[3]) for q in quads])
+        return v,f
+
+    def chord(self,*args,**kwargs):
+        self.assertTrue(hasattr(landmarks,'surface_chord'),'Missing exact surface chord measurement')
+        return landmarks.surface_chord(*args,**kwargs)
+
+    def test_measures_actual_faces_between_vertex_rows(self):
+        v,f=self.shape()
+        lo,hi=self.chord(v,f,[.2,0,.5],[3,0,0])
+        np.testing.assert_allclose([lo,hi],[[-.75,0,.5],[1.5,0,.5]],atol=1e-12)
+        np.testing.assert_allclose((lo+hi)/2,[.375,0,.5],atol=1e-12)
+
+    def test_rotated_and_translated_geometry_and_shared_edges(self):
+        v,f=self.shape();r=np.array([[0,-1,0],[0,0,1],[-1,0,0]],float);t=np.array([2,3,4])
+        # z=0.5,y=0 follows shared triangle edges on both side walls.
+        a,b=self.chord(v@r.T+t,f,np.array([0,0,.5])@r.T+t,np.array([1,0,0])@r.T)
+        np.testing.assert_allclose([a,b],np.array([[-.75,0,.5],[1.5,0,.5]])@r.T+t,atol=1e-12)
+
+    def test_open_missed_or_ambiguous_sections_fail(self):
+        v,f=self.shape()
+        for point,direction,verts,faces in [([0,0,2],[1,0,0],v,f),
+            ([3,0,.5],[1,0,0],v,f),([0,0,.5],[1,0,0],v,f[[i for i in range(12) if i not in (3,9)]]),
+            ([0,0,.5],[1,0,0],np.vstack([v,v+[5,0,0]]),np.vstack([f,f+8]))]:
+            with self.subTest(point=point,faces=len(faces)):
+                with self.assertRaisesRegex(ValueError,'crossings|bracket'):
+                    self.chord(verts,faces,point,direction)
+
+    def test_invalid_input_is_rejected(self):
+        v,f=self.shape()
+        for direction in ([0,0,0],[float('nan'),0,1]):
+            with self.assertRaises(ValueError):self.chord(v,f,[0,0,.5],direction)
+        with self.assertRaises(ValueError):self.chord(v,np.array([[0,1,99]]),[0,0,.5],[1,0,0])
+
+    def test_line_running_in_boundary_surface_is_not_a_depth_measurement(self):
+        v,f=self.shape()
+        with self.assertRaisesRegex(ValueError,'coplanar'):
+            self.chord(v,f,[0,1,.5],[1,0,0])
 
 if __name__=='__main__': unittest.main()
