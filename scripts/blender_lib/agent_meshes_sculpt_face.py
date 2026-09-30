@@ -1,10 +1,159 @@
-"""Fit lids, restrained expressions and independent gaze to an existing skinned sculpt.
+"""Fit lids, expressions, gaze and anatomical jaw weights to an existing sculpt.
 
-This is not the complete ARKit contract: jaw, teeth and speech remain
-separate work. Blender imports are lazy so field/timing checks run in NumPy.
+These helpers do not establish the complete ARKit contract. Dental geometry and
+speech authoring remain separate. Blender imports are lazy for pure NumPy checks.
 """
 import math
 import numpy as np
+
+
+def trace_quad_loop(faces, start, following):
+    """Trace a closed regular quad edge loop from a directed seed edge.
+
+    Return vertex indices, starting with the two supplied indices, without
+    repeating the start. No spatial heuristics: poles, boundaries, triangles on
+    the route and non-manifold edges fail rather than jumping to another loop.
+    Unrelated mesh regions may contain triangles or boundaries.
+    """
+    from numbers import Integral
+    valid = lambda i: isinstance(i, Integral) and not isinstance(i, bool) and i >= 0
+    if not valid(start) or not valid(following) or start == following:
+        raise ValueError('Quad loop needs two distinct nonnegative integer seed indices')
+    polygons = [list(f) for f in faces]
+    adjacency, edges = {}, {}
+    for fi, face in enumerate(polygons):
+        if len(face) < 3 or any(not valid(i) for i in face) or len(set(face)) != len(face):
+            raise ValueError('Mesh polygons require distinct nonnegative integer indices')
+        for a, b in zip(face, face[1:] + face[:1]):
+            adjacency.setdefault(a, set()).add(b); adjacency.setdefault(b, set()).add(a)
+            edges.setdefault(tuple(sorted((a, b))), []).append(fi)
+    def continuation(a, b):
+        adjacent = edges.get(tuple(sorted((a, b))), [])
+        if len(adjacent) != 2 or any(len(polygons[i]) != 4 for i in adjacent):
+            raise ValueError('Quad loop meets a boundary, non-manifold edge or non-quad face')
+        neighbours = adjacency[b]
+        if len(neighbours) != 4:
+            raise ValueError('Quad loop meets a pole')
+        candidates = neighbours - set(polygons[adjacent[0]]) - set(polygons[adjacent[1]])
+        if len(candidates) != 1:
+            raise ValueError('Quad loop continuation is ambiguous')
+        return next(iter(candidates))
+    result, seen = [int(start), int(following)], {start, following}
+    while True:
+        n = continuation(*result[-2:])
+        if n == start:
+            if continuation(result[-1], start) != following:
+                raise ValueError('Quad loop does not close onto its seed edge')
+            return result
+        if n in seen:
+            raise ValueError('Quad loop repeats a vertex before closing')
+        result.append(int(n)); seen.add(n)
+
+
+def faces_inside_loop(faces, loop, seed_face):
+    """Select one side of a separating edge loop, e.g. an existing mouth pocket.
+
+    The caller supplies a face on the desired side. Every loop edge must have
+    two owners, exactly one in the selected component; a leaky/nonseparating
+    boundary fails instead of coloring the rest of the sculpt.
+    """
+    from numbers import Integral
+    valid = lambda i: isinstance(i, Integral) and not isinstance(i, bool) and i >= 0
+    faces, loop = [list(f) for f in faces], list(loop)
+    if not valid(seed_face) or seed_face >= len(faces):
+        raise ValueError('Loop selection needs a valid seed face index')
+    if len(loop) < 3 or any(not valid(i) for i in loop) or len(set(loop)) != len(loop):
+        raise ValueError('Boundary loop needs at least three distinct vertex indices')
+    edges = {}
+    for fi, face in enumerate(faces):
+        if len(face) < 3 or any(not valid(i) for i in face) or len(set(face)) != len(face):
+            raise ValueError('Mesh polygons require distinct nonnegative integer indices')
+        for a, b in zip(face, face[1:]+face[:1]):
+            edges.setdefault(tuple(sorted((a,b))), []).append(fi)
+    barrier = {tuple(sorted(edge)) for edge in zip(loop, loop[1:]+loop[:1])}
+    if any(len(edges.get(edge, ())) != 2 for edge in barrier):
+        raise ValueError('Boundary loop edges must have exactly two incident faces')
+    dual = [set() for _ in faces]
+    for edge, owners in edges.items():
+        if edge not in barrier:
+            for fi in owners: dual[fi].update(set(owners)-{fi})
+    selected, pending = {int(seed_face)}, [int(seed_face)]
+    while pending:
+        for fi in dual[pending.pop()] - selected:
+            selected.add(fi); pending.append(fi)
+    if any(len(selected.intersection(edges[edge])) != 1 for edge in barrier):
+        raise ValueError('Loop does not separate the seeded region from the rest of the mesh')
+    return sorted(selected)
+
+
+def sculpt_jaw_weights(vertices, faces, jaw, face_vertices, *, lower_lip, upper_lip, fixed_vertices=(), reach=.02):
+    """Jaw weights for an existing mouth pocket with interlocking lip surfaces.
+
+    Explicit upper/lower lip vertex selections override height classification.
+    Weights relax along mesh edges within reach metres, never through
+    empty space to the opposite lip. Vertices outside the anatomical face stay
+    fixed. Additional fixed_vertices pin authored upper-jaw/cheek regions at zero.
+    Coordinates and topology are read-only; pass the weights to jaw.targets.
+    """
+    from numbers import Integral
+    import heapq
+    v = np.asarray(vertices, float)
+    if v.ndim != 2 or v.shape[1] != 3 or not len(v) or not np.isfinite(v).all():
+        raise ValueError('Jaw vertices must be finite Nx3 coordinates')
+    if isinstance(reach, bool) or not math.isfinite(reach) or reach <= 0:
+        raise ValueError('Jaw correction reach must be positive and finite')
+    def indices(values, label):
+        ids = list(values)
+        if not ids or any(isinstance(i, bool) or not isinstance(i, Integral) or i < 0 or i >= len(v) for i in ids):
+            raise ValueError(label + ' must contain valid integer vertex indices')
+        return set(ids)
+    region = indices(face_vertices, 'Face region')
+    lower, upper = indices(lower_lip, 'Lower lip'), indices(upper_lip, 'Upper lip')
+    fixed_vertices = list(fixed_vertices)
+    if fixed_vertices: upper |= indices(fixed_vertices, 'Fixed jaw region')
+    if lower & upper or not (lower | upper) <= region:
+        raise ValueError('Lip selections must be disjoint and within the face region')
+    adjacency = [dict() for _ in v]
+    for face in faces:
+        face = list(face)
+        if len(face) < 3 or len(indices(face, 'Face polygon')) != len(face):
+            raise ValueError('Face polygons need at least three distinct vertices')
+        for a, b in zip(face, face[1:] + face[:1]):
+            distance = float(np.linalg.norm(v[a] - v[b]))
+            if distance <= 0 or not math.isfinite(distance):
+                raise ValueError('Jaw mesh edges need positive finite length')
+            adjacency[a][b] = distance; adjacency[b][a] = distance
+    base = np.zeros(len(v))
+    for i in region: base[i] = jaw.weight(v[i])
+    weights = base.copy()
+    seeds = lower | upper
+    for i in lower: weights[i] = jaw.weight(v[i], lower_lip=True)
+    for i in upper: weights[i] = 0
+    if not np.isfinite(base).all() or not np.isfinite(weights).all() or np.any((base < 0) | (base > 1)) or np.any((weights < 0) | (weights > 1)):
+        raise ValueError('Jaw weights must be finite and between zero and one')
+    distance = np.full(len(v), np.inf)
+    pending = []
+    for i in seeds: distance[i] = 0; heapq.heappush(pending, (0., i))
+    while pending:
+        d, i = heapq.heappop(pending)
+        if d != distance[i]: continue
+        for j, length in adjacency[i].items():
+            candidate = d + length
+            if j in region and candidate < reach and candidate < distance[j]:
+                distance[j] = candidate; heapq.heappush(pending, (candidate, j))
+    free = sorted(i for i in region - seeds if distance[i] < reach and adjacency[i])
+    if not free: return weights
+    offsets = np.cumsum([0] + [len(adjacency[i]) for i in free])[:-1]
+    ids = np.array([j for i in free for j in adjacency[i]], dtype=int)
+    conductance = np.array([1 / d for i in free for d in adjacency[i].values()])
+    totals = np.add.reduceat(conductance, offsets)
+    for _ in range(10000):
+        updated = weights.copy()
+        updated[free] = np.add.reduceat(weights[ids] * conductance, offsets) / totals
+        error = float(np.max(np.abs(updated - weights)))
+        weights = updated
+        if error < 1e-10: return weights
+    raise ValueError('Jaw weight relaxation did not converge; shorten reach or add lip constraints')
 
 
 def rig_sculpt_eyes(body, rig, eye_vertices, centers, *, parts=None, head='head'):
