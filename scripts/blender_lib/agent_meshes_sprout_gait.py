@@ -35,6 +35,55 @@ def two_bone(hip, ankle, upper, lower, pole):
     return hip+along*axis+math.sqrt(max(0,upper*upper-along*along))*bend
 
 
+
+def fit_swing_lift(hips, hocks, lifts, upper, lower, minimum_angle=60, attenuation=None):
+    """Largest peak swing-lift scale retaining the requested knee opening.
+
+    Inputs are corresponding world-space hip and zero-lift hock samples, plus
+    nonnegative vertical lifts. Optional attenuation N values in [0,1] vary the
+    reduction: fitted lift = lift * (1 - attenuation * (1 - scale)). Defaults to
+    uniform reduction. A smooth envelope can retain lift needed near swing ends
+    while reducing the peak fold. Grounded targets never move. Angle is in degrees.
+    """
+    hips=np.asarray(hips,float);hocks=np.asarray(hocks,float);lifts=np.asarray(lifts,float)
+    scalars=(upper,lower,minimum_angle)
+    if any(isinstance(x,bool) or not np.isscalar(x) or not np.isfinite(x) for x in scalars):
+        raise ValueError('Leg lengths and knee angle must be finite scalars')
+    if upper<=0 or lower<=0 or not 0<minimum_angle<180:
+        raise ValueError('Require positive leg lengths and 0 < knee angle < 180')
+    if hips.ndim!=2 or hips.shape[1:]!=(3,) or not len(hips) or hocks.shape!=hips.shape or lifts.shape!=(len(hips),):
+        raise ValueError('Require matching nonempty hip/hock Nx3 and lift N arrays')
+    if not all(np.isfinite(v).all() for v in (hips,hocks,lifts)) or np.any(lifts<0):
+        raise ValueError('Targets must be finite and lifts nonnegative')
+    attenuation=np.ones_like(lifts) if attenuation is None else np.asarray(attenuation,float)
+    if attenuation.shape!=lifts.shape or not np.isfinite(attenuation).all() or np.any((attenuation<0)|(attenuation>1)):
+        raise ValueError('Attenuation must contain one finite value in [0,1] per sample')
+    delta=hips-hocks
+    reach=math.sqrt(upper**2+lower**2-2*upper*lower*math.cos(math.radians(minimum_angle)))
+    maximum=upper+lower-1e-7*(upper+lower)
+    horizontal=np.sum(delta[:,:2]**2,axis=1)
+    if np.any(delta[:,2]<=0) or np.any(horizontal>=maximum**2):
+        raise ValueError('Hock targets cannot be reached by changing vertical lift')
+    lower_gap=np.sqrt(np.maximum(0,reach**2-horizontal))
+    upper_gap=np.sqrt(maximum**2-horizontal)
+    grounded=lifts==0
+    if np.any(delta[grounded,2]<lower_gap[grounded]-1e-10) or np.any(delta[grounded,2]>upper_gap[grounded]+1e-10):
+        raise ValueError('Grounded hock targets violate leg reach or knee opening')
+    fixed=(~grounded)&(attenuation==0)
+    gap=delta[:,2]-lifts
+    if np.any(gap[fixed]<lower_gap[fixed]-1e-10) or np.any(gap[fixed]>upper_gap[fixed]+1e-10):
+        raise ValueError('Unattenuated swing targets violate leg reach or knee opening')
+    moving=(~grounded)&(attenuation>0)
+    if not np.any(moving):return 1.
+    q=attenuation[moving]
+    lo=max(0.,float(np.max(((delta[moving,2]-upper_gap[moving])/lifts[moving]-1+q)/q)))
+    hi=min(1.,float(np.min(((delta[moving,2]-lower_gap[moving])/lifts[moving]-1+q)/q)))
+    if lo>hi or hi<0:
+        raise ValueError(f'No common swing-lift amplitude satisfies leg reach: {lo}..{hi}')
+    return hi
+
+
+
 def periodic_curve(values,harmonics=5):
     """Smooth uniformly sampled closed reference curves without a derivative seam."""
     values=np.asarray(values,float)
@@ -103,17 +152,46 @@ def bake_gaits(objects,a,reference):
         direction=Vector(target)-head;rest=rests[name]
         q=(pb.bone.tail_local-pb.bone.head_local).rotation_difference(direction)
         matrix=q.to_matrix().to_4x4()@rest;matrix.translation=head;pb.matrix=matrix
+    def root_pose(phase,clip,stance,bob):
+        cycle=2*math.pi*phase
+        for pb in arm.pose.bones:pb.matrix_basis.identity();pb.rotation_mode='QUATERNION'
+        bodybob=sample('bob',phase)/max(report['bobRange'],1e-6)*bob*s
+        arm.pose.bones['root'].location=rests['root'].to_3x3().inverted()@Vector((0,0,bodybob-(.015 if clip=='walk' else .045)*s))
+        rotate('pelvis',(0,0,1),math.radians(5)*math.sin(cycle))
+        rotate('pelvis',(0,1,0),-math.radians(4 if clip=='walk' else 5)*math.sin(cycle+math.pi*(.5-stance)))
+        bpy.context.view_layer.update()
+        return cycle
     out=[];report['clips']={}
     for clip,duration,stance,stride,lift,bob,lean in [('walk',1.55,.62,.49,.09,.035,8),('jog',.9,.36,.48,.16,.07,18)]:
         action=bpy.data.actions.new(clip);arm.animation_data.action=action;frames=round(duration*60)
-        report['clips'][clip]={'duration':duration,'stance':stance,'travelSpeed':stride*step_scale/(stance*duration),'contactPhase':{'metatarsal_l':0.,'metatarsal_r':.5}}
+        def swing_attenuation(p):
+            return 0. if p<=stance else math.sin(math.pi*(p-stance)/(1-stance))**2
+        def foot_targets(side,p,lift_scale=None):
+            dy,dz=foot_path(p,stance,stride*step_scale,lift*s)
+            factor=0. if lift_scale is None else 1-(1-lift_scale)*swing_attenuation(p)
+            toe=j['toe_'+side]+[0,dy,dz*factor]
+            restmeta=j['hock_'+side]-j['toe_'+side];length=np.linalg.norm(restmeta)
+            angle=math.atan2(restmeta[1],restmeta[2])+sample('hock',p)*.35
+            return toe,toe+[0,length*math.sin(angle),length*math.cos(angle)],dz
+        # Fit one peak reduction through a smooth envelope, preserving reach near
+        # swing ends without clamping frames or changing the planted trajectory.
+        hips=[];hocks=[];lifts=[];attenuation=[]
+        phases=sorted(set(np.linspace(0,1,241))|{f/frames for f in range(frames+1)})
+        for phase in phases:
+            root_pose(phase,clip,stance,bob)
+            for side,offset in [('l',0),('r',.5)]:
+                hips.append(np.array(arm.pose.bones['thigh_'+side].head))
+                p=(phase+offset)%1
+                _,hock,dz=foot_targets(side,p)
+                hocks.append(hock);lifts.append(dz);attenuation.append(swing_attenuation(p))
+        upper=np.linalg.norm(j['knee_l']-j['hip_l']);lower=np.linalg.norm(j['hock_l']-j['knee_l'])
+        lift_scale=fit_swing_lift(hips,hocks,lifts,upper,lower,minimum_angle=60,attenuation=attenuation)
+        report['clips'][clip]={'duration':duration,'stance':stance,'travelSpeed':stride*step_scale/(stance*duration),
+            'contactPhase':{'metatarsal_l':0.,'metatarsal_r':.5},'requestedLift':lift*s,
+            'fittedMaxLift':float(np.max(np.asarray(lifts)*(1-(1-lift_scale)*np.asarray(attenuation)))),
+            'peakSwingLiftScale':lift_scale,'attenuation':'sin-squared-swing-phase','minimumKneeOpening':60}
         for frame in range(frames+1):
-            phase=frame/frames;cycle=2*math.pi*phase
-            for pb in arm.pose.bones:pb.matrix_basis.identity();pb.rotation_mode='QUATERNION'
-            bodybob=sample('bob',phase)/max(report['bobRange'],1e-6)*bob*s
-            arm.pose.bones['root'].location=rests['root'].to_3x3().inverted()@Vector((0,0,bodybob-(.015 if clip=='walk' else .045)*s))
-            rotate('pelvis',(0,0,1),math.radians(5)*math.sin(cycle))
-            rotate('pelvis',(0,1,0),-math.radians(4 if clip=='walk' else 5)*math.sin(cycle+math.pi*(.5-stance)))
+            phase=frame/frames;cycle=root_pose(phase,clip,stance,bob)
             # Pitch is distributed over two spine joints; upper spine counters yaw.
             pitch=math.radians(lean+(3 if clip=='walk' else 4.5)*math.sin(2*cycle))
             rotate('spine_low',(1,0,0),pitch*.55)
@@ -131,10 +209,7 @@ def bake_gaits(objects,a,reference):
                 for name in rests:
                     if name.startswith(('finger_'+side,'thumb_'+side)):rotate(name,(0,1 if side=='l' else -1,0),math.radians(12))
                 bpy.context.view_layer.update();hip=np.array(arm.pose.bones['thigh_'+side].head)
-                dy,dz=foot_path(p,stance,stride*step_scale,lift*s);toe=j['toe_'+side]+[0,dy,dz]
-                restmeta=j['hock_'+side]-j['toe_'+side];length=np.linalg.norm(restmeta)
-                angle=math.atan2(restmeta[1],restmeta[2])+sample('hock',p)*.35
-                hock=toe+[0,length*math.sin(angle),length*math.cos(angle)]
+                toe,hock,_=foot_targets(side,p,lift_scale)
                 upper=np.linalg.norm(j['knee_'+side]-j['hip_'+side]);lower=np.linalg.norm(j['hock_'+side]-j['knee_'+side])
                 knee=two_bone(hip,hock,upper,lower,[0,-1,0])
                 point('thigh_'+side,knee);point('shin_'+side,hock);point('metatarsal_'+side,toe)
