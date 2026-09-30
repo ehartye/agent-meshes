@@ -2,6 +2,26 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+## Compare rigged motion
+
+Use `node scripts/compare-rigs.mjs comparison.json review.html` to compare a reference
+rig with a fitted character (or up to four revisions). The generated page works offline,
+with named clip mappings, synchronized playback and scrubbing by normalized clip phase,
+front/side/perspective/back views, and an optional skeleton overlay. Paths in the config
+are relative to that config:
+
+```json
+{"models":[
+  {"label":"Reference","path":"reference.glb","clips":{"walk":"Walk_Loop","jog":"Jog_Fwd_Loop"}},
+  {"label":"Character","path":"character.glb","clips":{"walk":"walk","jog":"jog"}}
+]}
+```
+
+Inspect contact, swing and recovery from the same phase and view. Compare the skeletons
+first to find retargeting errors, then the surfaces to find skin-weight errors. A matching
+phase aligns clips that represent the same cycle; it does not infer footfall correspondence
+between different animations. The overlay omits finger and leaf bones for clarity.
+
 ## Agent workspace
 
 Use a durable workspace without starting a server. Commands share the same validated authoring engine as the browser:

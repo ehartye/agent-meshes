@@ -35,6 +35,12 @@ def import_reference(path):
         arm.animation_data.action = None
         for track in list(arm.animation_data.nla_tracks):
             arm.animation_data.nla_tracks.remove(track)
+    # glTF import evaluates the first animation. Unlinking its action/NLA leaves
+    # those pose values behind: reset explicitly before fitting the rest skeleton
+    # or transferring weights (curled fingers otherwise warp into nearby limbs).
+    for bone in arm.pose.bones:
+        bone.matrix_basis.identity()
+    bpy.context.view_layer.update()
     return arm, meshes, actions
 
 
@@ -155,9 +161,9 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
     bone's travel from its rest is scaled by `travel_scale`. Returns the new action.
 
     neutral: {'source': {bone: world 3x3}, 'target': {bone: world 3x3}} for bones whose motion, not absolute
-    angle, should carry over: each frame such a bone takes target @ (its reference orientation relative to the
-    reference's own neutral). A body shaped unlike the reference (a round torso, a big head) keeps its own
-    relaxed arm hang and gets the clip's swing around it."""
+    angle, should carry over: each frame applies the reference's world-space motion delta to the target neutral.
+    Unconfigured descendants inherit their parent's correction and keep their relative animated articulation.
+    A body shaped unlike the reference keeps its own relaxed arm hang without erasing the clip's finger grip."""
     import bpy
     scene = bpy.context.scene
     ref_arm.animation_data_create()
@@ -172,10 +178,19 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
     for frame in range(start, end + 1):
         scene.frame_set(frame)
         worlds = {n: ref_arm.matrix_world @ ref_arm.pose.bones[n].matrix for n in shared}
+        corrected = {}
         for n in shared:                                    # bones order: parents before children
             pb = arm.pose.bones[n]
             if neutral and n in neutral['target']:
                 R = (worlds[n].to_3x3().normalized() @ neutral['source'][n].inverted() @ neutral['target'][n]).to_4x4()
+                corrected[n] = R.to_3x3()
+            elif pb.parent and pb.parent.name in corrected:
+                parent = pb.parent.name
+                # Carry the calibrated parent's change through its descendants;
+                # retain their animated relative articulation (especially grips).
+                R = (corrected[parent] @ worlds[parent].to_3x3().normalized().inverted()
+                     @ worlds[n].to_3x3().normalized()).to_4x4()
+                corrected[n] = R.to_3x3()
             else:
                 R = worlds[n].to_3x3().normalized().to_4x4()
             if n == root:
@@ -194,7 +209,7 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
 
 
 def rig_from_reference(body, reference, correspondence, clips, directions=None, root='pelvis', leg=('thigh_l', 'foot_l'),
-                       rigid=None, ground=None, limbs=None, smooth=2, regions=None, neutral=None):
+                       rigid=None, ground=None, limbs=None, smooth=2, regions=None, neutral=None, weight_limits=None):
     """Rig `body` (a mesh at rest, Blender frame) from a reference GLB.
 
     correspondence: reference joint name -> body world point (bone heads; 'name:tail' for a bone's tail). At least
@@ -209,6 +224,8 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
     'bones': [subtree roots]} carries those subtrees' motion around the body's own neutral pose instead of copying
     absolute angles (see retarget).
     ground: clip -> 'always' | 'lowest' (see ground_clip).
+    weight_limits: optional restrict_weights keyword dicts (bones, fallback, point, normal, band), applied after
+    region isolation and before rigid overrides. Use anatomical constraints where transferred weights are unreliable.
     Returns (armature, {clip: action}).
     """
     import bpy
@@ -252,6 +269,11 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
         bpy.data.objects.remove(d, do_unlink=True)
     if regions:
         exclusive_regions(body, arm, regions)
+    for limit in weight_limits or []:
+        for name in limit['bones']:
+            if name not in arm.data.bones:
+                raise ValueError(f'Unknown weight-limit bone: {name}')
+        restrict_weights(body, **limit)
     for bone, (point, normal) in (rigid or {}).items():
         make_rigid(body, bone, point, normal)
     body.parent = arm
@@ -276,7 +298,10 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
             pb.matrix_basis.identity()
         # The body's neutral: its limbs turned to the relaxed directions (children follow), then back to rest.
         pose_to_directions(arm, neutral['target'])
-        target = world_frames(arm, names)
+        # Only explicitly requested joints get their own neutral correction. The
+        # remaining descendants inherit it; resetting each finger to its rest
+        # would erase the reference idle's grip from every retargeted clip.
+        target = world_frames(arm, [n for n in names if n in neutral['target']])
         for pb in arm.pose.bones:
             pb.matrix_basis.identity()
         calibration = {'source': source, 'target': target}
@@ -373,6 +398,43 @@ def surface_labels(vertices, edges, seeds):
     return label
 
 
+def region_masks(vertices, edges, labels, transition):
+    """Soft region support measured along the surface, never across a nearby limb.
+
+    Each region (including None, the trunk) owns its interior. Its weights may cross a
+    shared attachment by `transition` metres, fading smoothly to zero beyond it.
+    """
+    import heapq
+    if not math.isfinite(transition) or transition <= 0:
+        raise ValueError('Region transition must be positive and finite')
+    V = np.asarray(vertices, float)
+    neighbors = [[] for _ in V]
+    for a, b in edges:
+        distance = float(np.linalg.norm(V[a] - V[b]))
+        neighbors[a].append((b, distance)); neighbors[b].append((a, distance))
+    masks = {}
+    for region in dict.fromkeys(labels):
+        distances = np.full(len(V), np.inf)
+        queue = []
+        for i, label in enumerate(labels):
+            if label == region:
+                distances[i] = 0
+                queue.append((0.0, i))
+        heapq.heapify(queue)
+        while queue:
+            distance, i = heapq.heappop(queue)
+            if distance > distances[i]:
+                continue
+            for j, length in neighbors[i]:
+                d = distance + length
+                if d < transition and d < distances[j]:
+                    distances[j] = d
+                    heapq.heappush(queue, (d, j))
+        t = np.clip(1 - distances / transition, 0, 1)
+        masks[region] = t * t * (3 - 2 * t)
+    return masks
+
+
 def exclusive_regions(body, arm, regions, trust=0.8, core_depth=2):
     """Keep each vertex's weights inside one limb: `regions` lists subtree roots (e.g. ['clavicle_l'], ['thigh_r']).
 
@@ -381,8 +443,9 @@ def exclusive_regions(body, arm, regions, trust=0.8, core_depth=2):
     dominant transferred weight agree (at least `trust` of it), and every other vertex takes the label of its
     nearest seed over mesh edges (the hand and thigh are far apart along the skin). Only a limb's core bones (its
     root and `core_depth` - 1 levels below: clavicle, upper arm, forearm; thigh, calf) seed labels: a finger bone
-    that a fitted hand rests inside a thigh must not claim the thigh. Each vertex then drops other
-    limbs' weights; one left without weight rides its own limb's nearest bone (the trunk's if unlabeled)."""
+    that a fitted hand rests inside a thigh must not claim the thigh. Each region's weights (including the trunk)
+    fade outside its surface region over 4% of body extent, retaining a blend at attachments but excluding remote
+    influences. A vertex left without weight rides its own region's nearest bone (the trunk's if unlabeled)."""
     import bpy
     member, core = {}, set()
     for i, roots in enumerate(regions):
@@ -411,11 +474,18 @@ def exclusive_regions(body, arm, regions, trust=0.8, core_depth=2):
             seeds[v.index] = geo
     edges = [tuple(e.vertices) for e in body.data.edges]
     labels = surface_labels(V, edges, seeds)
+    # Trunk weights are just as harmful on the middle of a limb as weights from
+    # another limb. Keep blending at attachments, but exclude every remote region.
+    transition = float(np.ptp(V, axis=0).max()) * .04
+    masks = region_masks(V, edges, labels, max(transition, 1e-6))
     for v, home in zip(body.data.vertices, labels):
         for g in list(v.groups):
             r = member.get(names[g.group])
-            if r is not None and r != home:
+            factor = masks[r][v.index] if r in masks else 0.0
+            if factor <= 0:
                 body.vertex_groups[names[g.group]].remove([v.index])
+            elif factor < 1:
+                body.vertex_groups[names[g.group]].add([v.index], g.weight * factor, 'REPLACE')
         if sum(g.weight for g in v.groups) < 1e-6:
             allowed = [k for k, b in enumerate(bones) if member.get(b.name) == home]
             k = allowed[int(np.argmin(D[v.index, allowed]))] if allowed else int(np.argmin(D[v.index]))
@@ -428,6 +498,61 @@ def exclusive_regions(body, arm, regions, trust=0.8, core_depth=2):
     bpy.ops.object.vertex_group_limit_total(limit=4)
     bpy.ops.object.vertex_group_normalize_all(lock_active=False)
 
+def _write_limited_weights(body, vertex, weights, protected):
+    """Four exportable influences, preserving the protected/unprotected blend totals."""
+    weights = {n: w for n, w in weights.items() if w > 0}
+    if len(weights) > 4:
+        buckets = [{n: w for n, w in weights.items() if (n in protected) == own} for own in (True, False)]
+        rank = lambda n: (-weights[n], n)
+        # Reserve one slot per nonempty side so a small anatomical blend is not
+        # discarded by the GLB exporter's largest-four truncation.
+        selected = {min(bucket, key=rank) for bucket in buckets if bucket}
+        selected.update(sorted(weights.keys() - selected, key=rank)[:4 - len(selected)])
+        limited = {}
+        for bucket in buckets:
+            kept = sum(w for n, w in bucket.items() if n in selected)
+            if kept:
+                scale = sum(bucket.values()) / kept
+                limited.update({n: w * scale for n, w in bucket.items() if n in selected})
+        weights = limited
+    for g in list(vertex.groups):
+        group = body.vertex_groups[g.group]
+        if group.name not in weights:
+            group.remove([vertex.index])
+    for name, weight in weights.items():
+        body.vertex_groups[name].add([vertex.index], weight, 'REPLACE')
+
+
+def restrict_weights(body, bones, fallback, point, normal, band=0.02):
+    """Past a world-space plane, retain only allowed bones, easing over `band` metres.
+
+    Preserve their relative transferred weights. If none remain, assign `fallback` (one of `bones`). This constrains
+    anatomical ownership without making a multi-bone region rigid; e.g. a chin can follow head/neck, never clavicles.
+    Vertices behind the plane are unchanged. Apply before rigid overrides and clip grounding.
+    """
+    from mathutils import Vector
+    allowed = set(bones)
+    point, normal = Vector(point), Vector(normal)
+    if fallback not in allowed or not math.isfinite(band) or band <= 0:
+        raise ValueError('Weight limit requires an allowed fallback and a positive finite band')
+    if len(point) != 3 or len(normal) != 3 or not all(math.isfinite(x) for x in (*point, *normal)) or normal.length < 1e-8:
+        raise ValueError('Weight limit requires a finite point and a nonzero finite normal')
+    normal.normalize()
+    body.vertex_groups.get(fallback) or body.vertex_groups.new(name=fallback)
+    for v in body.data.vertices:
+        t = min(max(((body.matrix_world @ v.co) - point).dot(normal) / band, 0.0), 1.0)
+        if t <= 0:
+            continue
+        t = t * t * (3 - 2 * t)
+        weights = {body.vertex_groups[g.group].name: g.weight for g in v.groups}
+        total = sum(weights.values())
+        weights = {n: w / total for n, w in weights.items()} if total > 1e-8 else {fallback: 1.0}
+        retained = sum(w for n, w in weights.items() if n in allowed)
+        target = {n: w / retained for n, w in weights.items() if n in allowed} if retained > 1e-8 else {fallback: 1.0}
+        blended = {n: weights.get(n, 0) * (1 - t) + target.get(n, 0) * t for n in weights.keys() | target.keys()}
+        _write_limited_weights(body, v, blended, allowed)
+
+
 def make_rigid(body, bone, point, normal, band=0.02):
     """Vertices past the plane (point, normal) ride `bone` alone, eased in over `band` metres: a big stylized head
     must not take neck weights across the face."""
@@ -439,12 +564,11 @@ def make_rigid(body, bone, point, normal, band=0.02):
         t = min(max(((body.matrix_world @ v.co) - point).dot(normal) / band, 0.0), 1.0)
         if t <= 0:
             continue
-        for g in v.groups:
-            name = body.vertex_groups[g.group].name
-            if name != bone:
-                body.vertex_groups[name].add([v.index], g.weight * (1 - t), 'REPLACE')
-        own = next((g.weight for g in v.groups if body.vertex_groups[g.group].name == bone), 0.0)
-        group.add([v.index], own + (1 - own) * t, 'REPLACE')
+        weights = {body.vertex_groups[g.group].name: g.weight for g in v.groups}
+        own = weights.get(bone, 0)
+        weights = {n: w * (1 - t) for n, w in weights.items() if n != bone}
+        weights[bone] = own + (1 - own) * t
+        _write_limited_weights(body, v, weights, {bone})
     bpy.context.view_layer.objects.active = body
     bpy.ops.object.vertex_group_normalize_all(lock_active=False)
 
