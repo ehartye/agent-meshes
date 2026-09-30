@@ -1,10 +1,96 @@
-"""Fit bilateral lids and restrained expressions to an existing skinned sculpt.
+"""Fit lids, restrained expressions and independent gaze to an existing skinned sculpt.
 
-This is not the complete ARKit contract: jaw, teeth, gaze and speech remain
+This is not the complete ARKit contract: jaw, teeth and speech remain
 separate work. Blender imports are lazy so field/timing checks run in NumPy.
 """
 import math
 import numpy as np
+
+
+def rig_sculpt_eyes(body, rig, eye_vertices, centers, *, parts=None, head='head'):
+    """Give embedded, disconnected eye surfaces independent gaze without replacing their geometry.
+
+    eye_vertices maps L/R to body vertex indices; centers maps L/R to authored world-space pivots.
+    Optional parts maps L/R to already skinned iris/pupil/highlight objects. All meshes must use this
+    armature in Object mode. Selected eye polygons get equivalent, side-specific materials so GLB
+    keeps each eye in a distinct primitive. No coordinates, shape keys or animation curves change.
+    """
+    import bpy
+    from numbers import Integral
+    from mathutils import Vector
+    from agent_meshes_face import add_eye_bones
+    if getattr(rig, 'type', None) != 'ARMATURE' or rig.mode != 'OBJECT':
+        raise ValueError('Eye rig requires an armature in Object mode')
+    if rig.data.users != 1 or rig.library or rig.data.library or rig.override_library:
+        raise ValueError('Eye rig requires local single-user armature data')
+    if head not in rig.data.bones or any(n in rig.data.bones for n in ('eye_L', 'eye_R')):
+        raise ValueError('Eye rig requires the head bone and no existing eye_L/eye_R bones')
+    if set(eye_vertices) != {'L', 'R'} or set(centers) != {'L', 'R'}:
+        raise ValueError('Eye vertices and centers must each declare L and R')
+    centers = {s: np.asarray(centers[s], float) for s in ('L', 'R')}
+    if any(c.shape != (3,) or not np.isfinite(c).all() for c in centers.values()) or centers['L'][0] <= centers['R'][0]:
+        raise ValueError('Finite eye pivots must be ordered left (+X), right (-X)')
+    parts = {} if parts is None else parts
+    if set(parts) - {'L', 'R'}: raise ValueError('Eye parts must be keyed by L/R')
+    parts = {s: list(parts.get(s, ())) for s in ('L', 'R')}
+    objects = [body] + parts['L'] + parts['R']
+    if len(set(objects)) != len(objects): raise ValueError('An eye part cannot belong to both eyes or be the body')
+    for obj in objects:
+        if getattr(obj, 'type', None) != 'MESH' or obj.mode != 'OBJECT' or obj.data.users != 1:
+            raise ValueError('Eye surfaces must be single-user meshes in Object mode')
+        if obj.library or obj.data.library or obj.override_library or obj.constraints:
+            raise ValueError('Eye surfaces must be local and unconstrained')
+        modifiers = [m for m in obj.modifiers if m.type == 'ARMATURE']
+        if len(modifiers) != 1 or modifiers[0].object != rig or not modifiers[0].use_vertex_groups:
+            raise ValueError('Eye surfaces must already be skinned to this armature')
+        if any(name in obj.vertex_groups for name in ('eye_L', 'eye_R')):
+            raise ValueError('Existing eye vertex groups would be overwritten')
+        if not len(obj.data.vertices): raise ValueError('Eye surfaces cannot be empty')
+        if not all(math.isfinite(v) for row in obj.matrix_world for v in row):
+            raise ValueError('Eye surface transforms must be finite')
+    count = len(body.data.vertices); selected = {}
+    for side in ('L', 'R'):
+        ids = list(eye_vertices[side])
+        if not ids or any(isinstance(v, bool) or not isinstance(v, Integral) or v < 0 or v >= count for v in ids):
+            raise ValueError('Eye vertices must be nonempty integer indices within the body')
+        selected[side] = set(ids)
+    if selected['L'] & selected['R']: raise ValueError('Eye vertex selections overlap')
+    polygons = {s: [] for s in selected}
+    for side, ids in selected.items():
+        for polygon in body.data.polygons:
+            overlap = ids.intersection(polygon.vertices)
+            if overlap and len(overlap) != len(polygon.vertices):
+                raise ValueError('Select complete disconnected eye surfaces, not part of a skin polygon')
+            if overlap:
+                if polygon.material_index >= len(body.material_slots) or body.material_slots[polygon.material_index].material is None:
+                    raise ValueError('Embedded eye surfaces require an existing material')
+                polygons[side].append(polygon)
+        if not polygons[side]: raise ValueError('Eye selection contains no polygons')
+        for obj, vertices in [(body, ids)] + [(p, range(len(p.data.vertices))) for p in parts[side]]:
+            points = [obj.matrix_world @ obj.data.vertices[v].co for v in vertices]
+            if any((p - Vector(centers[side])).length > (centers['L'][0] - centers['R'][0]) / 2 for p in points):
+                raise ValueError('Eye selection reaches beyond its own eye; check ownership and pivot')
+    # Validate the inverse before any material/group mutation or entering Edit mode.
+    try: rig.matrix_world.inverted()
+    except ValueError as exc: raise ValueError('Eye armature transform must be invertible') from exc
+    deform = {bone.name for bone in rig.data.bones if bone.use_deform}
+    add_eye_bones(rig, centers['L'], centers['R'], head=head)
+    for side, ids in selected.items():
+        material_slots = {}
+        for polygon in polygons[side]:
+            old = polygon.material_index
+            if old not in material_slots:
+                original = body.material_slots[old].material
+                mat = original.copy(); mat.name = original.name + '-eye-' + side
+                material_slots[old] = len(body.data.materials); body.data.materials.append(mat)
+            polygon.material_index = material_slots[old]
+        for obj, vertices in [(body, sorted(ids))] + [(p, list(range(len(p.data.vertices)))) for p in parts[side]]:
+            for group in obj.vertex_groups:
+                if group.name in deform: group.remove(vertices)
+            obj.vertex_groups.new(name='eye_' + side).add(vertices, 1., 'REPLACE')
+    bpy.context.view_layer.update()
+    return {'centers': {s: centers[s].tolist() for s in centers},
+            'vertices': {s: len(v) for s, v in selected.items()}, 'parts': {s: [p.name for p in parts[s]] for s in parts}}
 
 
 def expression_fields(vertices, eye_centers, eye_radii, mouth_center):

@@ -33,6 +33,22 @@ timing per clip. `expression_fields` and `performance_samples` are NumPy-only
 helpers for anatomical fields and loop-neutral timings. This focused helper is
 not the full ARKit contract: gaze, jaw, mouth interior and speech are not supplied.
 
+`rig_sculpt_eyes(body, rig, eye_vertices, centers, parts=None, head='head')` adds
+independent gaze to existing disconnected eye surfaces without replacing the
+sculpt. `eye_vertices` maps `L`/`R` to explicit body vertex indices; `centers`
+maps them to world-space pivots (left is +X). Optional `parts` maps each side to
+already skinned iris, pupil or highlight objects. Use local single-user meshes
+in Object mode, skinned to this armature. Select complete eye polygons and keep
+each assembly within half the interocular distance of its pivot.
+
+The helper creates head-child `eye_L`/`eye_R` bones and rigidly binds each eye
+assembly to its own bone. Side-specific copies of the effective materials retain
+object overrides and separate embedded eyes into GLB primitives. Existing skin
+weights outside the selected eyes, geometry, morph coordinates and animation
+curves remain unchanged. Gaze uses local Y yaw and local X pitch. Author and
+visually inspect anatomical face membership separately with `mark_face_region`;
+eye rigging does not establish lid coverage, jaw motion or a complete contract.
+
 ## Cutting weighted clothing
 
 `agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,
