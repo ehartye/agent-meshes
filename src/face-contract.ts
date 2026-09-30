@@ -145,7 +145,7 @@ export interface FaceContractReport {
      * Where triangles flip or collapse (at most 20 combinations): the combination, the part, how many triangles, and the
      * rest-pose centers of up to 4 spots they gather in (m, glTF coordinates).
      */
-    inversions: { combo: string; part: string; count: number; at: number[][] }[];
+    inversions: { combo: string; part: string; count: number; at: number[][]; sourceTriangles: number[] }[];
     /** Drop of the face's lowest point (the chin) at jawOpen = 1, the face height it is measured against, and their ratio. */
     chinDrop: number | null; faceHeight: number | null; chinDropRatio: number | null;
     /** Largest jawOpen motion of face skin above the upper teeth's gum line (the upper lip and everything above it). */
@@ -164,12 +164,17 @@ export interface FaceContractReport {
 
 interface Instance {
   label: string; names: string[]; skinned: boolean; skin?: number; count: number;
+  /** Material owns a primitive in a shared mesh; the enclosing mesh name cannot identify its anatomy. */
+  bindingNames: string[];
+  faceMembership?: Float64Array; membershipProblem?: string;
   /** Why the primitive's material lets light through (alpha blend or mask, transmission), or null when opaque. */
   transparent: string | null; morphMesh: boolean;
   rest: Float64Array; targets: Map<string, Float64Array>; triangles: Uint32Array;
   influence: (vertex: number, joint: number) => number;
   /** Each vertex's albedo as relative luminance: the material's base color factor times COLOR_0 (textures not read). */
   luminance: Float64Array;
+  /** A body-region view retains indices into its original primitive; no geometry is changed. */
+  sourceVertices?: Uint32Array; sourceTriangles?: Uint32Array;
 }
 
 const round = (value: number, digits = 6) => Number(value.toFixed(digits));
@@ -281,10 +286,42 @@ function instances(doc: GLTFDocument, graph: ReturnType<typeof sceneGraph>): Ins
         const tint = (k: number) => base[k] * (colors ? colors.data[v * colors.size + k] : 1);
         luminance[v] = 0.2126 * tint(0) + 0.7152 * tint(1) + 0.0722 * tint(2);
       }
-      result.push({ label, names, skinned, skin: node.skin, count, rest, targets, triangles: triangles(doc, primitive, count), influence, transparent: seeThrough(materialJson), morphMesh: targetNames.length > 0, luminance });
+      const membership = primitive.attributes._FACE_REGION === undefined ? undefined : readAccessor(doc, primitive.attributes._FACE_REGION);
+      const membershipProblem = membership && (membership.size !== 1 || membership.count !== count || membership.data.some(v => v !== 0 && v !== 1))
+        ? `${label} _FACE_REGION must be a SCALAR 0/1 value for every vertex (1 = anatomical face, 0 = body)` : undefined;
+      result.push({ label, names, bindingNames: mesh.primitives.length > 1 ? [material] : names,
+        faceMembership: membership && !membershipProblem ? membership.data : undefined, membershipProblem,
+        skinned, skin: node.skin, count, rest, targets, triangles: triangles(doc, primitive, count), influence, transparent: seeThrough(materialJson), morphMesh: targetNames.length > 0, luminance });
     });
   }
   return result;
+}
+
+/** Select complete face triangles without changing geometry. A combined skin declares anatomical ownership
+ * independently of weights; weight-only extraction is diagnostic and cannot pass head-binding for a mixed primitive. */
+function faceRegion(instance: Instance, joints: number[]): Instance | undefined {
+  const owned = Array.from({ length: instance.count }, (_, v) => instance.faceMembership
+    ? instance.faceMembership[v] === 1 : joints.reduce((sum, j) => sum + instance.influence(v, j), 0) >= BOUND);
+  if (owned.every(Boolean)) return instance;
+  const sourceTriangles: number[] = [], sourceVertices: number[] = [], indices: number[] = [];
+  const mapped = new Map<number, number>();
+  for (let t = 0; t < instance.triangles.length; t += 3) {
+    const tri = instance.triangles.subarray(t, t + 3);
+    if (!tri.every(v => owned[v])) continue;
+    sourceTriangles.push(t / 3);
+    for (const v of tri) {
+      if (!mapped.has(v)) { mapped.set(v, sourceVertices.length); sourceVertices.push(v); }
+      indices.push(mapped.get(v)!);
+    }
+  }
+  if (!indices.length) return undefined;
+  const select = (data: Float64Array) => Float64Array.from(sourceVertices.flatMap(v => [data[v * 3], data[v * 3 + 1], data[v * 3 + 2]]));
+  return { ...instance, count: sourceVertices.length, rest: select(instance.rest),
+    targets: new Map([...instance.targets].map(([name, delta]) => [name, select(delta)])),
+    triangles: Uint32Array.from(indices), luminance: Float64Array.from(sourceVertices, v => instance.luminance[v]),
+    faceMembership: instance.faceMembership ? Float64Array.from(sourceVertices, v => instance.faceMembership![v]) : undefined,
+    influence: (v, joint) => instance.influence(sourceVertices[v], joint),
+    sourceVertices: Uint32Array.from(sourceVertices), sourceTriangles: Uint32Array.from(sourceTriangles) };
 }
 
 function positions(instance: Instance, weights: Record<string, number>): Float64Array {
@@ -464,7 +501,8 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   }
   if (bones.eye_L !== undefined && bones.eye_R !== undefined && worldPosition(bones.eye_L).x <= worldPosition(bones.eye_R).x) skeletonProblems.push("eye_L must be the character's left eye, on the +X side of eye_R");
   check('skeleton', skeletonProblems, bodySkeleton ? `one skin with head, eye_L and eye_R on a body skeleton (head under ${facts?.jointParents.head ?? 'the body'})` : 'one skin with head, eye_L and eye_R');
-  // The face: on a body skeleton, the parts bound wholly to head and the eye bones (the face, eyeballs, hair, ears).
+  // A combined body declares face membership independently of binding. Separate head parts retain weight-based
+  // selection; ambiguous unmarked skin is only a diagnostic selection and fails the head-binding check below.
   const faceJoints = ['head', 'eye_L', 'eye_R'].map(bone).filter((j): j is number => j !== undefined);
   // Hair on a body character is head dressing (it has its own bar): it occludes, but is not a part joined to the face,
   // nor skin the crease lines read, nor the chin.
@@ -472,7 +510,8 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   // A suit's helmet riding head (its shell, visor and fittings, by name) is costume round the face, judged by its own
   // bar: the face is judged as if it were lifted off, so an opaque visor neither hides the eyes nor counts as the skin.
   const gear = (i: Instance) => bodySkeleton && i.names.some(n => /helmet|visor/i.test(n));
-  const all = bodySkeleton ? everything.filter(i => i.skinned && !gear(i) && Array.from({ length: i.count }, (_, v) => faceJoints.reduce((sum, j) => sum + i.influence(v, j), 0)).every(w => w >= BOUND)) : everything;
+  const regions = new Map(everything.map(i => [i, bodySkeleton ? (i.skinned && !gear(i) ? faceRegion(i, faceJoints) : undefined) : i]));
+  const all = [...regions.values()].filter((i): i is Instance => i !== undefined);
 
   // 3. skinning
   const unskinned = skinFacts.meshNodes.filter(n => n.skin === null).map(n => n.name ?? n.meshName ?? `node ${n.node}`);
@@ -508,6 +547,10 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     measurements.eyes[side] = { center: center.toArray().map(v => round(v)), radius: round(radius), minLidClearance: null, eyeballs: balls.map(b => b.label), lidVertices: 0, coverage: null, oblique: null, lidFollow: null, crease: null };
   }
   check('eyes', eyeProblems, 'each eyeball is bound 100% to its eye bone, which pivots at its center');
+
+  // The face surface remains identifiable when its enclosing mesh is named "body". Neck/collar parts without
+  // explicit membership or an extracted face region keep their existing exclusion from chin measurements.
+  const skin = all.filter(i => !mouthPart(i.names) && !socket(i.names) && (!body(i.names) || !!i.sourceVertices || !!i.faceMembership) && !eyeballInstances.has(i) && !dressing(i) && (!bodySkeleton || i.morphMesh));
 
   // 5. orientation and scale
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
@@ -607,6 +650,8 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
       if (!Object.keys(combo.weights).some(name => instance.targets.has(name))) continue;
       const after = normals(positions(instance, combo.weights), instance.triangles);
       let flipped = 0, collapsed = 0;
+      // First 20 offending triangle indices in the original GLB primitive, before region extraction.
+      const sourceTriangles: number[] = [];
       // Spots: the rest centroids of the bad triangles, gathered within SPOT_RADIUS of each spot's first triangle.
       const spots: { first: number[]; sum: number[]; count: number }[] = [];
       for (let t = 0; t < before.length; t += 3) {
@@ -616,6 +661,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
         if (dot <= 0) flipped++;
         else if (Math.hypot(after[t], after[t + 1], after[t + 2]) < 1e-3 * area) collapsed++;
         else continue;
+        if (sourceTriangles.length < 20) sourceTriangles.push(instance.sourceTriangles?.[t / 3] ?? t / 3);
         const centroid = [0, 1, 2].map(k => (q[tris[t] * 3 + k] + q[tris[t + 1] * 3 + k] + q[tris[t + 2] * 3 + k]) / 3);
         const spot = spots.find(s => Math.hypot(s.first[0] - centroid[0], s.first[1] - centroid[1], s.first[2] - centroid[2]) <= SPOT_RADIUS);
         if (spot) { spot.count++; for (let k = 0; k < 3; k++) spot.sum[k] += centroid[k]; } else spots.push({ first: centroid, sum: centroid.slice(), count: 1 });
@@ -624,10 +670,11 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
       const centers = spots.sort((a, b) => b.count - a.count).map(s => s.sum.map(v => v / s.count));
       const where = centers.slice(0, SPOTS).map(c => `(${c.map(v => (v * 1000).toFixed(1)).join(', ')}) mm (${region(c)})`).join(', ');
       inversionProblems.push(`${combo.label} ${[flipped ? `flips ${flipped}` : '', collapsed ? `collapses ${collapsed}` : ''].filter(Boolean).join(' and ')} triangle(s) on ${instance.label} at ${where}${centers.length > SPOTS ? ` and ${centers.length - SPOTS} more spot(s)` : ''}`);
-      if (measurements.inversions.length < MAX_INVERSIONS) measurements.inversions.push({ combo: combo.label, part: instance.label, count: flipped + collapsed, at: centers.slice(0, SPOTS).map(c => c.map(v => round(v, 4))) });
+      if (measurements.inversions.length < MAX_INVERSIONS) measurements.inversions.push({ combo: combo.label, part: instance.label, count: flipped + collapsed, at: centers.slice(0, SPOTS).map(c => c.map(v => round(v, 4))), sourceTriangles });
     }
   }
-  check('inversion', inversionProblems, `no inverted or collapsed triangles across ${combos.length} weight combinations`);
+  check('inversion', inversionProblems, `no inverted or collapsed triangles across ${combos.length} weight combinations`,
+    bodySkeleton && !skin.some(i => i.triangles.length) ? 'no morph-bearing face skin was found' : undefined);
 
   // 10. mid-blink lid clearance
   if (eyes.L && eyes.R) {
@@ -1017,11 +1064,34 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   if (bones.head !== undefined) {
     const jointName = (joint: number) => nodes[joint]?.name ?? `node ${joint}`;
     for (const instance of everything) {
-      if (!instance.skinned || eyeballInstances.has(instance)) continue;
-      const required = instance.targets.size > 0 || instance.names.some(n => /skull|gum|teeth|tooth|head|skin|face|lid/i.test(n));
+      const region = regions.get(instance);
+      if (!instance.skinned) continue;
+      if (bodySkeleton && instance.membershipProblem) bindingProblems.push(instance.membershipProblem);
+      if (region && eyeballInstances.has(region)) {
+        if (bodySkeleton && instance.faceMembership?.some(v => v !== 1)) bindingProblems.push(`${instance.label} _FACE_REGION must include the entire eyeball, not hide part of its surface`);
+        continue;
+      }
+      if (bodySkeleton && !instance.faceMembership) {
+        const owned = Array.from({ length: instance.count }, (_, v) => faceJoints.reduce((sum, j) => sum + instance.influence(v, j), 0) >= BOUND);
+        if (!owned.every(Boolean) && (owned.some(Boolean) || instance.bindingNames.some(n => /skin/i.test(n)))) bindingProblems.push(`${instance.label} has mixed face/body bindings or body-bound skin of unknown anatomy: declare anatomical face vertices with _FACE_REGION (SCALAR 0/1), independently of the weights being verified`);
+      }
+      const required = instance.faceMembership || instance.targets.size > 0 || instance.names.some(n => /skull|gum|teeth|tooth|head|skin|face|lid/i.test(n));
       if (!required) continue;
       const off = new Set<string>();
-      for (let v = 0; v < instance.count; v++) if (instance.influence(v, bones.head) < BOUND) for (const joint of jointSet) if (joint !== bones.head && instance.influence(v, joint) > 1 - BOUND) off.add(jointName(joint));
+      // A combined body skin may share zero-delta target arrays with its face. Those static body vertices are not
+      // facial vertices. Explicit head parts still require head binding even when entirely outside the face region.
+      const explicitHead = instance.bindingNames.some(n => /skull|gum|teeth|tooth|head|face|lid/i.test(n));
+      const selected = region?.sourceVertices ? new Set(region.sourceVertices) : undefined;
+      const deltas = [...instance.targets.values()];
+      let outsideMorph = false;
+      for (let v = 0; v < instance.count; v++) {
+        const moves = deltas.some(delta => delta[v * 3] !== 0 || delta[v * 3 + 1] !== 0 || delta[v * 3 + 2] !== 0);
+        const inFace = instance.faceMembership ? instance.faceMembership[v] === 1 : region && (!selected || selected.has(v));
+        if (bodySkeleton && instance.faceMembership && !inFace && moves) outsideMorph = true;
+        if (bodySkeleton && !explicitHead && !inFace && !moves) continue;
+        if (instance.influence(v, bones.head) < BOUND) for (const joint of jointSet) if (joint !== bones.head && instance.influence(v, joint) > 1 - BOUND) off.add(jointName(joint));
+      }
+      if (outsideMorph) bindingProblems.push(`${instance.label} has morph motion outside its declared _FACE_REGION: every facial morph must stay within anatomical face vertices`);
       if (off.size) bindingProblems.push(`${instance.label} is bound to ${[...off].join(', ')}, not head: the skull, gums, upper teeth and every morph-bearing part must be bound 100% to head (bind_rigid(obj, rig, 'head'))`);
     }
     check('head-binding', bindingProblems, 'the skull, teeth, gums and morph-bearing parts are bound 100% to head');
@@ -1056,7 +1126,6 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
 
   // 16. puppet jaw: the chin, the face's lowest point, drops with the jaw (E3), not only the lips
   // On a body character the face is its morph-bearing mesh: hair, a helmet or a collar riding head are not its chin.
-  const skin = all.filter(i => !mouthPart(i.names) && !socket(i.names) && !body(i.names) && !eyeballInstances.has(i) && !dressing(i) && (!bodySkeleton || i.morphMesh));
   let restLow = Infinity, openLow = Infinity, top = -Infinity;
   for (const instance of skin) {
     const open = positions(instance, { jawOpen: 1 });

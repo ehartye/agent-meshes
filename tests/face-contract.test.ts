@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
+import { combinedBody } from './helpers/face-glb.ts';
 import { ballNose, browBar, onBody, tube, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, terracedSocket, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
@@ -436,6 +437,154 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(result.measurements.chinDrop).toBeCloseTo(JAW_DROP, 5);
     expect(result.measurements.faceHeight).toBeCloseTo(0.22, 5);
     expect(result.measurements.height).toBeCloseTo(0.22, 3);
+  });
+
+  it('passes a combined body primitive without judging legs as the face or zero-delta clothing as head-bound', async () => {
+    const result = await report(head => {
+      combinedBody(head);
+      const boot = sphere([0, -1.4, 0.03], 0.04);
+      head.meshes.push({ name: 'boot-tongue', material: 'leather', ...boot, targets: [], bones: boot.positions.map(() => 'root') });
+      head.groups!['character-body'].push('boot-tongue');
+    });
+    expect(result.failures).toEqual([]);
+    expect(result.measurements.height).toBeCloseTo(0.22, 5);
+    expect(result.measurements.chinDrop).toBeCloseTo(JAW_DROP, 5);
+    expect(result.measurements.faceHeight).toBeCloseTo(0.22, 5);
+    expect(result.measurements.morphMotion.eyeBlinkLeft).toBeGreaterThan(0.001);
+    expect(result.checks.find(c => c.id === 'mouth-parts')!.message).not.toContain('boot');
+  });
+
+  it('still sees inverted facial triangles in a combined body primitive', async () => {
+    let original: ReturnType<typeof combinedBody>;
+    const result = await report(head => {
+      const face = mesh(head, 'face');
+      face.targets.find(t => t.name === 'mouthFunnel')!.positions = face.positions.map(p => Math.hypot(p[0], p[1] + 0.045) < 0.02 ? [-p[0], p[1], p[2]] : p);
+      original = combinedBody(head);
+    });
+    expect(failed(result)).toContain('inversion');
+    expect(result.measurements.inversions.some(i => i.part === 'character-body[skin]' && i.combo === 'mouthFunnel=1')).toBe(true);
+    const inversion = result.measurements.inversions.find(i => i.combo === 'mouthFunnel=1')!;
+    expect(inversion.sourceTriangles.length).toBeGreaterThan(0);
+    for (const triangle of inversion.sourceTriangles) {
+      const vs = original!.indices.slice(triangle * 3, triangle * 3 + 3);
+      expect(vs.every(v => original!.bones![v] === 'head')).toBe(true);
+      expect(vs.some(v => Math.hypot(original!.positions[v][0], original!.positions[v][1] + 0.045) < 0.02)).toBe(true);
+    }
+  });
+
+  it('still sees an immobile chin in a combined body primitive', async () => {
+    const result = await report(head => {
+      const face = mesh(head, 'face');
+      face.targets.find(t => t.name === 'jawOpen')!.positions = face.positions;
+      combinedBody(head);
+    });
+    expect(result.checks.find(c => c.id === 'puppet-jaw')!.message).toMatch(/chin.*only 0.00 mm/);
+    expect(result.measurements.chinDrop).toBe(0);
+    expect(failed(result)).toContain('puppet-jaw');
+  });
+
+  it('rejects a body vertex moved by a face morph even when it is outside the combined face region', async () => {
+    const result = await report(head => {
+      const joined = combinedBody(head), p = joined.positions[0];
+      joined.targets.find(t => t.name === 'jawOpen')!.positions[0] = [p[0], p[1] - 0.01, p[2]];
+    });
+    expect(failed(result)).toContain('head-binding');
+    expect(result.failures.some(f => f.startsWith('head-binding:') && /root/.test(f))).toBe(true);
+  });
+
+  it('rejects a wrongly bound moving lid vertex within a combined body primitive', async () => {
+    const result = await report(head => {
+      const lid = mesh(head, 'lids_L');
+      const v = lid.targets.find(t => t.name === 'eyeBlinkLeft')!.positions.findIndex((p, i) => p.some((x, k) => Math.abs(x - lid.positions[i][k]) > 0.001));
+      expect(v).toBeGreaterThanOrEqual(0);
+      lid.bones![v] = 'spine';
+      combinedBody(head);
+    });
+    expect(failed(result)).toContain('head-binding');
+    expect(result.failures.find(f => f.startsWith('head-binding:'))).toMatch(/spine/);
+  });
+
+  it('rejects a static skull bound to the spine on a body skeleton', async () => {
+    const result = await report(head => { onBody(head); mesh(head, 'skull').bones!.fill('spine'); });
+    expect(failed(result)).toContain('head-binding');
+  });
+
+  it('does not treat the shared glTF mesh name face as ownership of static body vertices', async () => {
+    const result = await report(head => {
+      combinedBody(head);
+      head.groups = { face: head.groups!['character-body'] };
+    });
+    expect(result.failures).toEqual([]);
+  });
+
+  it('rejects even small nonzero body displacements in a facial morph', async () => {
+    const result = await report(head => {
+      const joined = combinedBody(head), p = joined.positions[0];
+      joined.targets.find(t => t.name === 'jawOpen')!.positions[0] = [p[0], p[1] - 0.000005, p[2]];
+    });
+    expect(failed(result)).toContain('head-binding');
+  });
+
+  it('does not report an inversion pass after losing all morph-bearing face skin to body bindings', async () => {
+    const result = await report(head => {
+      const joined = combinedBody(head);
+      joined.bones = joined.bones!.map(b => b === 'head' ? 'spine' : b);
+      delete joined.faceRegion;
+    });
+    expect(failed(result)).toContain('inversion');
+    expect(result.checks.find(c => c.id === 'inversion')!.message).toMatch(/no.*face skin/);
+  });
+
+  it('rejects a static wrongly bound skull after it is joined into body skin', async () => {
+    const result = await report(head => { mesh(head, 'skull').bones!.fill('spine'); combinedBody(head); });
+    expect(failed(result)).toContain('head-binding');
+    expect(result.failures.find(f => f.startsWith('head-binding:'))).toMatch(/spine/);
+  });
+
+  it('requires independent face ownership on a combined primitive rather than trusting its weights', async () => {
+    const result = await report(head => { delete combinedBody(head).faceRegion; });
+    expect(failed(result)).toContain('head-binding');
+    expect(result.failures.find(f => f.startsWith('head-binding:'))).toMatch(/_FACE_REGION/);
+  });
+
+  it.each([0.5, 2])('rejects invalid face membership value %s instead of dropping those vertices', async value => {
+    const result = await report(head => {
+      const body = combinedBody(head); body.faceRegion![body.faceRegion!.indexOf(1)] = value;
+    });
+    expect(failed(result)).toContain('head-binding');
+  });
+
+  it('rejects a static skull hidden as an unmarked skin primitive in a shared face mesh', async () => {
+    const result = await report(head => {
+      onBody(head); mesh(head, 'skull').bones!.fill('spine'); head.groups!.face.push('skull');
+    });
+    expect(failed(result)).toContain('head-binding');
+    expect(result.failures.find(f => f.startsWith('head-binding:'))).toMatch(/_FACE_REGION/);
+  });
+
+  it('accepts explicitly declared body-only skin sharing zero facial targets', async () => {
+    const result = await report(head => {
+      combinedBody(head);
+      const arm = sphere([0.3, -0.5, 0], 0.05);
+      head.meshes.push({ name: 'arm', material: 'skin', ...arm, bones: arm.positions.map(() => 'spine'), targets: [], faceRegion: arm.positions.map(() => 0) });
+      head.groups!['character-body'].push('arm');
+    });
+    expect(result.failures).toEqual([]);
+  });
+
+  it('validates eye membership before exempting eyeballs from head binding', async () => {
+    const result = await report(head => {
+      onBody(head); const eye = mesh(head, 'eyeball_L'); eye.faceRegion = eye.positions.map(() => 0.5);
+    });
+    expect(failed(result)).toContain('head-binding');
+  });
+
+  it('does not let a partial face marker hide a piece of an eyeball', async () => {
+    const result = await report(head => {
+      onBody(head); const eye = mesh(head, 'eyeball_L'); eye.faceRegion = eye.positions.map(() => 1);
+      eye.faceRegion[Math.floor(eye.positions.length / 2)] = 0;
+    });
+    expect(failed(result)).toContain('head-binding');
   });
 
   it('judges the hair of a body character as head dressing: it occludes, but is neither a part joined to the face nor its chin', async () => {
