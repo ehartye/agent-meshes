@@ -1202,6 +1202,22 @@ raised hocks, long metatarsals, padded toes and a counterweight tail.
 Child proportions enlarge the head relative to height and shorten the limbs;
 the adult crest has five broad fronds and the child's has three.
 
+All three anatomy entry points accept `finger_scale=1.0` and `thumb_scale=1.0`
+(finite numbers in `0.5..1.5`). They scale the middle/tip offsets of each digit
+about its fixed root, preserving palm size, root spacing, surface radii and the
+existing inward hand orientation. For example, `build_anatomy(finger_scale=.7,
+thumb_scale=.85)` produces shorter digit chains and passes those measurements to
+the rig through the returned anatomy dictionary. Skeleton endpoints and source
+regions consume the same measurements, including after JSON serialization. Older
+anatomy dictionaries without these fields retain the original proportions.
+The ratios describe chain length; rounded tip radii do not scale. Source parts
+outside the digits remain unchanged, but fused/decimated body topology and fitted
+clothes can change: inspect the final export and animation before adoption.
+`python tests/sprout_digit_proportions.py` checks pre-change default samples,
+both sides/ages, independent controls, tip alignment and source-region weights.
+`npx vitest run tests/sprout-digits-blender.test.ts` exercises actual fusion,
+decimation, fitted bone endpoints and normalized skin weights for both ages.
+
 `build_anatomy(height=..., age=..., skin=..., crest=..., clay=False)` returns
 `(objects, anatomy)` in Blender. It fuses the skin into one closed component and
 keeps eyes, tympana and fronds editable. Geometry generation is parameterized by

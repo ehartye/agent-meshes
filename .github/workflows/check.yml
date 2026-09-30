@@ -32,6 +32,7 @@ jobs:
       - run: python tests/sculpted_face.py
       - run: python tests/sculpted_jaw.py
       - run: python tests/sprout_kin.py
+      - run: python tests/sprout_digit_proportions.py
       - run: python tests/sprout_kin_rig.py
       - run: python tests/sprout_region_skin.py
       - run: python tests/sprout_kin_gait.py

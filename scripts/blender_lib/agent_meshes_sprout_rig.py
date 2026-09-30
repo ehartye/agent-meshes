@@ -6,7 +6,7 @@ the diagnostic animation clips.
 """
 import math
 import numpy as np
-from agent_meshes_sprout_kin import geometry, hand_point
+from agent_meshes_sprout_kin import geometry, hand_point, _digit_chains
 
 
 def skeleton(a):
@@ -30,13 +30,9 @@ def skeleton(a):
         add('upperarm_'+side,shoulder,elbow,'clavicle_'+side)
         add('forearm_'+side,elbow,wrist,'upperarm_'+side)
         add('hand_'+side,wrist,hand+[0,0,-.03*s],'forearm_'+side)
-        for n,dx in enumerate([-.015,.015]):
-            root=hand+[sign*dx,-.005*s,-.024*s];mid=root+[0,-.012*s,-.036*s];tip=root+[0,-.025*s,-.064*s]
-            add(f'finger_{side}{n}_base',root,mid,'hand_'+side)
-            add(f'finger_{side}{n}_tip',mid,tip,f'finger_{side}{n}_base')
-        root=hand+[sign*.02*s,0,.012*s];mid=root+[sign*.029*s,-.013*s,-.013*s];tip=root+[sign*.025*s,-.034*s,-.027*s]
-        add('thumb_'+side+'_base',root,mid,'hand_'+side)
-        add('thumb_'+side+'_tip',mid,tip,'thumb_'+side+'_base')
+        for name,(root,mid,tip) in _digit_chains(a,side).items():
+            add(name+'_base',root,mid,'hand_'+side)
+            add(name+'_tip',mid,tip,name+'_base')
         hip,knee,hock,toe=[j[n+'_'+side] for n in ['hip','knee','hock','toe']]
         add('thigh_'+side,hip,knee,'pelvis')
         add('shin_'+side,knee,hock,'thigh_'+side)
@@ -50,7 +46,7 @@ def skeleton(a):
                 b['tail']=hand_point(b['tail'],a,side).tolist()
             elif name.startswith(('finger_'+side,'thumb_'+side)):
                 b['head']=hand_point(b['head'],a,side).tolist();b['tail']=hand_point(b['tail'],a,side).tolist()
-    for part in geometry(height=a['height'],age=a['age']):
+    for part in geometry(height=a['height'],age=a['age'],finger_scale=a.get('finger_scale',1.),thumb_scale=a.get('thumb_scale',1.)):
         if part['kind']!='crest':continue
         i=part['name'].split('-')[1];rings=np.array(part['vertices']).reshape(-1,12,3).mean(axis=1)
         add('crest_'+i+'_base',rings[0],rings[len(rings)//2],'head')
@@ -107,7 +103,7 @@ def region_weights(point,region,anatomy):
 
 def skin_regions(a,include=None):
     """Return named skin source surfaces, optionally restricted before querying."""
-    parts=[p for p in geometry(height=a['height'],age=a['age']) if p['kind']=='skin']
+    parts=[p for p in geometry(height=a['height'],age=a['age'],finger_scale=a.get('finger_scale',1.),thumb_scale=a.get('thumb_scale',1.)) if p['kind']=='skin']
     if include is None:return parts
     if not isinstance(include,(list,tuple,set,frozenset)) or not include or any(not isinstance(n,str) for n in include):
         raise ValueError('A nonempty collection of skin-region names is required')
