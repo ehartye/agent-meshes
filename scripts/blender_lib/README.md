@@ -1286,6 +1286,29 @@ inter-frame motion need independent posed-surface checks. Run
 motion views before delivery. Keep skinned garments at scene root after binding.
 
 
+## Transferring a local skin influence
+
+`agent_meshes_skin_weights.ellipsoid_falloff(vertices, center, radii, strength=1)`
+returns a compact field in the supplied coordinate frame. Its value is
+`strength * max(1 - squared_ellipsoid_radius, 0)^2`: zero with zero slope at the
+boundary. Radii must be positive and strength must be in `[0, 1]`. This spatial
+brush can reach nearby disconnected surfaces; restrict its amounts with an
+explicit selection mask when that is unwanted.
+
+`transfer_influence(weights, source, target, amounts, max_influences=4)` consumes
+named row dictionaries, as used by `relax_weights`. Each amount moves that
+fraction of the source bone's weight to the target bone. It returns fresh rows,
+preserves all other named values and row totals, and does not normalize. Zero
+amount or absent/zero source preserves the row exactly. A fully emptied source
+entry is removed, allowing its influence slot to be reused.
+
+Changed rows that exceed the influence limit are rejected without mutating any
+input; nothing is silently pruned. Unchanged rows retain their existing counts.
+The function validates every row, including no-op rows. Reapplying a nonzero
+transfer compounds. These helpers author weights, not anatomical regions, and
+do not certify deformation or collision freedom. Inspect matching poses before
+and after writing the returned rows back to a mesh.
+
 ## Relaxing garment skin weights
 
 `agent_meshes_skin_relax.relax_weights(vertices, faces, weights, free,
