@@ -51,6 +51,23 @@ describe('curve helpers', () => {
     expect(rig.spine).toEqual(['spine_low', 'spine_high']);
   });
 
+  it('maps Mesh2Motion bird and kaiju knees to raised hocks, not the grounded foot', () => {
+    const kaijuNames = ['Hips','Spine_1','Spine_2','Spine_3','Spine_4','Head',
+      ...['L','R'].flatMap(s => ['Back_Leg_Upper','Back_Leg_Lower','Back_Leg_Ankle','Back_Leg_Foot','Back_Leg_Foot_1','Back_Leg_Foot_2','Front_Leg_Upper','Front_Leg_Lower','Hand'].map(n => `${n}_${s}`))];
+    const kaijuParents: Record<string,string> = {Head:'Spine_4',Spine_4:'Spine_3',Spine_3:'Spine_2',Spine_2:'Spine_1',Spine_1:'Hips'};
+    const kaiju = resolveGaitBones(kaijuNames,n => kaijuParents[n] ?? null);
+    expect(kaiju.legs.a).toEqual({thigh:'Back_Leg_Upper_L',calf:'Back_Leg_Lower_L',foot:'Back_Leg_Ankle_L',toe:'Back_Leg_Foot_1_L'});
+    expect(kaiju.arms.b).toEqual({upper:'Front_Leg_Upper_R',lower:'Front_Leg_Lower_R',hand:'Hand_R'});
+    const birdNames = ['hips','spine_0','spine_1','spine_2','spine_3','head',
+      ...['L','R'].flatMap(s => ['UpperLeg','LowerLeg','AnkleLeg','Foot','Toes','wing_1','wing_2','wing_3'].map(n => `${n}_${s}`))];
+    const birdParents: Record<string,string> = {head:'spine_3',spine_3:'spine_2',spine_2:'spine_1',spine_1:'spine_0',spine_0:'hips'};
+    const bird = resolveGaitBones(birdNames,n => birdParents[n] ?? null);
+    expect(bird.legs.b).toEqual({thigh:'UpperLeg_R',calf:'LowerLeg_R',foot:'AnkleLeg_R',toe:'Toes_R'});
+    expect(bird.arms.a).toEqual({upper:'wing_1_L',lower:'wing_2_L'});
+    expect(() => resolveGaitBones(kaijuNames.filter(n => n !== 'Back_Leg_Ankle_L'), n => kaijuParents[n] ?? null)).toThrow(/kaiju hock/);
+    expect(() => resolveGaitBones(birdNames.filter(n => n !== 'wing_2_R'), n => birdParents[n] ?? null)).toThrow(/bird wing joint 2/);
+  });
+
   it('resolves stylized and UE-mannequin bone names, choosing left and right by geometry', () => {
     const stylized = resolveGaitBones(['rig-root', 'rig-pelvis', 'rig-spine', 'rig-chest', 'rig-neck', 'rig-head', 'rig-left-thigh', 'rig-left-shin', 'rig-left-foot', 'rig-right-thigh', 'rig-right-shin', 'rig-right-foot', 'rig-left-upper-arm', 'rig-left-forearm', 'rig-right-upper-arm', 'rig-right-forearm'],
       name => ({ 'rig-head': 'rig-neck', 'rig-neck': 'rig-chest', 'rig-chest': 'rig-spine', 'rig-spine': 'rig-pelvis' } as Record<string, string>)[name] ?? null);

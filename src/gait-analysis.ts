@@ -165,6 +165,42 @@ export function resolveGaitBones(names: string[], parentOf: (name: string) => st
   if (!spine.length) throw Object.assign(new Error('Gait analysis needs at least one spine joint between pelvis and head'), { code: 'GAIT_BONES' });
   const side = (s: 'a' | 'b') => {
     const list = names.filter(name => sideOf(name) === s);
+    // Digitigrade references name the ground-level bones "Foot", but the knee
+    // ends at the raised hock. Using Foot here silently measures two segments
+    // as the shin and gives the wrong knee/ankle curves.
+    if (list.some(name => /backlegupper$/.test(baseOf(name)))) {
+      const toe = list.find(name => /Back_Leg_Foot_1_[LR]$/i.test(name));
+      return {
+        leg: {
+          thigh: find(list, /backlegupper$/, 'kaiju thigh'),
+          calf: find(list, /backleglower$/, 'kaiju shin'),
+          foot: find(list, /backlegankle$/, 'kaiju hock'),
+          ...(toe ? { toe } : {}),
+        },
+        arm: {
+          upper: find(list, /frontlegupper$/, 'kaiju upper arm'),
+          lower: find(list, /frontleglower$/, 'kaiju forearm'),
+          hand: find(list, /hand$/, 'kaiju hand'),
+        },
+      };
+    }
+    if (list.some(name => /ankleleg$/.test(baseOf(name)))) {
+      const wing = (index: number) => {
+        const hit = list.find(name => new RegExp(`wing_${index}_[LR]$`, 'i').test(name));
+        if (!hit) throw Object.assign(new Error(`Gait analysis cannot find bird wing joint ${index}`), { code: 'GAIT_BONES' });
+        return hit;
+      };
+      return {
+        leg: {
+          thigh: find(list, /upperleg$/, 'bird thigh'),
+          calf: find(list, /lowerleg$/, 'bird shin'),
+          foot: find(list, /ankleleg$/, 'bird hock'),
+          toe: find(list, /toes$/, 'bird toes'),
+        },
+        // Wings provide shoulder/limb motion, but are not hands.
+        arm: { upper: wing(1), lower: wing(2) },
+      };
+    }
     const thigh = find(list, /(thigh|upleg|upperleg)$/, `${s === 'a' ? 'left' : 'right'} thigh`);
     const calf = find(list.filter(n => n !== thigh), /(calf|shin|lowerleg|leg)$/, 'calf');
     const foot = find(list, /(foot|ankle|metatarsal)$/, 'foot');
