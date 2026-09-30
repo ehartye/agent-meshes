@@ -1315,7 +1315,8 @@ that set; unknown names, eyes and crest surfaces are rejected. `None` selects
 all skin regions used by the body rig. Coordinates use the anatomy's height
 and age; returned surfaces remain in rest-space Blender Z-up coordinates.
 
-`anatomy_weights(mesh, anatomy, regions=None, smooth=5, hip_seams=False)` queries those selected
+`anatomy_weights(mesh, anatomy, regions=None, smooth=5, hip_seams=False,
+neck_seam=False, waist_seam=False)` queries those selected
 surfaces before evaluating the region's anatomical weight function. It returns
 `(rows, report)` without binding or moving the mesh. The report names the source
 regions actually used, vertex count and maximum influence count. Rows diffuse
@@ -1327,6 +1328,17 @@ where fused trunk and thigh source surfaces meet. The band stops above the knee
 blend; knee and tail influences do not diffuse into it. This mode requires trunk
 and both leg source regions and reports `hipSeamVertices`. Other body weights,
 rest geometry, bones and clips are unchanged. `rig_anatomy` enables this mode.
+
+With `waist_seam=True`, a band of trunk skin within `0.075 * scale` above and
+below the lumbar joint receives 300 topology relaxation passes. This spreads
+the short pelvis/spine blend over the deep pear torso, preventing the local
+fold exposed by the spine diagnostic. Adjacent limbs and skin outside the band
+keep their weights; rest geometry and motion are unchanged. The flag requires
+the trunk source, reports `waistSeamVertices`, and is enabled by `rig_anatomy`.
+`npx vitest run tests/sprout-waist-blender.test.ts` checks child and adult bodies
+at 65 phases of each of eight clips, combining local signed-area diagnostics
+with actual nonadjacent waist contacts and preservation checks. These sampled
+checks do not establish continuous collision freedom or costume acceptance.
 
 For a fitted overall, use `regions=['trunk', 'leg_l', 'leg_r']` so nearby arms,
 neck and tail cannot donate weights. Bind the returned rows to the existing

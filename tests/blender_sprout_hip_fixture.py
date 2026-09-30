@@ -15,16 +15,17 @@ def build():
         objects,a=build_anatomy(height=height,age=age,clay=True)
         body=next(o for o in objects if o.name=='sprout-body')
         rest=np.array([v.co[:] for v in body.data.vertices])
-        # Isolate the hip pass while keeping the independent neck pass enabled.
+        # Isolate the hip pass for its preservation check. The subsequent waist
+        # pass reads hip weights at pinned neighbours in the child proportions.
         original,_=anatomy_weights(body,a,neck_seam=True)
+        hip_rows,_=anatomy_weights(body,a,neck_seam=True,hip_seams=True)
         try:anatomy_weights(body,a,regions=['trunk'],hip_seams=True)
         except ValueError:pass
         else:raise AssertionError('Restricted trunk source must not acquire leg influences')
         objects,_=rig_anatomy(objects,a)
         np.testing.assert_array_equal(rest,[v.co[:] for v in body.data.vertices])
         hip=a['joints']['hip_l'][2];s=a['scale']
-        for v,row in zip(body.data.vertices,original):
-            actual={body.vertex_groups[g.group].name:g.weight for g in v.groups}
+        for v,row,actual in zip(body.data.vertices,original,hip_rows):
             if not hip-.08*s<v.co.z<hip+.07*s:
                 for n in set(row)|set(actual):assert abs(row.get(n,0)-actual.get(n,0))<1e-7,'Weights outside hip band changed'
         arm=next(o for o in objects if o.type=='ARMATURE')
