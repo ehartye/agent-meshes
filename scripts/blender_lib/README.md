@@ -8,6 +8,22 @@ animation_mode='NLA_TRACKS')`; other values are rejected.
 
 ## Fitting a reference rig
 
+`agent_meshes_landmarks.humanoid_landmarks(vertices, profile)` measures a centered
+A-pose sculpt using explicit source heights and returns `Landmark` values for
+`proportion_targets` / `reproportion`. Declare `crotch`, `neck`, `chin`, a positive-X
+`shoulder` XYZ point, and height dictionaries: `legs` (ankle, calf, knee, thigh, hip),
+`arms` (upperarm, elbow, forearm, wrist, hand), `torso` (for example hips, waist,
+chest, upperchest), and `head` (brow, cheek, jaw). `fingertip_x` isolates the hands
+from the trunk. Units are metres, Z up, -Y forward. The sculpt must be centered on X.
+
+`section(vertices, height, side=0, part='all', half=.008, separation=.02)` exposes
+the measurement primitive. `inner` / `outer` require side +1 or -1 and separate
+clusters by a gap larger than both the minimum separation and ordinary vertex
+spacing. Missing bands and unseparated outer limbs reject explicitly. Inner leg
+sections exclude hands hanging at hip height. Sparse geometry may require a
+larger band or different authored measurements; this is not anatomy detection.
+Inspect the sculpt and fitted skeleton together before accepting joint pivots.
+
 `agent_meshes_retarget.rig_from_reference(body, reference_glb, correspondence, clips, ...)`
 fits a reference skeleton and transfers its skin weights onto a sculpted mesh. Coordinates
 are world-space Blender XYZ, Z up. `correspondence` maps reference bone names to target
