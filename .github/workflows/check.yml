@@ -35,6 +35,7 @@ jobs:
       - run: python tests/sprout_region_skin.py
       - run: python tests/sprout_kin_gait.py
       - run: python tests/retarget.py
+      - run: python tests/motion_style.py
       - run: python tests/stylized_costume.py
       - run: python tests/stylized_face.py
       - run: node --test tests/botanical-kit.test.mjs
