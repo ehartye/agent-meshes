@@ -12,7 +12,7 @@ def build():
         for obj in objects:bpy.data.objects.remove(obj,do_unlink=True)
         objects,a=build_anatomy(height=height,age=age,clay=True)
         body=next(o for o in objects if o.name=='sprout-body')
-        rest=np.array([v.co[:] for v in body.data.vertices]);original,_=anatomy_weights(body,a,hip_seams=True)
+        rest=np.array([v.co[:] for v in body.data.vertices]);original,_=anatomy_weights(body,a,hip_seams=True,waist_seam=True)
         for args in [{'regions':['neck'],'neck_seam':True},{'neck_seam':'yes'}]:
             try:anatomy_weights(body,a,**args)
             except ValueError:pass
