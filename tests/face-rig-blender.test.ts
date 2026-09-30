@@ -45,6 +45,12 @@ afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(p
 // Real Blender only: CI skips this, like the refine stage. Run it locally with Blender installed.
 const maybe = findBlender() ? it : it.skip;
 
+maybe('a coarse mouth slit reaches both authored corners without splitting them or folding under jaw motion', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-mouth-corners-')); directories.push(directory);
+  const result = await authorGLB(resolve('tests/blender_mouth_corner_fixture.py'), join(directory, 'model.glb'));
+  expect(result.meshes).toBe(1);
+}, 600000);
+
 for (const fixture of ['test_head', 'test_robot', 'test_frog', 'test_kid', 'test_lips_kid', 'test_lips_frog']) maybe(`the helper-authored ${fixture} builds through agent-meshes build and passes arkit-face/1`, async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-face-rig-')); directories.push(directory);
   const config = join(directory, 'build.json');
