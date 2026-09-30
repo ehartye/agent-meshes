@@ -11,6 +11,8 @@ export interface SynthMesh {
   targets: { name: string; positions: Vec3[] }[];
   /** One bone per vertex (single influence), or undefined for an unskinned mesh. */
   bones?: string[];
+  /** Explicit anatomical ownership, independent of the bone weights being checked. */
+  faceRegion?: number[];
   weights?: number[];
   unskinnedNode?: boolean;
 }
@@ -367,6 +369,7 @@ export function encodeHead(head: SynthHead): Uint8Array {
     const names = [...new Set(parts.flatMap(p => p.targets.map(t => t.name)))];
     const primitives = parts.map(m => {
       const attributes: Record<string, number> = { POSITION: floats(m.positions, 'VEC3', true) };
+      if (m.faceRegion) attributes._FACE_REGION = floats(m.faceRegion.map(v => [v]), 'SCALAR', false);
       if (m.bones) {
         const joints = new Uint8Array(m.bones.flatMap(b => { const i = jointNames.indexOf(b); if (i < 0) throw new Error(`Unknown bone ${b}`); return [i, 0, 0, 0]; }));
         attributes.JOINTS_0 = accessors.push({ bufferView: view(Buffer.from(joints.buffer), 34962), componentType: 5121, count: m.positions.length, type: 'VEC4' }) - 1;
@@ -616,4 +619,24 @@ export function onBody(head: SynthHead, declare = true): void {
   head.meshes.push({ name: 'torso', material: 'jacket', ...torso, targets: [], bones: torso.positions.map(() => 'spine') });
   head.meshes.push({ name: 'legs', material: 'trousers', ...legs, targets: [], bones: legs.positions.map(() => 'root') });
   if (declare) head.rootExtras = { arkitFace: { ...(head.rootExtras!.arkitFace as Record<string, unknown>), skeleton: 'body' } };
+}
+
+/** The sculpted cast stores head skin, lids and body skin in one primitive, with shared morph target arrays. */
+export function combinedBody(head: SynthHead): SynthMesh {
+  onBody(head);
+  const names = ['legs', 'torso', 'face', 'skull', 'lids_L', 'lids_R'];
+  const parts = names.map(name => mesh(head, name));
+  let offset = 0;
+  const joined: SynthMesh = {
+    name: 'body-skin', material: 'skin', positions: parts.flatMap(p => p.positions),
+    indices: parts.flatMap(p => { const indices = p.indices.map(i => i + offset); offset += p.positions.length; return indices; }),
+    bones: parts.flatMap(p => p.bones!),
+    faceRegion: parts.flatMap(p => p.positions.map(() => ['legs', 'torso'].includes(p.name) ? 0 : 1)),
+    targets: [...new Set(parts.flatMap(p => p.targets.map(t => t.name)))].map(name => ({
+      name, positions: parts.flatMap(p => p.targets.find(t => t.name === name)?.positions ?? p.positions),
+    })),
+  };
+  head.meshes = [...head.meshes.filter(p => !names.includes(p.name)), joined];
+  head.groups = { 'character-body': ['body-skin', ...head.groups!.face.filter(n => !names.includes(n))] };
+  return joined;
 }

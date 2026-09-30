@@ -22,7 +22,41 @@ __all__ = [
     'symmetric_offsets', 'smooth_surface', 'smooth_skin', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'follow_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'add_eye_bones', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
+    'mark_face_region',
 ]
+
+
+def mark_face_region(obj, vertices):
+    """Declare anatomical face vertices on a final combined body mesh, independent of bone weights.
+
+    Call after topology changes/joining, using the sculpt's authored face selection (include skull,
+    chin and lids; exclude neck/body). Do not derive this selection from the weights being verified.
+    The POINT/FLOAT attribute survives glTF vertex splitting; export_glb enables its export.
+    Repeating this call replaces the membership, after validating every input without mutation.
+    """
+    from numbers import Integral
+    if getattr(obj, 'type', None) != 'MESH' or obj.mode != 'OBJECT':
+        raise ValueError('Face ownership requires a mesh in Object mode')
+    if obj.data.users != 1:
+        raise ValueError('Face ownership requires a single-user mesh')
+    try:
+        vertices = list(vertices)
+    except TypeError as exc:
+        raise ValueError('Face vertices must be vertex indices') from exc
+    count = len(obj.data.vertices)
+    if any(isinstance(v, bool) or not isinstance(v, Integral) or v < 0 or v >= count for v in vertices):
+        raise ValueError('Face vertices must be integer indices within the mesh')
+    attribute = obj.data.attributes.get('_FACE_REGION')
+    if attribute and (attribute.domain != 'POINT' or attribute.data_type != 'FLOAT'):
+        raise ValueError('Existing _FACE_REGION must be a POINT/FLOAT attribute')
+    values = [0.] * count
+    for v in vertices:
+        values[v] = 1.
+    if attribute is None:
+        attribute = obj.data.attributes.new('_FACE_REGION', 'FLOAT', 'POINT')
+    attribute.data.foreach_set('value', values)
+    obj.data.update()
+    return attribute
 
 ARKIT_REQUIRED = (
     'eyeBlinkLeft', 'eyeBlinkRight', 'eyeSquintLeft', 'eyeSquintRight', 'eyeWideLeft', 'eyeWideRight',
