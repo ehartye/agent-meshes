@@ -1488,3 +1488,35 @@ geometry are unchanged. The fitter mutates nearby garment weights only after
 constructing and validating the fit. It does not clear hidden skin or certify
 animation clearance. The Blender fitting fixture checks endpoint placement,
 column weights, paired thickness, smoothing and preservation of distant weights.
+
+## Styling baked rotations
+
+`agent_meshes_motion_style.scale_action_rotations(action, bones, gain)` scales
+selected Blender pose-bone quaternion tracks toward their authored rest pose.
+For example, copy a retargeted locomotion action and pass its finger-bone names
+with a character-specific gain between zero (rest) and one (original motion).
+This scales the entire rest-relative rotation, including splay and twist. It
+does not infer anatomical flexion axes, solve grasps or repair skin weights.
+
+The action must have one layer and strip, with all selected tracks in one slot.
+Each bone needs four synchronized quaternion channels, finite increasing key
+times, and active keyframe curves without modifiers or sampled points. Bake
+first and keep those pose bones in quaternion mode. All selected tracks are
+validated before editing; other tracks stay untouched. Gain one preserves exact
+values, interpolation and handles. Other gains normalize samples and set LINEAR
+component interpolation, which is not SLERP between keys. Calling the helper
+again compounds the gain, so retain the source action for comparisons.
+
+The shortest rest-to-pose angle has a branch at 180 degrees. A detected crossing
+between adjacent canonical quaternion samples is rejected for gains below one.
+Half-turn samples with normalized `abs(w) <= 1e-7` are also rejected because
+their shortening direction is ambiguous; the tolerance covers float32 roundoff.
+This sampled check cannot prove continuity between keys or support arbitrary
+multi-turn motion. Inspect matching skeleton/mesh frames and contacts after any
+style change. The pure `scale_rotation_samples(samples, gain)` helper accepts
+Blender-order `(w, x, y, z)` rows without requiring Blender.
+
+Run `python tests/motion_style.py` for the numerical/adapter checks. For actual
+Blender evaluation, run `blender --background --factory-startup --python
+tests/blender_motion_style.py -- --report <report.json>`; optionally add
+`--asset <rigged.glb>` to compare imported quaternion tracks with mathutils SLERP.
