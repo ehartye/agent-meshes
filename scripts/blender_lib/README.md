@@ -1241,3 +1241,28 @@ Relaxation reduces weight discontinuities; it does not repair garment topology
 or guarantee clearance. An offset surface can bridge a narrow arm/torso gap
 before skinning begins. Check rest cross-sections, body contact, cloth self-contact
 and matching motion close-ups independently before delivering a garment.
+
+
+## Selecting anatomical skin sources
+
+`agent_meshes_sprout_rig.skin_regions(anatomy, include=None)` returns the shared
+sprout-kin skin source surfaces. A nonempty collection of exact names restricts
+that set; unknown names, eyes and crest surfaces are rejected. `None` selects
+all skin regions used by the body rig. Coordinates use the anatomy's height
+and age; returned surfaces remain in rest-space Blender Z-up coordinates.
+
+`anatomy_weights(mesh, anatomy, regions=None, smooth=5)` queries those selected
+surfaces before evaluating the region's anatomical weight function. It returns
+`(rows, report)` without binding or moving the mesh. The report names the source
+regions actually used, vertex count and maximum influence count. Rows diffuse
+along mesh edges for the requested number of passes, then keep four normalized
+influences. Bulb-head rows stay pinned. The body rig calls the same helper with
+all skin sources, preserving its prior behavior.
+
+For a fitted overall, use `regions=['trunk', 'leg_l', 'leg_r']` so nearby arms,
+neck and tail cannot donate weights. Bind the returned rows to the existing
+armature with `bind_skin`. Garment geometry must also exclude unwanted source
+surfaces; restricting weights cannot repair a cloth envelope that already
+incorporates a neighboring arm. Body/cloth clearance and deformation still
+need independent posed checks. Run `python tests/sprout_region_skin.py` and
+`python tests/sprout_kin_rig.py`; exercise the Blender adapter with a real build.
