@@ -5290,7 +5290,9 @@ def slit_mouth(obj, mouth_z, half_width, center_x=0.0, front_y=None):
     """Cut a closed mouth slit into a skin mesh along z = mouth_z for |x - center_x| < half_width on the front.
 
     Bisects the mesh at the mouth line and splits the edges on that line so the lips
-    can part (the corners stay joined). Vertices closer to the line than a quarter of
+    can part (the corners stay joined). Corners are inserted at the requested
+    half-width, reusing a nearby seam vertex within `SEAM_TOLERANCE`; coarse
+    topology does not shorten the opening. Vertices closer to the line than a quarter of
     their crossing edge first slide along that edge onto it, so the cut leaves no
     sliver faces (they shade as a seam across the face and fold when the jaw opens). The seam vertices are tagged in the `jaw_seam`
     point attribute (1 lower lip, 2 upper lip), so `add_jaw_open` opens exactly the
@@ -5310,9 +5312,41 @@ def slit_mouth(obj, mouth_z, half_width, center_x=0.0, front_y=None):
     snapped = _snap_to_plane([tuple(v.co) for v in bm.verts], [tuple(v.index for v in f.verts) for f in bm.faces], mouth_z)
     for vertex, point in zip(bm.verts, snapped): vertex.co = point
     bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], dist=1e-7, plane_co=(0, 0, mouth_z), plane_no=(0, 0, 1))
-    on_line = lambda v: abs(v.co.z - mouth_z) < SEAM_TOLERANCE and abs(v.co.x - center_x) < half_width - 1e-9 and v.co.y < front_y
+    # Put the two corners on the requested boundary. Selecting only existing
+    # vertices silently shortens a coarse head's slit by up to two whole edges.
+    # Split the horizontal seam edges in place: their adjacent faces keep the
+    # same surface and no vertical cut propagates into the rest of the head.
+    corner_faces = set()
+    seam_edge = lambda e: all(abs(v.co.z - mouth_z) < SEAM_TOLERANCE and v.co.y < front_y for v in e.verts)
+    for corner in (center_x - half_width, center_x + half_width):
+        # Reuse a numerically coincident vertex instead of creating a sliver
+        # edge whose jaw weight is dominated by float32 coordinate rounding.
+        nearby = {v for v in bm.verts if abs(v.co.z - mouth_z) < SEAM_TOLERANCE and v.co.y < front_y and abs(v.co.x - corner) <= SEAM_TOLERANCE}
+        while nearby:
+            seed = min(nearby, key=lambda v: abs(v.co.x - corner))
+            group, pending = {seed}, [seed]
+            nearby.remove(seed)
+            while pending:
+                vertex = pending.pop()
+                for edge in vertex.link_edges:
+                    other = edge.other_vert(vertex)
+                    if other in nearby and seam_edge(edge):
+                        nearby.remove(other); group.add(other); pending.append(other)
+            # Keep the other nearby vertices: snapping them too would collapse
+            # an existing short edge, even when its triangles are valid.
+            min(group, key=lambda v: abs(v.co.x - corner)).co.x = corner
+        for edge in list(bm.edges):
+            if not seam_edge(edge): continue
+            a, b = edge.verts
+            if min(a.co.x, b.co.x) + 1e-8 < corner < max(a.co.x, b.co.x) - 1e-8:
+                corner_faces.update(edge.link_faces)
+                bmesh.utils.edge_split(edge, a, (corner - a.co.x) / (b.co.x - a.co.x))
+    on_line = lambda v: abs(v.co.z - mouth_z) < SEAM_TOLERANCE and abs(v.co.x - center_x) <= half_width + 1e-8 and v.co.y < front_y
     edges = [e for e in bm.edges if all(on_line(v) for v in e.verts)]
     bmesh.ops.split_edges(bm, edges=edges)
+    # A new point on a polygon edge must not become a zero-area fan triangle
+    # in the deformation check or export. Only retriangulate the corner faces.
+    bmesh.ops.triangulate(bm, faces=[f for f in corner_faces if len(f.verts) > 3])
     bm.verts.ensure_lookup_table()
     layer = bm.verts.layers.int.get(SEAM_ATTRIBUTE) or bm.verts.layers.int.new(SEAM_ATTRIBUTE)
     for vertex in bm.verts:
