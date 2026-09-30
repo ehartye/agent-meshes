@@ -8,9 +8,10 @@ import { errorDetails } from './errors.ts';
 
 export async function main(args = process.argv): Promise<void> {
   const program = new Command();
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   const print = (value: unknown) => { process.stdout.write(`${JSON.stringify(value)}\n`); };
   program.exitOverride().configureOutput({ writeErr: () => {} });
-  program.name('agent-meshes').description('Named-part 3D authoring').version('0.1.0')
+  program.name('agent-meshes').description('Named-part 3D authoring').version(version)
     .option('--url <url>', 'Running authoring server URL', 'http://127.0.0.1:3388')
     .option('--workspace <directory>', 'Durable local workspace; no running server required')
     .option('--expect-revision <revision>', 'Require this workspace revision before mutation', value => {

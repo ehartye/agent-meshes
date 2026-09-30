@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer as createHttpServer } from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from '../src/server.ts';
@@ -11,6 +11,17 @@ const run = promisify(execFile);
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 const cli = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args], { timeout: 10000, windowsHide: true });
+
+it('reports the installed package version from another project directory', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-version-'));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, 'package.json'), '{"version":"99.0.0"}');
+  const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+  const { stdout } = await run(process.execPath, [resolve('scripts/agent-meshes.mjs'), '--version'], {
+    cwd: directory, timeout: 10000, windowsHide: true,
+  });
+  expect(stdout.trim()).toBe(version);
+});
 
 it('edits and saves a project through the executable CLI', async () => {
   const server = await createServer({ port: 0 });
