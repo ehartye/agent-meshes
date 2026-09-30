@@ -6,6 +6,33 @@ same clip name: the exporter combines them into one GLB animation. The default
 remains `ACTIONS`. Direct callers can use `export_glb(path, objects,
 animation_mode='NLA_TRACKS')`; other values are rejected.
 
+## Expressions on an existing sculpt
+
+`agent_meshes_sculpt_face.add_sculpt_face(body, arm, objects, eyes,
+head_min_z=..., mouth_center=..., attachments=...)` fits bilateral eyelids to
+the original skin and adds blink/squint/wide, brow and smile morphs. Supply the
+two eyes as dictionaries with measured `center`, `min` and `max`, and the mouth
+center from the sculpt's profile. The face is centered on X, Z-up, -Y forward;
+skin and disconnected eyeballs use material indices 0 and 1 by default.
+`head_min_z` excludes the neck/body from the solve. Optional skinned eyebrow or
+short-beard objects join the body so their expressions export on one morph mesh.
+
+The lid solve uses only front-visible exterior skin, then carries nearby socket
+lining with it. Garments and eyeballs cannot drive the solve. Inspect rest,
+partial/full blinks and oblique views: a valid export is not an eye-coverage test.
+The report includes measured eye margins and maximum rest adjustment.
+The current angular solver can leave small canthus gaps and a faceted closed
+rim on coarse sculpts. Oren's review still exposes one of 374 front eye rays at
+full blink; narrowing the corner fade and snapping to a nearby vertex did not
+resolve it. Do not treat this helper as full face-contract acceptance.
+
+Matching NLA tracks embed facial performances in the existing body clips; walk
+repeats twice and jog three times to allow an occasional blink independent of
+each footfall. Export with `NLA_TRACKS`. `blink_phases` can override the default
+timing per clip. `expression_fields` and `performance_samples` are NumPy-only
+helpers for anatomical fields and loop-neutral timings. This focused helper is
+not the full ARKit contract: gaze, jaw, mouth interior and speech are not supplied.
+
 ## Cutting weighted clothing
 
 `agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,
