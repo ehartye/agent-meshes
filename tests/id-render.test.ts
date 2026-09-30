@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { BackSide, BoxGeometry, Color, DoubleSide, Group, LinearSRGBColorSpace, Mesh, MeshBasicMaterial, MeshStandardMaterial } from 'three';
+import { BackSide, BoxGeometry, Color, DoubleSide, Group, LinearSRGBColorSpace, Mesh, MeshBasicMaterial, MeshPhysicalMaterial, MeshStandardMaterial } from 'three';
 import { applyIdMaterials, collectIdTargets, countColors, parseIdColor, resolveIdColors } from '../src/render/id-render.ts';
+import type { IdTarget } from '../src/render/id-render.ts';
 
 function model() {
   const skin = new MeshStandardMaterial({ name: 'skin', color: '#e0b090', side: DoubleSide });
@@ -85,5 +86,43 @@ describe('countColors', () => {
   it('counts RGBA pixels by #rrggbb, ignoring alpha', () => {
     const data = new Uint8ClampedArray([255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 0, 255, 16, 32, 48, 0]);
     expect(countColors({ width: 2, height: 2, data })).toEqual({ '#ff0000': 2, '#000000': 1, '#102030': 1 });
+  });
+});
+
+describe('glass in ID renders', () => {
+  function helmeted() {
+    const { root, head } = model();
+    const glass = new MeshStandardMaterial({ name: 'visor-glass', transparent: true, opacity: 0.2, depthWrite: false });
+    const bubble = new Mesh(new BoxGeometry(2, 2, 2), glass); bubble.name = 'bubble';
+    const lens = new Mesh(new BoxGeometry(), new MeshPhysicalMaterial({ name: 'lens', transmission: 1 })); lens.name = 'lens';
+    root.add(bubble, lens);
+    return { root, head, bubble, lens, glass };
+  }
+  it('marks blended and transmissive slots as glass', () => {
+    const { root } = helmeted();
+    const targets = collectIdTargets([{ model: null, root }]);
+    expect(targets.filter(t => t.glass).map(t => t.part)).toEqual(['bubble', 'lens']);
+    expect(targets.find(t => t.part === 'head')!.glass).toBe(false);
+  });
+  it('leaves glass out unless a part or material key names it, so what is seen through it is counted', () => {
+    const { root } = helmeted();
+    const targets = collectIdTargets([{ model: null, root }]);
+    const at = (colors: Map<IdTarget, string | null>, part: string) => colors.get(targets.find(t => t.part === part)!);
+    const plain = resolveIdColors(targets, { parts: { head: '#ff0000' }, other: '#010101' });
+    expect(at(plain, 'head')).toBe('#ff0000');
+    expect(at(plain, 'hat')).toBe('#010101');
+    expect(at(plain, 'bubble')).toBeNull();
+    expect(at(plain, 'lens')).toBeNull();
+    const named = resolveIdColors(targets, { parts: { bubble: '#00ff00' }, materials: { lens: '#0000ff' } });
+    expect(at(named, 'bubble')).toBe('#00ff00');
+    expect(at(named, 'lens')).toBe('#0000ff');
+  });
+  it('draws named glass as an opaque occluder', () => {
+    const { root, bubble } = helmeted();
+    const targets = collectIdTargets([{ model: null, root }]);
+    const restore = applyIdMaterials(targets, resolveIdColors(targets, { parts: { bubble: '#00ff00' } }), []);
+    const swapped = bubble.material as unknown as MeshBasicMaterial;
+    expect(swapped.transparent).toBe(false); expect(swapped.depthWrite).toBe(true); expect(bubble.visible).toBe(true);
+    restore();
   });
 });

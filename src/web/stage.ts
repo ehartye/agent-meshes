@@ -7,6 +7,7 @@ import { collectIdTargets } from '../render/id-render.ts';
 import { parseQuality } from '../render/quality.ts';
 import type { QualityInput } from '../render/quality.ts';
 import type { IdImage, IdRenderOptions } from '../render/id-render.ts';
+import { prepareGlass } from '../render/glass.ts';
 import { addFloor, addOutlines, addRoomLights, bytesOf, captureId, createRenderer, idImageURL } from './room.ts';
 import type { GlbInput } from './room.ts';
 import { viewDirection } from './views.ts';
@@ -104,7 +105,7 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
     try {
       const gltf = await new GLTFLoader().parseAsync(bytes, '');
       if (disposed) throw new Error('The stage is disposed');
-      gltf.scene.traverse(object => { object.castShadow = true; object.receiveShadow = true; });
+      gltf.scene.traverse(object => { object.castShadow = true; object.receiveShadow = true; }); prepareGlass(gltf.scene);
       const added = content.add(name, gltf, placement);
       if (options.outline) hulls.set(name, addOutlines(added, options.outline, options.outlineColor));
       if (model.autoplay ?? autoplay) added.play();

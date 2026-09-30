@@ -37,7 +37,7 @@ def main(source, output):
     meshes = sum(obj.type == 'MESH' for obj in objects)
     if not meshes:
         raise ValueError('build() must return at least one mesh')
-    export_glb(str(output), objects)
+    export_glb(str(output), objects, animation_mode=namespace.get('EXPORT_ANIMATION_MODE', 'ACTIONS'))
     return meshes
 
 

@@ -1,7 +1,7 @@
 ---
 name: mesh-build
-description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, the optional Blender refine stage, and the headless Unreal import check.
-when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, smooth and feather a model in Blender, or check that a GLB imports into Unreal with its morphs and bones intact.
+description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, fast Workbench previews of Blender-authored sources (matcap, wire, cavity, posed shape keys) with an optional persistent worker, the optional Blender refine stage, and the headless Unreal import check.
+when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, smooth and feather a model in Blender, preview a Blender-authored model quickly (matcap, wireframe, blink or jaw poses) without a full build, or check that a GLB imports into Unreal with its morphs and bones intact.
 ---
 
 # Mesh build and delivery
@@ -24,6 +24,36 @@ Zero errors and warnings is the bar; `UNUSED_OBJECT` infos about `TEXCOORD_0` ar
 every part (the primitives carry UVs that no material samples). `view` renders
 front, side and perspective PNGs plus one contact sheet per clip into a directory; look at them.
 
+For a deliberate delivery review or recurring anatomy/clothing defects, use
+[mesh-quality-review](../mesh-quality-review/SKILL.md) for reference fidelity, a full orbit
+and head-to-toe detail coverage.
+
+**Glass survives every stage.** A part (or Blender `material(..., opacity=.16)`) with opacity below
+1 exports as `alphaMode: BLEND` with the opacity in the base color alpha, `transmission` as
+`KHR_materials_transmission`, `ior` as `KHR_materials_ior`, `doubleSided` as `doubleSided`; the
+validator passes all of them with no warnings. three.js's GLTFLoader (the viewer, a stage, or a
+plain three.js page) loads BLEND as transparent without depth writes, so the face behind a visor
+still draws; the viewer and stage also stop glass casting shadows and skip its outline hull
+(`userData.glass` marks it). The workbench's fixed-view renders use the same finish. In an ID
+render, glass is left out unless a `parts` or `materials` key names it, so the pixels count what is
+seen through it; named glass draws as an opaque occluder. `verify-unreal` lists every glass
+material in `report.glass` and fails if Interchange imported one opaque (glTF BLEND becomes an
+`MI_Default_Blend` instance, transmission `M_Transmission`, both `BLEND_TRANSLUCENT`; checked with
+UE 5.7.3). `node scripts/check-glass-browser.mjs [model.glb]` proves the viewer, stage, a plain
+three.js page, the ID-render rule and the workbench renders in Chromium, and with a GLB counts the
+face pixels seen through its glass from the front, side and three-quarter views.
+
+**Enclosures hold what they declare at every pose.** A node whose glTF extras say
+`"encloses": {"parts": [...], "clearance": 0.015, "maxClearance": 0.04, "with": ["helmet-shell"]}`
+(from Blender: `obj['agent_meshes_extras'] = json.dumps({...})`) is checked by `build` and by
+`verify <glb>`: every vertex of every named part, posed as three.js poses it (skin and morphs) at
+rest, at each keyframe and 24 phases of every clip and with each morph target at full weight, must
+stay `clearance` metres inside the node's surface plus the `with` meshes; `maxClearance` also fails
+an enclosure far bigger than what it holds. Failures name the part, the pose and the millimetres
+(`helmet-glass: left-ear pokes 3.2 mm outside the glass at clip walk @ 0.45 s`), and
+`verification.json` keeps the report. Inside is judged from the enclosure's centroid (it must be
+star-shaped, as bubbles and domes are); an open neck is not glass.
+
 ## Repeatable build
 
 Keep a `build.json` beside the source in the project:
@@ -43,6 +73,40 @@ is replaced only when it is marked as owned by that config, so never point `outp
 directory holding other work. A failed build leaves the previous output in place; after a crash,
 confirm the process is gone before removing the adjacent `.agent-meshes.lock`.
 
+## Fast Blender previews while iterating
+
+`mesh preview <build.json|source.py>` runs a Blender-authored source's `build()` headlessly and
+renders Workbench PNGs from fixed cameras in the same run. It exports no GLB and starts no browser,
+so use it for every look while you shape a model, and keep the full build for final checks.
+
+```bash
+mesh preview asset-src/mara/build.json --views head --shading matcap,wire,cavity   --pose rest --pose blink:eyeBlinkLeft=1,eyeBlinkRight=1 --pose jaw:jawOpen=1 --sheet
+```
+
+- **Views.** `front`, `q34`, `side`, `below`, `above`, `close` (eyes to mouth), `eyes`, `mouth`, `mouth-q34`
+  and `back` frame the head, which is the mesh with face shape keys, or `--target <pattern>`. `body-front`, `body-q34`,
+  `body-side` and `body-back` frame everything. `head` and `body` are aliases for those sets.
+- **Shadings.**
+  - `matcap` shows lumps and ripples.
+  - `zebra` shows a reflection-stripe matcap; kinks in the stripes are curvature breaks.
+  - `wire` shows edge flow over the matcap.
+  - `cavity` shows creases and ridges.
+  - `color` shows material colors.
+  - `all` renders every shading.
+- **Poses.** `--pose name:key=w,...` sets shape-key weights and can be repeated. `--shape` adds
+  weights to every pose. Armatures stay in the rest pose unless you pass `--posed`.
+- **Other options.** `--hide 'hair*'` leaves meshes out. `--size` sets the square size in pixels.
+  `--sheet` adds `sheet.png`, with one row per pose.
+- **Output.** Files are named `<pose>-<view>-<shading>.png`, plus a `preview.json` manifest, in
+  `--out` (default `preview/` beside the source).
+
+`mesh preview --worker` keeps one headless Blender running and waits on a queue folder. Later
+`mesh preview` calls hand their job to it and skip Blender's startup, which is slow through the
+Store launcher, and edited helper modules are re-read for each job. `--no-worker-use` forces a fresh
+Blender run, and `mesh preview --stop-worker` stops the worker after its current job. Without a
+worker, every preview runs a one-shot Blender. The build time of the source itself is not saved: a
+character's face construction still takes its minute.
+
 ## Optional Blender refine
 
 ```json
@@ -57,6 +121,27 @@ The refined GLB is verified again. A build that asks for refinement fails when B
 missing instead of shipping a coarser model. Renders still come from the unrefined project.
 Subdivision multiplies vertex count by about four per level, so keep shell resolution modest
 (around 44) on a model you will refine, and check the GLB size afterward.
+
+## Garment penetration check
+
+```text
+mesh check-garments character.glb
+mesh check-garments character.glb --clips jog --samples 32 --tolerance 0.003 --json
+```
+
+Samples every clip of a skinned GLB at evenly spaced phases (16 by default), poses each mesh as
+three.js skins it, and reports every place one part pushes into another: a lifted thigh tearing
+through a belt, a hand sinking into a hip, a boot cuff driving into the leg. A vertex counts when it
+was outside another closed part at rest and is inside it by more than the tolerance (2 mm) at a
+phase, so layers seated into the body at rest are never reported. Garments are `layer-*`, gloves,
+boots and outsoles by default (`--garments <regex>`); garment-vs-garment, garment-vs-body and
+garment self-folds (a surface folding through its own volume, measured against cloth more than
+3 cm away along the rest surface, and at most the cloth over it along its normal) are checked.
+The rest pose itself fails when two garments cross, each hiding a patch of the other's outward
+surface (a trouser leg wider than the boot shaft round it shows through in jagged patches);
+`--crossing-vertices` (8) and `--crossing-depth` (0.004 m) size that patch. `--ignore <regex>` leaves parts out. The JSON lists each
+intrusion by clip, phase, part pair, vertex count, depth and the deepest vertex's rest and posed
+position, plus the worst per pair; it exits 1 with one `FAIL` line per pair otherwise.
 
 ## Unreal import check
 

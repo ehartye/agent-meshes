@@ -1,5 +1,126 @@
 # Blender authoring helpers
 
+An authoring source may declare `EXPORT_ANIMATION_MODE = 'NLA_TRACKS'` when
+armature and shape-key actions must play together. Give their NLA tracks the
+same clip name: the exporter combines them into one GLB animation. The default
+remains `ACTIONS`. Direct callers can use `export_glb(path, objects,
+animation_mode='NLA_TRACKS')`; other values are rejected.
+
+## Expressions on an existing sculpt
+
+`agent_meshes_sculpt_face.add_sculpt_face(body, arm, objects, eyes,
+head_min_z=..., mouth_center=..., attachments=...)` fits bilateral eyelids to
+the original skin and adds blink/squint/wide, brow and smile morphs. Supply the
+two eyes as dictionaries with measured `center`, `min` and `max`, and the mouth
+center from the sculpt's profile. The face is centered on X, Z-up, -Y forward;
+skin and disconnected eyeballs use material indices 0 and 1 by default.
+`head_min_z` excludes the neck/body from the solve. Optional skinned eyebrow or
+short-beard objects join the body so their expressions export on one morph mesh.
+
+The lid solve uses only front-visible exterior skin, then carries nearby socket
+lining with it. Garments and eyeballs cannot drive the solve. Inspect rest,
+partial/full blinks and oblique views: a valid export is not an eye-coverage test.
+The report includes measured eye margins and maximum rest adjustment.
+The current angular solver can leave small canthus gaps and a faceted closed
+rim on coarse sculpts. Oren's review still exposes one of 374 front eye rays at
+full blink; narrowing the corner fade and snapping to a nearby vertex did not
+resolve it. Do not treat this helper as full face-contract acceptance.
+
+Matching NLA tracks embed facial performances in the existing body clips; walk
+repeats twice and jog three times to allow an occasional blink independent of
+each footfall. Export with `NLA_TRACKS`. `blink_phases` can override the default
+timing per clip. `expression_fields` and `performance_samples` are NumPy-only
+helpers for anatomical fields and loop-neutral timings. This focused helper is
+not the full ARKit contract: gaze, jaw, mouth interior and speech are not supplied.
+
+## Cutting weighted clothing
+
+`agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,
+offset=0, shape=None, component=None)` clips a weighted sculpt into garment panels. This pure
+NumPy helper returns `vertices`, `faces`, `weights` and `covered_faces`. Each
+scalar field has one value per source vertex; all fields must be nonnegative
+in the retained region. For example, `[z - waist, neckline - z]` selects a band.
+Use convex source polygons; fields are interpolated linearly across each face.
+Position, normal and bone weights interpolate together at cut edges. Coincident
+source seams stay separate; output weights are normalized to four influences.
+
+`offset` is a distance in metres or a function of the source position. Supply
+`shape(position, unit_normal)` for authored drape instead. Construct Blender
+objects and fabric thickness in the caller. `covered_faces` identifies fully
+covered source polygons, **not** a deletion policy: preserve skin inside open
+sleeves and collars so oblique views cannot see hollow appendages. Materials,
+interior coverage and collision/contact review remain the author's responsibility.
+
+Use `component='largest'` when the cut should retain one connected patch, such
+as an outer beard surface rather than disconnected mouth-interior islands. It
+chooses greatest triangulated output area after shape/offset, not vertex count;
+exact ties retain the earliest source patch. Faces connect through shared vertex
+indices; coincident seams are not welded, so a deliberately split surface can
+have multiple components. Omit the option for paired or multipart garments.
+Vertices, faces and skin rows are compacted together. `covered_faces` excludes
+source faces belonging to discarded patches, so those skin faces remain visible.
+This selects topology, not semantic exterior anatomy; inspect the chosen patch.
+
+## Fitting a reference rig
+
+`agent_meshes_landmarks.humanoid_landmarks(vertices, profile)` measures a centered
+A-pose sculpt using explicit source heights and returns `Landmark` values for
+`proportion_targets` / `reproportion`. Declare `crotch`, `neck`, `chin`, a positive-X
+`shoulder` XYZ point, and height dictionaries: `legs` (ankle, calf, knee, thigh, hip),
+`arms` (upperarm, elbow, forearm, wrist, hand), `torso` (for example hips, waist,
+chest, upperchest), and `head` (brow, cheek, jaw). `fingertip_x` isolates the hands
+from the trunk. Units are metres, Z up, -Y forward. The sculpt must be centered on X.
+
+`section(vertices, height, side=0, part='all', half=.008, separation=.02)` exposes
+the measurement primitive. `inner` / `outer` require side +1 or -1 and separate
+clusters by a gap larger than both the minimum separation and ordinary vertex
+spacing. Missing bands and unseparated outer limbs reject explicitly. Inner leg
+sections exclude hands hanging at hip height. Sparse geometry may require a
+larger band or different authored measurements; this is not anatomy detection.
+Inspect the sculpt and fitted skeleton together before accepting joint pivots.
+
+`agent_meshes_retarget.rig_from_reference(body, reference_glb, correspondence, clips, ...)`
+fits a reference skeleton and transfers its skin weights onto a sculpted mesh. Coordinates
+are world-space Blender XYZ, Z up. `correspondence` maps reference bone names to target
+joint heads; `directions` poses the reference limbs to the target's rest stance. `limbs`
+adds matched cross-section rings to the fit. The imported reference is explicitly reset
+to rest before fitting: Blender's initially selected animation must not become the bind pose.
+
+Use `regions=[['clavicle_l'], ['clavicle_r'], ['thigh_l'], ['thigh_r']]` on a humanoid
+to contain transferred influences along the skin surface. Region support fades over 4%
+of body extent at attachments, including the trunk, so the spine cannot hold the middle
+of an arm in place. `smooth` controls weight smoothing before region isolation.
+
+Where the donor still transfers weights across anatomy, constrain the allowed bones:
+
+```python
+weight_limits=[{'bones': ['neck_01', 'head'], 'fallback': 'neck_01',
+                'point': (0, 0, 1.27), 'normal': (0, 0, 1), 'band': .02}]
+```
+
+Each limit keeps the allowed bones' relative weights beyond a world-space plane, blending
+over `band` metres with smoothstep. Vertices behind the plane are untouched; vertices with
+no allowed weight use the named fallback. Limits run after region isolation and before
+`rigid` overrides and clip grounding. The standalone helper is
+`restrict_weights(body, bones, fallback, point, normal, band=.02)`. Limits and rigid
+overrides keep at most four influences, preserving their anatomical blend's total share
+so a small corrective weight survives GLB export. Author planes against
+the final sculpt and inspect their boundaries in motion; a flat head plane can cut through
+a forward-projecting chin. This is an explicit anatomical constraint, not automatic anatomy detection.
+
+`neutral={'source': ('Idle_Loop', 0), 'bones': ['upperarm_l', 'upperarm_r'],
+'target': {...}}` adjusts explicitly named target joint directions while carrying the
+reference motion around that neutral. Descendants without an explicit direction retain
+the reference's relative articulation, including finger grips. `ground={clip: 'lowest'}`
+uses one vertical offset per clip, preserving the reference's flight phase.
+
+Review the exported skin and the skeleton throughout every clip. The comparison workflow
+in the repository README produces a synchronized, offline review page. Blender regressions
+run with `npx vitest run tests/retarget-blender.test.ts`; the NumPy helpers run with
+`python tests/retarget.py`.
+
+## Creating geometry
+
 The build runner adds this directory to Python's import path. Import the module
 as `agent_meshes_author`. Blender is only needed when creating/exporting objects;
 the sweep geometry function uses the Python standard library.
@@ -39,6 +160,16 @@ glow, such as a robot's lens glass or antenna bulb; glTF exports it as
 `emissiveFactor`, plus `KHR_materials_emissive_strength` when the strength is
 above 1. `linear_color(value)` does the hex conversion on its own. `make_mesh(name, vertices, faces, material=None)`
 creates a named mesh with smooth side faces and flat caps.
+
+Glass: `material(name, color, ..., opacity=1, transmission=0, ior=None, double_sided=None)`.
+`opacity` below 1 sets the Principled BSDF alpha and the blended render method, which Blender's
+glTF exporter writes as `alphaMode: BLEND` with the opacity in the base color alpha;
+`transmission` sets Transmission Weight (`KHR_materials_transmission`) and `ior` the IOR
+(`KHR_materials_ior`). Glass is double-sided unless `double_sided=False`; an opaque material keeps
+Blender's default. `glass_settings(...)` validates the same arguments without Blender. A clear
+visor is `material('visor', '#eaf6ff', roughness=.04, opacity=.16, ior=1.5)`;
+`tests/fixtures/glass/glass_helmet.py` builds one and `tests/glass-blender.test.ts` checks its
+export and, when Unreal is installed, that Interchange imports it translucent.
 
 `shape_key(obj, name, vertices)` creates a named 0..1 morph at an explicit zero
 rest weight. It checks finite coordinates and equal vertex count; authors must
@@ -156,6 +287,28 @@ fixture, validates its exported GLB, and loads the public viewer offline. It che
 normalized exported weights, actual deformed vertices, pinned root vertices,
 changed rendered pixels and return to rest. Screenshots and measurements are
 written under ignored `.agent-meshes/skin-proof/`.
+
+## The hm08 base head (`agent_meshes_hm08`)
+
+`agent_meshes_hm08` loads MakeHuman's CC0 hm08 head as plain data. It is pure numpy, needs no Blender, and uses
+no MPFB or GPL code.
+
+- **Data.** `data/hm08/hm08_head.npz` holds the head crop and 316 sparse targets: macros, features and the
+  `faceunits01` ARKit shapes. `SOURCES.json` pins the sources and their SHA-256. To regenerate it, run
+  `python scripts/hm08-vendor.py`.
+- **Stylize target.** `data/hm08/stylize01.target` is derived once from Blender Studio's CC0 stylized head. To
+  regenerate it, run `python scripts/hm08-stylize.py --blender <blender>`.
+- **Loading and shaping.** `load_head()` returns an `Hm08Head`. `head_shape(years, gender, stylize, shape)` composes
+  the macros (`macro_weights`), the features (`feature_weights`, over the `FEATURES` controls) and the stylize target.
+  `to_blender`/`from_blender` convert between hm08's frame and Blender's.
+- **Measuring.** `face_landmarks(vertices, faces, hm08_eyes(head, vertices))` measures the eyes, profile, mouth and
+  outline. `depth_map`, `eyeball_shows`, `eye_crease_folds` and `flipped` are the checks the face build uses.
+- **Building a face.** `character_face(years, gender, center, radii, shape, neck_z='chin', neck=...)` fits the head
+  to an envelope, crops and grafts the neck, and returns the vertices, the triangles and every ARKit morph. The
+  lids are rebuilt by `lid_morphs`, the jaw by `RigidJaw`, and `unfold_morphs` removes flips. It also returns the
+  eyes, landmarks, mouth-interior faces and jaw.
+
+`recipes/stylized_face.py` is the consumer. The design is `docs/design/parametric-head.md`.
 
 ## Face-rig helpers (`arkit-face/1`)
 
@@ -674,7 +827,16 @@ push the skin near `center` by `offset`, fading smoothly to zero at `radius` (on
 distance, or an (x, y, z) triple for an ellipsoid). `symmetric_offsets(...)`
 returns the (Left, Right) pair, mirrored across x = 0; `mirror_x(point)` mirrors
 one point. Brows, cheeks and mouth shapes are usually one or two of these per
-side. `ellipsoid_geometry(center, radii)` is a closed head blank, and
+side. `smooth_surface(vertices, faces, weights, iterations=6)` smooths a surface
+(Taubin: each iteration shrinks toward the neighbours' mean and inflates back, so
+round forms keep their size); a vertex's weight (0..1) scales its motion and 0
+holds it still. It is linear in the positions, so `smooth_skin(obj, weights,
+iterations)` smooths a skin's rest shape and every shape key alike and the morphs
+still blend: run it after the shape keys, before `join_face_parts`, with weights 0
+on the lid margins, the eye holes and the mouth's seam, to soften the creases a
+construction leaves (a lid patch's rim, the bridge between two eye holes).
+`keep=['jawOpen']` carries the named keys' motion unsmoothed on the smoothed rest
+(a jaw whose motion, smoothed, would spread above the upper gum line). `ellipsoid_geometry(center, radii)` is a closed head blank, and
 `cut_faces(vertices, faces, remove)` drops the faces whose centroid
 `remove(centroid)` accepts (a hair cap's front, a chin plate) and reindexes the
 rest. **It returns a 3-tuple** `(vertices, faces, mapping)`, where `mapping[old]`
@@ -890,6 +1052,14 @@ for name, targets in join_geometry(beads)['morphs'].items(): shape_key(nose, nam
 parts.append(nose)                             # then join_face_parts as usual
 ```
 
+`follow_skin(part, skin, reach, skip=())` is its counterpart for parts tucked
+*behind* the skin, such as a mouth cavity's rim behind the lips: each vertex within
+`reach` of the skin takes the skin's delta at its nearest point, fully near the skin
+and fading to none at `reach`, so the deep back of the bag stays put. A smile that
+draws the mouth corners back no longer pushes the skin through a still cavity rim
+(a dark line round the corners). Skip the `jawOpen` a `JawHinge` already gives it:
+`follow_skin(mouth_cavity_geometry(...), head, reach=.03, skip=['jawOpen'])`.
+
 A chin wart rides `jawOpen` the same way. A part can sit on another attached part:
 `attach_to_skin(bead, ball)` seats a nostril on a nose ball that was itself
 attached to the head (`ball` is the ball's geometry dict with its morphs), and the
@@ -977,3 +1147,299 @@ leaves the binary chunk untouched. three.js exposes the result as
 Check the exported head with `node scripts/agent-meshes.mjs verify model.glb
 --contract arkit-face/1`, and look at it with `node scripts/check-face-rig-browser.mjs`
 (see the main README).
+
+## Digitigrade plant-kin anatomy
+
+`agent_meshes_sprout_kin.anatomy(height=1.7, age='adult')` returns measured
+Z-up, -Y-facing landmarks for a pear trunk, S-neck, bulb head, three-digit hands,
+raised hocks, long metatarsals, padded toes and a counterweight tail.
+`geometry(...)` returns deterministic closed source parts without Blender.
+Child proportions enlarge the head relative to height and shorten the limbs;
+the adult crest has five broad fronds and the child's has three.
+
+`build_anatomy(height=..., age=..., skin=..., crest=..., clay=False)` returns
+`(objects, anatomy)` in Blender. It fuses the skin into one closed component and
+keeps eyes, tympana and fronds editable. Geometry generation is parameterized by
+height to the crest tip, before voxel smoothing. Run `python tests/sprout_kin.py`
+for the anatomical contract. This is a static foundation: eye sockets/lids,
+facial animation, gait and garments are not provided by this helper.
+
+`agent_meshes_sprout_rig.rig_anatomy(objects, anatomy, diagnostics=True)` binds
+that anatomy and returns `(objects_including_armature, report)`. The adult has
+50 bones and the child 46: separate spine and neck joints, fingers/thumbs,
+hocks/metatarsals/toes, a two-joint tail, eye bones and two bones per frond.
+`skeleton(anatomy)` and `weight_function(anatomy)` also work outside Blender.
+The latter returns a function accepting a point and named source region.
+
+The fused body is mapped back to its source surfaces before skinning. Weights
+blend along that region's joint chain, smooth along real mesh edges, and retain
+at most four influences. The bulb head stays rigid. Skin meshes export at scene
+root with armature modifiers, avoiding an ordinary parent transform on top of
+skinning. Eye bones are `eye_L`/`eye_R`; mesh names are distinct (`eye_l`/`eye_r`).
+
+Set `EXPORT_ANIMATION_MODE = 'NLA_TRACKS'` in the authoring script to export the
+six two-second diagnostic clips: `check-arms`, `check-legs`, `check-legs-right`,
+`check-spine`, `check-neck-tail`, and `check-hands-crest`. These isolate joint
+deformation; they do not enforce foot contact, balance or locomotion. Pass
+`diagnostics=False` to bind without adding clips. Run
+`python tests/sprout_kin_rig.py` for hierarchy, weight isolation and joint
+continuity checks; inspect rendered sequences as well as the exported skeleton.
+
+`agent_meshes_sprout_gait.bake_gaits(objects, anatomy, kaiju_reference_glb)` adds
+`walk` and `jog` to the bound rig. It samples Mesh2Motion's CC0 kaiju `Walk`,
+smooths its periodic pelvis/hock curves, and solves the fitted leg lengths toward
+explicit toe trajectories. Stride follows leg length; lift follows body height.
+Foot return begins after ground clearance, with continuous contact velocity.
+Requested lift is fitted against the actual pelvis motion and leg lengths to keep
+the knee at least 60 degrees open. A smooth sine-to-the-fourth swing envelope reduces
+peak lift while retaining the lift needed for reach near the swing ends; planted
+toe targets stay unchanged. `fit_swing_lift(hips, zero_lift_hocks, lifts, upper,
+lower, minimum_angle=60, attenuation=None)` exposes this constraint fit for other
+trajectories. Attenuation values are in [0,1]; the fitted lift factor is
+`1 - attenuation * (1 - returned_scale)`. Omitting attenuation fits a uniform
+scale. Infeasible targets raise instead of silently moving grounded feet.
+The returned report records source SHA-256, reference phase and clip metadata.
+Per-clip metadata includes requested/max fitted lift, peak scale and envelope.
+The GLB also receives `agent-meshes/gait/1` contact/travel metadata.
+
+The bake uses 60 fps and retimes existing NLA strips to preserve their duration.
+Natural hand orientation is shared by source geometry and joint positions:
+thumbs point forward and palms curl inward. The gait analyzer recognizes the
+raised-hock `metatarsal_l/r` bones and samples their skinned toe descendants.
+Run `python tests/sprout_kin_gait.py` and `mesh gait model.glb --clip walk
+--gait walk` (also `jog`). Passing movement ranges does not prove reference-curve
+correlation, collision clearance, visual approval or completed facial/clothing work.
+`npx vitest run tests/sprout-swing-blender.test.ts` checks both adult and child
+rigs against captured reference rhythm, including interpolated poses.
+
+
+## Hanging cloth flaps
+
+`agent_meshes_cloth_flap.rig_flaps(body, armature, specs, obstacle_bones,
+gap=.008, loop_clips=())` adds kinematic waist-hinge bones and keys them into
+existing single-strip NLA clips. Each spec contains a new `name`, an existing
+`parent`, rest-armature `hinge` XYZ, `length`, `half_width` and `direction`
+(-1 toward -Y/front, +1 toward +Y/back). Coordinates are Blender Z-up.
+Call it after the body motion is baked, before binding the garment. Supply
+cyclic clip names explicitly through `loop_clips`.
+
+Body vertices with more than 30% combined influence from `obstacle_bones`
+provide the clearance envelope. At scene-frame intervals they are transformed
+back through the posed parent into its rest space. A temporal maximum followed
+by a positive convolution smooths the required outward angle without reducing
+sampled clearance. Angles above 85 degrees reject an unsuitable fit. The return
+report records selected vertex count, requested gap and each clip's angle range.
+Body animation tracks remain intact. The caller blends the hanging panel onto
+the new bone below its waist attachment; pockets should inherit the panel's
+weights, not borrow weights from the body beneath it.
+
+This is a hinged garment, not a cloth simulator or a general collision solver.
+The pure clearance function covers points below the hinge within the stated
+width and reach. Curved panels, blended attachment vertices, tails, arms and
+inter-frame motion need independent posed-surface checks. Run
+`python tests/cloth_flap.py`, inspect sampled body/garment intersections and review
+motion views before delivery. Keep skinned garments at scene root after binding.
+
+
+## Relaxing garment skin weights
+
+`agent_meshes_skin_relax.relax_weights(vertices, faces, weights, free,
+iterations=150, max_influences=4)` relaxes a named skin-weight field along
+mesh edges. `free` is one boolean per vertex; false rows anchor the iteration.
+Inverse edge-length conductance limits abrupt weight changes on short edges.
+Disconnected surfaces never exchange weights just because they are close.
+The result is normalized and pruned to the requested influence limit, including
+anchor rows; supply already normalized, bounded rows to preserve anchors exactly.
+
+`relax_mesh_weights(mesh, free, iterations=150)` adapts this to a Blender mesh
+with exactly one armature modifier. It changes only deform-bone groups and
+returns vertex count, free count and iteration count. Apply it to the garment's
+single surface **before** adding thickness, so paired cloth layers inherit
+identical weights. Pin rigid regions and attachment boundaries deliberately.
+Run `python tests/skin_weight_relaxation.py` for the pure regression checks.
+
+Relaxation reduces weight discontinuities; it does not repair garment topology
+or guarantee clearance. An offset surface can bridge a narrow arm/torso gap
+before skinning begins. Check rest cross-sections, body contact, cloth self-contact
+and matching motion close-ups independently before delivering a garment.
+
+
+## Fitting garment offsets through animation
+
+For clothing cut from an already corrected and bound body, retain the body's
+actual vertex weights. `cut_surface` returns normalized interpolated source
+`normals` alongside its vertices, faces and weights; these directions remain
+source normals even when a custom shape changes positions.
+
+`agent_meshes_skin_samples.sample_deform_poses(armature, samples=33, clips=None)`
+samples isolated, single-strip NLA tracks in global scene time, respecting strip
+scaling. It returns `poses`, per-sample clip/phase/frame metadata, and measured
+matrix variation by clip. It rejects static selected clips and restores the
+active action/slot, NLA flags, pose position and frame/subframe. Matrices act on
+rest geometry in armature-local space; reconcile mesh transforms first.
+
+`agent_meshes_garment_partition.partition_surface(vertices, triangles, normals,
+weights, fields, component=None)` cuts the donor and garment on shared vertices.
+It returns `source` (the complete subdivided donor) and `garment` (the positive
+intersection of all fields). Both have vertices, fixed triangle faces, unit
+normals and weights. Replace the donor with `source` **before** fitting the
+garment; keeping the original donor leaves the cut-boundary skinning mismatch.
+New garment vertices use exactly the donor's new positions and weights, so their
+motion agrees after ordinary GLB skinning. The rest surface and original vertices
+are preserved; donor topology and interpolated motion at cuts change.
+
+`source.provenance` maps each new vertex to original vertex coefficients, and
+`source.source_faces` maps each triangle to its input face. Transfer UVs, colors,
+morphs and material assignments through these mappings when present; this pure
+geometry helper does not update Blender objects. `garment.source_vertices` maps
+garment vertices to the subdivided source. Normals supplied by the caller should
+also be carried to the replacement donor for consistent shading. Input triangles
+must have consistently wound manifold edges and one to four influences per vertex.
+Distinct-index seams remain separate. All field boundaries subdivide both sides;
+the donor is never cut away. `component='largest'` selects only the garment patch.
+Near-identical provenance coefficients within 2e-12 share a point, and an edge
+incidence check rejects unresolved cracks. More fields add topology. This fixes
+shared boundary motion, not offset-shell clearance or cloth self-collision.
+
+`agent_meshes_tessellation.triangulate_surface(vertices, faces)` freezes Blender's
+rest loop triangles and returns `faces` plus `source_faces` (one original polygon
+index per triangle). It does not move vertices or change caller data, and removes
+its temporary mesh. Non-triangle input needs Blender; existing triangles pass
+through unchanged. Cut fitted clothing from the donor's frozen triangles so a
+warped quad cannot acquire a different diagonal when copied, clipped or reversed.
+Reuse those indices in posed checks; rebuilding a BVH from posed quads can test
+a different surface than the exported triangles. Degenerate/self-crossing source
+polygons still require author repair; this is tessellation, not mesh repair.
+
+`agent_meshes_garment_fit.fit_surface_offsets(vertices, faces, normals, weights,
+reference_vertices, reference_faces, reference_weights, poses, offset=.006,
+minimum_offset=.0007, thickness=.0006, iterations=24)` fits a separate offset
+per garment vertex along its supplied normal. `poses` is a nonempty list of
+bone-name to 4×4 deform-matrix dictionaries; the helper also checks identity/rest.
+It reduces offsets where sampled body or cloth intersections occur, diffusing
+the reductions across connected edges. Weights and motion are not adjusted.
+Normals and weight totals are normalized, with no influence pruning; rows must
+have at most four influences. The minimum offset must exceed half the thickness.
+
+The result contains `vertices`, `faces`, `source_faces`, `weights`, source `offsets`, and `report`.
+Positive thickness creates a closed shell along the same source normals, with
+outer vertices followed by inner vertices and boundary rims. This avoids
+recalculating extrusion directions from tiny clipped edge triangles. Shell
+sources must be consistently wound and manifold. Both source and reference
+polygons are tessellated once before fitting; returned outer/inner surfaces and
+rims all use fixed triangles. `source_faces` maps output triangles to original
+input polygons, with `None` for rim triangles. Inputs are not modified.
+
+Check `report.converged` before accepting the fit. The report includes initial
+and final maximum triangle-pair counts (`pair_unit: 'triangle'`) and the stopping
+reason. Counts are not directly comparable to older polygon-pair reports.
+Each body example's `reference_face` identifies the original input polygon and
+`reference_triangle` its frozen triangle; `garment_face` indexes returned faces. Some
+garments cannot be repaired within the offset bounds: inspect and repair the
+surface or fit instead of reducing the minimum blindly. A converged result
+proves only that the supplied samples have no tested surface intersections.
+It does not detect contained volumes, guarantee a distance gap or between-sample
+clearance, or approve the appearance. Verify the exported model at additional
+phases and inspect the openings, thickness, attachments and silhouette.
+
+Run `npx vitest run tests/garment-fit-blender.test.ts tests/skin-samples-blender.test.ts tests/surface-triangles-blender.test.ts`
+for the Blender regression fixtures and `python tests/garment_cuts.py` for cuts.
+
+## Selecting anatomical skin sources
+
+`agent_meshes_sprout_rig.skin_regions(anatomy, include=None)` returns the shared
+sprout-kin skin source surfaces. A nonempty collection of exact names restricts
+that set; unknown names, eyes and crest surfaces are rejected. `None` selects
+all skin regions used by the body rig. Coordinates use the anatomy's height
+and age; returned surfaces remain in rest-space Blender Z-up coordinates.
+
+`anatomy_weights(mesh, anatomy, regions=None, smooth=5, hip_seams=False,
+neck_seam=False, waist_seam=False)` queries those selected
+surfaces before evaluating the region's anatomical weight function. It returns
+`(rows, report)` without binding or moving the mesh. The report names the source
+regions actually used, vertex count and maximum influence count. Rows diffuse
+along mesh edges for the requested number of passes, then keep four normalized
+influences. Bulb-head rows stay pinned. The body rig calls the same helper with
+all skin sources. With `hip_seams=True`, a geometric band around the hips blends
+pelvis and thigh weights along connected edges, avoiding the sharp weight switch
+where fused trunk and thigh source surfaces meet. The band stops above the knee
+blend; knee and tail influences do not diffuse into it. This mode requires trunk
+and both leg source regions and reports `hipSeamVertices`. Other body weights,
+rest geometry, bones and clips are unchanged. `rig_anatomy` enables this mode.
+
+With `waist_seam=True`, a band of trunk skin within `0.075 * scale` above and
+below the lumbar joint receives 300 topology relaxation passes. This spreads
+the short pelvis/spine blend over the deep pear torso, preventing the local
+fold exposed by the spine diagnostic. Adjacent limbs and skin outside the band
+keep their weights; rest geometry and motion are unchanged. The flag requires
+the trunk source, reports `waistSeamVertices`, and is enabled by `rig_anatomy`.
+`npx vitest run tests/sprout-waist-blender.test.ts` checks child and adult bodies
+at 65 phases of each of eight clips, combining local signed-area diagnostics
+with actual nonadjacent waist contacts and preservation checks. These sampled
+checks do not establish continuous collision freedom or costume acceptance.
+
+For a fitted overall, use `regions=['trunk', 'leg_l', 'leg_r']` so nearby arms,
+neck and tail cannot donate weights. Bind the returned rows to the existing
+armature with `bind_skin`. Garment geometry must also exclude unwanted source
+surfaces; restricting weights cannot repair a cloth envelope that already
+incorporates a neighboring arm. Body/cloth clearance and deformation still
+need independent posed checks. Run `python tests/sprout_region_skin.py` and
+`python tests/sprout_kin_rig.py`; exercise the Blender adapter with a real build.
+`npx vitest run tests/sprout-hip-blender.test.ts` checks the actual adult and child
+body surfaces through both leg diagnostic clips when Blender is available.
+The hip repair does not resolve calf/thigh contact from deeply folded jog poses
+or the separately observed neck folds.
+
+## Raised garment neckbands
+
+`agent_meshes_neckbands.neckband_mesh(lower, upper, thickness=.002, ribs=0,
+rib_depth=0, closed=True)` lofts a rounded fabric band between matching rest-space
+Z-up contours. Pass counterclockwise points viewed from above without repeating
+the endpoint. Upper points must be above their corresponding lower points.
+Closed bands form continuous crew necks; open bands receive end caps for jacket
+stands. The result is `(vertices, faces)` for `make_mesh`.
+
+Ribs stay aligned along the band height and leave the inner wall smooth. Supply
+at least four segments per rib (six or more gives smoother visible ridges).
+Typical shirt rib depth is sub-millimetre; use the character's actual scale.
+Fit contours to the real garment edge, particularly when an offset jacket
+surface moves its neckline above the body's original cutting plane. Assign
+weights from the appropriate neck/chest garment surface before export.
+
+The pure helper creates geometry only. It does not infer a neckline, remove hidden
+skin, bind a skeleton or guarantee posed clearance. Inspect the complete ring,
+front opening, underside and moving neck. Run `python tests/garment_neckbands.py`
+for closed topology, capped openings, rib alignment and invalid-input checks.
+
+In Blender, `fit_neckband(body, garment, lower=..., upper=..., clearance=.009,
+opening_width=None, surface_shape=None, ribs=0)` returns a dictionary with
+`vertices`, `faces` and normalized `weights`. Use it after shaping the garment
+and before attaching parts that inherit garment weights. Both objects must share
+a local Z-up frame, front -Y; the garment must have applied Solidify topology
+with paired vertex halves no more than 4 mm apart (`max_fabric_thickness`).
+
+For a shirt, leave `opening_width=None` for a complete ring and set `ribs`.
+For a jacket, pass the front opening's body-space half-width and the same
+`surface_shape(position, normal)` function used to offset the jacket. The fitter
+solves each endpoint separately on the body and lifts the stand from the shaped
+edge, embedded 2 mm by default. Set the lower/upper heights and dimensions for
+each character; these defaults are not scale independent.
+
+For an already relaxed shirt or a scooped hoodie opening, pass
+`follow_garment_edge=True` instead of `surface_shape`/`opening_width`. The fitter
+extracts closed boundary loops from the outer Solidify half, chooses the loop
+whose centroid is closest to `(center.x, center.y, lower)`, and resamples the
+actual fabric edge by arc length. Its base follows that non-planar edge, embedded
+by `embed`; `upper-lower` is the vertical band rise. The top stays directly over
+the attachment edge; body radial `clearance` is unused in this mode. Inspect the
+chosen loop and skin clearance on unusual garments; this mode requires
+closed, unbranched boundaries and is not an open-jacket selector.
+
+The base contour borrows barycentric skin weights. A 15 mm smoothing distance
+reduces weight discontinuities around the band; each vertical column shares one
+attachment row. The neighboring garment receives that field with a 35 mm fade,
+equally on both sides of its thickness. Source geometry/weights and garment
+geometry are unchanged. The fitter mutates nearby garment weights only after
+constructing and validating the fit. It does not clear hidden skin or certify
+animation clearance. The Blender fitting fixture checks endpoint placement,
+column weights, paired thickness, smoothing and preservation of distant weights.

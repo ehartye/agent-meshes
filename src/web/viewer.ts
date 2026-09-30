@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createPuppet } from '../render/puppet.ts';
 import type { Puppet } from '../render/puppet.ts';
 import { collectIdTargets } from '../render/id-render.ts';
+import { prepareGlass } from '../render/glass.ts';
 import { parseQuality } from '../render/quality.ts';
 import type { QualityInput } from '../render/quality.ts';
 import type { IdImage, IdRenderOptions } from '../render/id-render.ts';
@@ -70,7 +71,7 @@ export async function mount(container: HTMLElement, options: MountOptions) {
   const renderer = createRenderer(container, !background, quality);
   const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 200);
   const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.enabled = options.orbit ?? true;
-  scene.add(gltf.scene); gltf.scene.traverse(object => { object.castShadow = true; object.receiveShadow = true; });
+  scene.add(gltf.scene); gltf.scene.traverse(object => { object.castShadow = true; object.receiveShadow = true; }); prepareGlass(gltf.scene);
   addRoomLights(renderer, scene, quality);
   const hulls = options.outline ? addOutlines(puppet, options.outline, options.outlineColor) : [];
   const floor = options.floor ?? true ? addFloor(scene, background) : null;

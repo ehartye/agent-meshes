@@ -19,8 +19,8 @@ __all__ = [
     'lid_geometry', 'shutter_geometry', 'lid_clearance', 'COVERAGE_STATES', 'eye_coverage', 'eye_coverage_problems', 'eyeball_geometry', 'socket_geometry', 'recommended_gaze',
     'eye_window', 'lash_faces', 'lash_geometry', 'eye_hole', 'eye_holes', 'continuous_lid_edges', 'CONTINUOUS_OPTIONS', 'eye_hole_mask', 'shutter_hole', 'EYE_MATERIALS', 'EXPOSED_TEETH_MATERIAL', 'skin_brow_geometry', 'dome_brow_geometry',
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
-    'symmetric_offsets', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
-    'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
+    'symmetric_offsets', 'smooth_surface', 'smooth_skin', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'follow_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
+    'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'add_eye_bones', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
     'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
 ]
 
@@ -1125,9 +1125,31 @@ CONTINUOUS_OPTIONS = ('opening', 'meet', 'overlap', 'squint', 'squint_upper_shar
                       'lash_width', 'lower_lash_width', 'column_step')
 
 
+def _twin_shaped(shaped, point, width):
+    """`point` moved by one eye's skin shaping (`shaped`), evened out with the mirrored eye's toward the midline.
+
+    Within `width` of the midline the displacement eases from the eye's own to the mean of it and its reflection's
+    (the same shaping, mirrored), on a smoothstep that is flat at x = 0: there the shaping is left-right symmetric, so
+    a half and its mirror image meet with no crease, and farther out each eye's shaping acts alone. (Adding the two dug
+    the bridge between close-set eyes twice as deep; weighting them by size rippled where their sizes crossed.)
+    """
+    own = _sub(shaped(point), point)
+    s = 1 - _smoothstep(0, width, abs(point[0]))
+    if s <= 0: return _add(point, own)
+    reflected = mirror_x(point)
+    other = mirror_x(_sub(shaped(reflected), reflected))
+    return _add(point, _add(_mul(own, 1 - s / 2), _mul(other, s / 2)))
+
+
 def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25, lining_gap=.0001,
-             lining_rings=5, corner_margin=2, bevel=.5, style='continuous', **lid_options):
+             lining_rings=5, corner_margin=2, bevel=.5, style='continuous', twin=False, **lid_options):
     """Make a lid eye in a skin: by default the skin itself becomes the lids (`style='continuous'`).
+
+    `twin=True` evens the skin's shaping out toward the midline with the mirrored
+    eye's (at the reflected center), over half the eye's distance from it, so
+    where a socket dip reaches past the midline both eyes' dips meet there smoothly. `eye_holes` sets it: it
+    keeps one half of this skin and mirrors it, and a half shaped by one eye alone
+    meets its reflection in a crease down the brow and nose.
 
     **`style='continuous'` (the default).** The skin round the eye is rebuilt as one
     surface: it flows over the eyeball as the upper and lower lids, each lid's margin
@@ -1210,7 +1232,7 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
         unknown = sorted(set(lid_options) - set(CONTINUOUS_OPTIONS))
         if unknown: raise ValueError(f"eye_hole(style='continuous') takes {', '.join(CONTINUOUS_OPTIONS)}, not {', '.join(unknown)} (shell-lid options: pass style='shells')")
         return _continuous_eye_hole(vertices, faces, center, eye_radius, margin=margin, clearance=clearance, blend=blend, max_edge=max_edge,
-                                    socket=socket, **lid_options)
+                                    socket=socket, twin=twin, **lid_options)
     if style != 'shells': raise ValueError("eye_hole style must be 'continuous' or 'shells'")
     center = _vector(center, 3, 'Eye center')
     eye_radius = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
@@ -1229,11 +1251,10 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     # New points on the smooth surface through the skin, not on its flat faces: shaped round the eye, flat midpoints
     # shade the blank's facets as streaks radiating from it.
     points, polygons, _ = _refine(vertices, faces, near, max_edge, normals=_vertex_normals(vertices, faces))
-    pushed = 0
-    for i, point in enumerate(points):
+    def shape_skin(point):
         d = _sub(point, center)
         r = math.hypot(*d)
-        if r < 1e-12: continue
+        if r < 1e-12: return point
         target = r
         if socket > 0 and depth < r < far:
             # Draw far skin in toward `depth` near the window, fading out with angle and distance: the rim stays
@@ -1245,8 +1266,12 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
             # the drawn-in radius, so a blend wide enough to reach the socket dip meets it with no step.
             h = max(blend - abs(target - push), 0.0) / blend
             target = max(target, push) + h * h * blend / 4
-        if target != r:
-            points[i] = _add(center, _mul(d, target / r))
+        return point if target == r else _add(center, _mul(d, target / r))
+    pushed = 0
+    for i, point in enumerate(points):
+        moved = _twin_shaped(shape_skin, point, .5 * abs(center[0])) if twin else shape_skin(point)
+        if moved != point:
+            points[i] = moved
             pushed += 1
     # Pushing skin that ran inside the lids out onto the mound stretches its edges: split them again (on the shaped
     # skin's smooth surface), and keep each new midpoint out of the lids.
@@ -1396,14 +1421,21 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
     cuts the left eye's hole (`eye_left`, the character's left, +X) with `options`
     as for `eye_hole`, keeps the half of the skin at x >= 0 (clipped exactly on the
     midline) and mirrors it, so the right half, its hole, lids, window and wall are
-    the left's reflection and the midline has one row of shared vertices. The blank
+    the left's reflection and the midline has one row of shared vertices. The left
+    eye is cut with `twin=True`, so both eyes' socket dips shape that half and the
+    halves meet on the midline without a crease. The blank
     must be left-right symmetric. Returns {'vertices', 'faces', 'L': hole, 'R': hole},
     each hole as `eye_hole` returns it (indices into the new mesh), ready for
     `build_eye(..., hole=holes['L'])`, `eye_hole_mask` and the brow helpers.
     """
     eye_left = _vector(eye_left, 3, 'Left eye center')
     if eye_left[0] <= 0: raise ValueError("eye_left is the character's left eye, at x > 0")
-    left = eye_hole(vertices, faces, eye_left, eye_radius, **options)
+    # An eyeball within a fifth of its radius of reaching the midline has a hole that crosses it (checked exactly below,
+    # once the hole is cut); caught first, since the twin shaping would then fold the reflected eye's lids into this one.
+    if eye_left[0] < 1.2 * _number(eye_radius, 'Eyeball radius', 0, low_open=True):
+        raise ValueError('The eyes are so close that their holes meet at the midline: move them apart or make them smaller')
+    # Each eye's socket dip is blended with the other's, so where a dip reaches the midline the halves meet smoothly.
+    left = eye_hole(vertices, faces, eye_left, eye_radius, twin=True, **options)
     # Points within a micron of the midline lie on it (smooth refinement leaves some a few nanometres off, and a clip
     # there would add near-duplicate points).
     source_vertices = [((0.0,) + tuple(p[1:])) if abs(p[0]) < 1e-6 else tuple(p) for p in left['vertices']]
@@ -1618,7 +1650,7 @@ def _patch_rim(faces, q, level, around, step, front_face, what):
 
 def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25,
                          opening=(45, 38, 30), meet=-8, overlap=6, squint=.45, squint_upper_share=.2, wide=(10, 4), corner=1.25,
-                         thickness=None, gap=None, crease=.035, lash_width=5, lower_lash_width=2.5, column_step=2.5):
+                         thickness=None, gap=None, crease=.035, lash_width=5, lower_lash_width=2.5, column_step=2.5, twin=False):
     """`eye_hole(style='continuous')`: the skin itself flows over the eyeball as the lids (see `eye_hole`)."""
     center = _vector(center, 3, 'Eye center')
     r = _number(eye_radius, 'Eyeball radius', 0, low_open=True)
@@ -1715,11 +1747,10 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
     reach = max(inner_u) + t + blend + 2 * max_edge
     near = lambda p: math.dist(p, center) < reach or (math.dist(p, center) < far and level(p) < socket)
     points, polygons, _ = _refine(vertices, faces, near, max_edge, normals=_vertex_normals(vertices, faces))
-    pushed = 0
-    for i, point in enumerate(points):
+    def shape_skin(point):
         d = _sub(point, center)
         rad = math.hypot(*d)
-        if rad < 1e-12 or rad > far: continue
+        if rad < 1e-12 or rad > far: return point
         u = _mul(d, 1 / rad)
         push = outer_at(u)
         depth, target = 1.25 * (push + blend / 4), rad
@@ -1729,8 +1760,12 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
         if target < push + blend:
             h = max(blend - abs(target - push), 0.0) / blend
             target = max(target, push) + h * h * blend / 4
-        if target != rad:
-            points[i] = _add(center, _mul(u, target))
+        return point if target == rad else _add(center, _mul(u, target))
+    pushed = 0
+    for i, point in enumerate(points):
+        moved = _twin_shaped(shape_skin, point, .5 * abs(center[0])) if twin else shape_skin(point)
+        if moved != point:
+            points[i] = moved
             pushed += 1
 
     # Below a full cheek the skin runs away from the eye fast (the directions graze it): keep the patch's lower edge on
@@ -2757,6 +2792,45 @@ def attach_to_skin(part, skin, depth=None, tolerance=ATTACH_TOLERANCE):
     return result
 
 
+def follow_skin(part, skin, reach, skip=()):
+    """Make a part tucked behind the skin ride the skin's morphs near it, fading to none `reach` meters behind it.
+
+    For inner parts whose front edge sits just behind a moving skin: a mouth cavity's
+    rim behind the lips, a gum. A skin morph that draws the skin back (a smile pulls the
+    corners back and up) otherwise pushes the skin through the part's still rim, a
+    dark line on the face. Each vertex takes the skin point nearest it at rest and moves
+    by the skin's delta there, weighted 1 within a quarter of `reach` of the skin and
+    fading smoothly to 0 at `reach` (the deep back of the bag stays put); vertices
+    farther than `reach` from the skin take no delta. Names in `skip` (the jawOpen a
+    `JawHinge` already gives the part) are left alone. The part's own morphs are kept,
+    the skin's deltas added on top. Unlike `attach_to_skin` it neither moves the part
+    nor needs it to touch the skin. Returns a new geometry dict with `morphs`.
+    """
+    reach = _number(reach, 'Follow reach', 0, low_open=True)
+    vertices = [_vector(v, 3, 'Part vertex') for v in part['vertices']]
+    if not vertices: raise ValueError('The part has no vertices')
+    own = {name: [_vector(v, 3, 'Morph vertex') for v in targets] for name, targets in (part.get('morphs') or {}).items()}
+    skin_vertices, skin_faces, skin_morphs = _skin_data(skin)
+    index = _SkinIndex(skin_vertices, skin_faces, near=_near_box(vertices, reach))
+    feet = []
+    for v in vertices:
+        hit = index.nearest(v, limit=reach)
+        if hit is None: feet.append(None); continue
+        weight = 1 - _smoothstep(.25 * reach, reach, abs(hit[0]))
+        feet.append((index.triangles[hit[2]], hit[3], weight) if weight > 0 else None)
+    morphs = dict(own)
+    skip = set(skip)
+    for name, targets in skin_morphs.items():
+        if name in skip: continue
+        deltas = [(0.0, 0.0, 0.0) if foot is None else
+                  tuple(foot[2] * sum(w * (targets[i][k] - skin_vertices[i][k]) for i, w in zip(foot[0], foot[1])) for k in range(3))
+                  for foot in feet]
+        if max(math.hypot(*d) for d in deltas) < 1e-6: continue
+        base = own.get(name, vertices)
+        morphs[name] = [_add(p, d) for p, d in zip(base, deltas)]
+    return dict(part, vertices=vertices, morphs=morphs)
+
+
 # ---------------------------------------------------------------- skin regions
 
 def soft_offset(vertices, center, radius, offset, mask=None):
@@ -2781,6 +2855,63 @@ def soft_offset(vertices, center, radius, offset, mask=None):
         weight = 1 - _smoothstep(0, 1, q)
         if mask is not None: weight *= mask(vertex) if callable(mask) else mask[index]
         result.append(vertex if weight == 0 else tuple(vertex[k] + offset[k] * weight for k in range(3)))
+    return result
+
+
+def smooth_surface(vertices, faces, weights, iterations=6, shrink=.5, inflate=-.53):
+    """The surface smoothed (Taubin: a shrinking pass then an inflating one per iteration, so round surfaces keep their size).
+
+    Each vertex moves toward the mean of its edge neighbours by `shrink` times its weight, then away by `inflate`
+    times it; a weight of 0 holds a vertex still (a lid margin, a mouth seam, the skin round an eye hole). The
+    operator is linear in the positions, so a skin's rest shape and each morph target smoothed alike still blend
+    as before: smooth a skin's shape keys with it too (`smooth_skin`). Softens creases and ridges a construction
+    left in a skin (a lid patch's rim, the bridge between two eye holes) without moving what the weights hold.
+    """
+    vertices = [_vector(v, 3, 'Vertex') for v in vertices]
+    return _smooth_states([vertices], faces, weights, iterations, shrink, inflate)[0]
+
+
+def _smooth_states(states, faces, weights, iterations, shrink=.5, inflate=-.53):
+    """`smooth_surface` on several vertex lists of one topology at once (numpy when it is there)."""
+    count = len(states[0])
+    weights = list(weights)
+    if len(weights) != count: raise ValueError('Smoothing needs one weight per vertex')
+    weights = [_number(w, 'Smoothing weight', 0, 1) for w in weights]
+    iterations = _count(iterations, 'Smoothing iterations', 0)
+    neighbours = [set() for _ in range(count)]
+    for face in faces:
+        for a, b in zip(face, tuple(face[1:]) + tuple(face[:1])):
+            neighbours[a].add(b); neighbours[b].add(a)
+    moving = [i for i, w in enumerate(weights) if w > 0 and neighbours[i]]
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    if np is not None and moving:
+        rows = [(i, j) for i in moving for j in neighbours[i]]
+        index = np.array(moving)
+        owner = np.searchsorted(index, np.array([i for i, _ in rows]))
+        other = np.array([j for _, j in rows])
+        degree = np.bincount(owner, minlength=len(moving)).astype(float)[None, :, None]
+        w = np.array([weights[i] for i in moving])[None, :, None]
+        points = np.array(states, dtype=float)
+        for _ in range(iterations):
+            for factor in (shrink, inflate):
+                total = np.zeros((points.shape[0], len(moving), 3))
+                np.add.at(total, (slice(None), owner), points[:, other])
+                points[:, index] += factor * w * (total / degree - points[:, index])
+        return [[tuple(p) for p in state] for state in points.tolist()]
+    rings = {i: tuple(neighbours[i]) for i in moving}
+    result = []
+    for state in states:
+        points = [list(v) for v in state]
+        for _ in range(iterations):
+            for factor in (shrink, inflate):
+                means = {i: [sum(points[j][k] for j in rings[i]) / len(rings[i]) for k in range(3)] for i in moving}
+                for i in moving:
+                    f, p, m = factor * weights[i], points[i], means[i]
+                    for k in range(3): p[k] += f * (m[k] - p[k])
+        result.append([tuple(p) for p in points])
     return result
 
 
@@ -4504,14 +4635,16 @@ def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, 
 
 # ---------------------------------------------------------------- contract extras
 
-def face_contract_extras(morphs, yaw_max, pitch_max, lid_follow=None, emotions=None, exposed_teeth=(), drop_missing=True):
+def face_contract_extras(morphs, yaw_max, pitch_max, lid_follow=None, emotions=None, exposed_teeth=(), drop_missing=True, skeleton='head'):
     """Build the root-node `extras` for `arkit-face/1`: {'arkitFace': {...}}.
 
     `morphs` lists the morph names the GLB carries and must include all 21 required
     names. `emotions` defaults to the canonical concept-sheet presets; with
     `drop_missing` a preset's morph curves the head lacks are removed (gaze curves
     always stay, since they drive eye bones). `exposed_teeth` names the teeth that
-    show at rest (an empty list when none do).
+    show at rest (an empty list when none do). `skeleton='body'` declares a full-body
+    character: its `head` bone hangs under body bones instead of being the skin's root
+    (see `add_eye_bones`); the default `'head'` is a head-only rig and writes nothing.
     """
     morphs = list(dict.fromkeys(morphs))
     missing = [name for name in ARKIT_REQUIRED if name not in morphs]
@@ -4529,6 +4662,7 @@ def face_contract_extras(morphs, yaw_max, pitch_max, lid_follow=None, emotions=N
         'emotions': result,
         'exposedTeeth': list(exposed_teeth),
     }}
+    if skeleton != 'head': extras['arkitFace']['skeleton'] = skeleton
     errors = validate_face_contract_extras(extras, morphs)
     if errors: raise ValueError('; '.join(errors))
     return extras
@@ -4567,6 +4701,8 @@ def validate_face_contract_extras(extras, morphs=None):
             for curve, value in curves.items():
                 if curve not in ARKIT_NAMES: errors.append(f'extras.arkitFace.emotions.{name}.{curve} is not an ARKit curve')
                 elif not real(value) or not 0 <= value <= 1: errors.append(f'extras.arkitFace.emotions.{name}.{curve} must be in [0, 1]')
+    if face.get('skeleton', 'head') not in ('head', 'body'):
+        errors.append(f"extras.arkitFace.skeleton must be 'head' or 'body', got {face.get('skeleton')!r}")
     teeth = face.get('exposedTeeth')
     if not isinstance(teeth, list) or not all(isinstance(t, str) and t for t in teeth):
         errors.append('extras.arkitFace.exposedTeeth must be a list of names (empty when no teeth show at rest)')
@@ -4784,9 +4920,39 @@ def face_skeleton(head, eye_left, eye_right, name='Face rig', bone_length=None):
     if bpy.context.object and bpy.context.object.mode != 'OBJECT': bpy.ops.object.mode_set(mode='OBJECT')
     bpy.ops.object.mode_set(mode='EDIT')
     root = data.edit_bones.new('head'); root.head = head; root.tail = _add(head, (0, 0, 2 * length)); root.roll = 0
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return add_eye_bones(rig, eye_left, eye_right, bone_length=length)
+
+
+def add_eye_bones(rig, eye_left, eye_right, head='head', bone_length=None):
+    """Give an existing armature the contract's eye bones: `eye_L` and `eye_R`, children of its `head` bone.
+
+    This is how a full-body character carries an `arkit-face/1` face: its body
+    skeleton already has a `head` bone (under the neck or spine) that the walk and
+    jog clips turn, and the eyes, lids and mouth ride it. Each eye bone pivots at its
+    eyeball center (world coordinates; the rig's transform is honored), points up
+    (+Z) with zero roll like `face_skeleton`'s, and is not connected, so it adds no
+    keyframes and follows the head in every clip. Declare the rig with
+    `face_contract(rig, objects, ..., skeleton='body')`. Returns the armature.
+    """
+    import bpy
+    if getattr(rig, 'type', None) != 'ARMATURE': raise ValueError('add_eye_bones needs an armature object')
+    eye_left, eye_right = (_vector(p, 3, label) for p, label in ((eye_left, 'Left eye'), (eye_right, 'Right eye')))
+    if eye_left[0] <= eye_right[0]: raise ValueError("eye_L is the character's left eye and must have the larger x (+X)")
+    if rig.data.bones.get(head) is None: raise ValueError(f'The rig has no {head!r} bone for the eyes to hang from')
+    for label in ('eye_L', 'eye_R'):
+        if rig.data.bones.get(label) is not None: raise ValueError(f'The rig already has an {label} bone')
+    length = .25 * abs(eye_left[0] - eye_right[0]) if bone_length is None else _number(bone_length, 'Bone length', 0, low_open=True)
+    inverse = rig.matrix_world.inverted()
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT': bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode='EDIT')
+    parent = rig.data.edit_bones[head]
     for label, position in (('eye_L', eye_left), ('eye_R', eye_right)):
-        bone = data.edit_bones.new(label); bone.head = position; bone.tail = _add(position, (0, 0, length)); bone.roll = 0
-        bone.parent = root; bone.use_connect = False
+        from mathutils import Vector
+        start = inverse @ Vector(position)
+        bone = rig.data.edit_bones.new(label); bone.head = start; bone.tail = inverse @ Vector(_add(position, (0, 0, length))); bone.roll = 0
+        bone.parent = parent; bone.use_connect = False
     bpy.ops.object.mode_set(mode='OBJECT')
     return rig
 
@@ -5143,6 +5309,32 @@ def _sharp_edges(vertices, faces, angle):
 
 # The color attribute skin paint lives in; glTF exports it as COLOR_0 when a material uses it.
 PAINT_LAYER = 'tint'
+
+
+def smooth_skin(obj, weights, iterations=6, keep=()):
+    """Smooth a skin mesh's rest shape and every shape key alike with `smooth_surface` (Blender).
+
+    `weights` is one 0..1 value per vertex or a callable of the rest position; 0 holds a vertex still. The smoothing is
+    linear, so the morphs blend as before. The keys named in `keep` keep their motion exactly as made, carried on the
+    smoothed rest (a `jawOpen` whose motion must not spread above the mouth). Run it after the shape keys are made,
+    before `join_face_parts`.
+    """
+    mesh = obj.data
+    rest = [tuple(v.co) for v in mesh.vertices]
+    weights = [weights(v) for v in rest] if callable(weights) else list(weights)
+    faces = [tuple(p.vertices) for p in mesh.polygons]
+    blocks = list(mesh.shape_keys.key_blocks) if mesh.shape_keys else []
+    smoothed = [block for block in blocks if block.name not in keep]
+    states = _smooth_states([rest] + [[tuple(point.co) for point in block.data] for block in smoothed], faces, weights, iterations)
+    for block, targets in zip(smoothed, states[1:]):
+        for point, target in zip(block.data, targets): point.co = target
+    for block in blocks:
+        if block.name not in keep: continue
+        for point, before, after in zip(block.data, rest, states[0]):
+            point.co = tuple(point.co[k] + after[k] - before[k] for k in range(3))
+    for vertex, target in zip(mesh.vertices, states[0]): vertex.co = target
+    mesh.update()
+    return obj
 
 
 def paint_vertices(obj, tints, layer=PAINT_LAYER):

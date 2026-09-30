@@ -2,6 +2,26 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+## Compare rigged motion
+
+Use `node scripts/compare-rigs.mjs comparison.json review.html` to compare a reference
+rig with a fitted character (or up to four revisions). The generated page works offline,
+with named clip mappings, synchronized playback and scrubbing by normalized clip phase,
+front/side/perspective/back views, and an optional skeleton overlay. Paths in the config
+are relative to that config:
+
+```json
+{"models":[
+  {"label":"Reference","path":"reference.glb","clips":{"walk":"Walk_Loop","jog":"Jog_Fwd_Loop"}},
+  {"label":"Character","path":"character.glb","clips":{"walk":"walk","jog":"jog"}}
+]}
+```
+
+Inspect contact, swing and recovery from the same phase and view. Compare the skeletons
+first to find retargeting errors, then the surfaces to find skin-weight errors. A matching
+phase aligns clips that represent the same cycle; it does not infer footfall correspondence
+between different animations. The overlay omits finger and leaf bones for clarity.
+
 ## Agent workspace
 
 Use a durable workspace without starting a server. Commands share the same validated authoring engine as the browser:
@@ -163,6 +183,27 @@ actual Blender export deforms in the offline public viewer.
 
 `node scripts/agent-meshes.mjs refine model.glb smooth.glb --subdivide 1 --noise 0.004 --noise-scale 0.05 --only robin` rounds primitives into organic forms with a subdivision surface and, if asked, adds a feather- or fur-like displacement from a procedural clouds texture, while keeping bones, skins, vertex colors and clips. It runs Blender headless through `scripts/blender-refine.py`; Blender is found on PATH, in the usual install folders, in the Microsoft Store app alias, or from `AGENT_MESHES_BLENDER`. Primitive builds without refinement do not need Blender, and the refine test skips when it is absent. A build config can ask for the pass with `"refine":{"subdivide":1,"noise":0.003,"noiseScale":0.04,"only":["robin"]}`; the refined GLB is verified again, and a build that asks for refinement fails when Blender is missing rather than shipping a coarser model. Renders and contact sheets still come from the unrefined project.
 
+## Garment penetration check
+
+```powershell
+node scripts/agent-meshes.mjs check-garments character.glb
+node scripts/agent-meshes.mjs check-garments character.glb --clips jog --samples 32 --tolerance 0.003 --json
+```
+
+Samples every clip of a skinned GLB at evenly spaced phases (16 by default), poses each mesh as
+three.js skins it, and reports every place one part pushes into another: a lifted thigh tearing
+through a belt, a hand sinking into a hip, a boot cuff driving into the leg. A vertex counts when it
+was outside another closed part at rest and is inside it by more than the tolerance (2 mm) at a
+phase, so layers seated into the body at rest are never reported. Garments are `layer-*`, gloves,
+boots and outsoles by default (`--garments <regex>`); garment-vs-garment, garment-vs-body and
+garment self-folds (a surface folding through its own volume, measured against cloth more than
+3 cm away along the rest surface, and at most the cloth over it along its normal) are checked.
+The rest pose itself fails when two garments cross, each hiding a patch of the other's outward
+surface (a trouser leg wider than the boot shaft round it shows through in jagged patches);
+`--crossing-vertices` (8) and `--crossing-depth` (0.004 m) size that patch. `--ignore <regex>` leaves parts out. The JSON lists each
+intrusion by clip, phase, part pair, vertex count, depth and the deepest vertex's rest and posed
+position, plus the worst per pair; it exits 1 with one `FAIL` line per pair otherwise.
+
 ## Unreal import check
 
 `verify-unreal` imports a GLB into a scratch Unreal Engine project headlessly, through Interchange (the engine's glTF translator), and prints a JSON report of what Unreal made of it:
@@ -189,6 +230,25 @@ Unreal is found from `AGENT_MESHES_UNREAL` (the engine directory, such as `C:/Pr
 **Shared morph names across glTF meshes.** UE 5.7's glTF parser (`Engine/Plugins/Interchange/Runtime/Source/Parsers/GLTFCore/Private/GLTF/GLTFAsset.cpp`, around lines 322–374) keeps a mesh's `extras.targetNames` only if every name is unique across *all* meshes in the file. If one name appears on two meshes, for example `jawOpen` on a Face mesh and on a separate lower-teeth mesh, it discards every morph name in the file and renames them all `<file>_mesh_<m>_<i>_MorphTarget`. The Interchange option `bMergeMorphTargetsWithSameName` does not prevent this. It also drops one mesh's names if a name repeats inside that mesh or if the number of names differs from the number of targets. three.js keeps the names in all of these cases, so a head can work on the web and still lose every name in Unreal. The workaround is to build all morph-bearing parts (face, lids, lips, teeth, tongue, mouth cavity) as **one glTF mesh with one primitive per material**. Every primitive carries every target, with zero deltas where a part does not move. In Blender, that means one object with several materials. Morph-free parts, such as eyeballs, can stay separate meshes. Before starting Unreal, `verify-unreal` reads the GLB's JSON and audits the morph names of each mesh (`preflight.morphNames` in the report). When Unreal's names show the `_MorphTarget` fallback, the report gives one failure that names the cause and the fix. It does not list every contract morph as missing. Contract morphs that the GLB never had are still listed, marked "the GLB has no morph target with this name". If the audit finds a problem that Unreal tolerated, it goes in `warnings`. The audit needs no engine: `auditMorphNames(bytes)` in `src/gltf-morphs.ts` is exported for reuse. When Unreal imports nothing, for example from a corrupt file, the report gives that one failure with Unreal's import errors, not a list of missing names. The GLB is imported from a temporary copy named after the sanitized asset name, because Unreal names meshes after the source file and renames names that contain spaces or punctuation a second time. Unreal runs with `-notraceserver`, so it does not start an `UnrealTraceServer`.
 
 `tests/unreal-integration.test.ts` runs the real import whenever Unreal is installed (set `AGENT_MESHES_SKIP_UNREAL=1` to skip it). CI has no Unreal and runs only the report, log-parsing and contract unit tests.
+
+## Gait analysis
+
+`gait` samples one clip of a skinned, animated biped GLB into per-phase body curves and locomotion metrics, without a browser or GPU. It poses the skin as three.js does, from the clip's keyframe tracks:
+
+```powershell
+node scripts/agent-meshes.mjs gait model.glb --clip walk --gait walk --reference Walk_Loop.json --compare Walk_Female.json
+node scripts/agent-meshes.mjs gait human-base-animations.glb --clip Walk --out Walk_Loop.json --commit <sha> --license CC0-1.0 --source-url <url>
+```
+
+Bones are found by name: the stylized `rig-*` rig, UE-mannequin names (Mesh2Motion, `thigh_l`, `spine_01`) and Mixamo-style `LeftUpLeg` all resolve. Mesh2Motion bird and kaiju rigs also resolve: `AnkleLeg` and `Back_Leg_Ankle` identify the raised hock, while `Toes` and `Back_Leg_Foot_1` identify the distal toe. This keeps the knee measurement on the thigh–shin chain instead of including the metatarsal. Bird wings supply the upper-limb motion curves but do not count as hands. The spine is every joint between the pelvis and the head except the neck. Left and right are decided by geometry at rest (anatomical left is up × forward), not by name, so mirrored naming compares cleanly. Forward is detected from planted feet sliding backward in an in-place loop, or given with `--forward x,y,z`. Each foot is every skinned vertex whose strongest influence is the foot bone or a bone below it, so the check works whatever the boot meshes are called.
+
+A rig can declare its gait in node extras, `{"gait": {"format": "agent-meshes/gait/1", "height": 1.82, "clips": {"walk": {"stance": 0.6, "travelSpeed": 0.9, "contactPhase": {"rig-left-foot": 0, "rig-right-foot": 0.5}}}}}` (the stylized walk recipe writes it). Declared contacts set the planted windows for phase zero and pelvis drop; otherwise a foot is planted when its lowest vertex is within 10% of its lift range of its 10th-percentile height. Without a declared height, height is the skinned mesh's bounds; without a declared travel speed, it is the median backward speed of planted contact points. Skating, stride and hands never rely on what the rig declares. Skating follows every sole vertex within 1 mm of the lowest its foot reaches, on two frames in a row, so a heel that skims the floor before touchdown or a toe that slips at liftoff counts. `metrics.stride` is the ground covered per cycle at the soles' median stance speed, in meters, per body height and per leg length (hip to ankle at rest), with the thigh's sagittal swing range; Mesh2Motion's Walk_Loop and Walk_Female cover 1.58 and 1.60 leg lengths. Hands are the skinned vertices on each hand bone and below it (fingers): across the forearm the hand is widest from thumb to little finger and thinnest through the palm, the fingertips bend toward the palm and the thumb branches from the near half of the hand. That rest palm and thumb ride the hand bone through the clip and are read against the chest's left: `metrics.hands` has each palm's angle from facing the thigh (positive turns it back, negative forward, toward palm up when the forearm is raised), the smallest cosine between a thumb and the forearm's anterior side (forward when it hangs, up when it points forward), and the smallest finger curl (fingertips toward the palm, per hand length). Without skinned hands `metrics.hands` is null. A rig may still declare `"hands"` palm and thumb vectors in its extras; the analyzer ignores them.
+
+The report has `curves` (64 samples per cycle from `--samples`, phase 0 at the anatomical-left touchdown): pelvis and head height (centered, scaled to a 1.75 m body), pelvis roll and yaw, shoulder yaw, trunk, chest and head pitch, knee flexion and ankle angle per leg, and each foot's lowest-vertex height. `metrics` are measured at 60 fps over the whole loop: stance ground error, planted contact speed against travel speed, skating, loop seam over every skinned vertex, foot velocity jumps near contact changes, flight fraction, knee interior angles and per-frame knee change, head bob and bob count, head/chest pitch ranges, mean trunk lean, each spine joint's rotation range, shoulder–pelvis counter-rotation, swing-side pelvis drop per side, arm counterswing (correlation of each arm's swing with its own leg's), stride, and hand orientation from the skinned hands.
+
+Species references are measurements, not certificates that the source clip passes the human walk/jog ranges. Use `--compare` for exploratory species comparisons; it does not replace a required `--reference`. Without consecutive grounded samples, skating and stance-speed values are nonfinite in the API (serialized as `null` in JSON) and cannot establish a pass. This can occur with short, unevenly planted reference clips at the default 60 fps; use the API’s `fps` option to investigate temporal resolution.
+
+`--reference <curves.json>` scores the clip's pelvis height and roll, chest and head pitch, knees, ankles and foot heights against reference curves after one circular phase shift shared by all curves; `--compare` does the same for information only. Each comparison also has `symmetric` scores of the mirror-symmetric parts of both (even harmonics of body curves, odd harmonics of lateral ones, each leg averaged with the other half a cycle later), for scoring a symmetric gait against a reference that limps. `--gait walk|jog` adds an `evaluation` of the natural-gait ranges in `NATURAL_GAIT` and exits 1 when any fails: ground error < 5 mm, grounded speed within ±10% of travel with no grounded sole vertex skating more than 10%, seam < 2 mm, no contact velocity jump of half the travel speed, no knee past 180° or changing more than 25° a frame, flight only in the jog, a stride of 1.4–2.2 leg lengths walking and 2–4 jogging, arms counterswinging (r ≤ −0.5), head bob 2.5–6 cm walking and 5–10 cm jogging with two bobs a cycle, head pitch range 30–70% of the chest's, trunk lean 3–8° and 8–15°, at least two spine joints moving 2° and 4°, counter-rotation of 8° and 12° with shoulders against the pelvis, swing-side pelvis drop of 3–7°, hands hanging naturally at rest and through the clip (palm −20° to 45° from facing the thigh, thumb-forward cosine ≥ 0.5, finger curl ≥ 0.05; a rig without skinned hands fails), and every scored curve at r ≥ 0.8 against every `--reference` (`--curve-score symmetric` uses the symmetric scores). `--out` writes the full report and prints a summary; `--commit`, `--license` and `--source-url` record provenance in `source` beside the file's SHA-256. `analyzeGait`, `evaluateGait` and the curve helpers are exported from `src/gait-analysis.ts`.
 
 ## Embedding a model in your own page
 
@@ -423,7 +483,7 @@ def build():
 | `mouth-parts` | a tongue or mouth-cavity primitive is not moved at least 1 mm by `jawOpen` |
 | `puppet-jaw` | at `jawOpen` = 1 the face's lowest point (the chin) drops by less than 10% of the face height. This is E3 of the talking-heads bar, measured against chin to crown, which is stricter than chin to brow. A hole opening in a fixed face fails |
 | `upper-lip` | `jawOpen` moves face skin above the upper teeth's gum line (their highest point) by more than 0.5 mm: the upper lip must stay on the skull |
-| `mouth-open` | at `jawOpen` = 1, a front view halfway between the teeth rows (at the mouth center and a third of the way to each side) hits skin, such as an upper lip hanging like a curtain, before it hits teeth, tongue or mouth cavity; passes the teeth and hits nothing or only the inside of the head (see-through: add a mouth cavity); or the rows still overlap |
+| `mouth-open` | at `jawOpen` = 1, a front view halfway between the teeth rows (at the mouth center and a third of the way to each side) hits skin, such as an upper lip hanging like a curtain, before it hits teeth, tongue or mouth cavity; passes the teeth and hits nothing or only the inside of the head (see-through: add a mouth cavity); the rows still overlap; or, over a 5 by 3 grid of front rays across the opening, anything past the teeth and tongue is lighter than luminance 0.03 (base color times vertex color: the cavity, and whatever shows through it, must be near black) |
 
 The verifier identifies parts by convention, in contract terms:
 

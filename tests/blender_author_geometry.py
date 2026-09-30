@@ -6,7 +6,7 @@ import unittest
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
-from agent_meshes_author import fuse_meshes, linear_color, material, sweep_mesh, topology_report
+from agent_meshes_author import fuse_meshes, glass_settings, linear_color, material, sweep_mesh, topology_report
 
 
 class SweepGeometryTests(unittest.TestCase):
@@ -154,6 +154,19 @@ class ColorTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError): linear_color(value)
         for options in (dict(emission='#12'), dict(emission_strength=-1), dict(emission_strength=float('nan'))):
             with self.subTest(options=options), self.assertRaises(ValueError): material('glass', '#88ccff', **options)
+
+
+class GlassSettingsTests(unittest.TestCase):
+    def test_glass_defaults_to_double_sided_and_opaque_keeps_blender_default(self):
+        self.assertEqual(glass_settings(), (1.0, 0.0, None, None, False))
+        self.assertEqual(glass_settings(opacity=.2), (.2, 0.0, None, True, True))
+        self.assertEqual(glass_settings(transmission=1, ior=1.45), (1.0, 1.0, 1.45, True, True))
+        self.assertEqual(glass_settings(opacity=.2, double_sided=False), (.2, 0.0, None, False, True))
+
+    def test_rejects_bad_glass_before_requiring_blender(self):
+        for options in (dict(opacity=1.2), dict(opacity=-.1), dict(transmission=2), dict(ior=.9), dict(ior=3),
+                        dict(opacity=float('nan')), dict(double_sided='yes')):
+            with self.subTest(options=options), self.assertRaises(ValueError): material('visor', '#e8f6ff', **options)
 
 if __name__ == '__main__':
     unittest.main()

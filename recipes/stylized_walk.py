@@ -6,7 +6,7 @@ Blender adapter binds existing named meshes and bakes the same gait into a GLB.
 import math
 from functools import lru_cache
 
-WALK_VERSION=2
+WALK_VERSION=4
 
 def w_add(a,b):return tuple(x+y for x,y in zip(a,b))
 def w_sub(a,b):return tuple(x-y for x,y in zip(a,b))
@@ -15,6 +15,8 @@ def w_unit(a):return w_mul(a,1/math.hypot(*a))
 def w_dot(a,b):return sum(x*y for x,y in zip(a,b))
 def w_smooth(lo,hi,v):
     t=max(0,min(1,(v-lo)/(hi-lo)));return t*t*(3-2*t)
+def _rotate_z(p,angle):
+    x,y,z=p;c=math.cos(angle);s=math.sin(angle);return(x*c-y*s,x*s+y*c,z)
 def w_rotate_x(p,angle):
     x,y,z=p;c=math.cos(angle);s=math.sin(angle);return(x,y*c-z*s,y*s+z*c)
 
@@ -25,57 +27,147 @@ def _body_rotate(p,angles):
     c=math.cos(roll);s=math.sin(roll)
     return (c*x-s*y,s*x+c*y,z)
 
+# Phase 0 is the touchdown of the rig-left foot (-X, the anatomical right of a
+# figure facing +Z); the rig-right foot lands half a cycle later.
+#
+# Leg timing, fractions of the cycle or of leg length:
+#   stance: duty factor. A jog below .5 has two flight intervals.
+#   stride: rearward contact travel during stance; center: fore-aft offset of
+#   that travel (fractions of stride). The walk covers about 1.8 leg lengths per
+#   cycle: heel strike ahead of the hip, toe-off well behind it.
+#   lift: swing clearance (fractions of leg length), B-spline control points
+#   over swing progress; reach: the same, added to the fore-aft swing path
+#   (fractions of stride). push starts the lift with an upward push-off
+#   acceleration, so the toe clears the floor before it can slip.
+#   heel/peak: sole roll in radians (positive points the toe down) at heel
+#   strike and at the top of the toe roll; heel_flat/toe_from end the heel
+#   rocker and start the toe roll within stance; peak_at/flat_at time swing.
+#   arm, arm_phase, bend: shoulder swing (rad), its lag, and elbow bend.
+#   curl: finger bend toward the palm at the knuckles (rad); a loose fist in the jog.
+#
+# Body curves follow the symmetric part of Mesh2Motion's CC0 Walk_Loop and
+# Jog_Fwd_Loop (github.com/Mesh2Motion/mesh2motion-app): each shape is
+# harmonics (k, cos, sin) normalized to unit amplitude and shifted to this
+# phase convention; amplitudes follow human gait ranges.
+#   base, bob: pelvis height offset and half range, fractions of leg length.
+#   roll: pelvis roll (deg); positive raises the +X hip.
+#   lean, lumbar: mean forward chest lean (deg) and the lumbar's share of it.
+#   pitch: chest pitch half range (deg), shared by lumbar and chest.
+#   head: head pitch half range as a fraction of the chest's.
+#   yaw, chest_yaw: pelvis turn with the forward leg; chest turn against it.
+#   body_phase: delay of the body curves relative to the feet.
+GAITS={
+    'walk':dict(stance=.57644,stride=1.0376,center=-.10137,sway=.018,arm=.45,arm_phase=-.1,bend=.25,curl=.2,
+                lift=[.040158,-.01276,.1283,.081405,.059215,.023317,.16055,.10783],
+                reach=[-.026381,-.0097798,.25294,-.028955,-.49587,-.21303,-.088854,-.043437],
+                heel=-.34378,peak=1.3449,heel_flat=.17174,toe_from=.62934,peak_at=.47736,flat_at=.745,
+                base=-.055575,bob=.031555,bob_shape=[(2,-.636,-.772)],
+                roll=4.5,roll_shape=[(1,.992,.126)],
+                lean=5.98,lumbar=.55,pitch=1.8,pitch_shape=[(2,-.98,.199)],
+                head=.5,head_lean=2.0,head_shape=[(2,-.93,-.337),(4,.079,-.028)],
+                yaw=4.5,chest_yaw=3.5,yaw_phase=0,body_phase=-.0608),
+    'jog':dict(curl=.75,stance=.221,stride=.448,push=.011564,lift=[.027729,.15469,.3483,.263,.0686,.265,.16,.264,.501,.336],reach=[-.66932,-1.3342,-1.93,-2.05,-1.46,-.855,-.56,-.329,-.292,-.254],sway=.012,arm=.48,arm_phase=-.098,bend=.95,
+               heel=-.202,swing_roll=[-.0362,-.00647,.0252,.0425,.0524,.0554,.0145,-.0458,-.0679,-.0765],peak=1.22,heel_flat=.411,toe_from=.729,peak_at=.401,flat_at=.745,
+               base=-.0553,bob=.0741,bob_shape=[(2,-.469,-.873),(4,.131,-.1)],
+               roll=5.0,roll_shape=[(1,-.888,.473),(3,-.052,-.026)],
+               lean=17.3,lumbar=.55,pitch=5.5,pitch_shape=[(2,-.757,-.541),(4,.177,-.086)],
+               head=.5,head_lean=4.0,head_shape=[(2,-.95,.273),(4,-.071,-.046)],
+               yaw=8.0,chest_yaw=18.0,yaw_phase=0,body_phase=-.00152),
+}
+TORSO=['root','pelvis','spine','chest','neck','head']
+
 def gait_settings(gait='walk'):
     """Dimensionless gait parameters; stride/lift are fractions of leg length.
 
     Stance rolls heel to toe at constant rearward contact speed per cycle.
-    The light jog has two flight intervals because stance is less than half.
     """
-    if gait=='walk':return dict(stance=.6,stride=.43,lift=.12,sway=.018,arm=.32,bend=.25,lean=.025)
-    if gait=='jog':return dict(stance=.42,stride=.50,lift=.23,sway=.012,arm=.48,bend=.95,lean=.11)
-    raise ValueError('gait must be walk or jog')
+    if gait not in GAITS:raise ValueError('gait must be walk or jog')
+    return {k:(list(v) if isinstance(v,list) else v) for k,v in GAITS[gait].items()}
 
-def gait_rotations(phase,gait='walk'):
-    """Explicit torso frames retain axial twist that head/tail cannot express."""
-    settings=gait_settings(gait);t=(phase%1)*math.tau
-    yaw=(.075 if gait=='walk' else .095)*math.cos(t)
-    roll=.018*math.sin(t)
+def _series(phase,terms):
+    return sum(a*math.cos(math.tau*k*phase)+b*math.sin(math.tau*k*phase) for k,a,b in terms)
+
+def body_height(phase,settings,leg_length):
+    """Pelvis height offset from rest: low after contact, high mid-stance or in flight."""
+    return leg_length*(settings['base']+settings['bob']*_series(phase-settings['body_phase'],settings['bob_shape']))
+
+def gait_rotations(phase,gait='walk',settings=None):
+    """World (yaw, pitch, roll) of each torso joint in radians.
+
+    Explicit frames retain the axial twist that head/tail cannot express. The
+    pelvis turns and rolls, the lumbar and chest share the lean and counter-turn,
+    and the neck lets the head pitch through only part of the chest's range.
+    """
+    s=settings or gait_settings(gait);p=(phase%1)-s['body_phase'];r=math.radians
+    yaw=r(s['yaw'])*math.cos(math.tau*(phase-s['yaw_phase']))
+    chest_yaw=-r(s['chest_yaw'])*math.cos(math.tau*(phase-s['yaw_phase']))
+    roll=r(s['roll'])*_series(p,s['roll_shape'])
+    pitch=r(s['pitch'])*_series(p,s['pitch_shape']);lean=r(s['lean']);share=s['lumbar']
+    head=r(s['head_lean'])+r(s['pitch'])*s['head']*_series(p,s['head_shape'])
+    chest=lean+pitch
     return {'root':(0,0,0),'pelvis':(yaw,0,roll),
-            'spine':(-yaw,settings['lean'],-roll*.5),'head':(0,0,0)}
+            'spine':((yaw+chest_yaw)*.5,share*chest,roll*.4),
+            'chest':(chest_yaw,chest,roll*.1),
+            'neck':(chest_yaw*.5,(chest+head)*.5,0),
+            'head':(0,head,0)}
+
+PROFILE_PAD=3
 
 def _foot_path(phase,settings,length):
-    stance=settings['stance'];stride=length*settings['stride']
-    if phase<stance:return (0,stride*(.5-phase/stance))
+    stance=settings['stance'];stride=length*settings['stride'];center=stride*settings.get('center',0)
+    if phase<stance:return (0,center+stride*(.5-phase/stance))
     u=(phase-stance)/(1-stance)
-    # Quintic Hermite interpolation matches stance velocity AND acceleration
-    # at toe-off and next contact; unlike smoothstep it never stops at contact.
-    smooth=u**3*(10+u*(-15+6*u));travel=stride*(1-stance)/stance
-    z=-stride*.5-travel*u+(stride+travel)*smooth
-    # Recover the foot promptly after toe-off. The monotone warped phase has
-    # doubled speed at either endpoint and zero speed at mid swing; sin cubed
-    # still gives zero first/second derivatives where the sole leaves ground.
-    recovery=u+math.sin(math.tau*u)/math.tau if settings['stance']<.5 else u
-    lift=length*settings['lift']*math.sin(math.pi*recovery)**3
-    return lift,z
+    # Continuing the stance travel and adding a septic smoothstep matches stance
+    # velocity, acceleration and jerk at toe-off and at the next contact.
+    travel=stride*(1-stance)/stance
+    z=-stride*.5-travel*u+(stride+travel)*_ease(u)
+    # Both profiles are exactly zero near toe-off and touchdown, so they add no
+    # velocity, acceleration or jerk where the sole leaves or meets the ground.
+    z+=stride*_swing_profile(u,settings['reach'])
+    return length*_swing_profile(u,settings['lift'],push=settings.get('push',0)),center+z
+
+def _swing_profile(u,points,pad=PROFILE_PAD,push=0):
+    """Uniform cubic B-spline over swing progress u through `points`, padded with
+    zero control points at each end: three zero the value, velocity and
+    acceleration at toe-off and touchdown; four also the jerk. A `push` lead
+    (push, -push/2, push) in place of the toe-off pads still starts at zero value
+    and velocity, but with an upward push-off acceleration."""
+    if not points:return 0.0
+    p=([push,-push/2,push] if push else [0]*pad)+list(points)+[0]*pad;spans=len(p)-3;x=max(0,min(1,u))*spans;k=min(int(x),spans-1);t=x-k
+    w=((1-t)**3,3*t**3-6*t*t+4,-3*t**3+3*t*t+3*t+1,t**3)
+    return sum(a*b for a,b in zip(w,p[k:k+4]))/6
 
 def _ease(t):
-    t=max(0,min(1,t));return t**3*(10+t*(-15+6*t))
+    """Septic smoothstep: zero velocity, acceleration and jerk at both ends, so a
+    sole roll that starts or ends at a contact change adds no velocity pop."""
+    t=max(0,min(1,t));return t**4*(35+t*(-84+t*(70-20*t)))
 
 def _foot_roll(phase,settings):
-    """Heel-led contact, flat support, toe-off, then ankle recovery (X angle)."""
-    stance=settings['stance'];jog=stance<.5
-    heel=-.23 if jog else -.17;toe=.52 if jog else .34
-    if phase<stance:
-        u=phase/stance
-        if u<.23:return heel*(1-_ease(u/.23))
-        return toe*_ease((u-.60)/.40)
-    u=(phase-stance)/(1-stance)
-    peak=.70 if jog else .40
-    if u<.22:return toe+(peak-toe)*_ease(u/.22)
+    """Sole roll (X angle): heel-led contact rolling flat, then one toe roll from late
+    stance straight through toe-off to its swing peak, recovery to flat, and the
+    heel lead into the next contact.
+
+    The toe roll never pauses at toe-off: easing to a stop exactly where the sole
+    leaves the ground would concentrate its jerk at the contact change. An optional
+    swing_roll profile (radians, B-spline control points over swing) shapes the
+    ankle in the air and vanishes near both contact changes.
+    """
+    stance=settings['stance']
+    if phase>=stance and settings.get('swing_roll'):
+        return _base_roll(phase,settings)+_swing_profile((phase-stance)/(1-stance),settings['swing_roll'])
+    return _base_roll(phase,settings)
+
+def _base_roll(phase,settings):
+    stance=settings['stance'];heel=settings['heel'];peak=settings['peak']
+    flat=stance*settings['heel_flat'];start=stance*settings['toe_from']
+    top=stance+(1-stance)*settings['peak_at'];level=stance+(1-stance)*settings['flat_at']
+    if phase<flat:return heel*(1-_ease(phase/flat))
+    if phase<start:return 0.0
+    if phase<top:return peak*_ease((phase-start)/(top-start))
     # Pause angular velocity at flat so changing the compensation pivot is C2,
     # including in the air; a linear crossing would kink the ankle trajectory.
-    if u<.72:return peak*(1-_ease((u-.22)/.50))
-    return heel*_ease((u-.72)/.28)
+    if phase<level:return peak*(1-_ease((phase-top)/(level-top)))
+    return heel*_ease((phase-level)/(1-level))
 
 @lru_cache(maxsize=1)
 def _sole_pivots():
@@ -92,38 +184,55 @@ def _sole_pivots():
     points=[(0,v[1]-.14,v[2]) for v in sole if abs(v[1]-bottom)<1e-9]
     return min(points,key=lambda v:v[2]),max(points,key=lambda v:v[2])
 
-def foot_target(d,phase,gait='walk'):
+def leg_length(d):
+    rest=rest_bones(d);return sum(math.dist(rest[n]['head'],rest[n]['tail']) for n in ['left-thigh','left-shin'])
+
+def foot_target(d,phase,gait='walk',settings=None):
     """Return ankle offset and roll, compensating around the planted sole.
 
     The material heel/toe moves rearward at stride/stance during support.
     Changing pivots at zero rotation keeps the ankle continuous. During swing
     the lowest actual outsole vertex follows the authored clearance curve.
     """
-    settings=gait_settings(gait);rest=rest_bones(d)
-    length=sum(math.dist(rest[n]['head'],rest[n]['tail']) for n in ['left-thigh','left-shin'])
+    settings=settings or gait_settings(gait);length=leg_length(d)
     phase=phase%1;lift,z=_foot_path(phase,settings,length);angle=_foot_roll(phase,settings)
     pivot=w_mul(_sole_pivots()[0 if angle<0 else 1],d['s'])
     rotated=w_rotate_x(pivot,angle)
     return (0,lift-rotated[1]-.14*d['s'],z+pivot[2]-rotated[2]),angle
 
+def travel_speed(d,gait='walk',seconds=1.0,settings=None):
+    """Ground speed (m/s) the in-place loop represents: stance contact travel over stance time."""
+    s=settings or gait_settings(gait);return leg_length(d)*s['stride']/(s['stance']*seconds)
+
 def rest_bones(d):
-    s=d['s'];hip=d['hip_y'];shoulder=d['shoulder_y'];wrist=hip+.095*s;elbow=(wrist+shoulder)/2
-    sx=d['shoulder_w']*.49;wx=sx+.092*s
+    # knee_y / elbow_y / wrist_y let a sculpted body put the joints where its anatomy is; defaults suit the recipe body.
+    s=d['s'];hip=d['hip_y'];shoulder=d['shoulder_y'];wrist=d.get('wrist_y',hip+.095*s);elbow=d.get('elbow_y',(wrist+shoulder)/2);knee=d.get('knee_y',hip*.53)
+    sx=d['shoulder_w']*.49;wx=sx+.092*s;waist=hip+(shoulder-hip)*.45;skull=d['head_y']-d['ry']*.5
     bones={}
     def add(name,head,tail,parent=None):bones[name]=dict(head=head,tail=tail,parent=parent)
     add('root',(0,0,0),(0,.1*s,0))
     add('pelvis',(0,hip,0),(0,hip+.1*s,0),'root')
-    add('spine',(0,hip+.06*s,0),(0,shoulder+.04*s,0),'pelvis')
-    add('head',(0,shoulder+.05*s,0),(0,d['head_y']+d['ry'],0),'spine')
+    add('spine',(0,hip+.06*s,0),(0,waist,0),'pelvis')
+    add('chest',(0,waist,0),(0,shoulder+.04*s,0),'spine')
+    add('neck',(0,shoulder+.05*s,0),(0,skull,0),'chest')
+    add('head',(0,skull,0),(0,d['head_y']+d['ry'],0),'neck')
     for side,name in [(-1,'left'),(1,'right')]:
-        x=side*.096*s
-        add(name+'-thigh',(x,hip,0),(x,hip*.53,.015*s),'pelvis')
-        add(name+'-shin',(x,hip*.53,.015*s),(x,.14*s,0),name+'-thigh')
+        x=side*d.get('leg_x',.096*s)
+        add(name+'-thigh',(x,hip,0),(x,knee,.015*s),'pelvis')
+        add(name+'-shin',(x,knee,.015*s),(x,.14*s,0),name+'-thigh')
         add(name+'-foot',(x,.14*s,0),(x,.06*s,.20*s),name+'-shin')
-        add(name+'-upper-arm',(side*sx,shoulder,0),(side*(wx-.015*s),elbow,.012*s),'spine')
+        add(name+'-upper-arm',(side*sx,shoulder,0),(side*(wx-.015*s),elbow,.012*s),'chest')
         add(name+'-forearm',(side*(wx-.015*s),elbow,.012*s),(side*wx,wrist,.055*s),name+'-upper-arm')
         add(name+'-hand',(side*wx,wrist,.055*s),(side*wx,wrist-.12*s,.084*s),name+'-forearm')
+        add(name+'-fingers',(side*(wx-.005*s),wrist-KNUCKLE*s,.058*s),(side*(wx-.005*s),wrist-.15*s,.058*s),name+'-hand')
     return bones
+
+KNUCKLE=.082
+
+def hand_frames(d):
+    """Rest palm normal and thumb direction of each rigid hand (Y up, +Z forward):
+    palms face the thighs and thumbs point forward, as stylized_character authors them."""
+    return {name+'-hand':{'palm':(-side,0,0),'thumb':(0,0,1)} for side,name in [(-1,'left'),(1,'right')]}
 
 def _knee(hip,ankle,l1,l2):
     delta=w_sub(ankle,hip);distance=math.hypot(*delta)
@@ -134,20 +243,18 @@ def _knee(hip,ankle,l1,l2):
     height=math.sqrt(max(0,l1*l1-along*along))
     return w_add(hip,w_add(w_mul(direction,along),w_mul(bend,height)))
 
-def gait_pose(d,phase,gait='walk'):
+def gait_pose(d,phase,gait='walk',settings=None):
     if not isinstance(phase,(int,float)) or not math.isfinite(phase):raise ValueError('phase must be finite')
-    phase=phase%1;rest=rest_bones(d);s=d['s'];settings=gait_settings(gait)
-    leg_length=sum(math.dist(rest[n]['head'],rest[n]['tail']) for n in ['left-thigh','left-shin'])
-    if gait=='walk':dip=leg_length*(-.04+.009*math.cos(phase*math.tau*2))
-    else:dip=leg_length*(-.060+.022*math.cos((phase-.46)*math.tau*2))
-    shift=(-settings['sway']*s*math.sin(phase*math.tau),dip,0)
-    rotations=gait_rotations(phase,gait);pose={}
-    for name in ['root','pelvis','spine','head']:
+    phase=phase%1;rest=rest_bones(d);s=d['s'];settings=settings or gait_settings(gait)
+    length=leg_length(d)
+    shift=(-settings['sway']*s*math.sin(phase*math.tau),body_height(phase,settings,length),0)
+    rotations=gait_rotations(phase,gait,settings);pose={}
+    for name in TORSO:
         b=rest[name];parent=b['parent']
         start=w_add(b['head'],shift) if parent is None else w_add(pose[parent][0],_body_rotate(w_sub(b['head'],rest[parent]['head']),rotations[parent]))
         pose[name]=(start,w_add(start,_body_rotate(w_sub(b['tail'],b['head']),rotations[name])))
     for name,offset in [('left',0),('right',.5)]:
-        p=(phase+offset)%1;foot_offset,foot_angle=foot_target(d,p,gait)
+        p=(phase+offset)%1;foot_offset,foot_angle=foot_target(d,p,gait,settings)
         ankle=w_add(rest[name+'-foot']['head'],foot_offset)
         hip=w_add(pose['pelvis'][0],_body_rotate(w_sub(rest[name+'-thigh']['head'],rest['pelvis']['head']),rotations['pelvis']))
         l1=math.dist(rest[name+'-thigh']['head'],rest[name+'-thigh']['tail'])
@@ -155,27 +262,94 @@ def gait_pose(d,phase,gait='walk'):
         knee=_knee(hip,ankle,l1,l2)
         pose[name+'-thigh']=(hip,knee);pose[name+'-shin']=(knee,ankle)
         pose[name+'-foot']=(ankle,w_add(ankle,w_rotate_x(w_sub(rest[name+'-foot']['tail'],rest[name+'-foot']['head']),foot_angle)))
-        angle=settings['arm']*math.cos((phase+offset)*math.tau)
-        shoulder=w_add(pose['spine'][0],_body_rotate(w_sub(rest[name+'-upper-arm']['head'],rest['spine']['head']),rotations['spine']))
-        upper=w_sub(rest[name+'-upper-arm']['tail'],rest[name+'-upper-arm']['head'])
-        elbow=w_add(shoulder,_body_rotate(w_rotate_x(upper,angle),rotations['spine']))
-        lower=w_sub(rest[name+'-forearm']['tail'],rest[name+'-forearm']['head'])
-        bend=settings['bend']+.09*math.sin((phase+offset)*math.tau-.5)
-        wrist=w_add(elbow,_body_rotate(w_rotate_x(lower,angle-bend),rotations['spine']))
-        hand=w_sub(rest[name+'-hand']['tail'],rest[name+'-hand']['head'])
+        frame=rotations['chest'];turn=arm_rotations(phase,gait,settings,rotations)
+        shoulder=w_add(pose['chest'][0],_body_rotate(w_sub(rest[name+'-upper-arm']['head'],rest['chest']['head']),frame))
+        elbow=w_add(shoulder,turn[name+'-upper-arm'](w_sub(rest[name+'-upper-arm']['tail'],rest[name+'-upper-arm']['head'])))
+        wrist=w_add(elbow,turn[name+'-forearm'](w_sub(rest[name+'-forearm']['tail'],rest[name+'-forearm']['head'])))
         pose[name+'-upper-arm']=(shoulder,elbow);pose[name+'-forearm']=(elbow,wrist)
-        pose[name+'-hand']=(wrist,w_add(wrist,_body_rotate(w_rotate_x(hand,angle-bend),rotations['spine'])))
+        pose[name+'-hand']=(wrist,w_add(wrist,turn[name+'-hand'](w_sub(rest[name+'-hand']['tail'],rest[name+'-hand']['head']))))
+        knuckle=w_add(wrist,turn[name+'-hand'](w_sub(rest[name+'-fingers']['head'],rest[name+'-hand']['head'])))
+        pose[name+'-fingers']=(knuckle,w_add(knuckle,turn[name+'-fingers'](w_sub(rest[name+'-fingers']['tail'],rest[name+'-fingers']['head']))))
     return pose
+
+def arm_rotations(phase,gait='walk',settings=None,rotations=None):
+    """World rotation of each arm bone as a function of a rest vector.
+
+    Arms counterswing their own leg (back at that foot's touchdown) about the
+    chest's lateral axis, and the forearm and hand add the elbow bend. The
+    chest frame carries each bone whole, so the hand keeps its rest twist:
+    palms toward the thighs, thumbs forward. The fingers bend toward the palm
+    about the hand's front-to-back knuckle axis.
+    """
+    settings=settings or gait_settings(gait);rotations=rotations or gait_rotations(phase,gait,settings)
+    frame=rotations['chest'];out={}
+    for name,offset in [('left',0),('right',.5)]:
+        swing=math.tau*((phase+offset)%1-settings['arm_phase']);angle=settings['arm']*math.cos(swing)
+        bend=settings['bend']+.09*math.sin(swing-.5)
+        out[name+'-upper-arm']=lambda v,a=angle:_body_rotate(w_rotate_x(v,a),frame)
+        out[name+'-forearm']=out[name+'-hand']=hand=lambda v,a=angle-bend:_body_rotate(w_rotate_x(v,a),frame)
+        # Rest palms face the midline: -X for the rig-right hand, +X for the rig-left.
+        curl=settings.get('curl',0)*(1 if name=='left' else -1)
+        out[name+'-fingers']=lambda v,c=curl,hand=hand:hand(_rotate_z(v,c))
+    return out
 
 def walk_pose(d,phase):return gait_pose(d,phase,'walk')
 def jog_pose(d,phase):return gait_pose(d,phase,'jog')
+
+def _torso_row(y,d):
+    """Pelvis, lumbar and chest weights up the trunk, blended across each joint."""
+    s=d['s'];hip=d['hip_y'];waist=hip+(d['shoulder_y']-hip)*.45
+    lumbar=w_smooth(hip+.065*s,hip+.20*s,y);chest=w_smooth(waist-.06*s,waist+.06*s,y)
+    return {'pelvis':1-lumbar,'spine':lumbar*(1-chest),'chest':lumbar*chest}
 
 def skin_weights(name,vertices,d):
     s=d['s'];hip=d['hip_y'];knee=hip*.53;shoulder=d['shoulder_y'];wrist=hip+.095*s;elbow=(wrist+shoulder)/2;sx=d['shoulder_w']*.49
     side='left' if name.startswith('left-') else 'right'
     def rigid(bone):return [{bone:1} for _ in vertices]
+    def clean(row):
+        # glTF skins carry four joints per vertex: keep the strongest, renormalized.
+        kept=sorted(((v,b) for b,v in row.items() if v>0),reverse=True)[:4];total=sum(v for v,_ in kept)
+        return {b:v/total for v,b in kept}
+    if name.startswith('layer-'):
+        # Garment layers follow the body under them: the jacket rule above the hip, trousers below.
+        # Torso-hung layers (belts, hems, straps) never follow the arms; sleeve cuffs and badges do.
+        # A strap wrapping under the arm takes the torso side's weights, as the cloth under it does.
+        on_arm=name in ['layer-top','layer-bottom'] or 'sleeve' in name or 'badge' in name or name.endswith('-lower')
+        if any(token in name for token in ['badge','button','plate']):
+            # Small rigid trims move as the garment point at their centre.
+            centre=tuple(sum(v[k] for v in vertices)/len(vertices) for k in range(3))
+            row=(skin_weights('flight-jacket',[centre if on_arm else (0,)+centre[1:]],d) if centre[1]>=hip else skin_weights('trousers',[centre],d))[0]
+            return [dict(row) for _ in vertices]
+        upper=skin_weights('flight-jacket',vertices if on_arm else [(0,y,z) for x,y,z in vertices],d)
+        lower=skin_weights('trousers',vertices,d)
+        return [a if v[1]>=hip else b for v,a,b in zip(vertices,upper,lower)]
+    if name.startswith(('left-hand-glove','right-hand-glove')):return skin_weights(side+'-hand',vertices,d)  # gloves bend with the fingers
+    if 'boot' in name:
+        # The boot shaft flexes with the shin above the ankle; the foot carries the rest. The
+        # bend sits low, inside the upper, so the shaft and cuff ride the shin with the leg in them.
+        # Above that the boot takes the trouser leg's own weights, so a tall shaft and its cuff
+        # stay seated round the leg wherever the knee blend reaches.
+        # A boot point takes the weights of the shin point at the same direction round its own axis
+        # (the shaft sits further back than the shin, centred at z=-.006 unit), so a cuff and the
+        # trouser hem beside it bind alike on every side of the knee blend.
+        shaft_z=globals().get('BOOT_SHAFT_Z')
+        if shaft_z is None:
+            from stylized_character import BOOT_SHAFT_Z as shaft_z
+        x0=d.get('leg_x',.096*s)
+        def shin(x,y,z):
+            x=x if x*(1 if side=='right' else -1)>0 else -x
+            a=math.atan2(z-shaft_z*s,abs(x)-x0);return (math.copysign(x0+.06*s*math.cos(a),x),y,-.006*s+.06*s*math.sin(a))
+        rows=[]
+        for (x,y,z),leg in zip(vertices,skin_weights('trousers',[shin(*v) for v in vertices],d)):
+            t=w_smooth(.09*s,.15*s,y);row={side+'-foot':1-t}
+            for bone,w in leg.items():row[bone]=row.get(bone,0)+t*w
+            rows.append(clean(row))
+        return rows
     if any(token in name for token in ['boot','outsole','ankle']):return rigid(side+'-foot')
-    if name in ['left-hand','right-hand']:return rigid(name)
+    if name in ['left-hand','right-hand']:
+        # Fingers bend at the knuckles; the palm and the thumb's root stay on the hand.
+        knuckle=wrist-KNUCKLE*s
+        return [clean({name:1-f,side+'-fingers':f}) for f in (w_smooth(knuckle+.004*s,knuckle-.012*s,y) for _,y,_ in vertices)]
     if 'wrist-seal' in name:return rigid(side+'-forearm')
     if name in ['waist-belt']:return rigid('pelvis')
     if name in ['flight-jacket','trousers'] or 'knee-panel' in name:
@@ -184,34 +358,94 @@ def skin_weights(name,vertices,d):
             side='left' if x<0 else 'right'
             if name=='flight-jacket':
                 shoulder_blend=w_smooth(shoulder-.14*s,shoulder+.02*s,y)
-                arm=w_smooth(sx+.015*s-shoulder_blend*.075*s,sx+.07*s-shoulder_blend*.055*s,abs(x))
-                forearm=1-w_smooth(elbow-.045*s,elbow+.045*s,y)
-                torso=w_smooth(hip+.065*s,hip+.20*s,y)
-                row={'pelvis':(1-arm)*(1-torso),'spine':(1-arm)*torso,side+'-upper-arm':arm*(1-forearm),side+'-forearm':arm*forearm}
+                # Below the chest the arm begins where the torso ends, so the inner forearm
+                # (and a cuff over it) never binds to the pelvis as the arm swings.
+                # The torso side allows for an eased jacket over the body. Sleeves end at the
+                # wrist, so nothing lower (hips, thighs, belts) can belong to an arm.
+                edge=(d['hip_w']*.5+(d['shoulder_w']*.46-d['hip_w']*.5)*w_smooth(hip,d['chest_y'],y))*1.04+.018*s
+                edge+=s*(1-w_smooth(hip+.06*s,hip+.085*s,y))
+                arm=w_smooth(min(sx+.015*s-shoulder_blend*.075*s,edge),min(sx+.07*s-shoulder_blend*.055*s,edge+.025*s),abs(x))
+                # The inner elbow blends wider (by direction round the arm, as the knee does), so a
+                # bent arm rolls the sleeve into a crease instead of folding it through itself.
+                front=(z-.012*s)/max(1e-9,math.hypot(abs(x)-(sx+.077*s),z-.012*s))
+                reach=s*(.055+.1*w_smooth(-.4,.6,front))
+                forearm=1-w_smooth(elbow-reach,elbow+reach,y)
+                # The torso side follows the pelvis, lumbar and chest joints of the gait rig.
+                row={bone:(1-arm)*w for bone,w in _torso_row(y,d).items()}
+                row.update({side+'-upper-arm':arm*(1-forearm),side+'-forearm':arm*forearm})
             else:
-                pelvis=w_smooth(hip-.15*s,hip-.035*s,y)
-                lower=1-w_smooth(knee-.055*s,knee+.055*s,y)
-                row={'pelvis':pelvis,side+'-thigh':(1-pelvis)*(1-lower),side+'-shin':(1-pelvis)*lower}
-            rows.append({bone:value for bone,value in row.items() if value>0})
+                # The hip blends over most of the upper thigh, so a lifted thigh eases the cloth
+                # below the waist forward instead of driving through it; the crotch shares both
+                # thighs, so the inseam never tears open between them.
+                pelvis=w_smooth(hip-.26*s,hip-.015*s,y)
+                # Below the crotch the legs part, and each inseam binds its own thigh alone.
+                crotch=.06*s*w_smooth(hip-.42*s,hip-.3*s,y)+1e-6
+                right=w_smooth(-crotch,crotch,x)
+                # The back of the knee blends wider (by direction round the leg, so layers standing
+                # proud of the cloth take the same weights as the cloth under them), so a deep swing flexion folds the cloth
+                # into a crease instead of driving the calf through the thigh.
+                back=(z-.005*s)/max(1e-9,math.hypot(abs(x)-d.get('leg_x',.096*s),z-.005*s))  # direction round the leg, not depth
+                # Behind the knee the blend also centres lower, so the crease forms where the calf thins.
+                reach=s*(.12+.095*w_smooth(.35,-.5,back));dip=s*.035*w_smooth(.35,-.5,back)
+                lower=1-w_smooth(knee-dip-reach,knee-dip+reach,y)
+                row={'pelvis':pelvis,'left-thigh':(1-pelvis)*(1-lower)*(1-right),'right-thigh':(1-pelvis)*(1-lower)*right,side+'-shin':(1-pelvis)*lower}
+            rows.append(clean(row))
         return rows
-    if name in ['chest-terminal','chest-readout','front-fastener','collar','neck','air-hose'] or name.startswith(('air-tank','tank-band')):return rigid('spine')
+    if name=='neck':
+        # Chest at the collar, the neck joint along its length, the head under the skull.
+        skull=d['head_y']-d['ry']*.5
+        return [clean({'chest':1-w_smooth(shoulder,shoulder+.05*s,y),'neck':w_smooth(shoulder,shoulder+.05*s,y)*(1-w_smooth(skull-.04*s,skull+.01*s,y)),
+                       'head':w_smooth(skull-.04*s,skull+.01*s,y)}) for _,y,_ in vertices]
+    if name=='front-fastener':return [clean(_torso_row(y,d)) for _,y,_ in vertices]
+    if name in ['chest-terminal','chest-readout','collar','air-hose'] or name.startswith(('air-tank','tank-band')):return rigid('chest')
+    # Fieldwork suit kit rides the bone under it; the helmet's neck seal flexes from the chest to the helmet ring.
+    if name.startswith('backpack') or name.endswith('-chest-strap'):return rigid('chest')
+    if name.startswith('belt-pouch'):return rigid('pelvis')
+    if name.endswith('-shoulder-pad'):return rigid(side+'-upper-arm')
+    if name.endswith('-elbow-pad'):return rigid(side+'-forearm')
+    if name.endswith('-thigh-pouch'):return rigid(side+'-thigh')
+    if name=='helmet-neck-seal':
+        ys=[v[1] for v in vertices];low,high=min(ys),max(ys)
+        rows=[]
+        for y in ys:
+            t=w_smooth(low+(high-low)*.35,high,y)
+            rows.append({bone:value for bone,value in {'chest':1-t,'head':t}.items() if value>0})
+        return rows
     return rigid('head')
 
-def rig_character(objects,layout,duration=1.2,jog_duration=None):
+def clip_frames(seconds,fps=60):
+    """Frames in a looped clip: the nearest even count (ties up), so the rig-right
+    touchdown at half a cycle is keyed like the left one and the mirrored legs
+    are sampled alike."""
+    return 2*math.floor(seconds*fps/2+.5)
+
+def rig_character(objects,layout,duration=1.2,jog_duration=None,weights='parts'):
     """Bind geometry and bake walk, plus optional light jog, as named actions.
 
     Named NLA tracks preserve both clips through the authored glTF exporter.
-    Durations are rounded to the nearest frame at 60 Hz.
+    Durations are rounded to the nearest even frame count at 60 Hz (see
+    clip_frames). The rig carries
+    `agent-meshes/gait/1` extras: height, stance, contact phases, travel speed
+    and each hand's rest palm and thumb directions.
+
+    weights='parts' binds the recipe's named parts by body region (skin_weights). weights='heat' binds any
+    closed mesh (a sculpted base body) with Blender's automatic bone-heat weights, at most four bones a vertex;
+    the mesh must stand in the rig's rest pose (arms hanging, see rest_bones).
     """
+    # weights may also map object names to a mode (a heat-bound sculpted body wearing parts-bound recipe boots).
+    mode_of=(lambda obj:weights) if isinstance(weights,str) else (lambda obj:weights.get(obj.name,'parts'))
+    if any(mode_of(o) not in ('parts','heat') for o in objects):raise ValueError("weights must be 'parts' or 'heat'")
     for value in [duration]+([] if jog_duration is None else [jog_duration]):
         if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not .6<=value<=3:
             raise ValueError('duration must be 0.6..3 seconds')
+    import json
     import bpy
     from mathutils import Matrix,Vector
-    from agent_meshes_author import bind_skin
+    from agent_meshes_author import bind_skin,EXTRAS_PROPERTY
     def convert(point):x,y,z=point;return Vector((x,-z,y))
     bones=rest_bones(layout)
-    def bone_name(name):return 'rig-'+name
+    # The head bone keeps the arkit-face/1 name, so a living face's eye bones hang under `head` (stylized_face).
+    def bone_name(name):return 'head' if name=='head' else 'rig-'+name
     data=bpy.data.armatures.new('settler-skeleton');rig=bpy.data.objects.new('settler-rig',data)
     bpy.context.collection.objects.link(rig);bpy.context.view_layer.objects.active=rig;rig.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')
@@ -220,26 +454,40 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
         if bone['parent']:b.parent=data.edit_bones[bone_name(bone['parent'])]
     bpy.ops.object.mode_set(mode='OBJECT')
     for obj in objects:
-        vertices=[(v.co.x,v.co.z,-v.co.y) for v in obj.data.vertices]
-        weights=[{bone_name(n):w for n,w in row.items()} for row in skin_weights(obj.name,vertices,layout)]
-        bind_skin(obj,rig,weights)
+        if mode_of(obj)=='heat':
+            bpy.ops.object.select_all(action='DESELECT');obj.select_set(True);rig.select_set(True)
+            bpy.context.view_layer.objects.active=rig
+            bpy.ops.object.parent_set(type='ARMATURE_AUTO')
+            bpy.context.view_layer.objects.active=obj
+            bpy.ops.object.vertex_group_limit_total(limit=4)
+            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+        else:
+            vertices=[(v.co.x,v.co.z,-v.co.y) for v in obj.data.vertices]
+            rows=[{bone_name(n):w for n,w in row.items()} for row in skin_weights(obj.name,vertices,layout)]
+            bind_skin(obj,rig,rows)
         # The modifier still points to the rig. Export skins at scene root so
         # consumers do not need nonstandard parent-transform behavior for skins.
         world=obj.matrix_world.copy();obj.parent=None;obj.matrix_world=world
     fps=60;scene=bpy.context.scene;scene.render.fps=fps;scene.frame_start=0
     clips=[('walk',duration)]+([] if jog_duration is None else [('jog',jog_duration)])
-    scene.frame_end=max(round(seconds*fps) for _,seconds in clips)
-    rig.animation_data_create();actions=[]
+    scene.frame_end=max(clip_frames(seconds,fps) for _,seconds in clips)
+    rig.animation_data_create();actions=[];declared={}
     for gait,seconds in clips:
-        frames=round(seconds*fps);action=bpy.data.actions.new(gait);rig.animation_data.action=action
+        frames=clip_frames(seconds,fps);action=bpy.data.actions.new(gait);rig.animation_data.action=action
+        settings=gait_settings(gait)
+        declared[gait]={'stance':settings['stance'],'travelSpeed':travel_speed(layout,gait,frames/fps),
+                        'contactPhase':{bone_name('left-foot'):0,bone_name('right-foot'):.5}}
         for frame in range(frames+1):
             phase=frame/frames;pose=gait_pose(layout,phase,gait);rotations=gait_rotations(phase,gait);matrices={}
+            turns={name:(lambda v,r=r:_body_rotate(v,r)) for name,r in rotations.items()}
+            turns.update(arm_rotations(phase,gait,rotations=rotations))
             for name,bone in bones.items():
                 start,end=map(convert,pose[name]);rest_dir=convert(bone['tail'])-convert(bone['head'])
-                if name in rotations:
+                if name in turns:
                     # Coordinate conjugation maps Y-up anatomical frames into
-                    # Blender's Z-up frame, preserving real axial torso yaw.
-                    axes=[convert(_body_rotate(v,rotations[name])) for v in [(1,0,0),(0,0,-1),(0,1,0)]]
+                    # Blender's Z-up frame, preserving real axial torso yaw and
+                    # the arms' twist, so each palm keeps facing its thigh.
+                    axes=[convert(turns[name](v)) for v in [(1,0,0),(0,0,-1),(0,1,0)]]
                     delta=Matrix(axes).transposed().to_quaternion()
                 else:delta=rest_dir.rotation_difference(end-start)
                 rotation=delta @ data.bones[bone_name(name)].matrix_local.to_quaternion()
@@ -257,5 +505,43 @@ def rig_character(objects,layout,duration=1.2,jog_duration=None):
         for action in actions:
             track=rig.animation_data.nla_tracks.new();track.name=action.name
             track.strips.new(action.name,0,action)
+    extras=json.loads(rig.get(EXTRAS_PROPERTY,'{}'))
+    hands={bone_name(name):{k:list(v) for k,v in frame.items()} for name,frame in hand_frames(layout).items()}
+    extras['gait']={'format':'agent-meshes/gait/1','version':WALK_VERSION,'height':layout['h'],'clips':declared,'hands':hands}
+    rig[EXTRAS_PROPERTY]=json.dumps(extras)
     scene.frame_set(0)
     return objects+[rig]
+
+def _arc(a,b):
+    """Shortest-arc rotation taking direction a onto b (Blender's rotation_difference)."""
+    a=w_unit(a);b=w_unit(b);axis=(a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0])
+    sine=math.hypot(*axis);cosine=w_dot(a,b)
+    if sine<1e-12:return lambda v:v
+    axis=w_mul(axis,1/sine)
+    def rotate(v):
+        # Rodrigues: v cos + (k x v) sin + k (k.v)(1 - cos)
+        k=axis;cross=(k[1]*v[2]-k[2]*v[1],k[2]*v[0]-k[0]*v[2],k[0]*v[1]-k[1]*v[0])
+        return w_add(w_add(w_mul(v,cosine),w_mul(cross,sine)),w_mul(k,w_dot(k,v)*(1-cosine)))
+    return rotate
+
+def skinned_vertices(name,vertices,d,phase,gait='walk'):
+    """Linear-blend skinning of a recipe mesh at a gait phase, without Blender (Y up).
+
+    Mirrors rig_character: torso and arm bones take their explicit frames, legs the shortest
+    arc from rest to posed direction. Garment and contact checks sample clips with it.
+    """
+    rest=rest_bones(d);pose=gait_pose(d,phase,gait);rotations=gait_rotations(phase,gait);moves={}
+    turns={bone:(lambda v,r=r:_body_rotate(v,r)) for bone,r in rotations.items()}
+    turns.update(arm_rotations(phase,gait,rotations=rotations))
+    for bone,b in rest.items():
+        start,end=pose[bone]
+        rotate=turns[bone] if bone in turns else _arc(w_sub(b['tail'],b['head']),w_sub(end,start))
+        moves[bone]=(start,b['head'],rotate)
+    result=[]
+    for v,row in zip(vertices,skin_weights(name,vertices,d)):
+        total=sum(row.values());point=(0,0,0)
+        for bone,weight in row.items():
+            start,head,rotate=moves[bone]
+            point=w_add(point,w_mul(w_add(start,rotate(w_sub(v,head))),weight/total))
+        result.append(point)
+    return result

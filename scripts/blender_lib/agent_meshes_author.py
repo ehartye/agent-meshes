@@ -373,12 +373,37 @@ def linear_color(value):
     return color
 
 
-def material(name, color, metalness=0, roughness=0.4, emission=None, emission_strength=1.0):
+def glass_settings(opacity=1.0, transmission=0.0, ior=None, double_sided=None):
+    """Validate glass fields without Blender: opacity and transmission in 0..1, ior 1..2.333 or None.
+
+    Returns (opacity, transmission, ior, double_sided, is_glass). Glass (opacity below 1 or any
+    transmission) is double-sided unless double_sided says otherwise; for an opaque finish None
+    keeps Blender's default (no backface culling, which the glTF exporter writes as doubleSided).
+    """
+    opacity, transmission = _number(opacity, 'Opacity'), _number(transmission, 'Transmission')
+    if not 0 <= opacity <= 1: raise ValueError('Opacity must be in 0..1')
+    if not 0 <= transmission <= 1: raise ValueError('Transmission must be in 0..1')
+    if ior is not None:
+        ior = _number(ior, 'IOR')
+        if not 1 <= ior <= 2.333: raise ValueError('IOR must be in 1..2.333 (1.5 is glass)')
+    if double_sided is not None and not isinstance(double_sided, bool): raise ValueError('double_sided must be a boolean')
+    glass = opacity < 1 or transmission > 0
+    return opacity, transmission, ior, (True if glass else None) if double_sided is None else double_sided, glass
+
+
+def material(name, color, metalness=0, roughness=0.4, emission=None, emission_strength=1.0,
+             opacity=1.0, transmission=0.0, ior=None, double_sided=None):
     """Create a PBR material. `color` is an sRGB hex string ('#e8a27c', converted to linear) or linear 0..1 RGB.
 
     `emission` (hex or linear, like `color`) makes it glow: a robot's lens glass or
     antenna bulb. glTF exports it as `emissiveFactor`, and a strength above 1 as
     `KHR_materials_emissive_strength`; three.js and Unreal both read them.
+
+    Glass: `opacity` below 1 blends the surface over what is behind it (glTF `alphaMode`
+    BLEND, base color alpha = opacity); `transmission` 0..1 is physically transmitted light
+    (`KHR_materials_transmission`); `ior` sets `KHR_materials_ior` (1.5 is glass). A glass
+    material renders blended, casts no shadow in Blender and is double-sided by default,
+    so a hollow bubble shows its far wall. A clear visor is opacity about 0.2, roughness 0.05.
     """
     name = _name(name)
     color = linear_color(color)
@@ -388,6 +413,7 @@ def material(name, color, metalness=0, roughness=0.4, emission=None, emission_st
     glow = None if emission is None else linear_color(emission)
     strength = _number(emission_strength, 'Emission strength')
     if strength < 0: raise ValueError('Emission strength must be at least 0')
+    opacity, transmission, ior, double_sided, glass = glass_settings(opacity, transmission, ior, double_sided)
     import bpy
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
@@ -399,6 +425,19 @@ def material(name, color, metalness=0, roughness=0.4, emission=None, emission_st
         socket = shader.inputs.get('Emission Color') or shader.inputs.get('Emission')
         socket.default_value = (*glow, 1)
         shader.inputs['Emission Strength'].default_value = strength
+    if glass:
+        shader.inputs['Alpha'].default_value = opacity
+        socket = shader.inputs.get('Transmission Weight') or shader.inputs.get('Transmission')
+        socket.default_value = transmission
+        if ior is not None: shader.inputs['IOR'].default_value = ior
+        # Blender 4.2+ names the blended path surface_render_method; older releases use blend_method.
+        if hasattr(mat, 'surface_render_method'): mat.surface_render_method = 'BLENDED'
+        if hasattr(mat, 'blend_method'): mat.blend_method = 'BLEND'
+        if hasattr(mat, 'use_transparency_overlap'): mat.use_transparency_overlap = True
+        if hasattr(mat, 'shadow_method'): mat.shadow_method = 'NONE'
+    elif ior is not None:
+        shader.inputs['IOR'].default_value = ior
+    if double_sided is not None: mat.use_backface_culling = not double_sided
     return mat
 
 
@@ -418,7 +457,7 @@ def shape_key(obj, name, vertices):
     return key
 
 
-def export_glb(path, objects):
+def export_glb(path, objects, animation_mode='ACTIONS'):
     """Export selected objects with PBR materials, skins, morphs and animation.
 
     Geometry modifiers must be resolved by the author before adding morphs;
@@ -428,6 +467,8 @@ def export_glb(path, objects):
     dropped after export and the rest stored as sparse accessors (`prune_glb_morphs`).
     """
     import bpy
+    if animation_mode not in ('ACTIONS', 'NLA_TRACKS'):
+        raise ValueError('animation_mode must be ACTIONS or NLA_TRACKS')
     objects = list(objects)
     if not objects: raise ValueError('At least one object must be exported')
     previous_selection = list(bpy.context.selected_objects)
@@ -439,7 +480,7 @@ def export_glb(path, objects):
         bpy.context.view_layer.update()
         bpy.ops.export_scene.gltf(filepath=str(path), export_format='GLB', use_selection=True,
             export_apply=False, export_morph=True, export_morph_normal=True,
-            export_animations=True, export_skins=True, export_yup=True,
+            export_animations=True, export_animation_mode=animation_mode, export_skins=True, export_yup=True,
             export_cameras=False, export_lights=False)
         # Blender's exporter drops JSON-shaped custom properties; write root extras (for
         # example the arkit-face/1 contract from set_face_contract) into the GLB directly.

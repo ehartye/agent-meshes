@@ -3,6 +3,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type { Puppet } from '../render/puppet.ts';
 import type { Quality } from '../render/quality.ts';
 import { applyIdMaterials, idColor, resolveIdColors } from '../render/id-render.ts';
+import { isGlassObject } from '../render/glass.ts';
 import type { IdImage, IdRenderColors, IdTarget } from '../render/id-render.ts';
 
 /** GLB bytes, or the GLB as a base64 string (works from file:// where fetch does not). */
@@ -44,11 +45,19 @@ export function addFloor(scene: THREE.Scene, background: string | null): THREE.M
   return floor;
 }
 
-/** Inverted-hull ink outlines behind every part; hiding a part also hides its hull. Returns the hulls. */
+/** A face's mouth inside (arkit-face/1 names: cavity, teeth, tongue): a hull there is ink floating in an open mouth. */
+const MOUTH_INSIDE = /cavity|teeth|tooth|tongue/i;
+
+/**
+ * Inverted-hull ink outlines behind every opaque part (a hull would show through glass) but a mouth's inside; hiding a
+ * part also hides its hull. A hull shares its part's morph weights, so it follows a blink or an open jaw. Returns the hulls.
+ */
 export function addOutlines(puppet: Puppet, thickness: number, color = '#111111'): THREE.Mesh[] {
   const hulls = new Map<string, THREE.Mesh>(), ink = new THREE.MeshBasicMaterial({ color, side: THREE.BackSide });
   for (const name of puppet.parts) {
     const mesh = puppet.object(name);
+    if (isGlassObject(mesh)) continue;
+    if ((Array.isArray(mesh.material) ? mesh.material : [mesh.material]).some(material => MOUTH_INSIDE.test(material.name))) continue;
     // The same geometry pushed out along its normals, drawn back-face only.
     const source = mesh.geometry.clone(); if (!source.getAttribute('normal')) source.computeVertexNormals();
     const pos = source.getAttribute('position'), nor = source.getAttribute('normal');
@@ -58,6 +67,7 @@ export function addOutlines(puppet: Puppet, thickness: number, color = '#111111'
     // A skinned hull follows its part unculled, like the part itself (its rest sphere goes stale as it moves).
     if (mesh instanceof THREE.SkinnedMesh) { const skinned = new THREE.SkinnedMesh(source, ink); mesh.parent!.add(skinned); skinned.bind(mesh.skeleton, mesh.bindMatrix); skinned.frustumCulled = false; hull = skinned; }
     else { hull = new THREE.Mesh(source, ink); mesh.parent!.add(hull); hull.position.copy(mesh.position); hull.quaternion.copy(mesh.quaternion); hull.scale.copy(mesh.scale); }
+    if (mesh.morphTargetInfluences) { hull.morphTargetInfluences = mesh.morphTargetInfluences; hull.morphTargetDictionary = mesh.morphTargetDictionary; }
     hull.name = `${name}_outline`; hull.userData.outline = true; hull.castShadow = false; hull.receiveShadow = false; hull.renderOrder = -1;
     hulls.set(name, hull);
   }

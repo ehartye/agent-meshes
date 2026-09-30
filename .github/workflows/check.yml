@@ -16,12 +16,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: pip install numpy
       - run: python tests/blender_author_geometry.py
       - run: python tests/blender_author_skin.py
       - run: python tests/stylized_character.py
       - run: python tests/stylized_walk.py
+      - run: python tests/reproportion.py
+      - run: python tests/sculpt_landmarks.py
+      - run: python tests/garment_cuts.py
+      - run: python tests/garment_partition.py
+      - run: python tests/garment_neckbands.py
+      - run: python tests/cloth_flap.py
+      - run: python tests/skin_weight_relaxation.py
+      - run: python tests/sculpted_face.py
+      - run: python tests/sprout_kin.py
+      - run: python tests/sprout_kin_rig.py
+      - run: python tests/sprout_region_skin.py
+      - run: python tests/sprout_kin_gait.py
+      - run: python tests/retarget.py
+      - run: python tests/stylized_costume.py
+      - run: python tests/stylized_face.py
       - run: node --test tests/botanical-kit.test.mjs
       - run: python tests/blender_face_geometry.py
+      - run: python tests/hm08_head.py
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
