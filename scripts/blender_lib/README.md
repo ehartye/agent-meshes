@@ -6,6 +6,24 @@ same clip name: the exporter combines them into one GLB animation. The default
 remains `ACTIONS`. Direct callers can use `export_glb(path, objects,
 animation_mode='NLA_TRACKS')`; other values are rejected.
 
+## Cutting weighted clothing
+
+`agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,
+offset=0, shape=None)` clips a weighted sculpt into garment panels. This pure
+NumPy helper returns `vertices`, `faces`, `weights` and `covered_faces`. Each
+scalar field has one value per source vertex; all fields must be nonnegative
+in the retained region. For example, `[z - waist, neckline - z]` selects a band.
+Use convex source polygons; fields are interpolated linearly across each face.
+Position, normal and bone weights interpolate together at cut edges. Coincident
+source seams stay separate; output weights are normalized to four influences.
+
+`offset` is a distance in metres or a function of the source position. Supply
+`shape(position, unit_normal)` for authored drape instead. Construct Blender
+objects and fabric thickness in the caller. `covered_faces` identifies fully
+covered source polygons, **not** a deletion policy: preserve skin inside open
+sleeves and collars so oblique views cannot see hollow appendages. Materials,
+interior coverage and collision/contact review remain the author's responsibility.
+
 ## Fitting a reference rig
 
 `agent_meshes_landmarks.humanoid_landmarks(vertices, profile)` measures a centered

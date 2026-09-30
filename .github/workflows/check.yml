@@ -23,6 +23,7 @@ jobs:
       - run: python tests/stylized_walk.py
       - run: python tests/reproportion.py
       - run: python tests/sculpt_landmarks.py
+      - run: python tests/garment_cuts.py
       - run: python tests/retarget.py
       - run: python tests/stylized_costume.py
       - run: python tests/stylized_face.py
