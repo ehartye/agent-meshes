@@ -105,14 +105,28 @@ def region_weights(point,region,anatomy):
     return weight_function(anatomy)(point,region)
 
 
-def rig_anatomy(objects,a,diagnostics=True):
-    """Bind the shared fused anatomy; export all skins at scene root."""
-    import bpy
-    from mathutils import Vector,Quaternion
+def skin_regions(a,include=None):
+    """Return named skin source surfaces, optionally restricted before querying."""
+    parts=[p for p in geometry(height=a['height'],age=a['age']) if p['kind']=='skin']
+    if include is None:return parts
+    if not isinstance(include,(list,tuple,set,frozenset)) or not include or any(not isinstance(n,str) for n in include):
+        raise ValueError('A nonempty collection of skin-region names is required')
+    names=set(include);unknown=names-{p['name'] for p in parts}
+    if unknown:raise ValueError('Unknown skin regions: '+', '.join(sorted(unknown)))
+    return [p for p in parts if p['name'] in names]
+
+
+def anatomy_weights(body,a,regions=None,smooth=5):
+    """Blender mesh weights from selected anatomical source surfaces.
+
+    Selection happens before nearest-surface lookup, so adjacent excluded limbs
+    cannot donate weights to a garment. Mesh and regions use rest-space Z-up
+    coordinates. Returns rows and a provenance report; does not bind or move it.
+    """
+    from mathutils import Vector
     from mathutils.bvhtree import BVHTree
-    from agent_meshes_author import bind_skin
-    bones=skeleton(a);parts=geometry(height=a['height'],age=a['age']);weight=weight_function(a)
-    body=next(o for o in objects if o.name=='sprout-body')
+    if isinstance(smooth,bool) or not isinstance(smooth,int) or smooth<0:raise ValueError('Nonnegative integer smoothing passes required')
+    bones=skeleton(a);parts=skin_regions(a,regions);weight=weight_function(a)
     vertices=[];faces=[];regions=[]
     for p in parts:
         if p['kind']!='skin':continue
@@ -130,7 +144,7 @@ def rig_anatomy(objects,a,diagnostics=True):
     # skin retains head rigidity; only connected joint seams share influences.
     edges=np.array([e.vertices[:] for e in body.data.edges]);degree=np.bincount(edges.ravel(),minlength=len(W))
     pinned=np.array([n=='bulb-head' for n in labels])
-    for _ in range(5):
+    for _ in range(smooth):
         around=np.zeros_like(W)
         np.add.at(around,edges[:,0],W[edges[:,1]]);np.add.at(around,edges[:,1],W[edges[:,0]])
         proposed=.5*W+.5*around/np.maximum(degree,1)[:,None];proposed[pinned]=W[pinned];W=proposed
@@ -138,6 +152,19 @@ def rig_anatomy(objects,a,diagnostics=True):
     keep=np.argsort(W,axis=1)[:,-4:];filtered=np.zeros_like(W)
     np.put_along_axis(filtered,keep,np.take_along_axis(W,keep,axis=1),axis=1)
     W=filtered/filtered.sum(axis=1)[:,None]
+    rows=[{names[i]:float(w) for i,w in enumerate(row) if w>1e-8} for row in W]
+    return rows,{'sourceRegions':sorted(set(labels)),'vertices':len(W),'maxInfluences':int((W>0).sum(axis=1).max())}
+
+
+def rig_anatomy(objects,a,diagnostics=True):
+    """Bind the shared fused anatomy; export all skins at scene root."""
+    import bpy
+    from mathutils import Vector,Quaternion
+    from mathutils.bvhtree import BVHTree
+    from agent_meshes_author import bind_skin
+    bones=skeleton(a);weight=weight_function(a)
+    body=next(o for o in objects if o.name=='sprout-body')
+    rows,skin_report=anatomy_weights(body,a)
     data=bpy.data.armatures.new('sprout-skeleton');arm=bpy.data.objects.new('sprout-rig',data)
     bpy.context.scene.collection.objects.link(arm);bpy.context.view_layer.objects.active=arm;arm.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')
@@ -145,7 +172,7 @@ def rig_anatomy(objects,a,diagnostics=True):
         eb=data.edit_bones.new(n);eb.head=b['head'];eb.tail=b['tail']
         if b['parent']:eb.parent=data.edit_bones[b['parent']]
     bpy.ops.object.mode_set(mode='OBJECT')
-    rows=[{names[i]:float(w) for i,w in enumerate(row) if w>1e-8} for row in W]
+    names=list(bones)
     for obj in objects:
         weights=rows if obj==body else [weight(v.co,obj.name) for v in obj.data.vertices]
         bind_skin(obj,arm,weights)
@@ -182,5 +209,4 @@ def rig_anatomy(objects,a,diagnostics=True):
             track=arm.animation_data.nla_tracks.new();track.name=clip;track.strips.new(clip,0,action)
         for pb in arm.pose.bones:pb.matrix_basis.identity()
         bpy.context.scene.frame_set(0)
-    return [*objects,arm],{'bones':bones,'sourceRegions':sorted(set(labels)),
-                           'vertices':len(W),'maxInfluences':int((W>0).sum(axis=1).max())}
+    return [*objects,arm],{'bones':bones,**skin_report}
