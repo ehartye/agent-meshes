@@ -36,7 +36,7 @@ not the full ARKit contract: gaze, jaw, mouth interior and speech are not suppli
 ## Cutting weighted clothing
 
 `agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,
-offset=0, shape=None)` clips a weighted sculpt into garment panels. This pure
+offset=0, shape=None, component=None)` clips a weighted sculpt into garment panels. This pure
 NumPy helper returns `vertices`, `faces`, `weights` and `covered_faces`. Each
 scalar field has one value per source vertex; all fields must be nonnegative
 in the retained region. For example, `[z - waist, neckline - z]` selects a band.
@@ -50,6 +50,16 @@ objects and fabric thickness in the caller. `covered_faces` identifies fully
 covered source polygons, **not** a deletion policy: preserve skin inside open
 sleeves and collars so oblique views cannot see hollow appendages. Materials,
 interior coverage and collision/contact review remain the author's responsibility.
+
+Use `component='largest'` when the cut should retain one connected patch, such
+as an outer beard surface rather than disconnected mouth-interior islands. It
+chooses greatest triangulated output area after shape/offset, not vertex count;
+exact ties retain the earliest source patch. Faces connect through shared vertex
+indices; coincident seams are not welded, so a deliberately split surface can
+have multiple components. Omit the option for paired or multipart garments.
+Vertices, faces and skin rows are compacted together. `covered_faces` excludes
+source faces belonging to discarded patches, so those skin faces remain visible.
+This selects topology, not semantic exterior anatomy; inspect the chosen patch.
 
 ## Fitting a reference rig
 
