@@ -7,7 +7,7 @@ import numpy as np
 from numbers import Real
 
 
-def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None):
+def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None, component=None):
     """Return vertices/faces/weights and fully covered source-face indices.
 
     Each field has one signed value per source vertex. All fields must be >= 0
@@ -17,9 +17,17 @@ def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None)
     Returned weight rows are normalized and limited to four influences.
     Source polygons must be convex; scalar fields interpolate linearly per face.
 
+    component='largest' retains only the connected output patch with greatest
+    triangulated surface area (after shape/offset). Connectivity uses shared
+    vertex indices, never welded positions; authoring seams can split patches.
+    Exact area ties retain the earliest source patch. None retains every patch.
+    Discarded patches never mark their source faces covered.
+
     covered_faces means geometrically covered, not safe to delete: open sleeves
     and necklines can expose the interior skin from another camera angle.
     """
+    if component is not None and (not isinstance(component,str) or component!='largest'):
+        raise ValueError("component must be None or 'largest'")
     v=np.asarray(vertices,float);n=np.asarray(normals,float)
     if v.ndim!=2 or v.shape[1]!=3 or not len(v) or n.shape!=v.shape or not np.isfinite(v).all() or not np.isfinite(n).all():
         raise ValueError('vertices and normals must be finite matching Nx3 arrays')
@@ -33,7 +41,7 @@ def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None)
     f=[np.asarray(field,float) for field in fields]
     if any(field.shape!=(len(v),) or not np.isfinite(field).all() for field in f):
         raise ValueError('fields must contain one finite scalar per vertex')
-    output=[];polygons=[];skin=[];covered=[];lookup={}
+    output=[];polygons=[];skin=[];covered=[];lookup={};source_faces=[]
     def mix_row(a,b,t): return {k:(1-t)*a.get(k,0)+t*b.get(k,0) for k in a.keys()|b.keys()}
     for fi,face in enumerate(faces):
         if len(face)<3 or any(not isinstance(i,(int,np.integer)) or i<0 or i>=len(v) for i in face):
@@ -66,5 +74,29 @@ def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None)
                 lookup[key]=len(output);output.append(point);skin.append({k:w/total for k,w in top})
             ids.append(lookup[key])
         ids=list(dict.fromkeys(ids))
-        if len(ids)>=3: polygons.append(ids)
+        if len(ids)>=3:
+            polygons.append(ids);source_faces.append(fi)
+    if component=='largest' and polygons:
+        parent=list(range(len(output)))
+        def root(i):
+            while parent[i]!=i:
+                parent[i]=parent[parent[i]];i=parent[i]
+            return i
+        for face in polygons:
+            for i in face[1:]:
+                a,b=root(face[0]),root(i)
+                if a!=b:parent[max(a,b)]=min(a,b)
+        patches={}
+        for fi,face in enumerate(polygons):
+            patch=patches.setdefault(root(face[0]),{'area':0.,'faces':[]})
+            p=np.asarray([output[i] for i in face])
+            patch['area']+=sum(float(np.linalg.norm(np.cross(p[i]-p[0],p[i+1]-p[0])))*.5 for i in range(1,len(p)-1))
+            patch['faces'].append(fi)
+        selected=max(patches.values(),key=lambda patch:patch['area'])['faces']
+        retained={source_faces[i] for i in selected}
+        covered=[i for i in covered if i in retained]
+        used=sorted({v for i in selected for v in polygons[i]})
+        remap={v:i for i,v in enumerate(used)}
+        polygons=[[remap[v] for v in polygons[i]] for i in selected]
+        output=[output[i] for i in used];skin=[skin[i] for i in used]
     return {'vertices':np.asarray(output).reshape((-1,3)),'faces':polygons,'weights':skin,'covered_faces':covered}

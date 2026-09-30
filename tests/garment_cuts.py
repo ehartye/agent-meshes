@@ -59,4 +59,53 @@ class GarmentCuts(unittest.TestCase):
         self.assertTrue(all(p[0]>=0 and p[2]>=.5 for p in out['vertices']))
 
 
+class SurfaceComponents(unittest.TestCase):
+    def cut(self,vertices,faces,fields=(),**kwargs):
+        v=np.asarray(vertices,float)
+        return cut_surface(v,faces,np.tile([0,0,1],(len(v),1)),
+                           [{'source-'+str(i):1} for i in range(len(v))],fields,**kwargs)
+
+    def test_largest_uses_surface_area_not_vertex_count_and_preserves_rows(self):
+        # Tiny densely triangulated island, followed by a much larger quad.
+        v=[[0,0,0],[.1,0,0],[.1,.1,0],[0,.1,0],[.05,.05,0],
+           [2,0,0],[4,0,0],[4,2,0],[2,2,0]]
+        f=[[0,1,4],[1,2,4],[2,3,4],[3,0,4],[5,6,7,8]]
+        out=self.cut(v,f,component='largest')
+        np.testing.assert_array_equal(out['vertices'],v[5:])
+        self.assertEqual(out['faces'],[[0,1,2,3]])
+        self.assertEqual(out['weights'],[{'source-'+str(i):1} for i in range(5,9)])
+        self.assertEqual(out['covered_faces'],[4])
+
+    def test_partial_retained_panel_never_marks_source_skin_covered(self):
+        v=np.array([[0,0,0],[2,0,0],[2,2,0],[0,2,0],
+                    [4,0,0],[4.1,0,0],[4.1,.1,0],[4,.1,0]])
+        out=self.cut(v,[[0,1,2,3],[4,5,6,7]],[v[:,0]-1],component='largest')
+        self.assertEqual(out['covered_faces'],[])
+        self.assertEqual(len(out['faces']),1)
+        self.assertTrue(all(p[0]<=2 for p in out['vertices']))
+        for row in out['weights']:self.assertAlmostEqual(sum(row.values()),1)
+
+    def test_clipping_can_split_a_connected_strip(self):
+        v=[[x,y,0] for x in range(4) for y in [0,1]]
+        f=[[0,2,3,1],[2,4,5,3],[4,6,7,5]]
+        field=[1,1,-1,-1,-1,-1,1,1]
+        out=self.cut(v,f,[field],component='largest')
+        self.assertEqual(len(out['faces']),1)
+        self.assertTrue(all(p[0]<=.5 for p in out['vertices']))
+
+    def test_coincident_disconnected_sheets_are_not_welded(self):
+        quad=[[0,0,0],[1,0,0],[1,1,0],[0,1,0]]
+        out=self.cut(quad+quad,[[0,1,2,3],[4,5,6,7]],component='largest')
+        self.assertEqual(out['covered_faces'],[0])
+        self.assertEqual(len(out['vertices']),4)
+        self.assertEqual(out['weights'][0],{'source-0':1})
+
+    def test_empty_selection_and_invalid_mode(self):
+        v=[[0,0,0],[1,0,0],[0,1,0]]
+        out=self.cut(v,[[0,1,2]],[[-1,-1,-1]],component='largest')
+        self.assertEqual(out['vertices'].shape,(0,3));self.assertEqual(out['covered_faces'],[])
+        for mode in ['biggest',True,[],1]:
+            with self.assertRaises(ValueError):self.cut(v,[[0,1,2]],component=mode)
+
+
 if __name__=='__main__': unittest.main()
