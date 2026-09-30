@@ -1190,7 +1190,16 @@ continuity checks; inspect rendered sequences as well as the exported skeleton.
 smooths its periodic pelvis/hock curves, and solves the fitted leg lengths toward
 explicit toe trajectories. Stride follows leg length; lift follows body height.
 Foot return begins after ground clearance, with continuous contact velocity.
+Requested lift is fitted against the actual pelvis motion and leg lengths to keep
+the knee at least 60 degrees open. A smooth sine-to-the-fourth swing envelope reduces
+peak lift while retaining the lift needed for reach near the swing ends; planted
+toe targets stay unchanged. `fit_swing_lift(hips, zero_lift_hocks, lifts, upper,
+lower, minimum_angle=60, attenuation=None)` exposes this constraint fit for other
+trajectories. Attenuation values are in [0,1]; the fitted lift factor is
+`1 - attenuation * (1 - returned_scale)`. Omitting attenuation fits a uniform
+scale. Infeasible targets raise instead of silently moving grounded feet.
 The returned report records source SHA-256, reference phase and clip metadata.
+Per-clip metadata includes requested/max fitted lift, peak scale and envelope.
 The GLB also receives `agent-meshes/gait/1` contact/travel metadata.
 
 The bake uses 60 fps and retimes existing NLA strips to preserve their duration.
@@ -1200,6 +1209,8 @@ raised-hock `metatarsal_l/r` bones and samples their skinned toe descendants.
 Run `python tests/sprout_kin_gait.py` and `mesh gait model.glb --clip walk
 --gait walk` (also `jog`). Passing movement ranges does not prove reference-curve
 correlation, collision clearance, visual approval or completed facial/clothing work.
+`npx vitest run tests/sprout-swing-blender.test.ts` checks both adult and child
+rigs against captured reference rhythm, including interpolated poses.
 
 
 ## Hanging cloth flaps
