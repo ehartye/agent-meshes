@@ -1191,7 +1191,7 @@ smooths its periodic pelvis/hock curves, and solves the fitted leg lengths towar
 explicit toe trajectories. Stride follows leg length; lift follows body height.
 Foot return begins after ground clearance, with continuous contact velocity.
 Requested lift is fitted against the actual pelvis motion and leg lengths to keep
-the knee at least 60 degrees open. A smooth sine-squared swing envelope reduces
+the knee at least 60 degrees open. A smooth sine-to-the-fourth swing envelope reduces
 peak lift while retaining the lift needed for reach near the swing ends; planted
 toe targets stay unchanged. `fit_swing_lift(hips, zero_lift_hocks, lifts, upper,
 lower, minimum_angle=60, attenuation=None)` exposes this constraint fit for other

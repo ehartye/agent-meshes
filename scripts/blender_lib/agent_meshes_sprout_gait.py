@@ -165,7 +165,7 @@ def bake_gaits(objects,a,reference):
     for clip,duration,stance,stride,lift,bob,lean in [('walk',1.55,.62,.49,.09,.035,8),('jog',.9,.36,.48,.16,.07,18)]:
         action=bpy.data.actions.new(clip);arm.animation_data.action=action;frames=round(duration*60)
         def swing_attenuation(p):
-            return 0. if p<=stance else math.sin(math.pi*(p-stance)/(1-stance))**2
+            return 0. if p<=stance else math.sin(math.pi*(p-stance)/(1-stance))**4
         def foot_targets(side,p,lift_scale=None):
             dy,dz=foot_path(p,stance,stride*step_scale,lift*s)
             factor=0. if lift_scale is None else 1-(1-lift_scale)*swing_attenuation(p)
@@ -189,7 +189,7 @@ def bake_gaits(objects,a,reference):
         report['clips'][clip]={'duration':duration,'stance':stance,'travelSpeed':stride*step_scale/(stance*duration),
             'contactPhase':{'metatarsal_l':0.,'metatarsal_r':.5},'requestedLift':lift*s,
             'fittedMaxLift':float(np.max(np.asarray(lifts)*(1-(1-lift_scale)*np.asarray(attenuation)))),
-            'peakSwingLiftScale':lift_scale,'attenuation':'sin-squared-swing-phase','minimumKneeOpening':60}
+            'peakSwingLiftScale':lift_scale,'attenuation':'sin-fourth-swing-phase','minimumKneeOpening':60}
         for frame in range(frames+1):
             phase=frame/frames;cycle=root_pose(phase,clip,stance,bob)
             # Pitch is distributed over two spine joints; upper spine counters yaw.

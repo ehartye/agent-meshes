@@ -5,7 +5,7 @@ from agent_meshes_sprout_kin import build_anatomy
 from agent_meshes_sprout_rig import rig_anatomy
 import agent_meshes_sprout_gait as gait
 EXPORT_ANIMATION_MODE='NLA_TRACKS'
-def build():
+def build(age_to_export=None):
     # Captured CC0 reference rhythm keeps the reproduction independent of downloads.
     from pathlib import Path
     import json
@@ -14,6 +14,7 @@ def build():
     gait._reference=lambda path:(lambda name,p:curves[name](p),dict(data['provenance']))
     objects=[]
     for age,height in [('child',1.12),('adult',1.7)]:
+        if age_to_export is not None and age!=age_to_export:continue
         for obj in objects:bpy.data.objects.remove(obj,do_unlink=True)
         objects,a=build_anatomy(height=height,age=age,clay=True);objects,_=rig_anatomy(objects,a)
         report=gait.bake_gaits(objects,a,None)
