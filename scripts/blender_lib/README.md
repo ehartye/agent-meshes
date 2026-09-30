@@ -1292,7 +1292,40 @@ Fit contours to the real garment edge, particularly when an offset jacket
 surface moves its neckline above the body's original cutting plane. Assign
 weights from the appropriate neck/chest garment surface before export.
 
-The helper creates geometry only. It does not infer a neckline, remove hidden
+The pure helper creates geometry only. It does not infer a neckline, remove hidden
 skin, bind a skeleton or guarantee posed clearance. Inspect the complete ring,
 front opening, underside and moving neck. Run `python tests/garment_neckbands.py`
 for closed topology, capped openings, rib alignment and invalid-input checks.
+
+In Blender, `fit_neckband(body, garment, lower=..., upper=..., clearance=.009,
+opening_width=None, surface_shape=None, ribs=0)` returns a dictionary with
+`vertices`, `faces` and normalized `weights`. Use it after shaping the garment
+and before attaching parts that inherit garment weights. Both objects must share
+a local Z-up frame, front -Y; the garment must have applied Solidify topology
+with paired vertex halves no more than 4 mm apart (`max_fabric_thickness`).
+
+For a shirt, leave `opening_width=None` for a complete ring and set `ribs`.
+For a jacket, pass the front opening's body-space half-width and the same
+`surface_shape(position, normal)` function used to offset the jacket. The fitter
+solves each endpoint separately on the body and lifts the stand from the shaped
+edge, embedded 2 mm by default. Set the lower/upper heights and dimensions for
+each character; these defaults are not scale independent.
+
+For an already relaxed shirt or a scooped hoodie opening, pass
+`follow_garment_edge=True` instead of `surface_shape`/`opening_width`. The fitter
+extracts closed boundary loops from the outer Solidify half, chooses the loop
+whose centroid is closest to `(center.x, center.y, lower)`, and resamples the
+actual fabric edge by arc length. Its base follows that non-planar edge, embedded
+by `embed`; `upper-lower` is the vertical band rise. The top stays directly over
+the attachment edge; body radial `clearance` is unused in this mode. Inspect the
+chosen loop and skin clearance on unusual garments; this mode requires
+closed, unbranched boundaries and is not an open-jacket selector.
+
+The base contour borrows barycentric skin weights. A 15 mm smoothing distance
+reduces weight discontinuities around the band; each vertical column shares one
+attachment row. The neighboring garment receives that field with a 35 mm fade,
+equally on both sides of its thickness. Source geometry/weights and garment
+geometry are unchanged. The fitter mutates nearby garment weights only after
+constructing and validating the fit. It does not clear hidden skin or certify
+animation clearance. The Blender fitting fixture checks endpoint placement,
+column weights, paired thickness, smoothing and preservation of distant weights.
