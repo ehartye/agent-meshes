@@ -1278,6 +1278,16 @@ matrix variation by clip. It rejects static selected clips and restores the
 active action/slot, NLA flags, pose position and frame/subframe. Matrices act on
 rest geometry in armature-local space; reconcile mesh transforms first.
 
+`agent_meshes_tessellation.triangulate_surface(vertices, faces)` freezes Blender's
+rest loop triangles and returns `faces` plus `source_faces` (one original polygon
+index per triangle). It does not move vertices or change caller data, and removes
+its temporary mesh. Non-triangle input needs Blender; existing triangles pass
+through unchanged. Cut fitted clothing from the donor's frozen triangles so a
+warped quad cannot acquire a different diagonal when copied, clipped or reversed.
+Reuse those indices in posed checks; rebuilding a BVH from posed quads can test
+a different surface than the exported triangles. Degenerate/self-crossing source
+polygons still require author repair; this is tessellation, not mesh repair.
+
 `agent_meshes_garment_fit.fit_surface_offsets(vertices, faces, normals, weights,
 reference_vertices, reference_faces, reference_weights, poses, offset=.006,
 minimum_offset=.0007, thickness=.0006, iterations=24)` fits a separate offset
@@ -1288,15 +1298,20 @@ the reductions across connected edges. Weights and motion are not adjusted.
 Normals and weight totals are normalized, with no influence pruning; rows must
 have at most four influences. The minimum offset must exceed half the thickness.
 
-The result contains `vertices`, `faces`, `weights`, source `offsets`, and `report`.
+The result contains `vertices`, `faces`, `source_faces`, `weights`, source `offsets`, and `report`.
 Positive thickness creates a closed shell along the same source normals, with
 outer vertices followed by inner vertices and boundary rims. This avoids
 recalculating extrusion directions from tiny clipped edge triangles. Shell
-sources must be consistently wound and manifold. Zero thickness retains the
-surface topology. Inputs are not modified.
+sources must be consistently wound and manifold. Both source and reference
+polygons are tessellated once before fitting; returned outer/inner surfaces and
+rims all use fixed triangles. `source_faces` maps output triangles to original
+input polygons, with `None` for rim triangles. Inputs are not modified.
 
 Check `report.converged` before accepting the fit. The report includes initial
-and final maximum intersection-pair counts and the stopping reason. Some
+and final maximum triangle-pair counts (`pair_unit: 'triangle'`) and the stopping
+reason. Counts are not directly comparable to older polygon-pair reports.
+Each body example's `reference_face` identifies the original input polygon and
+`reference_triangle` its frozen triangle; `garment_face` indexes returned faces. Some
 garments cannot be repaired within the offset bounds: inspect and repair the
 surface or fit instead of reducing the minimum blindly. A converged result
 proves only that the supplied samples have no tested surface intersections.
@@ -1304,7 +1319,7 @@ It does not detect contained volumes, guarantee a distance gap or between-sample
 clearance, or approve the appearance. Verify the exported model at additional
 phases and inspect the openings, thickness, attachments and silhouette.
 
-Run `npx vitest run tests/garment-fit-blender.test.ts tests/skin-samples-blender.test.ts`
+Run `npx vitest run tests/garment-fit-blender.test.ts tests/skin-samples-blender.test.ts tests/surface-triangles-blender.test.ts`
 for the Blender regression fixtures and `python tests/garment_cuts.py` for cuts.
 
 ## Selecting anatomical skin sources

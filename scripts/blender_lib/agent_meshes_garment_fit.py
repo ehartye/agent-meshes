@@ -85,7 +85,8 @@ def _shell_faces(faces, count):
         if visited != fan:
             raise ValueError(f'thickness requires a manifold face fan at vertex {vertex}')
     inner = [tuple(i + count for i in reversed(face)) for face in faces]
-    rims = [(b, a, a + count, b + count) for a, b in boundaries]
+    rims = [triangle for a,b in boundaries for triangle in
+            [(b,a,a+count),(b,a+count,b+count)]]
     return faces + inner + rims
 
 
@@ -109,17 +110,22 @@ def fit_surface_offsets(vertices, faces, normals, weights, reference_vertices,
     fitted offsets +/- thickness/2, duplicating weights. The outer vertices come
     first, then inner vertices; outer faces retain winding, inner faces reverse
     it, and boundary edges receive rims. No modifier recomputes the normals.
-    Shell input must have manifold, consistently wound topology. Surface mode
-    keeps the original topology. minimum_offset must exceed thickness/2.
+    Shell input must have manifold, consistently wound topology. Source and
+    reference polygons are tessellated once in rest space; output faces include
+    fixed triangles for outer skin, inner skin and rims. Cut from the donor's
+    rest triangles to preserve correspondence on warped quads. The returned
+    source_faces map output triangles to input polygons (None for shell rims).
+    minimum_offset must exceed thickness/2.
 
     ``report`` gives per-pose maximum body and nonadjacent self-intersection pair
-    counts, initially and after fitting. Faces sharing a vertex are excluded
+    counts in triangle pairs, initially and after fitting. Faces sharing a vertex are excluded
     from self tests. Peak pose indices use zero for the automatic rest sample,
     then supplied pose index + 1 (None if clear; first sample wins a peak tie).
     ``history`` includes the initial check and each reduction. Up to three final
     pair examples from each peak sample identify output faces and source vertex
     indices, their offsets, and whether all those vertices reached the minimum.
-    Convergence applies only to sampled surface intersections:
+    reference_face identifies the input reference polygon; reference_triangle
+    identifies its fixed triangle. Convergence applies only to sampled surface intersections:
     no containment, between-sample, distance-clearance or aesthetic guarantee.
     """
     for name, value in [('offset', offset), ('minimum_offset', minimum_offset), ('thickness', thickness)]:
@@ -143,6 +149,10 @@ def fit_surface_offsets(vertices, faces, normals, weights, reference_vertices,
     body = _points(reference_vertices, 'reference_vertices')
     body_faces = _faces(reference_faces, len(body), 'reference_faces')
     body_rows = _weights(reference_weights, len(body), 'reference_weights')
+    from agent_meshes_tessellation import triangulate_surface
+    surface_topology=triangulate_surface(source,polygons)
+    body_topology=triangulate_surface(body,body_faces)
+    polygons=surface_topology['faces'];body_faces=body_topology['faces']
     names = sorted({name for row in rows + body_rows for name, value in row.items() if value > 0})
     if not isinstance(poses, (list, tuple)) or not poses:
         raise ValueError('poses must be a nonempty list of bone matrix dictionaries')
@@ -164,6 +174,9 @@ def fit_surface_offsets(vertices, faces, normals, weights, reference_vertices,
         matrices.append(np.array([validated[name] for name in names]))
 
     output_faces = _shell_faces(polygons, len(source)) if thickness else polygons
+    output_sources=surface_topology['source_faces']
+    if thickness:
+        output_sources=output_sources*2+[None]*(len(output_faces)-2*len(polygons))
     face_sets = [set(face) for face in output_faces]
     edge_pairs = sorted({tuple(sorted((a, b))) for face in polygons for a, b in zip(face, face[1:] + face[:1])})
     a, b = np.array(edge_pairs, dtype=int).T
@@ -210,7 +223,8 @@ def fit_surface_offsets(vertices, faces, normals, weights, reference_vertices,
             self_pairs = [(i, j) for i, j in tree.overlap(tree) if i < j and face_sets[i].isdisjoint(face_sets[j])]
             if len(body_pairs) > max_body:
                 max_body, peak_body = len(body_pairs), pose_index
-                body_examples = [dict(pose_index=pose_index, reference_face=i, garment_face=j,
+                body_examples = [dict(pose_index=pose_index, reference_face=body_topology['source_faces'][i],
+                                      reference_triangle=i, garment_face=j,
                                       **example_vertices([j])) for i, j in sorted(body_pairs)[:3]]
             if len(self_pairs) > max_self:
                 max_self, peak_self = len(self_pairs), pose_index
@@ -257,9 +271,11 @@ def fit_surface_offsets(vertices, faces, normals, weights, reference_vertices,
     return {
         'vertices': [tuple(point) for point in geometry(source, normal, limits).tolist()],
         'faces': output_faces,
+        'source_faces': output_sources,
         'weights': [dict(row) for row in (rows + rows if thickness else rows)],
         'offsets': limits.tolist(),
         'report': {'converged': not bad, 'iterations': performed, 'sampled_poses': len(samples),
+                   'pair_unit': 'triangle',
                    'initial_max_body_pairs': initial['max_body_pairs'],
                    'initial_max_self_pairs': initial['max_self_pairs'],
                    'initial_peak_body_pose': initial['peak_body_pose'],

@@ -44,8 +44,10 @@ def build():
     assert diagnosis['initial_peak_body_pose']==1 and diagnosis['peak_self_pose'] is None
     assert diagnosis['reason']=='minimum_offset_reached'
     assert diagnosis['colliding_vertices_at_minimum']==diagnosis['colliding_vertices']==4
-    assert diagnosis['body_pair_examples'][0]['garment_face']==0
-    assert diagnosis['body_pair_examples'][0]['source_vertices']==[0,1,2,3]
+    example=diagnosis['body_pair_examples'][0]
+    assert example['reference_face']==0 and example['reference_triangle'] in [0,1]
+    assert example['source_vertices']==sorted(blocked['faces'][example['garment_face']])
+    assert blocked['source_faces']==[0,0] and diagnosis['pair_unit']=='triangle'
     assert diagnosis['body_pair_examples'][0]['all_vertices_at_minimum']
     assert len(diagnosis['history'])==diagnosis['iterations']+1
     assert diagnosis['history'][0]['iteration']==0 and diagnosis['history'][-1]['max_body_pairs']==diagnosis['max_body_pairs']
@@ -63,7 +65,7 @@ def build():
     assert folded['report']['initial_peak_self_pose']==0 and folded['report']['self_pair_examples']==[]
     assert folded['report']['converged'] and folded['report']['max_self_pairs']==0
     tree=BVHTree.FromPolygons(folded['vertices'],folded['faces'])
-    assert not [(a,b) for a,b in tree.overlap(tree) if a<b]
+    assert not [(a,b) for a,b in tree.overlap(tree) if a<b and set(folded['faces'][a]).isdisjoint(folded['faces'][b])]
 
     shell=fit_surface_offsets(*args,offset=.2,minimum_offset=.03,thickness=.04)
     assert shell['report']['converged'] and len(shell['vertices'])==8
