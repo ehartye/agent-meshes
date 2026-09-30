@@ -15,7 +15,8 @@ def build():
         objects,a=build_anatomy(height=height,age=age,clay=True)
         body=next(o for o in objects if o.name=='sprout-body')
         rest=np.array([v.co[:] for v in body.data.vertices])
-        original,_=anatomy_weights(body,a)
+        # Isolate the hip pass while keeping the independent neck pass enabled.
+        original,_=anatomy_weights(body,a,neck_seam=True)
         try:anatomy_weights(body,a,regions=['trunk'],hip_seams=True)
         except ValueError:pass
         else:raise AssertionError('Restricted trunk source must not acquire leg influences')

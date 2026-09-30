@@ -116,16 +116,18 @@ def skin_regions(a,include=None):
     return [p for p in parts if p['name'] in names]
 
 
-def anatomy_weights(body,a,regions=None,smooth=5,hip_seams=False):
+def anatomy_weights(body,a,regions=None,smooth=5,hip_seams=False,neck_seam=False):
     """Blender mesh weights from selected anatomical source surfaces.
 
     Selection happens before nearest-surface lookup, so adjacent excluded limbs
     cannot donate weights to a garment. Mesh and regions use rest-space Z-up
-    coordinates. Returns rows and a provenance report; does not bind or move it.
+    coordinates. Optional seam passes require both adjoining source regions.
+    Returns rows and a provenance report; does not bind or move geometry.
     """
     from mathutils import Vector
     from mathutils.bvhtree import BVHTree
     if isinstance(smooth,bool) or not isinstance(smooth,int) or smooth<0:raise ValueError('Nonnegative integer smoothing passes required')
+    if not isinstance(neck_seam,bool):raise ValueError('neck_seam must be boolean')
     bones=skeleton(a);parts=skin_regions(a,regions);weight=weight_function(a)
     vertices=[];faces=[];regions=[]
     for p in parts:
@@ -169,6 +171,18 @@ def anatomy_weights(body,a,regions=None,smooth=5,hip_seams=False):
                              [tuple(p.vertices) for p in body.data.polygons],restricted,free,iterations=500)
         rows=[fitted[i] if active else rows[i] for i,active in enumerate(free)]
         report['hipSeamVertices']=int(sum(free))
+    if neck_seam:
+        if not {'neck','bulb-head'}<=set(labels):raise ValueError('Neck seam requires neck and bulb-head sources')
+        from agent_meshes_skin_relax import relax_weights
+        # Head-region vertices stay rigid. Diffuse their influence down the
+        # connected upper neck instead of switching at the nearest-source seam.
+        # Pin the lower neck and every unrelated region to its existing weights.
+        free=[label=='neck' and v.co.z>a['joints']['neck_mid'][2]-.06*a['scale']
+              for label,v in zip(labels,body.data.vertices)]
+        fitted=relax_weights([v.co[:] for v in body.data.vertices],
+                             [tuple(p.vertices) for p in body.data.polygons],rows,free,iterations=150)
+        rows=[fitted[i] if active else rows[i] for i,active in enumerate(free)]
+        report['neckSeamVertices']=int(sum(free))
     return rows,report
 
 
@@ -180,7 +194,7 @@ def rig_anatomy(objects,a,diagnostics=True):
     from agent_meshes_author import bind_skin
     bones=skeleton(a);weight=weight_function(a)
     body=next(o for o in objects if o.name=='sprout-body')
-    rows,skin_report=anatomy_weights(body,a,hip_seams=True)
+    rows,skin_report=anatomy_weights(body,a,hip_seams=True,neck_seam=True)
     data=bpy.data.armatures.new('sprout-skeleton');arm=bpy.data.objects.new('sprout-rig',data)
     bpy.context.scene.collection.objects.link(arm);bpy.context.view_layer.objects.active=arm;arm.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')
