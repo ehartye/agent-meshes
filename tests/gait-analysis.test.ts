@@ -42,6 +42,15 @@ describe('curve helpers', () => {
     expect(kneeInterior([0, 1, 0], [0, 0.5, -0.1], [0, 0, 0], forward)).toBeGreaterThan(180);
   });
 
+  it('resolves raised-hock metatarsals as the ankle chain, retaining grounded toes', () => {
+    const names = ['pelvis', 'spine_low', 'spine_high', 'neck_lower', 'neck_middle', 'neck_upper', 'head',
+      ...['l', 'r'].flatMap(s => ['thigh', 'shin', 'metatarsal', 'toes', 'upperarm', 'forearm', 'hand'].map(n => `${n}_${s}`))];
+    const parent = {head:'neck_upper', neck_upper:'neck_middle', neck_middle:'neck_lower', neck_lower:'spine_high', spine_high:'spine_low', spine_low:'pelvis'};
+    const rig = resolveGaitBones(names, n => parent[n as keyof typeof parent] ?? null);
+    expect(rig.legs.a).toEqual({thigh:'thigh_l', calf:'shin_l', foot:'metatarsal_l', toe:'toes_l'});
+    expect(rig.spine).toEqual(['spine_low', 'spine_high']);
+  });
+
   it('resolves stylized and UE-mannequin bone names, choosing left and right by geometry', () => {
     const stylized = resolveGaitBones(['rig-root', 'rig-pelvis', 'rig-spine', 'rig-chest', 'rig-neck', 'rig-head', 'rig-left-thigh', 'rig-left-shin', 'rig-left-foot', 'rig-right-thigh', 'rig-right-shin', 'rig-right-foot', 'rig-left-upper-arm', 'rig-left-forearm', 'rig-right-upper-arm', 'rig-right-forearm'],
       name => ({ 'rig-head': 'rig-neck', 'rig-neck': 'rig-chest', 'rig-chest': 'rig-spine', 'rig-spine': 'rig-pelvis' } as Record<string, string>)[name] ?? null);

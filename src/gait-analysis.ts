@@ -167,7 +167,7 @@ export function resolveGaitBones(names: string[], parentOf: (name: string) => st
     const list = names.filter(name => sideOf(name) === s);
     const thigh = find(list, /(thigh|upleg|upperleg)$/, `${s === 'a' ? 'left' : 'right'} thigh`);
     const calf = find(list.filter(n => n !== thigh), /(calf|shin|lowerleg|leg)$/, 'calf');
-    const foot = find(list, /(foot|ankle)$/, 'foot');
+    const foot = find(list, /(foot|ankle|metatarsal)$/, 'foot');
     const toe = list.find(name => /(ball|toe|toebase|toes)$/.test(baseOf(name)));
     const lower = find(list, /(forearm|lowerarm)$/, 'forearm');
     const upper = find(list.filter(n => n !== lower), /(upperarm|arm)$/, 'upper arm');

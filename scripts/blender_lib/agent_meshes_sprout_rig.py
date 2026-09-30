@@ -6,7 +6,7 @@ the diagnostic animation clips.
 """
 import math
 import numpy as np
-from agent_meshes_sprout_kin import geometry
+from agent_meshes_sprout_kin import geometry, hand_point
 
 
 def skeleton(a):
@@ -34,7 +34,7 @@ def skeleton(a):
             root=hand+[sign*dx,-.005*s,-.024*s];mid=root+[0,-.012*s,-.036*s];tip=root+[0,-.025*s,-.064*s]
             add(f'finger_{side}{n}_base',root,mid,'hand_'+side)
             add(f'finger_{side}{n}_tip',mid,tip,f'finger_{side}{n}_base')
-        root=hand+[-sign*.02*s,0,.012*s];mid=root+[-sign*.029*s,-.013*s,-.013*s];tip=root+[-sign*.025*s,-.034*s,-.027*s]
+        root=hand+[sign*.02*s,0,.012*s];mid=root+[sign*.029*s,-.013*s,-.013*s];tip=root+[sign*.025*s,-.034*s,-.027*s]
         add('thumb_'+side+'_base',root,mid,'hand_'+side)
         add('thumb_'+side+'_tip',mid,tip,'thumb_'+side+'_base')
         hip,knee,hock,toe=[j[n+'_'+side] for n in ['hip','knee','hock','toe']]
@@ -44,6 +44,12 @@ def skeleton(a):
         add('toes_'+side,toe,toe+[0,-.095*s,0],'metatarsal_'+side)
         eye=j['head']+[sign*a['head_radii'][0]*.59,-a['head_radii'][1]*.82,a['head_radii'][2]*.12]
         add('eye_'+side.upper(),eye,eye+np.array([sign*.5,-math.sqrt(.75),0])*.05*s,'head')
+    for side in ['l','r']:
+        for name,b in bones.items():
+            if name=='hand_'+side:
+                b['tail']=hand_point(b['tail'],a,side).tolist()
+            elif name.startswith(('finger_'+side,'thumb_'+side)):
+                b['head']=hand_point(b['head'],a,side).tolist();b['tail']=hand_point(b['tail'],a,side).tolist()
     for part in geometry(height=a['height'],age=a['age']):
         if part['kind']!='crest':continue
         i=part['name'].split('-')[1];rings=np.array(part['vertices']).reshape(-1,12,3).mean(axis=1)
@@ -156,7 +162,7 @@ def rig_anatomy(objects,a,diagnostics=True):
           'check-spine':{'pelvis':((0,0,1),8),'spine_low':((1,0,0),20),'spine_high':((1,0,0),-10)},
           'check-neck-tail':{'neck_lower':((1,0,0),15),'neck_middle':((1,0,0),-12),'neck_upper':((1,0,0),-15),
                              'head':((0,0,1),22),'tail_base':((0,0,1),30),'tail_tip':((0,0,1),20)},
-          'check-hands-crest':{n:(((-1,0,0) if n.startswith(('finger','thumb')) else (0,1,0)),
+          'check-hands-crest':{n:(((0,1 if '_l' in n else -1,0) if n.startswith(('finger','thumb')) else (0,1,0)),
                                   45 if n.startswith(('finger','thumb')) else (int(n.split('_')[1])-(a['crest_count']-1)/2)*12)
                                for n in names if n.startswith(('finger','thumb','crest'))}
         }

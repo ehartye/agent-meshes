@@ -41,6 +41,19 @@ class SproutKin(unittest.TestCase):
                 self.assertTrue(all(0<=i<len(part['vertices']) for f in part['faces'] for i in f))
             self.assertEqual(parts,geometry(age=age))
 
+    def test_relaxed_three_digit_hands_have_forward_thumbs_and_inward_curl(self):
+        for age,height in [('adult',1.7),('child',1.12)]:
+            parts={p['name']:np.array(p['vertices']) for p in geometry(age=age,height=height)}
+            for side,sign in [('l',1),('r',-1)]:
+                palm=parts['palm_'+side].mean(axis=0)
+                thumb=parts['thumb-tip_'+side].mean(axis=0)-palm
+                self.assertGreater(-thumb[1],abs(thumb[0])*1.3)
+                finger=(parts['digit-tip_'+side+'0'].mean(axis=0)+parts['digit-tip_'+side+'1'].mean(axis=0))/2-palm
+                joints=anatomy(age=age,height=height)['joints']
+                axis=np.array(joints['wrist_'+side])-joints['elbow_'+side];axis/=np.linalg.norm(axis)
+                curl=finger-axis*np.dot(finger,axis)
+                self.assertLess(sign*curl[0],-.008*height/1.7)
+
     def test_child_is_not_a_uniformly_scaled_adult_and_inputs_are_bounded(self):
         adult=anatomy(height=1.7); child=anatomy(height=1.12,age='child')
         self.assertGreater(child['head_radii'][0]/1.12,adult['head_radii'][0]/1.7)
