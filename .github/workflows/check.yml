@@ -28,6 +28,7 @@ jobs:
       - run: python tests/garment_neckbands.py
       - run: python tests/cloth_flap.py
       - run: python tests/skin_weight_relaxation.py
+      - run: python tests/skin_weight_transfer.py
       - run: python tests/sculpted_face.py
       - run: python tests/sculpted_jaw.py
       - run: python tests/sprout_kin.py
