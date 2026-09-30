@@ -138,6 +138,31 @@ def geometry(*,height=1.7,age='adult'):
     return parts
 
 
+def _smooth_hip_join(body,a):
+    """Round the fused trunk/thigh junction before weights or clothes are fitted.
+
+    Voxel fusion closes the thigh caps but leaves a shelf under the pear trunk.
+    Local relaxation blends that contour without shrinking hands, feet or head.
+    Run after decimation so its relative edge density is stable across heights.
+    """
+    import bpy
+    s=a['scale'];hip=a['joints']['hip_l'][2]
+    vertices=np.array([v.co[:] for v in body.data.vertices])
+    q=(vertices[:,2]-hip)/(.15*s)
+    mask=np.where(np.abs(q)<1,np.cos(np.clip(q,-1,1)*math.pi/2)**2,0)
+    mask*=np.clip((.18*s-np.abs(vertices[:,0]))/(.04*s),0,1)
+    mask*=np.clip((.13*s-vertices[:,1])/(.04*s),0,1)
+    group=body.vertex_groups.new(name='hip_join_relaxation');group_name=group.name
+    for i,w in enumerate(mask):
+        if w>0:group.add([i],float(w),'REPLACE')
+    bpy.context.view_layer.objects.active=body
+    modifier=body.modifiers.new('Continuous hip contours','SMOOTH')
+    modifier.factor=.5;modifier.iterations=80;modifier.vertex_group=group_name
+    bpy.ops.object.modifier_apply(modifier=modifier.name)
+    # Applying a modifier invalidates Blender's original DeformGroup handle.
+    body.vertex_groups.remove(body.vertex_groups[group_name])
+
+
 def build_anatomy(*,height=1.7,age='adult',skin='#b79ad6',crest='#79b25c',clay=False):
     """Fuse continuous skin before rigging; eyes, tympana and fronds stay editable."""
     import bpy
@@ -159,5 +184,6 @@ def build_anatomy(*,height=1.7,age='adult',skin='#b79ad6',crest='#79b25c',clay=F
     bpy.context.view_layer.objects.active=body
     dec=body.modifiers.new('Anatomy triangle budget','DECIMATE');dec.ratio=min(1,28000/max(1,len(body.data.polygons)*2))
     bpy.ops.object.modifier_apply(modifier=dec.name)
+    _smooth_hip_join(body,a)
     objects.insert(0,body)
     return objects,a
