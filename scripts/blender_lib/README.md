@@ -1275,3 +1275,24 @@ need independent posed checks. Run `python tests/sprout_region_skin.py` and
 body surfaces through both leg diagnostic clips when Blender is available.
 The hip repair does not resolve calf/thigh contact from deeply folded jog poses
 or the separately observed neck folds.
+
+## Raised garment neckbands
+
+`agent_meshes_neckbands.neckband_mesh(lower, upper, thickness=.002, ribs=0,
+rib_depth=0, closed=True)` lofts a rounded fabric band between matching rest-space
+Z-up contours. Pass counterclockwise points viewed from above without repeating
+the endpoint. Upper points must be above their corresponding lower points.
+Closed bands form continuous crew necks; open bands receive end caps for jacket
+stands. The result is `(vertices, faces)` for `make_mesh`.
+
+Ribs stay aligned along the band height and leave the inner wall smooth. Supply
+at least four segments per rib (six or more gives smoother visible ridges).
+Typical shirt rib depth is sub-millimetre; use the character's actual scale.
+Fit contours to the real garment edge, particularly when an offset jacket
+surface moves its neckline above the body's original cutting plane. Assign
+weights from the appropriate neck/chest garment surface before export.
+
+The helper creates geometry only. It does not infer a neckline, remove hidden
+skin, bind a skeleton or guarantee posed clearance. Inspect the complete ring,
+front opening, underside and moving neck. Run `python tests/garment_neckbands.py`
+for closed topology, capped openings, rib alignment and invalid-input checks.
