@@ -1264,6 +1264,49 @@ before skinning begins. Check rest cross-sections, body contact, cloth self-cont
 and matching motion close-ups independently before delivering a garment.
 
 
+## Fitting garment offsets through animation
+
+For clothing cut from an already corrected and bound body, retain the body's
+actual vertex weights. `cut_surface` returns normalized interpolated source
+`normals` alongside its vertices, faces and weights; these directions remain
+source normals even when a custom shape changes positions.
+
+`agent_meshes_skin_samples.sample_deform_poses(armature, samples=33, clips=None)`
+samples isolated, single-strip NLA tracks in global scene time, respecting strip
+scaling. It returns `poses`, per-sample clip/phase/frame metadata, and measured
+matrix variation by clip. It rejects static selected clips and restores the
+active action/slot, NLA flags, pose position and frame/subframe. Matrices act on
+rest geometry in armature-local space; reconcile mesh transforms first.
+
+`agent_meshes_garment_fit.fit_surface_offsets(vertices, faces, normals, weights,
+reference_vertices, reference_faces, reference_weights, poses, offset=.006,
+minimum_offset=.0007, thickness=.0006, iterations=24)` fits a separate offset
+per garment vertex along its supplied normal. `poses` is a nonempty list of
+bone-name to 4×4 deform-matrix dictionaries; the helper also checks identity/rest.
+It reduces offsets where sampled body or cloth intersections occur, diffusing
+the reductions across connected edges. Weights and motion are not adjusted.
+Normals and weight totals are normalized, with no influence pruning; rows must
+have at most four influences. The minimum offset must exceed half the thickness.
+
+The result contains `vertices`, `faces`, `weights`, source `offsets`, and `report`.
+Positive thickness creates a closed shell along the same source normals, with
+outer vertices followed by inner vertices and boundary rims. This avoids
+recalculating extrusion directions from tiny clipped edge triangles. Shell
+sources must be consistently wound and manifold. Zero thickness retains the
+surface topology. Inputs are not modified.
+
+Check `report.converged` before accepting the fit. The report includes initial
+and final maximum intersection-pair counts and the stopping reason. Some
+garments cannot be repaired within the offset bounds: inspect and repair the
+surface or fit instead of reducing the minimum blindly. A converged result
+proves only that the supplied samples have no tested surface intersections.
+It does not detect contained volumes, guarantee a distance gap or between-sample
+clearance, or approve the appearance. Verify the exported model at additional
+phases and inspect the openings, thickness, attachments and silhouette.
+
+Run `npx vitest run tests/garment-fit-blender.test.ts tests/skin-samples-blender.test.ts`
+for the Blender regression fixtures and `python tests/garment_cuts.py` for cuts.
+
 ## Selecting anatomical skin sources
 
 `agent_meshes_sprout_rig.skin_regions(anatomy, include=None)` returns the shared

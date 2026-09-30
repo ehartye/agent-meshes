@@ -26,6 +26,15 @@ class GarmentCuts(unittest.TestCase):
             self.assertEqual(out['weights'][i],{'a':.5,'b':.5})
             self.assertAlmostEqual(out['vertices'][i][1],-.01)
 
+    def test_cut_preserves_normal_directions_for_fitted_fabric_thickness(self):
+        self.n=np.array([[0,-1,0],[0,-1,1],[0,-1,1],[0,-1,0]],float)
+        out=self.cut([self.v[:,0]])
+        for point,normal in zip(out['vertices'],out['normals']):
+            expected=np.array([0,-1,(point[0]+1)/2])
+            np.testing.assert_allclose(normal,expected/np.linalg.norm(expected))
+        empty=self.cut([-self.v[:,0]-2])
+        self.assertEqual(empty['normals'].shape,(0,3))
+
     def test_only_fully_covered_faces_are_removable(self):
         self.assertEqual(self.cut([self.v[:,0]+2])['covered_faces'],[0])
         self.assertEqual(len(self.cut([-self.v[:,0]-2])['faces']),0)
@@ -75,6 +84,7 @@ class SurfaceComponents(unittest.TestCase):
         self.assertEqual(out['faces'],[[0,1,2,3]])
         self.assertEqual(out['weights'],[{'source-'+str(i):1} for i in range(5,9)])
         self.assertEqual(out['covered_faces'],[4])
+        np.testing.assert_array_equal(out['normals'],np.tile([0,0,1],(4,1)))
 
     def test_partial_retained_panel_never_marks_source_skin_covered(self):
         v=np.array([[0,0,0],[2,0,0],[2,2,0],[0,2,0],

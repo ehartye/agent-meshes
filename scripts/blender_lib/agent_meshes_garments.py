@@ -8,13 +8,15 @@ from numbers import Real
 
 
 def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None, component=None):
-    """Return vertices/faces/weights and fully covered source-face indices.
+    """Return vertices/faces/normals/weights and covered source-face indices.
 
     Each field has one signed value per source vertex. All fields must be >= 0
     on the retained region. `offset` is metres or a position -> metres callable;
     `shape(position, unit_normal)` can replace the normal-offset operation.
     Source vertex provenance keeps coincident UV/normal/skinning seams separate.
     Returned weight rows are normalized and limited to four influences.
+    Returned normals are normalized interpolated source directions, suitable for
+    fitting an offset shell. A custom shape does not recalculate these normals.
     Source polygons must be convex; scalar fields interpolate linearly per face.
 
     component='largest' retains only the connected output patch with greatest
@@ -41,7 +43,7 @@ def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None,
     f=[np.asarray(field,float) for field in fields]
     if any(field.shape!=(len(v),) or not np.isfinite(field).all() for field in f):
         raise ValueError('fields must contain one finite scalar per vertex')
-    output=[];polygons=[];skin=[];covered=[];lookup={};source_faces=[]
+    output=[];directions=[];polygons=[];skin=[];covered=[];lookup={};source_faces=[]
     def mix_row(a,b,t): return {k:(1-t)*a.get(k,0)+t*b.get(k,0) for k in a.keys()|b.keys()}
     for fi,face in enumerate(faces):
         if len(face)<3 or any(not isinstance(i,(int,np.integer)) or i<0 or i>=len(v) for i in face):
@@ -71,7 +73,7 @@ def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None,
                 if point.shape!=(3,) or not np.isfinite(point).all(): raise ValueError('garment shape returned a nonfinite XYZ point')
                 top=sorted(((k,w) for k,w in row.items() if w>1e-12),key=lambda item:(-item[1],item[0]))[:4]
                 total=sum(w for _,w in top)
-                lookup[key]=len(output);output.append(point);skin.append({k:w/total for k,w in top})
+                lookup[key]=len(output);output.append(point);directions.append(normal);skin.append({k:w/total for k,w in top})
             ids.append(lookup[key])
         ids=list(dict.fromkeys(ids))
         if len(ids)>=3:
@@ -98,5 +100,5 @@ def cut_surface(vertices, faces, normals, weights, fields, offset=0, shape=None,
         used=sorted({v for i in selected for v in polygons[i]})
         remap={v:i for i,v in enumerate(used)}
         polygons=[[remap[v] for v in polygons[i]] for i in selected]
-        output=[output[i] for i in used];skin=[skin[i] for i in used]
-    return {'vertices':np.asarray(output).reshape((-1,3)),'faces':polygons,'weights':skin,'covered_faces':covered}
+        output=[output[i] for i in used];directions=[directions[i] for i in used];skin=[skin[i] for i in used]
+    return {'vertices':np.asarray(output).reshape((-1,3)),'faces':polygons,'normals':np.asarray(directions).reshape((-1,3)),'weights':skin,'covered_faces':covered}
