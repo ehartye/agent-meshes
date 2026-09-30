@@ -24,6 +24,7 @@ jobs:
       - run: python tests/reproportion.py
       - run: python tests/sculpt_landmarks.py
       - run: python tests/garment_cuts.py
+      - run: python tests/garment_neckbands.py
       - run: python tests/cloth_flap.py
       - run: python tests/skin_weight_relaxation.py
       - run: python tests/sculpted_face.py
