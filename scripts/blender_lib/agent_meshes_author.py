@@ -457,7 +457,7 @@ def shape_key(obj, name, vertices):
     return key
 
 
-def export_glb(path, objects):
+def export_glb(path, objects, animation_mode='ACTIONS'):
     """Export selected objects with PBR materials, skins, morphs and animation.
 
     Geometry modifiers must be resolved by the author before adding morphs;
@@ -467,6 +467,8 @@ def export_glb(path, objects):
     dropped after export and the rest stored as sparse accessors (`prune_glb_morphs`).
     """
     import bpy
+    if animation_mode not in ('ACTIONS', 'NLA_TRACKS'):
+        raise ValueError('animation_mode must be ACTIONS or NLA_TRACKS')
     objects = list(objects)
     if not objects: raise ValueError('At least one object must be exported')
     previous_selection = list(bpy.context.selected_objects)
@@ -478,7 +480,7 @@ def export_glb(path, objects):
         bpy.context.view_layer.update()
         bpy.ops.export_scene.gltf(filepath=str(path), export_format='GLB', use_selection=True,
             export_apply=False, export_morph=True, export_morph_normal=True,
-            export_animations=True, export_skins=True, export_yup=True,
+            export_animations=True, export_animation_mode=animation_mode, export_skins=True, export_yup=True,
             export_cameras=False, export_lights=False)
         # Blender's exporter drops JSON-shaped custom properties; write root extras (for
         # example the arkit-face/1 contract from set_face_contract) into the GLB directly.
