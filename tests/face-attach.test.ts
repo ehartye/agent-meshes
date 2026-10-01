@@ -10,8 +10,12 @@ const surface = (label: string, points: number[][], triangles: number[], delta =
 
 function fixture({ split = false, gap = 0, follow = true } = {}): AttachSurface[] {
   const points = [[-.03, -.03, 0], [.03, -.03, 0], [.03, .03, 0], [-.03, .03, 0]];
+  // The small central material island is below SKIN_SHARE by itself. Only a
+  // position weld to the surrounding ring makes it skin rather than a part.
+  const island = [[-.013, .001, 0], [-.003, .001, 0], [-.003, .011, 0], [-.013, .011, 0]];
+  const ring = [0, 1, 2, 3].flatMap(i => { const j = (i + 1) % 4; return [i, j, 4 + j, i, 4 + j, 4 + i]; });
   const skin = split
-    ? [surface('skin-a', [points[0], points[1], points[2]], [0, 1, 2], .002), surface('skin-b', [points[0], points[2], points[3]], [0, 1, 2], .002)]
+    ? [surface('skin-a', [...points, ...island], ring, .002), surface('skin-b', island, [0, 1, 2, 0, 2, 3], .002)]
     : [surface('skin', [...points, [-.006, .006, 0]], [0, 1, 4, 1, 2, 4, 2, 3, 4, 3, 0, 4], .002)];
   // A second large piece keeps the ornament classified as an attachment even
   // when a faulty seam weld excludes the entire first skin from contact tests.
