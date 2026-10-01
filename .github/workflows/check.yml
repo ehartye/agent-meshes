@@ -1,11 +1,25 @@
 name: Check
-on: [push, pull_request]
+on:
+  push:
+    branches: [main, integration/cast]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
+  node:
+    name: JavaScript (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,41 +27,99 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: node --test tests/botanical-kit.test.mjs
+      - run: npm test
+
+  python:
+    name: Python ${{ matrix.suite }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        suite: [costume, character, face, geometry]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: pip install numpy
-      - run: python tests/blender_author_geometry.py
-      - run: python tests/blender_author_skin.py
-      - run: python tests/stylized_character.py
-      - run: python tests/stylized_walk.py
-      - run: python tests/reproportion.py
-      - run: python tests/sculpt_landmarks.py
-      - run: python tests/garment_cuts.py
-      - run: python tests/garment_partition.py
-      - run: python tests/surface_fans.py
-      - run: python tests/offset_directions.py
-      - run: python tests/garment_neckbands.py
-      - run: python tests/cloth_flap.py
-      - run: python tests/skin_weight_relaxation.py
-      - run: python tests/skin_weight_transfer.py
-      - run: python tests/sculpted_face.py
-      - run: python tests/sculpted_jaw.py
-      - run: python tests/sprout_kin.py
-      - run: python tests/sprout_digit_proportions.py
-      - run: python tests/sprout_kin_rig.py
-      - run: python tests/sprout_region_skin.py
-      - run: python tests/sprout_kin_gait.py
-      - run: python tests/retarget.py
-      - run: python tests/motion_style.py
-      - run: python tests/stylized_costume.py
-      - run: python tests/stylized_face.py
-      - run: node --test tests/botanical-kit.test.mjs
-      - run: python tests/blender_face_geometry.py
-      - run: python tests/lip_axis.py
-      - run: python tests/oriented_eyes.py
-      - run: python tests/geometry_eye_mask.py
-      - run: python tests/hm08_head.py
-      - run: npm test
-      - run: npm run typecheck
-      - run: npm run build
+      # Keep each suite as a separate step so failures and timings stay visible.
+      - if: matrix.suite == 'character'
+        run: python tests/stylized_character.py
+      - if: matrix.suite == 'character'
+        run: python tests/stylized_walk.py
+      - if: matrix.suite == 'costume'
+        run: python tests/stylized_costume.py
+      - if: matrix.suite == 'face'
+        run: python tests/stylized_face.py
+      - if: matrix.suite == 'face'
+        run: python tests/blender_face_geometry.py
+      - if: matrix.suite == 'face'
+        run: python tests/lip_axis.py
+      - if: matrix.suite == 'face'
+        run: python tests/oriented_eyes.py
+      - if: matrix.suite == 'face'
+        run: python tests/geometry_eye_mask.py
+      - if: matrix.suite == 'face'
+        run: python tests/hm08_head.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/blender_author_geometry.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/blender_author_skin.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/reproportion.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sculpt_landmarks.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/garment_cuts.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/garment_partition.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/surface_fans.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/offset_directions.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/garment_neckbands.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/cloth_flap.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/skin_weight_relaxation.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/skin_weight_transfer.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sculpted_face.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sculpted_jaw.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sprout_kin.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sprout_digit_proportions.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sprout_kin_rig.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sprout_region_skin.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sprout_kin_gait.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/retarget.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/motion_style.py
+
+  required:
+    name: CI required
+    if: ${{ always() }}
+    needs: [node, python]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every matrix job to succeed
+        shell: bash
+        env:
+          NODE_RESULT: ${{ needs.node.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+        # A skipped, cancelled or failed dependency must never produce a green gate.
+        run: '[[ "$NODE_RESULT" == success && "$PYTHON_RESULT" == success ]]'
