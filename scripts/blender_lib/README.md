@@ -1413,6 +1413,32 @@ Reuse those indices in posed checks; rebuilding a BVH from posed quads can test
 a different surface than the exported triangles. Degenerate/self-crossing source
 polygons still require author repair; this is tessellation, not mesh repair.
 
+`agent_meshes_offset_directions.fit_offset_directions(vertices, triangles,
+normals, weights, poses, iterations=1000,
+margins=(.05, .025, .0125, .00625, .003125))` selects unit rest-space offset
+directions that point outward relative to incident faces in sampled animation.
+Use it when skin deformation turns ordinary normal offsets inward. It requires
+frozen triangles and the same bone deform-matrix convention as the offset fitter
+below; identity/rest is added automatically. It is pure NumPy and changes no
+geometry, weights or animation. Already-valid normalized directions are retained.
+
+The result contains `directions` and `report`. Require `report.converged` before
+passing directions as the offset fitter's normals. Unresolved vertices retain
+their original normalized directions and appear in `unresolved_vertices`;
+`unconstrained_vertices` lists isolated points. Per-vertex attempts record the
+margin, projection count and initial/final normalized constraint alignment.
+Margins decrease when the initial cone is too narrow, with a bounded iteration
+budget per margin. Search failure does not prove mathematical infeasibility.
+Collapsed posed triangles or pulled directions raise a pose-indexed error.
+Returned unit directions must have constraint alignment greater than 64 float64
+epsilons; tiny positive values at rounding scale cannot certify convergence.
+
+Constraint alignment is measured in rest space; under general affine transforms
+it is not a posed-space cosine. Neither this direction search nor its margins
+establish physical clearance, collision freedom or smooth visual construction.
+Run the offset fitter, check the exported model and inspect motion and attachments.
+The standalone regressions run with `python tests/offset_directions.py`.
+
 `agent_meshes_garment_fit.fit_surface_offsets(vertices, faces, normals, weights,
 reference_vertices, reference_faces, reference_weights, poses, offset=.006,
 minimum_offset=.0007, thickness=.0006, iterations=24)` fits a separate offset

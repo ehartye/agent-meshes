@@ -26,6 +26,7 @@ jobs:
       - run: python tests/garment_cuts.py
       - run: python tests/garment_partition.py
       - run: python tests/surface_fans.py
+      - run: python tests/offset_directions.py
       - run: python tests/garment_neckbands.py
       - run: python tests/cloth_flap.py
       - run: python tests/skin_weight_relaxation.py
