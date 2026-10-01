@@ -2,7 +2,8 @@
  * Attached parts for `arkit-face/1`: every small part joined to a face (brows, brow ridges, nostrils, freckles, fins)
  * must sit on the skin at rest and while each morph plays, with no air gap and without sinking out of sight.
  *
- * Parts are found by geometry, not names: the face's surfaces are welded by position into connected pieces. A piece
+ * Parts are found by geometry: the face's surfaces are welded by position into connected pieces, keeping named
+ * mouth interiors separate from facial skin even where they share a lip boundary. A piece
  * is part of an eye when an eye morph moves it (lids, shutters), it is named `socket`, or it lies wholly inside the
  * reach of that eye's lids (a shutter housing); part of the mouth when it is teeth, tongue or cavity; skin when it is
  * at least a third the size of the largest piece (a head, a skull or chin plate, a hair cap). Every other piece is an
@@ -208,14 +209,16 @@ function classify(surfaces: AttachSurface[], pieces: Map<number, Piece>, eyes: A
   for (const piece of pieces.values()) if (piece.kind === 'part' && size(piece) >= SKIN_SHARE * largest) piece.kind = 'skin';
 }
 
-/** The surfaces welded by position into connected pieces (the pieces split by materials and sharp edges join again). */
+/** Weld positions within mouth/facial groups; material and sharp-edge splits still join within each group. */
 function weld(surfaces: AttachSurface[]): Map<number, Piece> {
-  // Weld every surface by position so the pieces split by materials and sharp edges join again.
+  // A lining can meet the lip exactly. Joining it to skin would make classify()
+  // label the entire head as mouth and remove that skin from attachment contacts.
   const ids = new Map<string, number>(), node: Int32Array[] = [];
   for (const s of surfaces) {
+    const group = s.names.some(mouthName) ? 'mouth' : 'face';
     const index = new Int32Array(s.count);
     for (let v = 0; v < s.count; v++) {
-      const key = `${Math.round(s.rest[v * 3] * 1e6)},${Math.round(s.rest[v * 3 + 1] * 1e6)},${Math.round(s.rest[v * 3 + 2] * 1e6)}`;
+      const key = `${group}/${Math.round(s.rest[v * 3] * 1e6)},${Math.round(s.rest[v * 3 + 1] * 1e6)},${Math.round(s.rest[v * 3 + 2] * 1e6)}`;
       let id = ids.get(key); if (id === undefined) { id = ids.size; ids.set(key, id); }
       index[v] = id;
     }
