@@ -35,6 +35,8 @@ export function createPuppet(gltf: GltfSource) {
 
 /** A loaded glTF: GLTFLoader's result, or any `{scene, animations}`. */
 export interface GltfSource { scene: Object3D; animations: AnimationClip[]; parser?: { associations?: { get(object: Object3D): { meshes?: number; primitives?: number } | undefined } } }
+/** Pure derived morph weights, evaluated after clips and manual overrides. Return only weights to change. */
+export type MorphTransform = (weights: Readonly<Record<string, number>>) => Readonly<Record<string, number>>;
 /**
  * A glTF mesh with several primitives (skin, lids, teeth sharing one set of morph names) loads as a
  * group named after its node holding one three.js mesh per primitive. Map each such group's name to
@@ -98,6 +100,7 @@ function buildPuppet(gltf: GltfSource, capture: boolean, groupNames: ReadonlyMap
   // Setters only record their input and mark the puppet dirty; the whole rest + clip + offset
   // application runs once, in sync(), before a render or any read of the live three.js state.
   let dirty = false;
+  const morphTransforms = new Set<{ meshes: Mesh[]; transform: MorphTransform }>();
   const invalidate = (): void => { dirty = true; };
   function sync(): void { if (dirty) apply(); }
 
@@ -134,6 +137,16 @@ function buildPuppet(gltf: GltfSource, capture: boolean, groupNames: ReadonlyMap
     for (const sampler of samplers) sampler.binding.setValue(sampler.interpolant.evaluate(time), 0);
     for (const [name, offset] of offsets) { const value = bones.get(name)!; value.position.add(offset.position); value.quaternion.multiply(offset.quaternion); value.scale.multiply(offset.scale); }
     for (const [mesh, values] of morphOverrides) for (const [index, weight] of values) mesh.morphTargetInfluences![index] = weight;
+    for (const { meshes, transform } of morphTransforms) for (const mesh of meshes) {
+      const dictionary = mesh.morphTargetDictionary!, weights = mesh.morphTargetInfluences!;
+      const base = Object.freeze(Object.fromEntries(Object.entries(dictionary).map(([target, index]) => [target, weights[index]])));
+      const derived = Object.entries(transform(base));
+      for (const [target, weight] of derived) {
+        if (!Object.hasOwn(dictionary, target)) throw new Error(`Unknown derived morph target for ${mesh.name}: ${target}`);
+        if (typeof weight !== 'number' || !Number.isFinite(weight)) throw new Error(`Derived morph weight must be finite: ${weight}`);
+      }
+      for (const [target, weight] of derived) weights[dictionary[target]] = weight;
+    }
     root.updateMatrixWorld(true);
     for (const skeleton of ownedSkeletons) skeleton.update();
   }
@@ -299,6 +312,19 @@ function buildPuppet(gltf: GltfSource, capture: boolean, groupNames: ReadonlyMap
     },
     /** Read the effective weight, including animation and any override. */
     getMorph(name: string, target: string): number { const [{ mesh, index }] = morph(name, target); sync(); return mesh.morphTargetInfluences![index]; },
+    /**
+     * Compose derived weights after clips and manual overrides, without taking ownership of either.
+     * Called once per morph-bearing primitive in registration order. Keep the callback pure; use
+     * refresh() when its inputs change, or dispose() to reveal the original weights again.
+     * These live display layers are not copied into independent pose samplers.
+     */
+    addMorphTransform(name: string, transform: MorphTransform): { refresh(): void; dispose(): void } {
+      if (typeof transform !== 'function') throw new Error('Morph transform must be a function');
+      const meshes = morphMeshes(name).filter(mesh => mesh.morphTargetInfluences && mesh.morphTargetDictionary);
+      if (!meshes.length) throw new Error(`No morph targets for ${name}`);
+      const layer = { meshes, transform }; morphTransforms.add(layer); invalidate();
+      return { refresh() { if (morphTransforms.has(layer)) invalidate(); }, dispose() { if (morphTransforms.delete(layer)) invalidate(); } };
+    },
     /** Clear one target, one part, or all overrides; reveal the current clip or authored rest weights. */
     resetMorph(name?: string, target?: string): void {
       if (name === undefined) {

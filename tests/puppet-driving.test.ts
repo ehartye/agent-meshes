@@ -270,6 +270,20 @@ async function multiPrimitiveGltf() {
 }
 
 describe('multi-primitive glTF meshes', () => {
+  it('composes disposable morph transforms after per-primitive manual weights without accumulating', async () => {
+    const puppet = createPuppet(await multiPrimitiveGltf());
+    const parts = puppet.root.getObjectByName('face')!.children as Mesh[];
+    puppet.setMorph('face', 'jawOpen', .2); puppet.setMorph(parts[1].name, 'jawOpen', .6);
+    let amount = .1;
+    const layer = puppet.addMorphTransform('face', weights => ({ jawOpen: weights.jawOpen + amount }));
+    expect(parts.map(part => puppet.getMorph(part.name, 'jawOpen'))).toEqual([.3, .7, .3].map(x => expect.closeTo(x)));
+    layer.refresh(); expect(puppet.getMorph('face', 'jawOpen')).toBeCloseTo(.3);
+    amount = .2; layer.refresh(); expect(puppet.getMorph(parts[1].name, 'jawOpen')).toBeCloseTo(.8);
+    puppet.resetMorph('face'); expect(puppet.getMorph('face', 'jawOpen')).toBe(.2);
+    layer.dispose(); expect(puppet.getMorph('face', 'jawOpen')).toBe(0);
+    layer.refresh(); layer.dispose(); expect(puppet.getMorph('face', 'jawOpen')).toBe(0);
+  });
+
   it('lists preview morph controls by mesh group and emotion presets from extras.arkitFace', async () => {
     const gltf = await multiPrimitiveGltf();
     gltf.scene.children[0].userData.arkitFace = { contract: 'arkit-face/1', emotions: { neutral: {}, happy: { jawOpen: 0.25, mouthSmileLeft: 0.9 }, sad: { eyeBlinkLeft: 0.25 } } };
