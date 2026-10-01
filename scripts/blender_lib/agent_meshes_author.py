@@ -500,3 +500,4 @@ def export_glb(path, objects, animation_mode='ACTIONS'):
 # Face-rig helpers live in a sibling module; importing them here keeps one entry point.
 # agent_meshes_face never imports this module at load time, so there is no import cycle.
 from agent_meshes_face import *  # noqa: E402,F401,F403
+from agent_meshes_eye_frames import *  # noqa: E402,F401,F403
