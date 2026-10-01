@@ -2279,7 +2279,57 @@ def shutter_hole(vertices, faces, center, eye_radius, hole_radius=None, max_edge
 MASK_BAND = 20
 
 
-def eye_hole_mask(*holes, band=None):
+def _spatial_eye_mask(holes, spatial):
+    """Distance to a snapshot of constructed eye points, independent of Blender."""
+    hold, reach = _vector(spatial, 2, 'Spatial mask distances')
+    if not 0 <= hold < reach:
+        raise ValueError('Spatial mask needs 0 <= hold < reach')
+    points = set()
+    for hole in holes:
+        try:
+            motion, lining, rim = hole['motion'], hole['lining_points'], hole['rim']
+            if not motion or not lining or not rim:
+                raise ValueError('Spatial mask needs continuous-eye motion, lining and rim geometry')
+            candidates = [p for p, _ in motion] + list(lining)
+            for index in rim:
+                index = _count(index, 'Eye rim index', 0)
+                candidates.append(hole['vertices'][index])
+            points.update(_vector(p, 3, 'Protected eye point') for p in candidates)
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError('Spatial mask needs continuous-eye motion, lining and rim geometry') from exc
+
+    # Balanced point tree. Clipping search to reach avoids a Blender KDTree
+    # dependency; nearest-point distance makes rotated eyes behave identically.
+    def build(rows, depth=0):
+        if not rows: return None
+        axis = depth % 3
+        rows.sort(key=lambda p: p[axis])
+        middle = len(rows) // 2
+        return rows[middle], axis, build(rows[:middle], depth+1), build(rows[middle+1:], depth+1)
+    tree = build(list(points))
+    cache = {}
+
+    def nearest(node, point, best):
+        if node is None: return best
+        pivot, axis, left, right = node
+        best = min(best, math.dist(point, pivot))
+        if best <= hold: return best
+        delta = point[axis] - pivot[axis]
+        near, far = (left, right) if delta < 0 else (right, left)
+        best = nearest(near, point, best)
+        if best > hold and abs(delta) < best:
+            best = nearest(far, point, best)
+        return best
+
+    def mask(vertex):
+        point = _vector(vertex, 3, 'Mask vertex')
+        if point not in cache:
+            cache[point] = _smoothstep(hold, reach, nearest(tree, point, reach))
+        return cache[point]
+    return mask
+
+
+def eye_hole_mask(*holes, band=None, spatial=None):
     """A `soft_offset` mask that keeps every `eye_hole` rim, wall and lining still and fades in away from them.
 
     For each hole the weight is 0 on the rim and inside the skin (the wall and
@@ -2288,7 +2338,19 @@ def eye_hole_mask(*holes, band=None):
     radius beyond the mound. The mask is the product over all holes. Pass it as
     `symmetric_offsets(..., mask=eye_hole_mask(*holes))` for brows, cheeks and any
     skin shape that reaches an eye.
+
+    For continuous eyes, `spatial=(hold, reach)` instead measures distance in
+    rest-space meters to the actual moving lid, rim and lining vertices. Weight
+    is zero through `hold` and smoothly reaches one at `reach` (0 <= hold < reach).
+    This avoids suppressing nearby cheeks on a broad or side-set face. All holes
+    form one protected point set; oriented eyes use their returned world points.
+    Geometry is copied at construction, and queries are cached. The mode needs
+    continuous-eye construction data and cannot be combined with `band`.
+    Omit `spatial` to retain the original angular/radial behavior exactly.
     """
+    if spatial is not None:
+        if band is not None: raise ValueError('Choose spatial distances or an angular band, not both')
+        return _spatial_eye_mask(holes, spatial)
     # The weight is zero within 2 degrees of the window (rim and wall), so the band must reach past that.
     reach = MASK_BAND if band is None else _number(band, 'Mask band', 3)
     parts = []
