@@ -5116,6 +5116,10 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     hanging a few degrees past it (`lash_geometry`).
     Returns a dict with the objects and the lid geometry report (radii, clearance,
     squint ratio).
+
+    A hole from oriented_eye_hole carries its explicit rest-space frame. Its
+    continuous skin targets are already world-space; the eyeball is generated
+    in that same frame. Eye bones must still be authored with suitable gaze axes.
     """
     from agent_meshes_author import shape_key
     if side not in _SIDES: raise ValueError("Eye side must be 'L' or 'R'")
@@ -5158,7 +5162,19 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
         _material(None, 'eye_iris', (.05, .35, .45), roughness=.3),
         _material(None, 'eye_pupil', (.01, .01, .012), roughness=.2),
     ]
-    eyeball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris, pupil, slit=slit, split_borders=split_borders), materials)
+    if hole is not None and 'frame' in hole:
+        from agent_meshes_eye_frames import oriented_eyeball_geometry
+        frame = hole['frame']
+        if not continuous or not isinstance(frame, dict) or not all(k in frame for k in ('center', 'forward', 'up')):
+            raise ValueError('An oriented eye frame must come from an oriented_eye_hole with continuous lids')
+        frame_center = _vector(frame['center'], 3, 'Eye frame center')
+        if math.dist(frame_center, center) > 1e-9:
+            raise ValueError('The eye frame belongs to another eye center')
+        ball_geometry = oriented_eyeball_geometry(center, radius, forward=frame['forward'], up=frame['up'],
+                                                   iris=iris, pupil=pupil, slit=slit, split_borders=split_borders)
+    else:
+        ball_geometry = eyeball_geometry(center, radius, iris, pupil, slit=slit, split_borders=split_borders)
+    eyeball = mesh_from_geometry(f'eyeball_{side}', ball_geometry, materials)
     bind_rigid(eyeball, rig, f'eye_{side}')
     if continuous:
         _continuous_lids(skin, side, hole, lash, lash_side, lining_material)

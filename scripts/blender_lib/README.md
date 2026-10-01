@@ -357,6 +357,39 @@ no MPFB or GPL code.
 
 ## Face-rig helpers (`arkit-face/1`)
 
+Side-set or rolled continuous eyes use `oriented_eye_hole` from
+`agent_meshes_author` (or `agent_meshes_eye_frames`). Pass world/rest-space
+vertices, center and radius, plus `forward` and `up` in Blender coordinates:
+
+```python
+hole = oriented_eye_hole(vertices, faces, center, radius,
+                         forward=(.5, -.866025403784, 0), up=(0, 0, 1),
+                         opening=(48, 36, 28))
+skin = mesh_from_geometry('skin', hole, [skin_material])
+eye = build_eye(rig, 'L', center, radius, hole=hole, skin=skin)
+```
+
+The same frame governs the eyeball, connected lids, every motion target, paint
+positions, window and `eye_hole_mask`. Angular metadata is local to that frame.
+`oriented_eyeball_geometry` also builds a matching standalone eyeball.
+Directions are normalized; up is orthogonalized against forward. Invalid,
+zero or parallel vectors fail. The oriented hole supports continuous lids;
+global mirrored `twin` shaping and separate shell lids are rejected. For two
+eyes, cut each separately and preserve the earlier lid region. `build_eye`
+checks that the continuous lid vertices remain on the final skin.
+
+Author the eye bones before binding or baking clips. `eye_bone_frame(center,
+forward=..., up=...)` returns a world-space Blender edit-bone matrix with
+local Y up and local Z along gaze. In edit mode, assign
+`bone.matrix = rig.matrix_world.inverted() @ Matrix(frame)` and set its length
+separately. Apply nonuniform or mirrored armature scale first. This pure helper
+does not retarget existing animation or bindings. The exported frame supports
+the viewer's local-Y yaw, local-X pitch and `aimBone` controls.
+
+These opt-in authoring helpers leave existing front-facing APIs unchanged.
+They do not change the face verifier's global view directions or establish
+whole-face acceptance; inspect and verify the exported character.
+
 `agent_meshes_face` holds the helpers every talking head needs, so no head source
 repeats them. `agent_meshes_author` re-exports all of them, so one import works:
 
