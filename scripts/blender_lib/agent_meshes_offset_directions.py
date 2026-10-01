@@ -29,7 +29,9 @@ def fit_offset_directions(vertices, faces, normals, weights, poses, *, iteration
     in rest space; their dot products are NOT posed-space cosines under general
     affine deformation, a physical clearance distance, or a collision test.
 
-    Directions already meeting margins[0] remain unchanged after normalization.
+    Directions already meeting margins[0] and the numerical positivity guard
+    remain unchanged after normalization. Returned constraint alignment must be
+    greater than 64 float64 epsilons; rounding-level positives are unresolved.
     Others use bounded halfspace projection, restarting from the original normal
     for each decreasing margin. A .25 original-normal projection preference and
     length cap 2 limit departure; these are search heuristics, not proof that a
@@ -100,7 +102,8 @@ def fit_offset_directions(vertices, faces, normals, weights, poses, *, iteration
     for index, matrix in enumerate(matrices):
         alignment = np.einsum('fci,fci->fc', coefficients(matrix, index), original[triangles])
         np.minimum.at(initial, triangles.ravel(), alignment.ravel())
-    candidates = np.flatnonzero(initial < margins[0])
+    positivity_guard = 64 * np.finfo(float).eps
+    candidates = np.flatnonzero((initial < margins[0]) | (initial <= positivity_guard))
     corner_faces, corners = np.nonzero(np.isin(triangles, candidates))
     corner_vertices = triangles[corner_faces, corners]
     constraints = (np.array([coefficients(matrix, index)[corner_faces, corners]
@@ -128,11 +131,13 @@ def fit_offset_directions(vertices, faces, normals, weights, poses, *, iteration
                     x *= 2 / length
                 steps += 1
             # Check the last permitted projection too; exhaustion alone is not failure.
-            solved = bool(np.min(constraints_here @ x) >= margin * .9999)
+            unit = x / np.linalg.norm(x)
+            solved = bool(np.min(constraints_here @ x) >= margin * .9999
+                          and np.min(constraints_here @ unit) > positivity_guard)
             if solved:
                 break
         if solved:
-            directions[vertex] = x / np.linalg.norm(x)
+            directions[vertex] = unit
             changed.append(int(vertex))
         else:
             unresolved.append(int(vertex))

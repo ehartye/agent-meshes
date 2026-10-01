@@ -160,6 +160,19 @@ class OffsetDirections(unittest.TestCase):
                        [[0, 0, 1]] * 3, [{'a': .5, 'b': .5}] * 3,
                        [{'a': np.eye(4), 'b': mirror}])
 
+    def test_tiny_margin_cannot_certify_a_rounding_level_inward_direction(self):
+        v = [[0., 0., 0.], [-.29209841513141754, -1.614575196566304, -.3478091083282183],
+             [1.8098321471124752, -.5386336458292206, .6886866143944701]]
+        n = [-.8638261193797779, .3977920648029172, -.30913736211772486]
+        result = self.solve(v, [(0, 1, 2)], [n] * 3, margins=[1e-20], iterations=20)
+        self.assertFalse(result['report']['converged'])
+        self.assertEqual(result['report']['unresolved_vertices'], [0, 1, 2])
+
+    def test_tiny_positive_initial_alignment_still_requires_numerical_separation(self):
+        result = self.solve([[0, 0, 0], [1, 0, 0], [0, 1, 0]], [(0, 1, 2)],
+                            [[1, 0, 1e-20]] * 3, margins=[1e-21])
+        self.assertFalse(result['report']['converged'])
+
 
 if __name__ == '__main__':
     unittest.main()

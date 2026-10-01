@@ -1430,6 +1430,8 @@ margin, projection count and initial/final normalized constraint alignment.
 Margins decrease when the initial cone is too narrow, with a bounded iteration
 budget per margin. Search failure does not prove mathematical infeasibility.
 Collapsed posed triangles or pulled directions raise a pose-indexed error.
+Returned unit directions must have constraint alignment greater than 64 float64
+epsilons; tiny positive values at rounding scale cannot certify convergence.
 
 Constraint alignment is measured in rest space; under general affine transforms
 it is not a posed-space cosine. Neither this direction search nor its margins
