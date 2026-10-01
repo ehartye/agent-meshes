@@ -16,7 +16,7 @@ export { viewDirection, viewNames } from './views.ts';
 export type { ViewName, ViewSpec } from './views.ts';
 import { viewDirection } from './views.ts';
 import type { ViewName, ViewSpec } from './views.ts';
-export type { Pose, PoseInput, MaterialValues, MaterialInput, Aim, AimOptions } from '../render/puppet.ts';
+export type { Pose, PoseInput, MaterialValues, MaterialInput, Aim, AimOptions, MorphTransform } from '../render/puppet.ts';
 export type { Quality, QualityInput, QualityOptions, QualityPreset } from '../render/quality.ts';
 export type { IdImage, IdRenderOptions, IdRenderColors } from '../render/id-render.ts';
 export { countColors } from '../render/id-render.ts';
