@@ -906,6 +906,36 @@ function (x, z) -> y of the frontmost skin point (None beside the head). Name
 the material `teeth_exposed` (`EXPOSED_TEETH_MATERIAL`), bind it to `head` and
 list it in `exposedTeeth`.
 
+`lip_lining_geometry(skin, mouth_z, half_width, *, front_y, offsets,
+center_x=0, tolerance=1e-6)` constructs inward strips from the actual cut lip
+boundary, with closed lateral caps. `skin` accepts a geometry dict with optional
+absolute-target `morphs`, or a Blender mesh read in world space. Use it after
+`slit_mouth` and all skin expressions: each lining vertex copies its source lip
+vertex's movement, including corners shared by both lips (which have no upper or
+lower seam tag). Both lips must be connected boundary chains sharing their two
+corner indices. The mouth line and bounds use world coordinates; the face points
+down -Y and its polygons wind outwards.
+
+Composition supplies `offsets`: `(depth, rise)` rings starting at `(0, 0)`,
+followed by increasing positive +Y depths and positive +/-Z rises (upper/lower).
+For example, `[(0, 0), (.002, .001), (.008, .004), (.020, .008)]` makes a 20 mm
+lining; scale and fit these values to the character. The result contains
+`vertices`, `faces`, `morphs`, and `boundary` pairs `(source_vertex, side)` where
+1 is lower and 2 is upper. Each ring repeats that boundary order. The inner ring
+remains open to join a separate cavity; this helper does not verify containment.
+
+The Blender wrapper creates the mesh and copies every skin shape key:
+
+```python
+lining = build_lip_lining(skin, mouth_z, half_width, front_y=slit_back,
+                         offsets=lining_offsets, material=mouth_dark)
+# Bind lining to head, then include it in join_face_parts with the skin.
+```
+
+`build_lip_lining` also accepts `center_x`, `tolerance`, and
+`name='mouth_lip_lining'`. The material, binding and character dimensions stay
+in composition. Invalid boundary topology is rejected before object creation.
+
 `mouth_cavity_geometry(center, width, height, depth, rings=8, segments=32,
 surface=None, inset=.004)` is a dark bag behind the lips, open to the front, so
 an open mouth never sees through the head. Give it a dark, double-sided material
