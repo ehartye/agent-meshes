@@ -103,7 +103,8 @@ it('follows the face skin beside its rig, leaving unrelated morph owners unchang
 
 it('rejects invalid derived weights and recovers when the layer is disposed', () => {
   const { puppet } = fixture();
-  for (const weights of [{ jawOpen: NaN }, { unknown: 1 }]) {
+  const invalidWeights: Record<string, number>[] = [{ jawOpen: NaN }, { unknown: 1 }];
+  for (const weights of invalidWeights) {
     const layer = puppet.addMorphTransform('face', () => weights);
     expect(() => puppet.sync()).toThrow(/finite|Unknown derived morph/);
     layer.dispose(); expect(puppet.getMorph('face', 'jawOpen')).toBe(0);
