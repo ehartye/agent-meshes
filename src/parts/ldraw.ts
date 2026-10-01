@@ -75,7 +75,15 @@ export async function loadLDrawPart(libraryPath: string, partId: string, color: 
   parsed.traverse(object => {
     if (!(object instanceof Mesh)) return;
     const mesh = new Mesh(object.geometry.clone(), object.material);
-    mesh.geometry.applyMatrix4(new Matrix4().multiplyMatrices(conversion, object.matrixWorld));
+    const transform = new Matrix4().multiplyMatrices(conversion, object.matrixWorld);
+    mesh.geometry.applyMatrix4(transform);
+    // Baking a reflection removes Three's object-level front-face correction.
+    if (transform.determinant() < 0) {
+      const count = mesh.geometry.getAttribute('position').count;
+      const indices = mesh.geometry.index ? Array.from(mesh.geometry.index.array) : Array.from({ length: count }, (_, i) => i);
+      for (let i = 0; i < indices.length; i += 3) [indices[i + 1], indices[i + 2]] = [indices[i + 2], indices[i + 1]];
+      mesh.geometry.setIndex(indices);
+    }
     group.add(mesh);
   });
   const bounds = new Box3().setFromObject(group);

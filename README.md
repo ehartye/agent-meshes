@@ -955,3 +955,46 @@ owned by the same manifest through `.agent-meshes-assembly.json`; unowned direct
 extra files cause an error. A failed import or validation leaves the previous build intact.
 `npx vitest run tests/parts-assembly.test.ts` exercises local import, transforms, colors,
 dependency failures, mass accounting, hierarchy, CLI export, validation and rebuild safety.
+
+Assemblies can also declare sourced connector anchors. Each part accepts optional
+`connectors`; each anchor has a part-local unique `name`, `kind`, `position` in meters
+relative to the centered mesh, unit `axis`, and a nonempty `source` describing the evidence
+(for example, an LDraw primitive path and transform). Supported kinds are `pin-hole`,
+`axle-hole`, `pin`, `axle`, `ball`, and `socket`. The assembly accepts optional `connections`
+and `requireConnected` (default `false`):
+
+```json
+{
+  "requireConnected": true,
+  "connections": [
+    { "a": { "part": "beam", "connector": "hole-1" },
+      "b": { "part": "joining-pin", "connector": "beam-end" } }
+  ]
+}
+```
+
+For example, `beam.connectors` can contain
+`{"name":"hole-1","kind":"pin-hole","position":[0,0,0],"axis":[1,0,0],"source":"parts/beam.dat: declared hole primitive"}`.
+The pin declares its corresponding `pin` anchor. Every endpoint must exist and may appear
+in only one connection; a shaft with multiple engagements needs a separate named anchor
+at each engagement position. Connections must join distinct parts. Only pin↔pin-hole,
+axle↔axle-hole, and ball↔socket pairs are accepted; two holes do not constitute an attachment.
+Consumed pin/axle-hole anchors on the same part must also occupy distinct physical holes:
+different names cannot reuse a coincident position and parallel axis within the same
+0.1 mm / 1e-6 tolerances. Unconsumed aliases do not grant additional engagements.
+
+Validation transforms anchors through the part and full body hierarchy at rest. Positions
+must coincide within 0.0001 m (0.1 mm). Axes must be parallel or antiparallel with
+`1 - abs(dot(axisA, axisB)) <= 1e-6`; ball/socket pairs ignore axis alignment. When
+`requireConnected` is true, these valid connections must place **every part** in a single
+connected component. Declared connections are checked even when that flag is false.
+
+`robot.json` preserves connectors, their sources, connections, and `requireConnected`.
+Its `connectivity` report contains sorted `connectedComponents`, `allPartsConnected`, the
+tolerances, and a `residuals` entry per connection with endpoint references, world anchor
+positions, `positionErrorMeters`, and `axisError` (`null` for ball/socket). A failed check
+rejects the build before it replaces an existing artifact. These are checks of supplied
+connector declarations: they do not infer connectors from meshes or establish structural
+strength, insertion depth, keyed axle orientation, interference clearance, or manufacturability.
+Physical joints remain explicitly authored in `bodies`. Run
+`npx vitest run tests/parts-connectivity.test.ts tests/parts-assembly.test.ts` for the checks.

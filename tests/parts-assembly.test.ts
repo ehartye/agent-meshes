@@ -30,6 +30,19 @@ beforeEach(async () => {
 afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
 
 describe('local LDraw physical parts', () => {
+  it('preserves outward winding when a dependency is reflected', async () => {
+    await file('parts/parent.dat', '0 Parent\n0 !LDRAW_ORG Part\n1 16 0 0 0 -1 0 0 0 1 0 0 0 1 child.dat');
+    const result = await loadLDrawPart(directory, 'parent.dat', 4);
+    result.group.traverse(object => {
+      if (!(object instanceof Mesh)) return;
+      const geometry = object.geometry.index ? object.geometry.toNonIndexed() : object.geometry;
+      const positions = geometry.getAttribute('position'), normals = geometry.getAttribute('normal');
+      for (let i = 0; i < positions.count; i += 3) {
+        const a = new Vector3().fromBufferAttribute(positions, i), b = new Vector3().fromBufferAttribute(positions, i+1), c = new Vector3().fromBufferAttribute(positions, i+2);
+        expect(b.sub(a).cross(c.sub(a)).dot(new Vector3().fromBufferAttribute(normals, i))).toBeGreaterThan(0);
+      }
+    });
+  });
   it('imports nested surfaces and colors, rotates -Y to +Y without mirroring and centers SI geometry', async () => {
     const part = await loadLDrawPart(directory, 'parent.dat', 4);
     expect(part.sourceBounds.min).toEqual([expect.closeTo(0.004, 8), expect.closeTo(-0.008, 8), expect.closeTo(-0.014, 8)]);
@@ -103,6 +116,8 @@ describe('physical assembly', () => {
     expect(bytes.toString('utf8', 0, 4)).toBe('glTF');
     expect(JSON.parse(await readFile(join(output, 'verification.json'), 'utf8')).ok).toBe(true);
     expect(await readFile(join(output, 'ATTRIBUTION.md'), 'utf8')).toContain('Test Author');
+    expect(await readFile(join(output, 'ATTRIBUTION.md'), 'utf8')).toContain('https://creativecommons.org/licenses/by/4.0/');
+    expect(await readFile(join(output, 'ATTRIBUTION.md'), 'utf8')).toContain('Modification notice');
     const gltf = JSON.parse(bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)));
     const chassis = gltf.nodes.find((node: any) => node.name === 'chassis'), wheel = gltf.nodes.findIndex((node: any) => node.name === 'wheel-body');
     expect(chassis.children).toContain(wheel);
