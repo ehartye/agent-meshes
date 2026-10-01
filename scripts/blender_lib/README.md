@@ -1362,6 +1362,24 @@ matrix variation by clip. It rejects static selected clips and restores the
 active action/slot, NLA flags, pose position and frame/subframe. Matrices act on
 rest geometry in armature-local space; reconcile mesh transforms first.
 
+`agent_meshes_surface_fans.repair_folded_fans(vertices, triangles,
+max_distance=..., minimum_alignment=.95)` conservatively removes shallow folded
+degree-three fans left by decimation. It replaces three triangles with their
+oriented boundary triangle only when the center projects outside that triangle,
+one face points backward, every face is nearly parallel to the replacement, and
+the center-to-triangle distance is within the caller's limit. Ordinary curved
+fans, steep folds, large deviations, boundary vertices and overlapping candidates
+are retained. The helper does not smooth any retained vertex or interpolate skin
+weights. The result includes `vertices`, `faces`, `source_vertices` (new vertex to
+original vertex), `removed_vertices` and per-repair diagnostics. Apply the source
+map to every vertex attribute, recompute normals, and separately map face/corner
+attributes if present; preferably repair before UVs, morphs and skinning. This is
+not a general self-intersection repair or an animation-clearance guarantee. The
+distance limit bounds the removed vertex's distance to its replacement triangle,
+not a symmetric Hausdorff error of the entire patch. Recheck the exported model
+and dependent garments. The helper validates edge manifoldness and winding; it
+does not certify global vertex manifoldness or a closed surface.
+
 `agent_meshes_garment_partition.partition_surface(vertices, triangles, normals,
 weights, fields, component=None)` cuts the donor and garment on shared vertices.
 It returns `source` (the complete subdivided donor) and `garment` (the positive
