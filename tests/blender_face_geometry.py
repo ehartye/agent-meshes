@@ -31,6 +31,30 @@ WEIGHTS = (0, .25, .5, .75, 1)
 def distance(a, b): return math.dist(a, b)
 
 
+def triangle_distance(point, triangle):
+    """Independent point/triangle distance: plane projection or the nearest edge."""
+    sub = lambda a, b: tuple(x - y for x, y in zip(a, b))
+    dot = lambda a, b: sum(x * y for x, y in zip(a, b))
+    cross = lambda a, b: (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+    a, b, c = [sub(v, point) for v in triangle]
+    best = min(dot(v, v) for v in (a, b, c))
+    for p, q in ((a, b), (b, c), (c, a)):
+        edge = sub(q, p)
+        length2 = dot(edge, edge)
+        if length2:
+            u = min(1, max(0, -dot(p, edge) / length2))
+            nearest = tuple(x + u * d for x, d in zip(p, edge))
+            best = min(best, dot(nearest, nearest))
+    normal = cross(sub(b, a), sub(c, a))
+    length2 = dot(normal, normal)
+    if length2:
+        projected = tuple(n * dot(a, normal) / length2 for n in normal)
+        if all(dot(cross(sub(p, projected), sub(q, projected)), normal) >= -1e-12 * length2
+               for p, q in ((a, b), (b, c), (c, a))):
+            best = min(best, dot(projected, projected))
+    return math.sqrt(best)
+
+
 def mix(rest, morphs, weights):
     return [tuple(r[k] + sum(w * (m[i][k] - r[k]) for m, w in zip(morphs, weights)) for k in range(3)) for i, r in enumerate(rest)]
 
@@ -1481,6 +1505,46 @@ class ContinuousEyeHoleTests(unittest.TestCase):
             blank = ellipsoid_geometry(*head, rings=56, segments=72)
             self._cache[which] = eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=opening)
         return self._cache[which]
+
+    def test_static_lining_facets_clear_the_ball_across_scales_and_openings(self):
+        # A lining's vertices can all clear the ball while their flat triangle
+        # interiors intersect it. Front blink rays also miss many of these faces.
+        for radius, opening, wide, share, center, options in (
+            (.008, (48, 16, 28), (16, 4), .45, (0, 0, 0), {}),
+            (.012, (45, 38, 30), (10, 4), .2, (.014, -.037, .13), {}),
+            (.02, (48, 36, 28), (10, 4), .2, (0, 0, 0), {}),
+            (.058, (48, 16, 28), (16, 4), .45, (0, 0, 0), {}),
+            (.02, (48, 36, 28), (10, 4), .2, (0, 0, 0),
+             dict(thickness=.0015, clearance=.0002, column_step=5)),
+            (.008, (48, 16, 28), (16, 4), .45, (0, 0, 0),
+             dict(thickness=.001, clearance=0, column_step=4)),
+        ):
+            with self.subTest(radius=radius, opening=opening, center=center, options=options):
+                scale = radius / .02
+                blank = ellipsoid_geometry(tuple(c + x * scale for c, x in zip(center, (-.045, .052, -.062))),
+                                           tuple(x * scale for x in (.11, .085, .10)), rings=56, segments=72)
+                try:
+                    hole = eye_hole(blank['vertices'], blank['faces'], center, radius,
+                                    opening=opening, wide=wide, squint_upper_share=share, **options)
+                except ValueError as error:
+                    self.fail(f'Valid continuous-eye construction rejected: {error}')
+                static = set(map(tuple, hole['lining_points'])) - {tuple(p) for p, _ in hole['motion']}
+                triangles = [[hole['vertices'][v] for v in indices] for indices in hole['faces']
+                             if all(tuple(hole['vertices'][v]) in static for v in indices)]
+                self.assertGreater(len(triangles), 100)
+                nearest = min(triangle_distance(center, triangle) for triangle in triangles)
+                required = min(options.get('clearance', .0005), .5 * (hole['lining'][0] - radius))
+                self.assertGreaterEqual(nearest - radius, required - 1e-10,
+                                        f'lining facet needs {required*1000:.6f} mm clearance')
+
+    def test_static_lining_rejects_an_unresolvable_fixed_strip(self):
+        # Almost no radial gap and fixed yaw columns: refining the rear bag cannot
+        # fix the front strip. Construction must terminate with a useful error.
+        blank = ellipsoid_geometry((-.045, .052, -.062), (.11, .085, .10), rings=56, segments=72)
+        with self.assertRaisesRegex(ValueError, r'Eye lining facets.*after 6 tessellations.*column_step'):
+            eye_hole(blank['vertices'], blank['faces'], (0, 0, 0), .02,
+                     opening=(48, 1, 1), meet=0, wide=(0, 0), overlap=0,
+                     thickness=.000001, clearance=0, gap=0)
 
     def patch(self, hole, whole=False):
         """The patch (the grid, the margins, the lids' inner surfaces and lining), or the whole skin, with its lid morphs."""

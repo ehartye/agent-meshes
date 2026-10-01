@@ -1203,6 +1203,11 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     blink, squint and wide mix (`lid_clearance`); the closed upper lid passes in front
     of the lower one, which rises behind it far enough that blink 1 + wide 1 still
     closes. Folded faces and uncovered eyeball in any contract state are rejected.
+    The static lining behind the lids is tessellated adaptively: its flat facets,
+    including the inner-to-fornix join, retain half the lining's radial gap up to
+    `clearance`. This does not change the moving lid grid or its target positions.
+    Construction rejects settings that cannot meet that bound within six attempts;
+    it does not add a per-character resolution knob or certify moving triangle interiors.
     Returns {'vertices', 'faces', 'style', 'lids' (margins, radii, `min_clearance`,
     `squint_ratio`), 'window', 'motion' (each moving vertex's rest position and
     targets), 'lash' and 'lining_points' (paint by position), 'still' (the moving
@@ -1536,8 +1541,8 @@ _SKIN_ROWS = (0.0, .04, .08, .13, .19, .26, .34, .43, .53, .64, .76, .88, 1.0)
 _ROLL_ROWS = 4          # the lid margin's half-round, from the outer surface to the inner one
 _INNER_ROWS = 4         # the inner lid surface, from the margin back to the fornix
 _FORNIX = (30, 60, 90)  # the fornix: a quarter turn from the inner lid surface down onto the lining
-_LINING_ROWS = 3        # the lining round the eyeball behind the fornix, to a pole behind it
-_FAN = 5                # ladders round each corner of the eye (the canthus)
+_LINING_ROWS = 3        # initial lining rows; refined to keep flat facets outside the eyeball
+_FAN = 5                # initial ladders round each corner (the canthus); refined with the lining
 
 
 def _direction(yaw, elevation):
@@ -2008,6 +2013,7 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
     # surface, runs back under the lid to the fornix, turns down onto the lining and wraps the eyeball to a pole behind
     # it. Round each corner a fan of ladders (sharing the corner's roll, one radial line) closes the bag sideways.
     back = (0.0, 1.0, 0.0)
+    lining_rows, corner_ladders = _LINING_ROWS, _FAN
 
     def ladder(j, which, fan=None):
         """Per state (rest first), the ladder's points after its margin vertex: roll, inner, fornix, lining rows."""
@@ -2043,19 +2049,46 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
                 ww = math.radians(w)
                 out.append(_add(center, _mul(at(span * math.sin(ww)), inner - fall * (1 - math.cos(ww)))))
             fornix = at(span)
-            for k in range(1, _LINING_ROWS + 1):
-                s = k / (_LINING_ROWS + 1)
+            for k in range(1, lining_rows + 1):
+                s = k / (lining_rows + 1)
                 d = _add(_mul(fornix, 1 - s), _mul(back, s))
                 out.append(_add(center, _mul(d, lining / math.hypot(*d))))
             result.append(out)
         return result, lining
 
     up_row, low_row = row_of[('U0', 0)], row_of[('L0', 0)]
-    loop = [(grid[(j, up_row)], ladder(j, 'upper'), 'upper') for j in range(first + 1, last)]
-    loop += [(grid[(last, up_row)], ladder(last, 'upper', 90 - 180 * f / (_FAN - 1)), 'corner') for f in range(_FAN)]
-    loop += [(grid[(j, low_row)], ladder(j, 'lower'), 'lower') for j in range(last - 1, first, -1)]
-    loop += [(grid[(first, up_row)], ladder(first, 'upper', -90 - 180 * f / (_FAN - 1)), 'corner') for f in range(_FAN)]
-    lining = loop[0][1][1]
+    # Vertices outside a sphere do not guarantee that their flat triangles clear it.
+    # Refine only the static bag and corner fans, leaving the moving lid grid intact.
+    # Keep half the radial gap (up to the requested clearance) in the emitted facets.
+    for refinement in range(6):
+        loop = [(grid[(j, up_row)], ladder(j, 'upper'), 'upper') for j in range(first + 1, last)]
+        loop += [(grid[(last, up_row)], ladder(last, 'upper', 90 - 180 * f / (corner_ladders - 1)), 'corner') for f in range(corner_ladders)]
+        loop += [(grid[(j, low_row)], ladder(j, 'lower'), 'lower') for j in range(last - 1, first, -1)]
+        loop += [(grid[(first, up_row)], ladder(first, 'upper', -90 - 180 * f / (corner_ladders - 1)), 'corner') for f in range(corner_ladders)]
+        lining = loop[0][1][1]
+        pole_point = _add(center, _mul(back, lining))
+        required = min(clearance, .5 * (lining - r))
+        nearest = math.inf
+        # The last inner rung already has zero motion, so include its join to the
+        # first fornix rung. Indices here exclude the margin vertex prepended below.
+        first_static = _ROLL_ROWS + _INNER_ROWS - 1
+        for before, after in zip(loop, loop[1:] + loop[:1]):
+            a, b = before[1][0][0], after[1][0][0]
+            triangles = [(b[-1], a[-1], pole_point)]
+            for k in range(first_static, len(a) - 1):
+                triangles.extend(((b[k], a[k], a[k + 1]), (b[k], a[k + 1], b[k + 1])))
+            for triangle in triangles:
+                closest, _ = _closest_on_triangle(center, *triangle)
+                nearest = min(nearest, math.dist(center, closest))
+        if nearest >= r + required:
+            break
+        lining_rows *= 2
+        corner_ladders = 2 * corner_ladders - 1
+    else:
+        raise ValueError(f'Eye lining facets clear the eyeball by {(nearest-r)*1000:.3f} mm, '
+                         f'need {required*1000:.3f} mm after 6 tessellations '
+                         f'(radius {r}, opening {opening}, column_step {step}); '
+                         'reduce column_step or adjust the opening/clearance')
 
     # ---- vertices, morph targets and faces of the patch
     verts, targets, roles, ids = [], {s: [] for s in states}, [], {}
@@ -2094,7 +2127,7 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
                     continue
             face(a, b, c)
             face(a, c, d)
-    kinds = ['roll'] * _ROLL_ROWS + ['inner'] * _INNER_ROWS + ['fornix'] * len(_FORNIX) + ['lining'] * _LINING_ROWS
+    kinds = ['roll'] * _ROLL_ROWS + ['inner'] * _INNER_ROWS + ['fornix'] * len(_FORNIX) + ['lining'] * lining_rows
     ladders = []
     for number, (margin_vertex, (positions, _), role) in enumerate(loop):
         rungs = [ids[('g',) + margin_vertex]]
