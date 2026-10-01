@@ -33,6 +33,16 @@ class GeometryEyeMask(unittest.TestCase):
         self.assertEqual(mask((.04, 0, 0)), 1)
         self.assertEqual(eye_hole_mask(hole)((.04, 0, 0)), 0)
 
+    def test_explicit_none_retains_legacy_custom_bands(self):
+        hole = self.fixture()
+        hole['still'] = lambda p: math.degrees(math.atan2(p[0], .04))
+        for band in [None, 3, 7, 20, 80]:
+            omitted = eye_hole_mask(hole, band=band)
+            explicit = eye_hole_mask(hole, band=band, spatial=None)
+            for x in range(-20, 141):
+                p = (x/1000, .03, .02)
+                self.assertEqual(omitted(p), explicit(p))
+
     def test_smooth_distance_transition_and_union_of_eyes(self):
         hole = self.fixture()
         other = copy.deepcopy(hole)
