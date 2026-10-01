@@ -3235,7 +3235,7 @@ def _zip_loops(inner, outer, q, points):
     return result
 
 
-def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=None, crease=None, height=None, max_edge=None):
+def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=None, crease=None, height=None, max_edge=None, *, axis_y=None):
     """Shape soft lips with a lip line into a skin face at rest: the upper and a fuller lower lip either side of a crease.
 
     For skin faces (kids, creatures) whose closed mouth would otherwise be a flat
@@ -3261,11 +3261,18 @@ def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=Non
     `mesh_from_geometry`, `slit_mouth` and the shape keys, after `eye_hole` or
     `nose_geometry`), then take `front_surface` of the result for the cavity and
     teeth. Returns vertices and faces (unused vertices dropped, the rest in order).
+
+    `axis_y` sets the vertical wrapping axis's Y coordinate in the same rest space
+    as the vertices. On a complete character, use the authored head's depth center
+    so a distant tail or accessory cannot move the axis. None retains the legacy
+    midpoint of the mesh's depth bounds. The axis must lie behind the mouth skin;
+    it selects the wrap frame, not a region exemption from topology checks.
     """
     vertices = [_vector(v, 3, 'Vertex') for v in vertices]
     faces = [tuple(f) for f in faces]
     mouth_z, half_width = _number(mouth_z, 'Mouth line'), _number(half_width, 'Mouth half-width', 0, low_open=True)
     center_x = _number(center_x, 'Mouth center')
+    if axis_y is not None: axis_y = _number(axis_y, 'Lip wrap axis')
     fullness = .09 * half_width if fullness is None else _number(fullness, 'Lip fullness', 0)
     crease = .6 * fullness if crease is None else _number(crease, 'Lip crease', 0)
     height = .45 * half_width if height is None else _number(height, 'Lip height', 0, low_open=True)
@@ -3274,7 +3281,8 @@ def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=Non
     if y is None: raise ValueError(f'No skin at the mouth ({center_x:.4f}, {mouth_z:.4f}): put the mouth line on the face skin')
     # The grid wraps round a vertical axis through the mouth's middle, level with the middle of the head: the middle of
     # its depth, not the mean of its vertices, which a finely meshed feature (a continuous eye) pulls forward.
-    axis_y = (min(v[1] for v in vertices) + max(v[1] for v in vertices)) / 2
+    if axis_y is None:
+        axis_y = (min(v[1] for v in vertices) + max(v[1] for v in vertices)) / 2
     radius = axis_y - y
     if radius <= 0: raise ValueError('The mouth must be on the front of the head (the face looks down -Y)')
     angle = lambda p: math.atan2(p[0] - center_x, axis_y - p[1])

@@ -832,7 +832,7 @@ first slides along that edge onto the line (it stays on the old surface), so the
 cut runs through vertices and no blank needs a row pre-snapped to the mouth.
 
 `sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0, fullness=None,
-crease=None, height=None, max_edge=None)` gives a skin face soft lips and a lip
+crease=None, height=None, max_edge=None, *, axis_y=None)` gives a skin face soft lips and a lip
 line at rest: an upper and a fuller lower lip (each `fullness` proud, 9% of the
 half width; `height` 45% of it) either side of a crease along the mouth line (60%
 of the fullness deep), thinning to nothing just past the corners. The skin round
@@ -853,6 +853,14 @@ column spacing (default 12% of `height`). Run it on the blank before
 `mesh_from_geometry` and `slit_mouth`, then take `front_surface` of its result for
 the cavity and teeth; it raises a clear error when the mouth's skin is not one
 plain patch (a hole or another feature in the way) or wraps past 85 degrees.
+
+For a complete character mesh, set `axis_y` to the authored head's depth center
+in the same rest coordinates as the vertices. A distant tail can otherwise move
+the inferred wrapping axis outside the head and make lip construction fail.
+For example, `sculpt_lips(vertices, faces, mouth_z, half_width, axis_y=head_y)`
+keeps the head frame independent of the body bounds. Omit it or pass `None` to
+retain the depth-bounds midpoint. The value must be finite and behind the mouth
+surface; existing patch, wrap-angle and topology checks still apply.
 
 `teeth_row_geometry(style, center, half_width, depth, count, height, row='upper',
 width=None, thickness=None, sizes=None, span=150)` lays teeth along an elliptical
