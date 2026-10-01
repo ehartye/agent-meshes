@@ -112,7 +112,7 @@ def skin_regions(a,include=None):
     return [p for p in parts if p['name'] in names]
 
 
-def anatomy_weights(body,a,regions=None,smooth=5,hip_seams=False,neck_seam=False,waist_seam=False):
+def anatomy_weights(body,a,regions=None,smooth=5,hip_seams=False,neck_seam=False,waist_seam=False,thumb_seams=False):
     """Blender mesh weights from selected anatomical source surfaces.
 
     Selection happens before nearest-surface lookup, so adjacent excluded limbs
@@ -125,7 +125,10 @@ def anatomy_weights(body,a,regions=None,smooth=5,hip_seams=False,neck_seam=False
     if isinstance(smooth,bool) or not isinstance(smooth,int) or smooth<0:raise ValueError('Nonnegative integer smoothing passes required')
     if not isinstance(neck_seam,bool):raise ValueError('neck_seam must be boolean')
     if not isinstance(waist_seam,bool):raise ValueError('waist_seam must be boolean')
+    if not isinstance(thumb_seams,bool):raise ValueError('thumb_seams must be boolean')
     bones=skeleton(a);parts=skin_regions(a,regions);weight=weight_function(a)
+    if thumb_seams and not {'palm_l','palm_r','thumb_l','thumb_r'}<={p['name'] for p in parts}:
+        raise ValueError('Thumb seams require both palm and thumb source regions')
     vertices=[];faces=[];regions=[]
     for p in parts:
         if p['kind']!='skin':continue
@@ -193,10 +196,37 @@ def anatomy_weights(body,a,regions=None,smooth=5,hip_seams=False,neck_seam=False
                              [tuple(p.vertices) for p in body.data.polygons],rows,free,iterations=300)
         rows=[fitted[i] if active else rows[i] for i,active in enumerate(free)]
         report['waistSeamVertices']=int(sum(free))
+    if thumb_seams:
+        from agent_meshes_skin_relax import relax_weights
+        # Shorter digit chains can expose the nearest-source transition at the
+        # fused thumb root. Relax only that connected patch; distant digits and
+        # all rows outside the patch retain their exact prior values.
+        vertices=[v.co[:] for v in body.data.vertices]
+        masks={side:[bool(np.linalg.norm(np.asarray(p)-bones['thumb_'+side+'_base']['head'])<.03*a['scale']
+                         and row.get('thumb_'+side+'_base',0)+row.get('thumb_'+side+'_tip',0)>.01)
+                     for p,row in zip(vertices,rows)] for side in ('l','r')}
+        free=[l or r for l,r in zip(masks['l'],masks['r'])]
+        fitted=relax_weights(vertices,[tuple(p.vertices) for p in body.data.polygons],rows,free,iterations=20)
+        # A hard mask endpoint can move the last relaxed vertex away from its
+        # pinned neighbour and introduce a new fold. Fade the correction over
+        # the outer third of the radius; retain exact original rows outside it.
+        result=[]
+        for i,(point,row,active) in enumerate(zip(vertices,rows,free)):
+            if not active:result.append(row);continue
+            distance=min(np.linalg.norm(np.asarray(point)-bones['thumb_'+side+'_base']['head'])
+                         for side in ('l','r') if masks[side][i])
+            t=float(np.clip((.03*a['scale']-distance)/(.01*a['scale']),0,1))
+            blend=t*t*(3-2*t)
+            mixed={n:(1-blend)*row.get(n,0)+blend*fitted[i].get(n,0) for n in sorted(set(row)|set(fitted[i]))}
+            top=sorted(mixed.items(),key=lambda item:-item[1])[:4];total=sum(w for _,w in top)
+            result.append({n:w/total for n,w in top if w>1e-12})
+        rows=result
+        report['thumbSeamVertices']=int(sum(free))
+        report['thumbSeamVerticesBySide']={side:int(sum(mask)) for side,mask in masks.items()}
     return rows,report
 
 
-def rig_anatomy(objects,a,diagnostics=True):
+def rig_anatomy(objects,a,diagnostics=True,*,thumb_seams=False):
     """Bind the shared fused anatomy; export all skins at scene root."""
     import bpy
     from mathutils import Vector,Quaternion
@@ -204,7 +234,7 @@ def rig_anatomy(objects,a,diagnostics=True):
     from agent_meshes_author import bind_skin
     bones=skeleton(a);weight=weight_function(a)
     body=next(o for o in objects if o.name=='sprout-body')
-    rows,skin_report=anatomy_weights(body,a,hip_seams=True,neck_seam=True,waist_seam=True)
+    rows,skin_report=anatomy_weights(body,a,hip_seams=True,neck_seam=True,waist_seam=True,thumb_seams=thumb_seams)
     data=bpy.data.armatures.new('sprout-skeleton');arm=bpy.data.objects.new('sprout-rig',data)
     bpy.context.scene.collection.objects.link(arm);bpy.context.view_layer.objects.active=arm;arm.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')

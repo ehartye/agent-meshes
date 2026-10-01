@@ -1438,7 +1438,7 @@ all skin regions used by the body rig. Coordinates use the anatomy's height
 and age; returned surfaces remain in rest-space Blender Z-up coordinates.
 
 `anatomy_weights(mesh, anatomy, regions=None, smooth=5, hip_seams=False,
-neck_seam=False, waist_seam=False)` queries those selected
+neck_seam=False, waist_seam=False, thumb_seams=False)` queries those selected
 surfaces before evaluating the region's anatomical weight function. It returns
 `(rows, report)` without binding or moving the mesh. The report names the source
 regions actually used, vertex count and maximum influence count. Rows diffuse
@@ -1461,6 +1461,27 @@ the trunk source, reports `waistSeamVertices`, and is enabled by `rig_anatomy`.
 at 65 phases of each of eight clips, combining local signed-area diagnostics
 with actual nonadjacent waist contacts and preservation checks. These sampled
 checks do not establish continuous collision freedom or costume acceptance.
+
+With `thumb_seams=True`, each thumb-root patch receives 20 topology relaxation
+passes. The patch contains vertices within `0.03 * scale` of the authored thumb
+base with more than .01 original combined thumb-base/tip influence. It blends
+all participating local influences; it is not a thumb-only weight adjustment.
+The correction fades smoothly across the outer third of that radius to avoid
+an abrupt transition into pinned neighbours; mixed rows retain four influences.
+Rows outside the patch remain exactly unchanged, as do geometry, bones and
+animation. Both palm and thumb source regions must be selected. The report adds
+`thumbSeamVertices` and `thumbSeamVerticesBySide`. Pass the same opt-in keyword
+to `rig_anatomy(objects, anatomy, thumb_seams=True)` to bind the repaired body;
+both APIs default to false. Do not enable it merely because digits are shorter:
+inspect the deformation and test the actual character first. Later garment cuts
+can add interpolated body vertices on triangles incident to the edited patch.
+
+`npx vitest run tests/sprout-thumb-blender.test.ts` exercises actual fused adult
+and child bodies with .70 fingers/.85 thumbs, exact outside-patch preservation,
+explicit-false compatibility, normalized exported weights, and both hands at
+65 phases of curl, walk and jog. The original child contacts must reproduce as
+a negative control. Sampled nonadjacent triangle checks do not establish
+adjacent-fold, containment, continuous-clearance or visual acceptance.
 
 For a fitted overall, use `regions=['trunk', 'leg_l', 'leg_r']` so nearby arms,
 neck and tail cannot donate weights. Bind the returned rows to the existing
