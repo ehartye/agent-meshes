@@ -44,6 +44,7 @@ jobs:
       - run: python tests/stylized_face.py
       - run: node --test tests/botanical-kit.test.mjs
       - run: python tests/blender_face_geometry.py
+      - run: python tests/lip_axis.py
       - run: python tests/oriented_eyes.py
       - run: python tests/hm08_head.py
       - run: npm test
