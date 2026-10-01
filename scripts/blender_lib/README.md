@@ -661,6 +661,20 @@ and everything inside its mound), rising smoothly over `band` degrees outside th
 `socket`; round 5 used the socket band, so a hole cut with `socket=0` masked out
 every skin shape) and half an eyeball radius. The worked examples do this.
 
+On broad or side-set faces that radial protection can also suppress a nearby
+cheek or mouth. For continuous eyes, use
+`eye_hole_mask(*holes, spatial=(.002, .035))` to hold points within 2 mm of the
+constructed moving lids, rim and lining, then smoothly restore full influence
+at 35 mm. Choose these rest-space distances for the character's scale and check
+combined expression extremes. This mode uses the nearest protected point across
+all supplied holes, including oriented eyes, and needs no Blender runtime.
+It snapshots the construction points and caches queries; rebuild the mask if
+you change the eye geometry. Distances must satisfy `0 <= hold < reach`, and
+`spatial` cannot be combined with `band`. Shell eyes lack the required continuous
+motion data and must use the original mode. Omitting `spatial` preserves that
+mode unchanged. Protecting sampled points does not certify triangle clearance
+or prevent folds elsewhere in a strong expression.
+
 ```python
 cut = eye_holes(vertices, faces, EYE_L, EYE_RADIUS, opening=OPENING)   # both eyes, mirror images
 vertices, faces, holes = cut['vertices'], cut['faces'], {'L': cut['L'], 'R': cut['R']}
