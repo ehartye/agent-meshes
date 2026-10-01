@@ -585,6 +585,94 @@ class JawTests(unittest.TestCase):
                 JawHinge(**(dict(pivot=(0, 0, 0), angle=20, mouth_z=-.04, half_width=.02) | options))
 
 
+class LipLiningTests(unittest.TestCase):
+    # Split centers, joined corners, as produced by slit_mouth. Outer skin edges
+    # are open too, so selecting all boundary edges would produce the wrong wall.
+    skin = {'vertices': [(-.1, -.2, 0), (0, -.21, 0), (.1, -.2, 0),
+                         (0, -.21, 0), (0, -.2, .1), (0, -.2, -.1)],
+            'faces': [(0, 1, 4), (1, 2, 4), (0, 5, 3), (3, 5, 2)]}
+    options = dict(mouth_z=0, half_width=.1, front_y=-.1,
+                   offsets=[(0, 0), (.002, .001), (.008, .004), (.020, .008)])
+
+    def lining(self, skin=None, **options):
+        from agent_meshes_face import lip_lining_geometry
+        return lip_lining_geometry(self.skin if skin is None else skin, **(self.options | options))
+
+    def test_shared_corners_have_two_branches_and_closed_sides(self):
+        lining = self.lining()
+        self.assertEqual(len(lining['vertices']), 24)
+        self.assertEqual(len(lining['faces']), 18)
+        boundary = lining['boundary']
+        self.assertEqual(set(boundary), {(0, 1), (0, 2), (1, 2), (2, 1), (2, 2), (3, 1)})
+        for corner in (0, 2):
+            lower, upper = boundary.index((corner, 1)), boundary.index((corner, 2))
+            self.assertEqual(lining['vertices'][lower], lining['vertices'][upper])
+            for ring in (1, 2, 3):
+                self.assertGreater(lining['vertices'][upper + 6*ring][2],
+                                   lining['vertices'][lower + 6*ring][2])
+        # Weld the two coincident corner roots for the topological audit. The
+        # only open edges must then be the lip opening and the innermost ring.
+        ids = list(range(len(lining['vertices'])))
+        for corner in (0, 2):
+            ids[boundary.index((corner, 2))] = boundary.index((corner, 1))
+        owners = {}
+        for face in lining['faces']:
+            face = [ids[i] for i in face]
+            for a, b in zip(face, face[1:] + face[:1]):
+                owners.setdefault(tuple(sorted((a, b))), []).append((a, b))
+        for pairs in owners.values():
+            self.assertLessEqual(len(pairs), 2)
+            if len(pairs) == 2:
+                self.assertEqual(pairs[0], tuple(reversed(pairs[1])))
+        self.assertEqual(sum(len(p) == 1 for p in owners.values()), 10)
+
+    def test_translation_preserves_topology_and_attachment(self):
+        delta = (1.75, 2.5, -3.25)
+        moved = dict(self.skin, vertices=[tuple(a+b for a, b in zip(v, delta)) for v in self.skin['vertices']])
+        before = self.lining()
+        after = self.lining(moved, center_x=delta[0], mouth_z=delta[2], front_y=-.1+delta[1])
+        self.assertEqual(before['faces'], after['faces'])
+        self.assertEqual(before['boundary'], after['boundary'])
+        for a, b in zip(before['vertices'], after['vertices']):
+            self.assertLess(math.dist(tuple(x+y for x, y in zip(a, delta)), b), 1e-12)
+
+    def test_every_expression_copies_boundary_motion_including_shared_corners(self):
+        rest = self.skin['vertices']
+        morphs = {name: [(x+.003*i*scale, y+.001*i, z-.007*i*scale)
+                         for i, (x, y, z) in enumerate(rest)]
+                  for name, scale in [('jawOpen', 1), ('mouthSmileLeft', -.4)]}
+        lining = self.lining(dict(self.skin, morphs=morphs))
+        self.assertEqual(set(lining['morphs']), set(morphs))
+        for name, targets in lining['morphs'].items():
+            for i, target in enumerate(targets):
+                source = lining['boundary'][i % 6][0]
+                expected = tuple(morphs[name][source][k] - rest[source][k] for k in range(3))
+                actual = tuple(target[k] - lining['vertices'][i][k] for k in range(3))
+                self.assertLess(math.dist(expected, actual), 1e-12)
+
+    def test_rejects_missing_or_disconnected_lips_and_unshared_corners(self):
+        missing = dict(self.skin, faces=self.skin['faces'][:2])
+        unshared = dict(self.skin, vertices=self.skin['vertices'] + [self.skin['vertices'][0]],
+                        faces=[(6, 1, 4)] + self.skin['faces'][1:])
+        extra = dict(self.skin, vertices=self.skin['vertices'] + [(-.03, -.2, 0), (.03, -.2, 0), (0, -.2, .04)],
+                     faces=self.skin['faces'] + [(6, 7, 8)])
+        for skin in (missing, unshared, extra, dict(vertices=[], faces=[])):
+            with self.subTest(skin=skin), self.assertRaises(ValueError):
+                self.lining(skin)
+
+    def test_rejects_bad_offsets_parameters_and_morph_topology(self):
+        for options in (dict(offsets=[]), dict(offsets=[(0, 0)]), dict(offsets=[(.001, 0), (.002, .001)]),
+                        dict(offsets=[(0, 0), (-.002, .001)]), dict(offsets=[(0, 0), (.002, 0)]),
+                        dict(offsets=[(0, 0), (.002, .001), (.001, .002)]),
+                        dict(half_width=0), dict(front_y=float('nan')), dict(tolerance=0)):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.lining(**options)
+        with self.assertRaises(ValueError):
+            self.lining(dict(self.skin, morphs={'jawOpen': [(0, 0, 0)]}))
+        with self.assertRaises(ValueError):
+            self.lining(dict(self.skin, faces=[(0, 1, 99)]))
+
+
 class MouthTests(unittest.TestCase):
     arch = dict(center=(0, -.08, -.035), half_width=.024, depth=.02)
 
