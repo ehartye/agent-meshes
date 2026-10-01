@@ -9,10 +9,17 @@ import numpy as np
 from agent_meshes_author import sweep_mesh
 
 
-def anatomy(*, height=1.7, age='adult'):
+def _digit_scale(value,name):
+    if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not .5<=value<=1.5:
+        raise ValueError(name+' must be finite and within 0.5..1.5')
+    return float(value)
+
+
+def anatomy(*, height=1.7, age='adult', finger_scale=1., thumb_scale=1.):
     if isinstance(height,bool) or not isinstance(height,(int,float)) or not math.isfinite(height) or not .7<=height<=2.5:
         raise ValueError('height must be finite and within 0.7..2.5 metres')
     if age not in ('adult','child'): raise ValueError('age must be adult or child')
+    finger_scale=_digit_scale(finger_scale,'finger_scale');thumb_scale=_digit_scale(thumb_scale,'thumb_scale')
     scale=height/1.7; child=age=='child'
     # Child has a larger head and shorter limbs relative to total height.
     def point(p):
@@ -33,7 +40,7 @@ def anatomy(*, height=1.7, age='adult'):
             joints[name+'_'+s]=(sign*p[0],p[1],p[2])
     return {'height':height,'age':age,'scale':scale,'joints':{n:point(p) for n,p in joints.items()},
             'head_radii':[v*scale*(1.18 if child else 1) for v in (.185,.125,.135)],
-            'crest_count':3 if child else 5}
+            'crest_count':3 if child else 5,'finger_scale':finger_scale,'thumb_scale':thumb_scale}
 
 
 def _sphere(center,radii,segments=40,rows=24):
@@ -74,8 +81,29 @@ def hand_point(points,a,side):
     return center+v*math.cos(angle)+np.cross(axis,v)*math.sin(angle)+np.sum(v*axis,axis=-1,keepdims=True)*axis*(1-math.cos(angle))
 
 
-def geometry(*,height=1.7,age='adult'):
-    a=anatomy(height=height,age=age);s=a['scale'];j={n:np.array(v) for n,v in a['joints'].items()};parts=[]
+def _digit_chains(a,side):
+    """Unturned root/middle/tip points shared by the surface and skeleton.
+
+    Keep the original root spacing, including its unscaled lateral component.
+    Curves must be generated before hand_point: componentwise clipping in _curve
+    does not commute with rotation. Missing ratios support older anatomy records.
+    """
+    s=a['scale'];sign=1 if side=='l' else -1;hand=np.array(a['joints']['hand_'+side])
+    finger=_digit_scale(a.get('finger_scale',1.),'finger_scale')
+    thumb=_digit_scale(a.get('thumb_scale',1.),'thumb_scale');chains={}
+    for n,dx in enumerate([-.015,.015]):
+        root=hand+np.array([sign*dx,-.005*s,-.024*s])
+        chains['finger_'+side+str(n)]=[root,root+np.array([0,-.012*s,-.036*s])*finger,
+                                     root+np.array([0,-.025*s,-.064*s])*finger]
+    root=hand+np.array([sign*.02*s,0,.012*s])
+    chains['thumb_'+side]=[root,root+np.array([sign*.029*s,-.013*s,-.013*s])*thumb,
+                          root+np.array([sign*.025*s,-.034*s,-.027*s])*thumb]
+    return chains
+
+
+def geometry(*,height=1.7,age='adult',finger_scale=1.,thumb_scale=1.):
+    a=anatomy(height=height,age=age,finger_scale=finger_scale,thumb_scale=thumb_scale)
+    s=a['scale'];j={n:np.array(v) for n,v in a['joints'].items()};parts=[]
     def add(name,data,kind='skin'):
         v,f=data
         if name.startswith(('palm_','finger_','digit-tip_','thumb_','thumb-tip_')):
@@ -99,15 +127,11 @@ def geometry(*,height=1.7,age='adult'):
         sphere('shoulder_'+side,shoulder,[.047*s,.044*s,.047*s])
         tube('arm_'+side,[shoulder,elbow,wrist,hand],[.046*s,.034*s,.024*s,.028*s])
         sphere('palm_'+side,hand,[.031*s,.024*s,.043*s])
-        for n,dx in enumerate([-.015,.015]):
-            root=hand+np.array([sign*dx,-.005*s,-.024*s])
-            tube('finger_'+side+str(n),[root,root+[0,-.012*s,-.036*s],root+[0,-.025*s,-.064*s]],
-                 [.013*s,.011*s,.009*s])
-            sphere('digit-tip_'+side+str(n),root+[0,-.025*s,-.064*s],[.009*s]*3)
-        root=hand+np.array([sign*.02*s,0,.012*s])
-        tube('thumb_'+side,[root,root+[sign*.029*s,-.013*s,-.013*s],root+[sign*.025*s,-.034*s,-.027*s]],
-             [.014*s,.012*s,.009*s])
-        sphere('thumb-tip_'+side,root+[sign*.025*s,-.034*s,-.027*s],[.009*s]*3)
+        for name,points in _digit_chains(a,side).items():
+            thumb=name.startswith('thumb_')
+            tube(name,points,[.014*s if thumb else .013*s,.012*s if thumb else .011*s,.009*s])
+            tip_name=name.replace('thumb_','thumb-tip_') if thumb else name.replace('finger_','digit-tip_')
+            sphere(tip_name,points[-1],[.009*s]*3)
         hip,knee,hock,toe=[j[n+'_'+side] for n in ['hip','knee','hock','toe']]
         tube('leg_'+side,[hip,knee,hock,toe],[.066*s,.040*s,.028*s,.025*s])
         sphere('hock_'+side,hock,[.033*s,.031*s,.033*s])
@@ -163,17 +187,17 @@ def _smooth_hip_join(body,a):
     body.vertex_groups.remove(body.vertex_groups[group_name])
 
 
-def build_anatomy(*,height=1.7,age='adult',skin='#b79ad6',crest='#79b25c',clay=False):
+def build_anatomy(*,height=1.7,age='adult',skin='#b79ad6',crest='#79b25c',clay=False,finger_scale=1.,thumb_scale=1.):
     """Fuse continuous skin before rigging; eyes, tympana and fronds stay editable."""
     import bpy
     from agent_meshes_author import make_mesh,material,fuse_meshes
-    a=anatomy(height=height,age=age);objects=[];skin_parts=[]
+    a=anatomy(height=height,age=age,finger_scale=finger_scale,thumb_scale=thumb_scale);objects=[];skin_parts=[]
     mats={kind:material('sprout-'+kind,color,roughness=.75) for kind,color in
           [('skin',skin),('eye','#eee9df'),('detail',skin),('crest',crest)]}
     if clay:
         neutral=material('sprout-clay','#a7adb2',roughness=.8)
         mats={kind:neutral for kind in mats}
-    for p in geometry(height=height,age=age):
+    for p in geometry(height=height,age=age,finger_scale=finger_scale,thumb_scale=thumb_scale):
         obj=make_mesh(p['name'],p['vertices'],p['faces'],mats[p['kind']])
         for f in obj.data.polygons:f.use_smooth=True
         (skin_parts if p['kind']=='skin' else objects).append(obj)

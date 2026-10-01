@@ -33,6 +33,42 @@ timing per clip. `expression_fields` and `performance_samples` are NumPy-only
 helpers for anatomical fields and loop-neutral timings. This focused helper is
 not the full ARKit contract: gaze, jaw, mouth interior and speech are not supplied.
 
+`rig_sculpt_eyes(body, rig, eye_vertices, centers, parts=None, head='head')` adds
+independent gaze to existing disconnected eye surfaces without replacing the
+sculpt. `eye_vertices` maps `L`/`R` to explicit body vertex indices; `centers`
+maps them to world-space pivots (left is +X). Optional `parts` maps each side to
+already skinned iris, pupil or highlight objects. Use local single-user meshes
+in Object mode, skinned to this armature. Select complete eye polygons and keep
+each assembly within half the interocular distance of its pivot.
+
+The helper creates head-child `eye_L`/`eye_R` bones and rigidly binds each eye
+assembly to its own bone. Side-specific copies of the effective materials retain
+object overrides and separate embedded eyes into GLB primitives. Existing skin
+weights outside the selected eyes, geometry, morph coordinates and animation
+curves remain unchanged. Gaze uses local Y yaw and local X pitch. Author and
+visually inspect anatomical face membership separately with `mark_face_region`;
+eye rigging does not establish lid coverage, jaw motion or a complete contract.
+
+For a sculpt with an existing mouth pocket, use
+`trace_quad_loop(faces, start, following)` to recover each closed lip/lining
+loop from a directed edge. It rejects boundaries, poles and non-quad or
+non-manifold edges on the route. Author the upper/lower arcs explicitly:
+interlocking lips can put the lower lining above the upper lip in height.
+`sculpt_jaw_weights(vertices, faces, jaw, face_vertices, lower_lip=...,
+upper_lip=..., reach=.02)` fixes upper lip weights at zero, seeds the lower lip
+from `jaw.weight(..., lower_lip=True)`, and solves a local harmonic weight field
+along mesh edges. `reach` is a geodesic distance in the input coordinate units.
+Vertices outside the anatomical face remain fixed; rest geometry is unchanged.
+Use `fixed_vertices` to hold the upper jaw above the teeth's gum line in place.
+The relaxation rejects nonconvergence. Apply the result through `jaw.targets`
+or `add_jaw_open` and check intermediate morph weights and expression combinations
+for folded faces. Include the lining loop behind the lip rim when a narrow fold
+otherwise pulls the upper lining down. This helper does not construct teeth,
+color the mouth, merge skinned meshes or establish the complete face contract.
+`faces_inside_loop(faces, loop, seed_face)` selects the existing mouth pocket on
+the seeded side of its seam loop. It checks that the loop separates that region
+from the exterior before returning polygon indices for material assignment.
+
 ## Cutting weighted clothing
 
 `agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,
@@ -78,6 +114,15 @@ spacing. Missing bands and unseparated outer limbs reject explicitly. Inner leg
 sections exclude hands hanging at hip height. Sparse geometry may require a
 larger band or different authored measurements; this is not anatomy detection.
 Inspect the sculpt and fitted skeleton together before accepting joint pivots.
+
+`surface_chord(vertices, triangles, point, direction, tolerance=1e-7)` measures
+the actual surface at an authored landmark, even between sparse vertex rows.
+It returns two triangle intersections on the line through `point`, ordered along
+`direction`. Their midpoint and separation provide depth measurements for placing
+finger joints. Supply the relevant surface in one common coordinate frame; the
+direction need not be normalized. Missed, one-sided, multiple-shell, coplanar or unbracketed
+measurements reject explicitly. A chord midpoint is not automatically an
+anatomical joint center, and this local measurement does not establish mesh closure.
 
 `agent_meshes_retarget.rig_from_reference(body, reference_glb, correspondence, clips, ...)`
 fits a reference skeleton and transfers its skin weights onto a sculpted mesh. Coordinates
@@ -311,6 +356,39 @@ no MPFB or GPL code.
 `recipes/stylized_face.py` is the consumer. The design is `docs/design/parametric-head.md`.
 
 ## Face-rig helpers (`arkit-face/1`)
+
+Side-set or rolled continuous eyes use `oriented_eye_hole` from
+`agent_meshes_author` (or `agent_meshes_eye_frames`). Pass world/rest-space
+vertices, center and radius, plus `forward` and `up` in Blender coordinates:
+
+```python
+hole = oriented_eye_hole(vertices, faces, center, radius,
+                         forward=(.5, -.866025403784, 0), up=(0, 0, 1),
+                         opening=(48, 36, 28))
+skin = mesh_from_geometry('skin', hole, [skin_material])
+eye = build_eye(rig, 'L', center, radius, hole=hole, skin=skin)
+```
+
+The same frame governs the eyeball, connected lids, every motion target, paint
+positions, window and `eye_hole_mask`. Angular metadata is local to that frame.
+`oriented_eyeball_geometry` also builds a matching standalone eyeball.
+Directions are normalized; up is orthogonalized against forward. Invalid,
+zero or parallel vectors fail. The oriented hole supports continuous lids;
+global mirrored `twin` shaping and separate shell lids are rejected. For two
+eyes, cut each separately and preserve the earlier lid region. `build_eye`
+checks that the continuous lid vertices remain on the final skin.
+
+Author the eye bones before binding or baking clips. `eye_bone_frame(center,
+forward=..., up=...)` returns a world-space Blender edit-bone matrix with
+local Y up and local Z along gaze. In edit mode, assign
+`bone.matrix = rig.matrix_world.inverted() @ Matrix(frame)` and set its length
+separately. Apply nonuniform or mirrored armature scale first. This pure helper
+does not retarget existing animation or bindings. The exported frame supports
+the viewer's local-Y yaw, local-X pitch and `aimBone` controls.
+
+These opt-in authoring helpers leave existing front-facing APIs unchanged.
+They do not change the face verifier's global view directions or establish
+whole-face acceptance; inspect and verify the exported character.
 
 `agent_meshes_face` holds the helpers every talking head needs, so no head source
 repeats them. `agent_meshes_author` re-exports all of them, so one import works:
@@ -583,6 +661,20 @@ and everything inside its mound), rising smoothly over `band` degrees outside th
 `socket`; round 5 used the socket band, so a hole cut with `socket=0` masked out
 every skin shape) and half an eyeball radius. The worked examples do this.
 
+On broad or side-set faces that radial protection can also suppress a nearby
+cheek or mouth. For continuous eyes, use
+`eye_hole_mask(*holes, spatial=(.002, .035))` to hold points within 2 mm of the
+constructed moving lids, rim and lining, then smoothly restore full influence
+at 35 mm. Choose these rest-space distances for the character's scale and check
+combined expression extremes. This mode uses the nearest protected point across
+all supplied holes, including oriented eyes, and needs no Blender runtime.
+It snapshots the construction points and caches queries; rebuild the mask if
+you change the eye geometry. Distances must satisfy `0 <= hold < reach`, and
+`spatial` cannot be combined with `band`. Shell eyes lack the required continuous
+motion data and must use the original mode. Omitting `spatial` preserves that
+mode unchanged. Protecting sampled points does not certify triangle clearance
+or prevent folds elsewhere in a strong expression.
+
 ```python
 cut = eye_holes(vertices, faces, EYE_L, EYE_RADIUS, opening=OPENING)   # both eyes, mirror images
 vertices, faces, holes = cut['vertices'], cut['faces'], {'L': cut['L'], 'R': cut['R']}
@@ -754,7 +846,7 @@ first slides along that edge onto the line (it stays on the old surface), so the
 cut runs through vertices and no blank needs a row pre-snapped to the mouth.
 
 `sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0, fullness=None,
-crease=None, height=None, max_edge=None)` gives a skin face soft lips and a lip
+crease=None, height=None, max_edge=None, *, axis_y=None)` gives a skin face soft lips and a lip
 line at rest: an upper and a fuller lower lip (each `fullness` proud, 9% of the
 half width; `height` 45% of it) either side of a crease along the mouth line (60%
 of the fullness deep), thinning to nothing just past the corners. The skin round
@@ -775,6 +867,14 @@ column spacing (default 12% of `height`). Run it on the blank before
 `mesh_from_geometry` and `slit_mouth`, then take `front_surface` of its result for
 the cavity and teeth; it raises a clear error when the mouth's skin is not one
 plain patch (a hole or another feature in the way) or wraps past 85 degrees.
+
+For a complete character mesh, set `axis_y` to the authored head's depth center
+in the same rest coordinates as the vertices. A distant tail can otherwise move
+the inferred wrapping axis outside the head and make lip construction fail.
+For example, `sculpt_lips(vertices, faces, mouth_z, half_width, axis_y=head_y)`
+keeps the head frame independent of the body bounds. Omit it or pass `None` to
+retain the depth-bounds midpoint. The value must be finite and behind the mouth
+surface; existing patch, wrap-angle and topology checks still apply.
 
 `teeth_row_geometry(style, center, half_width, depth, count, height, row='upper',
 width=None, thickness=None, sizes=None, span=150)` lays teeth along an elliptical
@@ -805,6 +905,36 @@ closed lower lip never cuts it and drops away behind it when the jaw opens.
 function (x, z) -> y of the frontmost skin point (None beside the head). Name
 the material `teeth_exposed` (`EXPOSED_TEETH_MATERIAL`), bind it to `head` and
 list it in `exposedTeeth`.
+
+`lip_lining_geometry(skin, mouth_z, half_width, *, front_y, offsets,
+center_x=0, tolerance=1e-6)` constructs inward strips from the actual cut lip
+boundary, with closed lateral caps. `skin` accepts a geometry dict with optional
+absolute-target `morphs`, or a Blender mesh read in world space. Use it after
+`slit_mouth` and all skin expressions: each lining vertex copies its source lip
+vertex's movement, including corners shared by both lips (which have no upper or
+lower seam tag). Both lips must be connected boundary chains sharing their two
+corner indices. The mouth line and bounds use world coordinates; the face points
+down -Y and its polygons wind outwards.
+
+Composition supplies `offsets`: `(depth, rise)` rings starting at `(0, 0)`,
+followed by increasing positive +Y depths and positive +/-Z rises (upper/lower).
+For example, `[(0, 0), (.002, .001), (.008, .004), (.020, .008)]` makes a 20 mm
+lining; scale and fit these values to the character. The result contains
+`vertices`, `faces`, `morphs`, and `boundary` pairs `(source_vertex, side)` where
+1 is lower and 2 is upper. Each ring repeats that boundary order. The inner ring
+remains open to join a separate cavity; this helper does not verify containment.
+
+The Blender wrapper creates the mesh and copies every skin shape key:
+
+```python
+lining = build_lip_lining(skin, mouth_z, half_width, front_y=slit_back,
+                         offsets=lining_offsets, material=mouth_dark)
+# Bind lining to head, then include it in join_face_parts with the skin.
+```
+
+`build_lip_lining` also accepts `center_x`, `tolerance`, and
+`name='mouth_lip_lining'`. The material, binding and character dimensions stay
+in composition. Invalid boundary topology is rejected before object creation.
 
 `mouth_cavity_geometry(center, width, height, depth, rings=8, segments=32,
 surface=None, inset=.004)` is a dark bag behind the lips, open to the front, so
@@ -1157,6 +1287,22 @@ raised hocks, long metatarsals, padded toes and a counterweight tail.
 Child proportions enlarge the head relative to height and shorten the limbs;
 the adult crest has five broad fronds and the child's has three.
 
+All three anatomy entry points accept `finger_scale=1.0` and `thumb_scale=1.0`
+(finite numbers in `0.5..1.5`). They scale the middle/tip offsets of each digit
+about its fixed root, preserving palm size, root spacing, surface radii and the
+existing inward hand orientation. For example, `build_anatomy(finger_scale=.7,
+thumb_scale=.85)` produces shorter digit chains and passes those measurements to
+the rig through the returned anatomy dictionary. Skeleton endpoints and source
+regions consume the same measurements, including after JSON serialization. Older
+anatomy dictionaries without these fields retain the original proportions.
+The ratios describe chain length; rounded tip radii do not scale. Source parts
+outside the digits remain unchanged, but fused/decimated body topology and fitted
+clothes can change: inspect the final export and animation before adoption.
+`python tests/sprout_digit_proportions.py` checks pre-change default samples,
+both sides/ages, independent controls, tip alignment and source-region weights.
+`npx vitest run tests/sprout-digits-blender.test.ts` exercises actual fusion,
+decimation, fitted bone endpoints and normalized skin weights for both ages.
+
 `build_anatomy(height=..., age=..., skin=..., crest=..., clay=False)` returns
 `(objects, anatomy)` in Blender. It fuses the skin into one closed component and
 keeps eyes, tympana and fronds editable. Geometry generation is parameterized by
@@ -1241,6 +1387,29 @@ inter-frame motion need independent posed-surface checks. Run
 motion views before delivery. Keep skinned garments at scene root after binding.
 
 
+## Transferring a local skin influence
+
+`agent_meshes_skin_weights.ellipsoid_falloff(vertices, center, radii, strength=1)`
+returns a compact field in the supplied coordinate frame. Its value is
+`strength * max(1 - squared_ellipsoid_radius, 0)^2`: zero with zero slope at the
+boundary. Radii must be positive and strength must be in `[0, 1]`. This spatial
+brush can reach nearby disconnected surfaces; restrict its amounts with an
+explicit selection mask when that is unwanted.
+
+`transfer_influence(weights, source, target, amounts, max_influences=4)` consumes
+named row dictionaries, as used by `relax_weights`. Each amount moves that
+fraction of the source bone's weight to the target bone. It returns fresh rows,
+preserves all other named values and row totals, and does not normalize. Zero
+amount or absent/zero source preserves the row exactly. A fully emptied source
+entry is removed, allowing its influence slot to be reused.
+
+Changed rows that exceed the influence limit are rejected without mutating any
+input; nothing is silently pruned. Unchanged rows retain their existing counts.
+The function validates every row, including no-op rows. Reapplying a nonzero
+transfer compounds. These helpers author weights, not anatomical regions, and
+do not certify deformation or collision freedom. Inspect matching poses before
+and after writing the returned rows back to a mesh.
+
 ## Relaxing garment skin weights
 
 `agent_meshes_skin_relax.relax_weights(vertices, faces, weights, free,
@@ -1278,6 +1447,24 @@ matrix variation by clip. It rejects static selected clips and restores the
 active action/slot, NLA flags, pose position and frame/subframe. Matrices act on
 rest geometry in armature-local space; reconcile mesh transforms first.
 
+`agent_meshes_surface_fans.repair_folded_fans(vertices, triangles,
+max_distance=..., minimum_alignment=.95)` conservatively removes shallow folded
+degree-three fans left by decimation. It replaces three triangles with their
+oriented boundary triangle only when the center projects outside that triangle,
+one face points backward, every face is nearly parallel to the replacement, and
+the center-to-triangle distance is within the caller's limit. Ordinary curved
+fans, steep folds, large deviations, boundary vertices and overlapping candidates
+are retained. The helper does not smooth any retained vertex or interpolate skin
+weights. The result includes `vertices`, `faces`, `source_vertices` (new vertex to
+original vertex), `removed_vertices` and per-repair diagnostics. Apply the source
+map to every vertex attribute, recompute normals, and separately map face/corner
+attributes if present; preferably repair before UVs, morphs and skinning. This is
+not a general self-intersection repair or an animation-clearance guarantee. The
+distance limit bounds the removed vertex's distance to its replacement triangle,
+not a symmetric Hausdorff error of the entire patch. Recheck the exported model
+and dependent garments. The helper validates edge manifoldness and winding; it
+does not certify global vertex manifoldness or a closed surface.
+
 `agent_meshes_garment_partition.partition_surface(vertices, triangles, normals,
 weights, fields, component=None)` cuts the donor and garment on shared vertices.
 It returns `source` (the complete subdivided donor) and `garment` (the positive
@@ -1310,6 +1497,32 @@ warped quad cannot acquire a different diagonal when copied, clipped or reversed
 Reuse those indices in posed checks; rebuilding a BVH from posed quads can test
 a different surface than the exported triangles. Degenerate/self-crossing source
 polygons still require author repair; this is tessellation, not mesh repair.
+
+`agent_meshes_offset_directions.fit_offset_directions(vertices, triangles,
+normals, weights, poses, iterations=1000,
+margins=(.05, .025, .0125, .00625, .003125))` selects unit rest-space offset
+directions that point outward relative to incident faces in sampled animation.
+Use it when skin deformation turns ordinary normal offsets inward. It requires
+frozen triangles and the same bone deform-matrix convention as the offset fitter
+below; identity/rest is added automatically. It is pure NumPy and changes no
+geometry, weights or animation. Already-valid normalized directions are retained.
+
+The result contains `directions` and `report`. Require `report.converged` before
+passing directions as the offset fitter's normals. Unresolved vertices retain
+their original normalized directions and appear in `unresolved_vertices`;
+`unconstrained_vertices` lists isolated points. Per-vertex attempts record the
+margin, projection count and initial/final normalized constraint alignment.
+Margins decrease when the initial cone is too narrow, with a bounded iteration
+budget per margin. Search failure does not prove mathematical infeasibility.
+Collapsed posed triangles or pulled directions raise a pose-indexed error.
+Returned unit directions must have constraint alignment greater than 64 float64
+epsilons; tiny positive values at rounding scale cannot certify convergence.
+
+Constraint alignment is measured in rest space; under general affine transforms
+it is not a posed-space cosine. Neither this direction search nor its margins
+establish physical clearance, collision freedom or smooth visual construction.
+Run the offset fitter, check the exported model and inspect motion and attachments.
+The standalone regressions run with `python tests/offset_directions.py`.
 
 `agent_meshes_garment_fit.fit_surface_offsets(vertices, faces, normals, weights,
 reference_vertices, reference_faces, reference_weights, poses, offset=.006,
@@ -1354,7 +1567,7 @@ all skin regions used by the body rig. Coordinates use the anatomy's height
 and age; returned surfaces remain in rest-space Blender Z-up coordinates.
 
 `anatomy_weights(mesh, anatomy, regions=None, smooth=5, hip_seams=False,
-neck_seam=False, waist_seam=False)` queries those selected
+neck_seam=False, waist_seam=False, thumb_seams=False)` queries those selected
 surfaces before evaluating the region's anatomical weight function. It returns
 `(rows, report)` without binding or moving the mesh. The report names the source
 regions actually used, vertex count and maximum influence count. Rows diffuse
@@ -1377,6 +1590,27 @@ the trunk source, reports `waistSeamVertices`, and is enabled by `rig_anatomy`.
 at 65 phases of each of eight clips, combining local signed-area diagnostics
 with actual nonadjacent waist contacts and preservation checks. These sampled
 checks do not establish continuous collision freedom or costume acceptance.
+
+With `thumb_seams=True`, each thumb-root patch receives 20 topology relaxation
+passes. The patch contains vertices within `0.03 * scale` of the authored thumb
+base with more than .01 original combined thumb-base/tip influence. It blends
+all participating local influences; it is not a thumb-only weight adjustment.
+The correction fades smoothly across the outer third of that radius to avoid
+an abrupt transition into pinned neighbours; mixed rows retain four influences.
+Rows outside the patch remain exactly unchanged, as do geometry, bones and
+animation. Both palm and thumb source regions must be selected. The report adds
+`thumbSeamVertices` and `thumbSeamVerticesBySide`. Pass the same opt-in keyword
+to `rig_anatomy(objects, anatomy, thumb_seams=True)` to bind the repaired body;
+both APIs default to false. Do not enable it merely because digits are shorter:
+inspect the deformation and test the actual character first. Later garment cuts
+can add interpolated body vertices on triangles incident to the edited patch.
+
+`npx vitest run tests/sprout-thumb-blender.test.ts` exercises actual fused adult
+and child bodies with .70 fingers/.85 thumbs, exact outside-patch preservation,
+explicit-false compatibility, normalized exported weights, and both hands at
+65 phases of curl, walk and jog. The original child contacts must reproduce as
+a negative control. Sampled nonadjacent triangle checks do not establish
+adjacent-fold, containment, continuous-clearance or visual acceptance.
 
 For a fitted overall, use `regions=['trunk', 'leg_l', 'leg_r']` so nearby arms,
 neck and tail cannot donate weights. Bind the returned rows to the existing
@@ -1443,3 +1677,35 @@ geometry are unchanged. The fitter mutates nearby garment weights only after
 constructing and validating the fit. It does not clear hidden skin or certify
 animation clearance. The Blender fitting fixture checks endpoint placement,
 column weights, paired thickness, smoothing and preservation of distant weights.
+
+## Styling baked rotations
+
+`agent_meshes_motion_style.scale_action_rotations(action, bones, gain)` scales
+selected Blender pose-bone quaternion tracks toward their authored rest pose.
+For example, copy a retargeted locomotion action and pass its finger-bone names
+with a character-specific gain between zero (rest) and one (original motion).
+This scales the entire rest-relative rotation, including splay and twist. It
+does not infer anatomical flexion axes, solve grasps or repair skin weights.
+
+The action must have one layer and strip, with all selected tracks in one slot.
+Each bone needs four synchronized quaternion channels, finite increasing key
+times, and active keyframe curves without modifiers or sampled points. Bake
+first and keep those pose bones in quaternion mode. All selected tracks are
+validated before editing; other tracks stay untouched. Gain one preserves exact
+values, interpolation and handles. Other gains normalize samples and set LINEAR
+component interpolation, which is not SLERP between keys. Calling the helper
+again compounds the gain, so retain the source action for comparisons.
+
+The shortest rest-to-pose angle has a branch at 180 degrees. A detected crossing
+between adjacent canonical quaternion samples is rejected for gains below one.
+Half-turn samples with normalized `abs(w) <= 1e-7` are also rejected because
+their shortening direction is ambiguous; the tolerance covers float32 roundoff.
+This sampled check cannot prove continuity between keys or support arbitrary
+multi-turn motion. Inspect matching skeleton/mesh frames and contacts after any
+style change. The pure `scale_rotation_samples(samples, gain)` helper accepts
+Blender-order `(w, x, y, z)` rows without requiring Blender.
+
+Run `python tests/motion_style.py` for the numerical/adapter checks. For actual
+Blender evaluation, run `blender --background --factory-startup --python
+tests/blender_motion_style.py -- --report <report.json>`; optionally add
+`--asset <rigged.glb>` to compare imported quaternion tracks with mathutils SLERP.

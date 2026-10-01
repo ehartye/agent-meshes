@@ -69,7 +69,9 @@ def build():
     upper = [i for i, t in enumerate(frog_tags) if t == 2]
     lower = [i for i, t in enumerate(frog_tags) if t == 1]
     assert upper and all((opened[i].co - frog.data.vertices[i].co).length < 1e-9 for i in upper), 'the upper lip stays at mouth_z .088'
-    assert lower and all(opened[i].co.z < frog.data.vertices[i].co.z - .02 for i in lower), 'the lower lip opens at mouth_z .088'
+    assert lower and all(opened[i].co.z < frog.data.vertices[i].co.z - 1e-7 for i in lower), 'the lower lip opens at mouth_z .088'
+    middle = [i for i in lower if abs(frog.data.vertices[i].co.x) < .055 / 3]
+    assert middle and all(opened[i].co.z < frog.data.vertices[i].co.z - .02 for i in middle), 'the middle of the lower lip opens by at least 20 mm; motion tapers toward shared corners'
     assert chin_drop(frog_rest, [tuple(p.co) for p in opened])['ratio'] >= .1
     import bpy
     bpy.data.objects.remove(frog, do_unlink=True)

@@ -21,8 +21,42 @@ __all__ = [
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
     'symmetric_offsets', 'smooth_surface', 'smooth_skin', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'follow_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'add_eye_bones', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
-    'mesh_from_geometry', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
+    'mesh_from_geometry', 'lip_lining_geometry', 'build_lip_lining', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
+    'mark_face_region',
 ]
+
+
+def mark_face_region(obj, vertices):
+    """Declare anatomical face vertices on a final combined body mesh, independent of bone weights.
+
+    Call after topology changes/joining, using the sculpt's authored face selection (include skull,
+    chin and lids; exclude neck/body). Do not derive this selection from the weights being verified.
+    The POINT/FLOAT attribute survives glTF vertex splitting; export_glb enables its export.
+    Repeating this call replaces the membership, after validating every input without mutation.
+    """
+    from numbers import Integral
+    if getattr(obj, 'type', None) != 'MESH' or obj.mode != 'OBJECT':
+        raise ValueError('Face ownership requires a mesh in Object mode')
+    if obj.data.users != 1:
+        raise ValueError('Face ownership requires a single-user mesh')
+    try:
+        vertices = list(vertices)
+    except TypeError as exc:
+        raise ValueError('Face vertices must be vertex indices') from exc
+    count = len(obj.data.vertices)
+    if any(isinstance(v, bool) or not isinstance(v, Integral) or v < 0 or v >= count for v in vertices):
+        raise ValueError('Face vertices must be integer indices within the mesh')
+    attribute = obj.data.attributes.get('_FACE_REGION')
+    if attribute and (attribute.domain != 'POINT' or attribute.data_type != 'FLOAT'):
+        raise ValueError('Existing _FACE_REGION must be a POINT/FLOAT attribute')
+    values = [0.] * count
+    for v in vertices:
+        values[v] = 1.
+    if attribute is None:
+        attribute = obj.data.attributes.new('_FACE_REGION', 'FLOAT', 'POINT')
+    attribute.data.foreach_set('value', values)
+    obj.data.update()
+    return attribute
 
 ARKIT_REQUIRED = (
     'eyeBlinkLeft', 'eyeBlinkRight', 'eyeSquintLeft', 'eyeSquintRight', 'eyeWideLeft', 'eyeWideRight',
@@ -1169,6 +1203,11 @@ def eye_hole(vertices, faces, center, eye_radius, margin=6, clearance=.0005, ble
     blink, squint and wide mix (`lid_clearance`); the closed upper lid passes in front
     of the lower one, which rises behind it far enough that blink 1 + wide 1 still
     closes. Folded faces and uncovered eyeball in any contract state are rejected.
+    The static lining behind the lids is tessellated adaptively: its flat facets,
+    including the inner-to-fornix join, retain half the lining's radial gap up to
+    `clearance`. This does not change the moving lid grid or its target positions.
+    Construction rejects settings that cannot meet that bound within six attempts;
+    it does not add a per-character resolution knob or certify moving triangle interiors.
     Returns {'vertices', 'faces', 'style', 'lids' (margins, radii, `min_clearance`,
     `squint_ratio`), 'window', 'motion' (each moving vertex's rest position and
     targets), 'lash' and 'lining_points' (paint by position), 'still' (the moving
@@ -1502,8 +1541,8 @@ _SKIN_ROWS = (0.0, .04, .08, .13, .19, .26, .34, .43, .53, .64, .76, .88, 1.0)
 _ROLL_ROWS = 4          # the lid margin's half-round, from the outer surface to the inner one
 _INNER_ROWS = 4         # the inner lid surface, from the margin back to the fornix
 _FORNIX = (30, 60, 90)  # the fornix: a quarter turn from the inner lid surface down onto the lining
-_LINING_ROWS = 3        # the lining round the eyeball behind the fornix, to a pole behind it
-_FAN = 5                # ladders round each corner of the eye (the canthus)
+_LINING_ROWS = 3        # initial lining rows; refined to keep flat facets outside the eyeball
+_FAN = 5                # initial ladders round each corner (the canthus); refined with the lining
 
 
 def _direction(yaw, elevation):
@@ -1974,6 +2013,7 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
     # surface, runs back under the lid to the fornix, turns down onto the lining and wraps the eyeball to a pole behind
     # it. Round each corner a fan of ladders (sharing the corner's roll, one radial line) closes the bag sideways.
     back = (0.0, 1.0, 0.0)
+    lining_rows, corner_ladders = _LINING_ROWS, _FAN
 
     def ladder(j, which, fan=None):
         """Per state (rest first), the ladder's points after its margin vertex: roll, inner, fornix, lining rows."""
@@ -2009,19 +2049,46 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
                 ww = math.radians(w)
                 out.append(_add(center, _mul(at(span * math.sin(ww)), inner - fall * (1 - math.cos(ww)))))
             fornix = at(span)
-            for k in range(1, _LINING_ROWS + 1):
-                s = k / (_LINING_ROWS + 1)
+            for k in range(1, lining_rows + 1):
+                s = k / (lining_rows + 1)
                 d = _add(_mul(fornix, 1 - s), _mul(back, s))
                 out.append(_add(center, _mul(d, lining / math.hypot(*d))))
             result.append(out)
         return result, lining
 
     up_row, low_row = row_of[('U0', 0)], row_of[('L0', 0)]
-    loop = [(grid[(j, up_row)], ladder(j, 'upper'), 'upper') for j in range(first + 1, last)]
-    loop += [(grid[(last, up_row)], ladder(last, 'upper', 90 - 180 * f / (_FAN - 1)), 'corner') for f in range(_FAN)]
-    loop += [(grid[(j, low_row)], ladder(j, 'lower'), 'lower') for j in range(last - 1, first, -1)]
-    loop += [(grid[(first, up_row)], ladder(first, 'upper', -90 - 180 * f / (_FAN - 1)), 'corner') for f in range(_FAN)]
-    lining = loop[0][1][1]
+    # Vertices outside a sphere do not guarantee that their flat triangles clear it.
+    # Refine only the static bag and corner fans, leaving the moving lid grid intact.
+    # Keep half the radial gap (up to the requested clearance) in the emitted facets.
+    for refinement in range(6):
+        loop = [(grid[(j, up_row)], ladder(j, 'upper'), 'upper') for j in range(first + 1, last)]
+        loop += [(grid[(last, up_row)], ladder(last, 'upper', 90 - 180 * f / (corner_ladders - 1)), 'corner') for f in range(corner_ladders)]
+        loop += [(grid[(j, low_row)], ladder(j, 'lower'), 'lower') for j in range(last - 1, first, -1)]
+        loop += [(grid[(first, up_row)], ladder(first, 'upper', -90 - 180 * f / (corner_ladders - 1)), 'corner') for f in range(corner_ladders)]
+        lining = loop[0][1][1]
+        pole_point = _add(center, _mul(back, lining))
+        required = min(clearance, .5 * (lining - r))
+        nearest = math.inf
+        # The last inner rung already has zero motion, so include its join to the
+        # first fornix rung. Indices here exclude the margin vertex prepended below.
+        first_static = _ROLL_ROWS + _INNER_ROWS - 1
+        for before, after in zip(loop, loop[1:] + loop[:1]):
+            a, b = before[1][0][0], after[1][0][0]
+            triangles = [(b[-1], a[-1], pole_point)]
+            for k in range(first_static, len(a) - 1):
+                triangles.extend(((b[k], a[k], a[k + 1]), (b[k], a[k + 1], b[k + 1])))
+            for triangle in triangles:
+                closest, _ = _closest_on_triangle(center, *triangle)
+                nearest = min(nearest, math.dist(center, closest))
+        if nearest >= r + required:
+            break
+        lining_rows *= 2
+        corner_ladders = 2 * corner_ladders - 1
+    else:
+        raise ValueError(f'Eye lining facets clear the eyeball by {(nearest-r)*1000:.3f} mm, '
+                         f'need {required*1000:.3f} mm after 6 tessellations '
+                         f'(radius {r}, opening {opening}, column_step {step}); '
+                         'reduce column_step or adjust the opening/clearance')
 
     # ---- vertices, morph targets and faces of the patch
     verts, targets, roles, ids = [], {s: [] for s in states}, [], {}
@@ -2060,7 +2127,7 @@ def _continuous_eye_hole(vertices, faces, center, eye_radius, margin=6, clearanc
                     continue
             face(a, b, c)
             face(a, c, d)
-    kinds = ['roll'] * _ROLL_ROWS + ['inner'] * _INNER_ROWS + ['fornix'] * len(_FORNIX) + ['lining'] * _LINING_ROWS
+    kinds = ['roll'] * _ROLL_ROWS + ['inner'] * _INNER_ROWS + ['fornix'] * len(_FORNIX) + ['lining'] * lining_rows
     ladders = []
     for number, (margin_vertex, (positions, _), role) in enumerate(loop):
         rungs = [ids[('g',) + margin_vertex]]
@@ -2245,7 +2312,57 @@ def shutter_hole(vertices, faces, center, eye_radius, hole_radius=None, max_edge
 MASK_BAND = 20
 
 
-def eye_hole_mask(*holes, band=None):
+def _spatial_eye_mask(holes, spatial):
+    """Distance to a snapshot of constructed eye points, independent of Blender."""
+    hold, reach = _vector(spatial, 2, 'Spatial mask distances')
+    if not 0 <= hold < reach:
+        raise ValueError('Spatial mask needs 0 <= hold < reach')
+    points = set()
+    for hole in holes:
+        try:
+            motion, lining, rim = hole['motion'], hole['lining_points'], hole['rim']
+            if not motion or not lining or not rim:
+                raise ValueError('Spatial mask needs continuous-eye motion, lining and rim geometry')
+            candidates = [p for p, _ in motion] + list(lining)
+            for index in rim:
+                index = _count(index, 'Eye rim index', 0)
+                candidates.append(hole['vertices'][index])
+            points.update(_vector(p, 3, 'Protected eye point') for p in candidates)
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError('Spatial mask needs continuous-eye motion, lining and rim geometry') from exc
+
+    # Balanced point tree. Clipping search to reach avoids a Blender KDTree
+    # dependency; nearest-point distance makes rotated eyes behave identically.
+    def build(rows, depth=0):
+        if not rows: return None
+        axis = depth % 3
+        rows.sort(key=lambda p: p[axis])
+        middle = len(rows) // 2
+        return rows[middle], axis, build(rows[:middle], depth+1), build(rows[middle+1:], depth+1)
+    tree = build(list(points))
+    cache = {}
+
+    def nearest(node, point, best):
+        if node is None: return best
+        pivot, axis, left, right = node
+        best = min(best, math.dist(point, pivot))
+        if best <= hold: return best
+        delta = point[axis] - pivot[axis]
+        near, far = (left, right) if delta < 0 else (right, left)
+        best = nearest(near, point, best)
+        if best > hold and abs(delta) < best:
+            best = nearest(far, point, best)
+        return best
+
+    def mask(vertex):
+        point = _vector(vertex, 3, 'Mask vertex')
+        if point not in cache:
+            cache[point] = _smoothstep(hold, reach, nearest(tree, point, reach))
+        return cache[point]
+    return mask
+
+
+def eye_hole_mask(*holes, band=None, spatial=None):
     """A `soft_offset` mask that keeps every `eye_hole` rim, wall and lining still and fades in away from them.
 
     For each hole the weight is 0 on the rim and inside the skin (the wall and
@@ -2254,7 +2371,19 @@ def eye_hole_mask(*holes, band=None):
     radius beyond the mound. The mask is the product over all holes. Pass it as
     `symmetric_offsets(..., mask=eye_hole_mask(*holes))` for brows, cheeks and any
     skin shape that reaches an eye.
+
+    For continuous eyes, `spatial=(hold, reach)` instead measures distance in
+    rest-space meters to the actual moving lid, rim and lining vertices. Weight
+    is zero through `hold` and smoothly reaches one at `reach` (0 <= hold < reach).
+    This avoids suppressing nearby cheeks on a broad or side-set face. All holes
+    form one protected point set; oriented eyes use their returned world points.
+    Geometry is copied at construction, and queries are cached. The mode needs
+    continuous-eye construction data and cannot be combined with `band`.
+    Omit `spatial` to retain the original angular/radial behavior exactly.
     """
+    if spatial is not None:
+        if band is not None: raise ValueError('Choose spatial distances or an angular band, not both')
+        return _spatial_eye_mask(holes, spatial)
     # The weight is zero within 2 degrees of the window (rim and wall), so the band must reach past that.
     reach = MASK_BAND if band is None else _number(band, 'Mask band', 3)
     parts = []
@@ -2669,6 +2798,91 @@ def _skin_data(skin):
     keys = data.shape_keys
     morphs = {block.name: [tuple(world @ point.co) for point in block.data] for block in keys.key_blocks[1:]} if keys else {}
     return vertices, faces, morphs
+
+
+def lip_lining_geometry(skin, mouth_z, half_width, *, front_y, offsets, center_x=0.0, tolerance=1e-6):
+    """Inward strips and side caps attached to the actual boundary of a slit mouth.
+
+    `skin` is a geometry dict (vertices, faces, optional absolute-target morphs)
+    or a Blender mesh, read in world space. Call after slit_mouth and expressions.
+    Select the front boundary on z=mouth_z, within half_width of center_x; both
+    lips must be single chains sharing their two corner vertex indices. Face
+    winding must face outwards (-Y). No seam tags or nearest-surface guesses are
+    used: shared untagged corners belong to both lips through their incident faces.
+
+    `offsets` are authored (inward +Y depth, upper +Z / lower -Z rise) pairs,
+    starting at (0, 0), then strictly increasing depths and positive rises.
+    Every ring copies the exact source vertex's expression displacement. Returns
+    vertices, faces, morphs and `boundary`: ordered (skin index, side) pairs,
+    side 1 lower / 2 upper, repeated in that order for each ring. The inner ring
+    stays open to meet a separate cavity; this is not an enclosure verifier.
+    """
+    from numbers import Integral
+    mouth_z = _number(mouth_z, 'Mouth line')
+    half_width = _number(half_width, 'Mouth half-width', 0, low_open=True)
+    center_x, front_y = _number(center_x, 'Mouth center X'), _number(front_y, 'Mouth front Y')
+    tolerance = _number(tolerance, 'Boundary tolerance', 0, low_open=True)
+    offsets = [_vector(pair, 2, 'Lining offset') for pair in offsets]
+    if (len(offsets) < 2 or offsets[0] != (0, 0)
+            or any(depth <= offsets[i-1][0] or rise <= 0 for i, (depth, rise) in enumerate(offsets[1:], 1))):
+        raise ValueError('Lining offsets must start at (0, 0), then have increasing positive depths and positive rises')
+    rest, skin_faces, morphs = _skin_data(skin)
+    for face in skin_faces:
+        if (len(face) < 3 or any(isinstance(i, bool) or not isinstance(i, Integral) or not 0 <= i < len(rest) for i in face)
+                or len(set(face)) != len(face)):
+            raise ValueError('Skin faces must contain at least three distinct valid vertex indices')
+    morphs = {name: [_vector(v, 3, 'Morph vertex') for v in targets] for name, targets in morphs.items()}
+    if any(len(targets) != len(rest) for targets in morphs.values()):
+        raise ValueError('Morph topology mismatch')
+    owners = {}
+    for face in skin_faces:
+        side = 1 if sum(rest[i][2] for i in face) / len(face) < mouth_z else 2
+        for a, b in zip(face, face[1:] + face[:1]):
+            owners.setdefault(tuple(sorted((a, b))), []).append((a, b, side))
+    edges = [row[0] for row in owners.values() if len(row) == 1 and all(
+        abs(rest[i][2] - mouth_z) < tolerance and abs(rest[i][0] - center_x) <= half_width + tolerance
+        and rest[i][1] < front_y for i in row[0][:2])]
+    boundary = sorted({(i, side) for a, b, side in edges for i in (a, b)})
+    index = {pair: i for i, pair in enumerate(boundary)}
+    corners = {}
+    for side in (1, 2):
+        neighbours = {}
+        for a, b, lip in edges:
+            if lip == side:
+                neighbours.setdefault(a, []).append(b)
+                neighbours.setdefault(b, []).append(a)
+        endpoints = [i for i, adjacent in neighbours.items() if len(adjacent) == 1]
+        if len(endpoints) != 2 or any(len(adjacent) > 2 for adjacent in neighbours.values()):
+            raise ValueError('Each lip must be one boundary chain between the mouth corners')
+        seen, pending = set(), [endpoints[0]]
+        while pending:
+            i = pending.pop()
+            if i not in seen:
+                seen.add(i)
+                pending.extend(neighbours[i])
+        if len(seen) != len(neighbours):
+            raise ValueError('Disconnected lip boundary')
+        for sign in (-1, 1):
+            matches = [i for i in endpoints if abs(rest[i][0] - (center_x + sign*half_width)) < tolerance]
+            if len(matches) != 1:
+                raise ValueError('Lip chain must end at the requested mouth corners')
+            corners[side, sign] = matches[0]
+    if any(corners[1, sign] != corners[2, sign] for sign in (-1, 1)):
+        raise ValueError('Upper and lower lips must share each corner vertex')
+    count = len(boundary)
+    def rings(points):
+        return [(points[i][0], points[i][1] + depth, points[i][2] + rise*(1 if side == 2 else -1))
+                for depth, rise in offsets for i, side in boundary]
+    faces = [(index[b, side] + r*count, index[a, side] + r*count,
+              index[a, side] + (r+1)*count, index[b, side] + (r+1)*count)
+             for r in range(len(offsets)-1) for a, b, side in edges]
+    for sign in (-1, 1):
+        u, l = index[corners[2, sign], 2], index[corners[1, sign], 1]
+        cap = [(u, u+count, l+count)]
+        cap += [(l+r*count, u+r*count, u+(r+1)*count, l+(r+1)*count) for r in range(1, len(offsets)-1)]
+        faces.extend([tuple(reversed(f)) for f in cap] if sign < 0 else cap)
+    return {'vertices': rings(rest), 'faces': faces, 'morphs': {name: rings(targets) for name, targets in morphs.items()},
+            'boundary': boundary}
 
 
 def _near_box(points, margin):
@@ -3201,7 +3415,7 @@ def _zip_loops(inner, outer, q, points):
     return result
 
 
-def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=None, crease=None, height=None, max_edge=None):
+def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=None, crease=None, height=None, max_edge=None, *, axis_y=None):
     """Shape soft lips with a lip line into a skin face at rest: the upper and a fuller lower lip either side of a crease.
 
     For skin faces (kids, creatures) whose closed mouth would otherwise be a flat
@@ -3227,11 +3441,18 @@ def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=Non
     `mesh_from_geometry`, `slit_mouth` and the shape keys, after `eye_hole` or
     `nose_geometry`), then take `front_surface` of the result for the cavity and
     teeth. Returns vertices and faces (unused vertices dropped, the rest in order).
+
+    `axis_y` sets the vertical wrapping axis's Y coordinate in the same rest space
+    as the vertices. On a complete character, use the authored head's depth center
+    so a distant tail or accessory cannot move the axis. None retains the legacy
+    midpoint of the mesh's depth bounds. The axis must lie behind the mouth skin;
+    it selects the wrap frame, not a region exemption from topology checks.
     """
     vertices = [_vector(v, 3, 'Vertex') for v in vertices]
     faces = [tuple(f) for f in faces]
     mouth_z, half_width = _number(mouth_z, 'Mouth line'), _number(half_width, 'Mouth half-width', 0, low_open=True)
     center_x = _number(center_x, 'Mouth center')
+    if axis_y is not None: axis_y = _number(axis_y, 'Lip wrap axis')
     fullness = .09 * half_width if fullness is None else _number(fullness, 'Lip fullness', 0)
     crease = .6 * fullness if crease is None else _number(crease, 'Lip crease', 0)
     height = .45 * half_width if height is None else _number(height, 'Lip height', 0, low_open=True)
@@ -3240,7 +3461,8 @@ def sculpt_lips(vertices, faces, mouth_z, half_width, center_x=0.0, fullness=Non
     if y is None: raise ValueError(f'No skin at the mouth ({center_x:.4f}, {mouth_z:.4f}): put the mouth line on the face skin')
     # The grid wraps round a vertical axis through the mouth's middle, level with the middle of the head: the middle of
     # its depth, not the mean of its vertices, which a finely meshed feature (a continuous eye) pulls forward.
-    axis_y = (min(v[1] for v in vertices) + max(v[1] for v in vertices)) / 2
+    if axis_y is None:
+        axis_y = (min(v[1] for v in vertices) + max(v[1] for v in vertices)) / 2
     radius = axis_y - y
     if radius <= 0: raise ValueError('The mouth must be on the front of the head (the face looks down -Y)')
     angle = lambda p: math.atan2(p[0] - center_x, axis_y - p[1])
@@ -4974,6 +5196,22 @@ def _material(value, name, color, metalness=0, roughness=.4, double_sided=False)
     return result
 
 
+def build_lip_lining(skin, mouth_z, half_width, *, material, offsets, front_y, center_x=0.0,
+                     tolerance=1e-6, name='mouth_lip_lining'):
+    """Blender wrapper for lip_lining_geometry; creates an unbound mesh with copied shape keys.
+
+    Character composition supplies the material and offsets, then binds/joins the
+    result with its face. Boundary and geometry validation run before object creation.
+    """
+    from agent_meshes_author import shape_key
+    geometry = lip_lining_geometry(skin, mouth_z, half_width, front_y=front_y,
+                                  offsets=offsets, center_x=center_x, tolerance=tolerance)
+    lining = mesh_from_geometry(name, geometry, [material])
+    for morph, targets in geometry['morphs'].items():
+        shape_key(lining, morph, targets)
+    return lining
+
+
 def mesh_from_geometry(name, geometry, materials, smooth=True):
     """Make a mesh object from a geometry dict (vertices, faces, optional material_indices) and a list of materials (None leaves a slot empty)."""
     from agent_meshes_author import make_mesh
@@ -5082,6 +5320,10 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
     hanging a few degrees past it (`lash_geometry`).
     Returns a dict with the objects and the lid geometry report (radii, clearance,
     squint ratio).
+
+    A hole from oriented_eye_hole carries its explicit rest-space frame. Its
+    continuous skin targets are already world-space; the eyeball is generated
+    in that same frame. Eye bones must still be authored with suitable gaze axes.
     """
     from agent_meshes_author import shape_key
     if side not in _SIDES: raise ValueError("Eye side must be 'L' or 'R'")
@@ -5124,7 +5366,19 @@ def build_eye(rig, side, center, radius, style='lid', lid_material=None, socket_
         _material(None, 'eye_iris', (.05, .35, .45), roughness=.3),
         _material(None, 'eye_pupil', (.01, .01, .012), roughness=.2),
     ]
-    eyeball = mesh_from_geometry(f'eyeball_{side}', eyeball_geometry(center, radius, iris, pupil, slit=slit, split_borders=split_borders), materials)
+    if hole is not None and 'frame' in hole:
+        from agent_meshes_eye_frames import oriented_eyeball_geometry
+        frame = hole['frame']
+        if not continuous or not isinstance(frame, dict) or not all(k in frame for k in ('center', 'forward', 'up')):
+            raise ValueError('An oriented eye frame must come from an oriented_eye_hole with continuous lids')
+        frame_center = _vector(frame['center'], 3, 'Eye frame center')
+        if math.dist(frame_center, center) > 1e-9:
+            raise ValueError('The eye frame belongs to another eye center')
+        ball_geometry = oriented_eyeball_geometry(center, radius, forward=frame['forward'], up=frame['up'],
+                                                   iris=iris, pupil=pupil, slit=slit, split_borders=split_borders)
+    else:
+        ball_geometry = eyeball_geometry(center, radius, iris, pupil, slit=slit, split_borders=split_borders)
+    eyeball = mesh_from_geometry(f'eyeball_{side}', ball_geometry, materials)
     bind_rigid(eyeball, rig, f'eye_{side}')
     if continuous:
         _continuous_lids(skin, side, hole, lash, lash_side, lining_material)
@@ -5256,7 +5510,9 @@ def slit_mouth(obj, mouth_z, half_width, center_x=0.0, front_y=None):
     """Cut a closed mouth slit into a skin mesh along z = mouth_z for |x - center_x| < half_width on the front.
 
     Bisects the mesh at the mouth line and splits the edges on that line so the lips
-    can part (the corners stay joined). Vertices closer to the line than a quarter of
+    can part (the corners stay joined). Corners are inserted at the requested
+    half-width, reusing a nearby seam vertex within `SEAM_TOLERANCE`; coarse
+    topology does not shorten the opening. Vertices closer to the line than a quarter of
     their crossing edge first slide along that edge onto it, so the cut leaves no
     sliver faces (they shade as a seam across the face and fold when the jaw opens). The seam vertices are tagged in the `jaw_seam`
     point attribute (1 lower lip, 2 upper lip), so `add_jaw_open` opens exactly the
@@ -5276,9 +5532,41 @@ def slit_mouth(obj, mouth_z, half_width, center_x=0.0, front_y=None):
     snapped = _snap_to_plane([tuple(v.co) for v in bm.verts], [tuple(v.index for v in f.verts) for f in bm.faces], mouth_z)
     for vertex, point in zip(bm.verts, snapped): vertex.co = point
     bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], dist=1e-7, plane_co=(0, 0, mouth_z), plane_no=(0, 0, 1))
-    on_line = lambda v: abs(v.co.z - mouth_z) < SEAM_TOLERANCE and abs(v.co.x - center_x) < half_width - 1e-9 and v.co.y < front_y
+    # Put the two corners on the requested boundary. Selecting only existing
+    # vertices silently shortens a coarse head's slit by up to two whole edges.
+    # Split the horizontal seam edges in place: their adjacent faces keep the
+    # same surface and no vertical cut propagates into the rest of the head.
+    corner_faces = set()
+    seam_edge = lambda e: all(abs(v.co.z - mouth_z) < SEAM_TOLERANCE and v.co.y < front_y for v in e.verts)
+    for corner in (center_x - half_width, center_x + half_width):
+        # Reuse a numerically coincident vertex instead of creating a sliver
+        # edge whose jaw weight is dominated by float32 coordinate rounding.
+        nearby = {v for v in bm.verts if abs(v.co.z - mouth_z) < SEAM_TOLERANCE and v.co.y < front_y and abs(v.co.x - corner) <= SEAM_TOLERANCE}
+        while nearby:
+            seed = min(nearby, key=lambda v: abs(v.co.x - corner))
+            group, pending = {seed}, [seed]
+            nearby.remove(seed)
+            while pending:
+                vertex = pending.pop()
+                for edge in vertex.link_edges:
+                    other = edge.other_vert(vertex)
+                    if other in nearby and seam_edge(edge):
+                        nearby.remove(other); group.add(other); pending.append(other)
+            # Keep the other nearby vertices: snapping them too would collapse
+            # an existing short edge, even when its triangles are valid.
+            min(group, key=lambda v: abs(v.co.x - corner)).co.x = corner
+        for edge in list(bm.edges):
+            if not seam_edge(edge): continue
+            a, b = edge.verts
+            if min(a.co.x, b.co.x) + 1e-8 < corner < max(a.co.x, b.co.x) - 1e-8:
+                corner_faces.update(edge.link_faces)
+                bmesh.utils.edge_split(edge, a, (corner - a.co.x) / (b.co.x - a.co.x))
+    on_line = lambda v: abs(v.co.z - mouth_z) < SEAM_TOLERANCE and abs(v.co.x - center_x) <= half_width + 1e-8 and v.co.y < front_y
     edges = [e for e in bm.edges if all(on_line(v) for v in e.verts)]
     bmesh.ops.split_edges(bm, edges=edges)
+    # A new point on a polygon edge must not become a zero-area fan triangle
+    # in the deformation check or export. Only retriangulate the corner faces.
+    bmesh.ops.triangulate(bm, faces=[f for f in corner_faces if len(f.verts) > 3])
     bm.verts.ensure_lookup_table()
     layer = bm.verts.layers.int.get(SEAM_ATTRIBUTE) or bm.verts.layers.int.new(SEAM_ATTRIBUTE)
     for vertex in bm.verts:

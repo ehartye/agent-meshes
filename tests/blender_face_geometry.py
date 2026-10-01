@@ -31,6 +31,30 @@ WEIGHTS = (0, .25, .5, .75, 1)
 def distance(a, b): return math.dist(a, b)
 
 
+def triangle_distance(point, triangle):
+    """Independent point/triangle distance: plane projection or the nearest edge."""
+    sub = lambda a, b: tuple(x - y for x, y in zip(a, b))
+    dot = lambda a, b: sum(x * y for x, y in zip(a, b))
+    cross = lambda a, b: (a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0])
+    a, b, c = [sub(v, point) for v in triangle]
+    best = min(dot(v, v) for v in (a, b, c))
+    for p, q in ((a, b), (b, c), (c, a)):
+        edge = sub(q, p)
+        length2 = dot(edge, edge)
+        if length2:
+            u = min(1, max(0, -dot(p, edge) / length2))
+            nearest = tuple(x + u * d for x, d in zip(p, edge))
+            best = min(best, dot(nearest, nearest))
+    normal = cross(sub(b, a), sub(c, a))
+    length2 = dot(normal, normal)
+    if length2:
+        projected = tuple(n * dot(a, normal) / length2 for n in normal)
+        if all(dot(cross(sub(p, projected), sub(q, projected)), normal) >= -1e-12 * length2
+               for p, q in ((a, b), (b, c), (c, a))):
+            best = min(best, dot(projected, projected))
+    return math.sqrt(best)
+
+
 def mix(rest, morphs, weights):
     return [tuple(r[k] + sum(w * (m[i][k] - r[k]) for m, w in zip(morphs, weights)) for k in range(3)) for i, r in enumerate(rest)]
 
@@ -559,6 +583,94 @@ class JawTests(unittest.TestCase):
         for options in (dict(angle=40), dict(angle=0), dict(half_width=0), dict(band=-1), dict(drop=-.01), dict(angle=0, drop=0), dict(drop_reach=0)):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 JawHinge(**(dict(pivot=(0, 0, 0), angle=20, mouth_z=-.04, half_width=.02) | options))
+
+
+class LipLiningTests(unittest.TestCase):
+    # Split centers, joined corners, as produced by slit_mouth. Outer skin edges
+    # are open too, so selecting all boundary edges would produce the wrong wall.
+    skin = {'vertices': [(-.1, -.2, 0), (0, -.21, 0), (.1, -.2, 0),
+                         (0, -.21, 0), (0, -.2, .1), (0, -.2, -.1)],
+            'faces': [(0, 1, 4), (1, 2, 4), (0, 5, 3), (3, 5, 2)]}
+    options = dict(mouth_z=0, half_width=.1, front_y=-.1,
+                   offsets=[(0, 0), (.002, .001), (.008, .004), (.020, .008)])
+
+    def lining(self, skin=None, **options):
+        from agent_meshes_face import lip_lining_geometry
+        return lip_lining_geometry(self.skin if skin is None else skin, **(self.options | options))
+
+    def test_shared_corners_have_two_branches_and_closed_sides(self):
+        lining = self.lining()
+        self.assertEqual(len(lining['vertices']), 24)
+        self.assertEqual(len(lining['faces']), 18)
+        boundary = lining['boundary']
+        self.assertEqual(set(boundary), {(0, 1), (0, 2), (1, 2), (2, 1), (2, 2), (3, 1)})
+        for corner in (0, 2):
+            lower, upper = boundary.index((corner, 1)), boundary.index((corner, 2))
+            self.assertEqual(lining['vertices'][lower], lining['vertices'][upper])
+            for ring in (1, 2, 3):
+                self.assertGreater(lining['vertices'][upper + 6*ring][2],
+                                   lining['vertices'][lower + 6*ring][2])
+        # Weld the two coincident corner roots for the topological audit. The
+        # only open edges must then be the lip opening and the innermost ring.
+        ids = list(range(len(lining['vertices'])))
+        for corner in (0, 2):
+            ids[boundary.index((corner, 2))] = boundary.index((corner, 1))
+        owners = {}
+        for face in lining['faces']:
+            face = [ids[i] for i in face]
+            for a, b in zip(face, face[1:] + face[:1]):
+                owners.setdefault(tuple(sorted((a, b))), []).append((a, b))
+        for pairs in owners.values():
+            self.assertLessEqual(len(pairs), 2)
+            if len(pairs) == 2:
+                self.assertEqual(pairs[0], tuple(reversed(pairs[1])))
+        self.assertEqual(sum(len(p) == 1 for p in owners.values()), 10)
+
+    def test_translation_preserves_topology_and_attachment(self):
+        delta = (1.75, 2.5, -3.25)
+        moved = dict(self.skin, vertices=[tuple(a+b for a, b in zip(v, delta)) for v in self.skin['vertices']])
+        before = self.lining()
+        after = self.lining(moved, center_x=delta[0], mouth_z=delta[2], front_y=-.1+delta[1])
+        self.assertEqual(before['faces'], after['faces'])
+        self.assertEqual(before['boundary'], after['boundary'])
+        for a, b in zip(before['vertices'], after['vertices']):
+            self.assertLess(math.dist(tuple(x+y for x, y in zip(a, delta)), b), 1e-12)
+
+    def test_every_expression_copies_boundary_motion_including_shared_corners(self):
+        rest = self.skin['vertices']
+        morphs = {name: [(x+.003*i*scale, y+.001*i, z-.007*i*scale)
+                         for i, (x, y, z) in enumerate(rest)]
+                  for name, scale in [('jawOpen', 1), ('mouthSmileLeft', -.4)]}
+        lining = self.lining(dict(self.skin, morphs=morphs))
+        self.assertEqual(set(lining['morphs']), set(morphs))
+        for name, targets in lining['morphs'].items():
+            for i, target in enumerate(targets):
+                source = lining['boundary'][i % 6][0]
+                expected = tuple(morphs[name][source][k] - rest[source][k] for k in range(3))
+                actual = tuple(target[k] - lining['vertices'][i][k] for k in range(3))
+                self.assertLess(math.dist(expected, actual), 1e-12)
+
+    def test_rejects_missing_or_disconnected_lips_and_unshared_corners(self):
+        missing = dict(self.skin, faces=self.skin['faces'][:2])
+        unshared = dict(self.skin, vertices=self.skin['vertices'] + [self.skin['vertices'][0]],
+                        faces=[(6, 1, 4)] + self.skin['faces'][1:])
+        extra = dict(self.skin, vertices=self.skin['vertices'] + [(-.03, -.2, 0), (.03, -.2, 0), (0, -.2, .04)],
+                     faces=self.skin['faces'] + [(6, 7, 8)])
+        for skin in (missing, unshared, extra, dict(vertices=[], faces=[])):
+            with self.subTest(skin=skin), self.assertRaises(ValueError):
+                self.lining(skin)
+
+    def test_rejects_bad_offsets_parameters_and_morph_topology(self):
+        for options in (dict(offsets=[]), dict(offsets=[(0, 0)]), dict(offsets=[(.001, 0), (.002, .001)]),
+                        dict(offsets=[(0, 0), (-.002, .001)]), dict(offsets=[(0, 0), (.002, 0)]),
+                        dict(offsets=[(0, 0), (.002, .001), (.001, .002)]),
+                        dict(half_width=0), dict(front_y=float('nan')), dict(tolerance=0)):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.lining(**options)
+        with self.assertRaises(ValueError):
+            self.lining(dict(self.skin, morphs={'jawOpen': [(0, 0, 0)]}))
+        with self.assertRaises(ValueError):
+            self.lining(dict(self.skin, faces=[(0, 1, 99)]))
 
 
 class MouthTests(unittest.TestCase):
@@ -1481,6 +1593,46 @@ class ContinuousEyeHoleTests(unittest.TestCase):
             blank = ellipsoid_geometry(*head, rings=56, segments=72)
             self._cache[which] = eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=opening)
         return self._cache[which]
+
+    def test_static_lining_facets_clear_the_ball_across_scales_and_openings(self):
+        # A lining's vertices can all clear the ball while their flat triangle
+        # interiors intersect it. Front blink rays also miss many of these faces.
+        for radius, opening, wide, share, center, options in (
+            (.008, (48, 16, 28), (16, 4), .45, (0, 0, 0), {}),
+            (.012, (45, 38, 30), (10, 4), .2, (.014, -.037, .13), {}),
+            (.02, (48, 36, 28), (10, 4), .2, (0, 0, 0), {}),
+            (.058, (48, 16, 28), (16, 4), .45, (0, 0, 0), {}),
+            (.02, (48, 36, 28), (10, 4), .2, (0, 0, 0),
+             dict(thickness=.0015, clearance=.0002, column_step=5)),
+            (.008, (48, 16, 28), (16, 4), .45, (0, 0, 0),
+             dict(thickness=.001, clearance=0, column_step=4)),
+        ):
+            with self.subTest(radius=radius, opening=opening, center=center, options=options):
+                scale = radius / .02
+                blank = ellipsoid_geometry(tuple(c + x * scale for c, x in zip(center, (-.045, .052, -.062))),
+                                           tuple(x * scale for x in (.11, .085, .10)), rings=56, segments=72)
+                try:
+                    hole = eye_hole(blank['vertices'], blank['faces'], center, radius,
+                                    opening=opening, wide=wide, squint_upper_share=share, **options)
+                except ValueError as error:
+                    self.fail(f'Valid continuous-eye construction rejected: {error}')
+                static = set(map(tuple, hole['lining_points'])) - {tuple(p) for p, _ in hole['motion']}
+                triangles = [[hole['vertices'][v] for v in indices] for indices in hole['faces']
+                             if all(tuple(hole['vertices'][v]) in static for v in indices)]
+                self.assertGreater(len(triangles), 100)
+                nearest = min(triangle_distance(center, triangle) for triangle in triangles)
+                required = min(options.get('clearance', .0005), .5 * (hole['lining'][0] - radius))
+                self.assertGreaterEqual(nearest - radius, required - 1e-10,
+                                        f'lining facet needs {required*1000:.6f} mm clearance')
+
+    def test_static_lining_rejects_an_unresolvable_fixed_strip(self):
+        # Almost no radial gap and fixed yaw columns: refining the rear bag cannot
+        # fix the front strip. Construction must terminate with a useful error.
+        blank = ellipsoid_geometry((-.045, .052, -.062), (.11, .085, .10), rings=56, segments=72)
+        with self.assertRaisesRegex(ValueError, r'Eye lining facets.*after 6 tessellations.*column_step'):
+            eye_hole(blank['vertices'], blank['faces'], (0, 0, 0), .02,
+                     opening=(48, 1, 1), meet=0, wide=(0, 0), overlap=0,
+                     thickness=.000001, clearance=0, gap=0)
 
     def patch(self, hole, whole=False):
         """The patch (the grid, the margins, the lids' inner surfaces and lining), or the whole skin, with its lid morphs."""

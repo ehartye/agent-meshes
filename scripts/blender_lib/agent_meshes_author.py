@@ -480,6 +480,7 @@ def export_glb(path, objects, animation_mode='ACTIONS'):
         bpy.context.view_layer.update()
         bpy.ops.export_scene.gltf(filepath=str(path), export_format='GLB', use_selection=True,
             export_apply=False, export_morph=True, export_morph_normal=True,
+            export_attributes=any(obj.type == 'MESH' and '_FACE_REGION' in obj.data.attributes for obj in objects),
             export_animations=True, export_animation_mode=animation_mode, export_skins=True, export_yup=True,
             export_cameras=False, export_lights=False)
         # Blender's exporter drops JSON-shaped custom properties; write root extras (for
@@ -499,3 +500,4 @@ def export_glb(path, objects, animation_mode='ACTIONS'):
 # Face-rig helpers live in a sibling module; importing them here keeps one entry point.
 # agent_meshes_face never imports this module at load time, so there is no import cycle.
 from agent_meshes_face import *  # noqa: E402,F401,F403
+from agent_meshes_eye_frames import *  # noqa: E402,F401,F403

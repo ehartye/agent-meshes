@@ -59,6 +59,12 @@ jobs:
       - if: matrix.suite == 'face'
         run: python tests/blender_face_geometry.py
       - if: matrix.suite == 'face'
+        run: python tests/lip_axis.py
+      - if: matrix.suite == 'face'
+        run: python tests/oriented_eyes.py
+      - if: matrix.suite == 'face'
+        run: python tests/geometry_eye_mask.py
+      - if: matrix.suite == 'face'
         run: python tests/hm08_head.py
       - if: matrix.suite == 'geometry'
         run: python tests/blender_author_geometry.py
@@ -73,15 +79,25 @@ jobs:
       - if: matrix.suite == 'geometry'
         run: python tests/garment_partition.py
       - if: matrix.suite == 'geometry'
+        run: python tests/surface_fans.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/offset_directions.py
+      - if: matrix.suite == 'geometry'
         run: python tests/garment_neckbands.py
       - if: matrix.suite == 'geometry'
         run: python tests/cloth_flap.py
       - if: matrix.suite == 'geometry'
         run: python tests/skin_weight_relaxation.py
       - if: matrix.suite == 'geometry'
+        run: python tests/skin_weight_transfer.py
+      - if: matrix.suite == 'geometry'
         run: python tests/sculpted_face.py
       - if: matrix.suite == 'geometry'
+        run: python tests/sculpted_jaw.py
+      - if: matrix.suite == 'geometry'
         run: python tests/sprout_kin.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/sprout_digit_proportions.py
       - if: matrix.suite == 'geometry'
         run: python tests/sprout_kin_rig.py
       - if: matrix.suite == 'geometry'
@@ -90,6 +106,8 @@ jobs:
         run: python tests/sprout_kin_gait.py
       - if: matrix.suite == 'geometry'
         run: python tests/retarget.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/motion_style.py
 
   required:
     name: CI required
