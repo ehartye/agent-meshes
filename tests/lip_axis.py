@@ -48,6 +48,15 @@ class LipAxisTests(unittest.TestCase):
         self.assertEqual(legacy, build(self.head['vertices'], self.head['faces'], .10, .055, axis_y=None))
         self.assertEqual(legacy, build(self.head['vertices'], self.head['faces'], .10, .055, axis_y=0.0))
 
+    def test_nonzero_head_axis_preserves_head_and_tail_surfaces(self):
+        build = self.api()
+        head = ellipsoid_geometry((0, .25, .12), (.11, .085, .10), rings=40, segments=64)
+        tail = ellipsoid_geometry((0, .75, -.15), (.025, .1, .025), rings=8, segments=12)
+        whole = join_geometry([head, tail])
+        head_lips = build(head['vertices'], head['faces'], .10, .055)
+        result = build(whole['vertices'], whole['faces'], .10, .055, axis_y=.25)
+        self.assertEqual(surface_faces(result), surface_faces(head_lips) + surface_faces(tail))
+
     def test_axis_rejects_nonfinite_and_nonreal_values(self):
         build = self.api()
         for axis in (True, False, float('nan'), float('inf'), -float('inf'), '0', [], 1j):
