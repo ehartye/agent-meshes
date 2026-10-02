@@ -37,13 +37,14 @@ def build():
             geometry['morphs']={'jawOpen':target.tolist()}
         targets[name]=(rest.astype(np.float32).astype(float),target.astype(np.float32).astype(float))
         parts.append((name,geometry,color))
-    before_objects=len(bpy.data.objects)
+    before_objects=len(bpy.data.objects);before_materials=len(bpy.data.materials)
     def rejected(candidate):
         try:sculpt.attach_sculpt_dentals(body,rig,parts=candidate)
         except ValueError:pass
         else:raise AssertionError('Invalid dental attachment accepted')
         assert len(body.data.vertices)==count and len(body.data.polygons)==polygons
         assert list(body.data.materials)==materials and len(bpy.data.objects)==before_objects
+        assert len(bpy.data.materials)==before_materials
         for key in body.data.shape_keys.key_blocks:
             np.testing.assert_array_equal([p.co[:] for p in key.data],coordinates[key.name])
     rejected(parts[:2])
@@ -61,6 +62,22 @@ def build():
     jaw.value=.2
     rejected(parts)
     jaw.value=0
+    # A shape-key mask would silently suppress motion on newly joined vertices.
+    jaw.vertex_group='head'
+    rejected(parts)
+    jaw.vertex_group=''
+    jaw.mute=True
+    rejected(parts)
+    jaw.mute=False
+    # bind_skin needs an invertible rig; discover this before creating dentals.
+    rig_world=rig.matrix_world.copy();body_world=body.matrix_world.copy()
+    parent=body.parent;parent_inverse=body.matrix_parent_inverse.copy()
+    body.parent=None;body.matrix_world=body_world;rig.scale.x=0
+    bpy.context.view_layer.update()
+    rejected(parts)
+    rig.matrix_world=rig_world;body.parent=parent
+    body.matrix_parent_inverse=parent_inverse;body.matrix_world=body_world
+    bpy.context.view_layer.update()
     # Neither adding dentals nor native join is allowed to replace the old jaw.
     result=sculpt.attach_sculpt_dentals(body,rig,parts=parts)
     assert [k.name for k in body.data.shape_keys.key_blocks]==key_names
@@ -89,4 +106,14 @@ def build():
     assert len(body.data.vertices)==count+sum(len(p[1]['vertices']) for p in parts)
     assert len(body.data.polygons)==polygons+sum(len(p[1]['faces']) for p in parts)
     assert result['existingJawReused'] and result['newBodyJawFits']==0 and not result['fullFaceContractClaim']
+    jaw=body.data.shape_keys.key_blocks['jawOpen'];jaw.value=1
+    bpy.context.view_layer.update()
+    evaluated=body.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    mesh=evaluated.to_mesh()
+    try:
+        for name,(_,target) in targets.items():
+            ids=sorted({i for p in body.data.polygons[polygons:] if body.data.materials[p.material_index].name==name for i in p.vertices})
+            np.testing.assert_allclose([mesh.vertices[i].co[:] for i in ids],target,rtol=0,atol=2e-8)
+    finally:evaluated.to_mesh_clear()
+    jaw.value=0;bpy.context.view_layer.update()
     return [body,rig]

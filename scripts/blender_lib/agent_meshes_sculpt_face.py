@@ -420,6 +420,7 @@ def attach_sculpt_dentals(body, rig, *, parts):
     teeth_upper, teeth_lower and tongue; gums_upper/gums_lower are optional.
     Lower teeth, tongue and lower gums require absolute morphs['jawOpen']
     coordinates. Upper parts stay fixed. No body jaw fitting is performed.
+    Masked or muted jaw keys and singular rig transforms are unsupported.
 
     Uses identity-world coordinates on a local, selectable, single-user body
     bound to rig's deforming head. Existing Basis-relative keys must be at zero
@@ -443,6 +444,14 @@ def attach_sculpt_dentals(body, rig, *, parts):
         raise ValueError('Dental attachment needs local single-user body data')
     if rig.library or rig.data.library or rig.override_library or bpy.context.view_layer.objects.get(rig.name)!=rig or bpy.context.view_layer.objects.get(body.name)!=body:
         raise ValueError('Dental attachment needs local editable body and rig in the active view layer')
+    bpy.context.view_layer.update()
+    if not np.isfinite(np.array(rig.matrix_world)).all():
+        raise ValueError('Dental attachment needs a finite rig world transform')
+    try:inverse=rig.matrix_world.inverted()
+    except ValueError as exc:
+        raise ValueError('Dental attachment needs an invertible rig world transform') from exc
+    if not np.isfinite(np.array(inverse)).all():
+        raise ValueError('Dental attachment needs a finite rig inverse transform')
     if not body.visible_get() or body.hide_select or body not in bpy.context.selectable_objects:
         raise ValueError('Dental attachment needs a visible selectable body')
     if not np.allclose(np.array(body.matrix_world),np.eye(4),rtol=0,atol=1e-10):
@@ -458,6 +467,8 @@ def attach_sculpt_dentals(body, rig, *, parts):
         raise ValueError('Dental attachment needs an existing relative Basis and jawOpen')
     if any(k.value!=0 or k.relative_key!=keys.reference_key for k in list(keys.key_blocks)[1:]):
         raise ValueError('Dental attachment needs zero Basis-relative morph weights')
+    if keys.key_blocks['jawOpen'].vertex_group or keys.key_blocks['jawOpen'].mute:
+        raise ValueError('Dental attachment does not support a masked or muted jawOpen')
     rest=np.array([p.co[:] for p in keys.reference_key.data])
     jaw=np.array([p.co[:] for p in keys.key_blocks['jawOpen'].data])
     if not np.isfinite(rest).all() or not np.isfinite(jaw).all() or not np.any(jaw!=rest):

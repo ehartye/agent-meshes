@@ -177,7 +177,9 @@ Use local single-user, identity-world body data, existing POINT/FLOAT
 `_FACE_REGION`, one skin modifier for the supplied rig and a deforming `head`
 bone. The visible/selectable body and rig must be in Object mode in the active
 view layer. Existing shape keys must be relative to `Basis`, have zero weights
-and include a finite, nonzero `jawOpen`. The helper joins into the active body,
+and include a finite, nonzero, unmasked and unmuted `jawOpen`. The rig world
+transform and its inverse must be finite and invertible; unsupported rigs or
+jaw masks reject before creating objects or materials. The helper joins into the active body,
 preserving original coordinates, polygons, material slots, UVs, skin, morphs,
 point attributes and NLA. Added vertices are head bound and face tagged, with
 zero deltas for other body expressions. Selection changes to the joined body.
