@@ -1478,6 +1478,30 @@ correlation, collision clearance, visual approval or completed facial/clothing w
 `npx vitest run tests/sprout-swing-blender.test.ts` checks both adult and child
 rigs against captured reference rhythm, including interpolated poses.
 
+For reference-informed body timing, pass `body_references={'walk': walk_report,
+'jog': jog_report}` to `bake_gaits`. Each value is an `agent-meshes/gait-curves/1`
+report with even uniform samples (excluding the duplicated endpoint) and finite,
+nonflat `pelvisHeight`, `pelvisRoll`, `chestPitch` and `headPitch` curves. The
+reports are preflighted before Blender mutation. The optional mapping changes
+pelvis bob/roll, distributed spine pitch and independent stabilized head pitch;
+the existing toe trajectories, leg IK, reach fitting and hand motion remain.
+Omitting it preserves the legacy recipe. The bake may fit a different swing-lift
+scale because body timing changes leg reach; this is recorded in clip metadata.
+
+`body_timing(report, phase_shift=0)` exposes the pure periodic sampler and a
+source receipt. Sagittal curves retain their left/right symmetric component;
+pelvis roll retains the antisymmetric component. A five-harmonic fit closes the
+seam. Height has unit peak-to-peak range and angle curves have range two; the
+recipe supplies physical amplitudes. One phase shift applies to all four curves.
+This is a body timing fit, not a fit of lower-limb curves or a full P5 pass.
+Run `python -B tests/sprout_body_timing.py` and
+`npx vitest run tests/sprout-body-timing-blender.test.ts` for pure phase/rejection
+checks and actual adult/child exports with four-body-curve correlation plus all
+movement limits. Check dressed characters independently: rebuilding a garment
+that was fitted against animation poses can change its rest shape. Applying
+new clips to an existing model also requires compatible rest bone frames;
+calibrated facial bones must not inherit incompatible donor tracks.
+
 
 ## Hanging cloth flaps
 
