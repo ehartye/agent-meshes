@@ -38,13 +38,21 @@ timing per clip. `expression_fields` and `performance_samples` are NumPy-only
 helpers for anatomical fields and loop-neutral timings. This focused helper is
 not the full ARKit contract: gaze, jaw, mouth interior and speech are not supplied.
 
-`rig_sculpt_eyes(body, rig, eye_vertices, centers, parts=None, head='head')` adds
+`rig_sculpt_eyes(body, rig, eye_vertices, centers, parts=None, head='head', gaze=None)` adds
 independent gaze to existing disconnected eye surfaces without replacing the
 sculpt. `eye_vertices` maps `L`/`R` to explicit body vertex indices; `centers`
 maps them to world-space pivots (left is +X). Optional `parts` maps each side to
 already skinned iris, pupil or highlight objects. Use local single-user meshes
 in Object mode, skinned to this armature. Select complete eye polygons and keep
 each assembly within half the interocular distance of its pivot.
+
+To expose shared preview controls on a partial face, pass
+`gaze={'yawMax': 14, 'pitchMax': 9}`. Both limits are authored degrees in `(0,90]`.
+The helper writes `extras.eyeGaze` with `contract='eye-gaze/1'` and exported
+eye-local `forward='+Z'`, preserving unrelated extras and rejecting conflicting
+face/gaze declarations before mutation. This enables eye controls without a full
+facial-contract claim or automatic lid follow. Omitting `gaze` preserves existing
+exports. Complete faces retain their `extras.arkitFace` declaration instead.
 
 The helper creates head-child `eye_L`/`eye_R` bones and rigidly binds each eye
 assembly to its own bone. Side-specific copies of the effective materials retain
