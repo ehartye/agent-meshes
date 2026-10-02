@@ -1,5 +1,10 @@
 # Blender authoring helpers
 
+Before constructing or repairing a character, read the
+[character construction checklist](references/character-construction.md) for
+landmarks, skin ownership, hands, connected clothing, hair and evidence checks.
+The sections below remain the API reference.
+
 An authoring source may declare `EXPORT_ANIMATION_MODE = 'NLA_TRACKS'` when
 armature and shape-key actions must play together. Give their NLA tracks the
 same clip name: the exporter combines them into one GLB animation. The default

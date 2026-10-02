@@ -6,6 +6,10 @@ when_to_use: Use when a model needs a skeleton, when parts should move with join
 
 # Mesh rigging and animation
 
+Before placing character joints or binding skin/garments, read the
+[construction checklist](../../scripts/blender_lib/references/character-construction.md).
+Use anatomical bend locations and explicit donor regions; preserve approved proportions.
+
 Load `mesh-setup` first. Commands run through the managed launcher (`mesh` below):
 `node "<plugin-root>/scripts/run-managed.js" --workspace <dir> batch <file>`. Field shapes for
 every operation are in [operations](../mesh-authoring/references/operations.md).

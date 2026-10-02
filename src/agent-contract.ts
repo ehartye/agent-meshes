@@ -86,6 +86,18 @@ const descriptions: Record<Operation['op'], string> = {
   'pose.target': 'Pose a three-bone parent-child chain with two-link IK so the end bone reaches a world-space target, bending toward the pole.',
 };
 
+/** File references resolve from the package running this CLI/server, including managed installs. */
+export function techniqueGuidance() {
+  return {
+    baseUrl: new URL('../', import.meta.url).href,
+    references: [{
+      topic: 'character-construction',
+      path: 'scripts/blender_lib/references/character-construction.md',
+      useWhen: 'Before constructing or repairing a skinned character, clothing, hair or facial attachments',
+    }],
+  };
+}
+
 export function capabilities() {
   // Defaults come from the same constructor path used by authoring, not a second list.
   const part = applyOperation(createProject('defaults'), { op: 'add', part: { name: 'example' } }).parts[0];
@@ -96,6 +108,7 @@ export function capabilities() {
     version: 1,
     service: 'agent-meshes',
     protocolVersion: '0.1.0',
+    guidance: techniqueGuidance(),
     coordinates: { units: 'meters', up: '+Y', quaternion: '[x,y,z,w]', animationTransforms: 'Offsets from bone rest transforms' },
     defaults: { part: partDefaults, bone: boneDefaults },
     constraints: [

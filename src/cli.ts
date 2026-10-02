@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Project } from './core/types.ts';
-import { capabilities } from './agent-contract.ts';
+import { capabilities, techniqueGuidance } from './agent-contract.ts';
 import { errorDetails } from './errors.ts';
 
 export async function main(args = process.argv): Promise<void> {
@@ -18,6 +18,10 @@ export async function main(args = process.argv): Promise<void> {
       if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new InvalidArgumentError('Revision must be a nonnegative safe integer');
       return Number(value);
     });
+  program.addHelpText('afterAll', () => {
+    const guidance = techniqueGuidance();
+    return `\nCharacter construction checklist: ${fileURLToPath(new URL(guidance.references[0].path, guidance.baseUrl))}\nUse for skinned characters; static props use the operation schemas.\n`;
+  });
   program.hook('preAction', () => {
     if (program.opts().workspace !== undefined && program.getOptionValueSource('url') === 'cli') {
       throw Object.assign(new Error('--workspace and --url cannot be used together'), { code: 'CLI_ARGUMENT_ERROR' });
@@ -52,7 +56,7 @@ export async function main(args = process.argv): Promise<void> {
     const value = await requestValue('project');
     return (program.opts().workspace === undefined ? value : (value as { project: Project }).project) as Project;
   };
-  program.command('capabilities').description('Print versioned JSON operation schemas, examples and constraints').action(() => print(capabilities()));
+  program.command('capabilities').description('Print operation schemas, examples, constraints and technique reference locations').action(() => print(capabilities()));
   program.command('inspect [selector]').description('Summarize the project or inspect a named part, bone or clip').action(async selector => {
     if (program.opts().workspace !== undefined) await request('inspect', { selection: selector });
     else await request(`inspect${selector ? `?select=${encodeURIComponent(selector)}` : ''}`);
