@@ -31,7 +31,7 @@ export function previewGaze(source: Puppet) {
   const owners = new Set(controls.targets.filter(control => /^eye(Blink|Wide)(Left|Right)$/.test(control.target))
     .flatMap(control => control.owners.filter(belongs)));
   let yaw = 0, pitch = 0;
-  const layers = [...owners].map(owner => source.addMorphTransform(owner, weights => {
+  const layers = (partial ? [] : [...owners]).map(owner => source.addMorphTransform(owner, weights => {
     const derived: Record<string, number> = {};
     for (const side of ['Left', 'Right']) {
       const blink = `eyeBlink${side}`, wide = `eyeWide${side}`;

@@ -74,6 +74,17 @@ it('refuses ambiguous declarations, unsupported eye frames and unsafe partial li
   expect(previewGaze(puppet)).toBeNull();
 });
 
+it('partial gaze leaves simultaneous authored blink and wide expressions entirely unchanged', () => {
+  const { puppet } = partialFixture(), gaze = previewGaze(puppet)!;
+  gaze.setMorph('eyeBlinkLeft', .5); gaze.setMorph('eyeWideLeft', .6);
+  for (const pitch of [9, -9, 0]) {
+    gaze.set(0, pitch); gaze.update();
+    expect(puppet.getMorph('face', 'eyeBlinkLeft')).toBe(.5);
+    expect(puppet.getMorph('face', 'eyeWideLeft')).toBe(.6);
+  }
+  gaze.reset(); expect(puppet.getMorph('face', 'eyeWideLeft')).toBe(.6);
+});
+
 it('offers gaze only for one compatible face contract with two unambiguous eye bones', () => {
   const { puppet, rig } = fixture(); expect(previewGaze(puppet)?.limits).toEqual({ yaw: 25, pitch: 18 });
   rig.userData.arkitFace.gaze.yawMax = NaN; expect(previewGaze(puppet)).toBeNull();
