@@ -6,6 +6,7 @@ import math
 import json
 import hashlib
 from pathlib import Path
+from collections.abc import Mapping
 import numpy as np
 from agent_meshes_sprout_kin import anatomy
 
@@ -96,6 +97,40 @@ def periodic_curve(values,harmonics=5):
     return sample
 
 
+def body_timing(report, *, phase_shift=0.):
+    """Prepare four coordinated, symmetric, periodic body rhythms from a gait report.
+
+    Uniform samples exclude the duplicated loop endpoint. Sagittal rhythms keep
+    even harmonics and pelvis roll keeps odd harmonics. One phase shift applies
+    to all curves. Height has unit peak-to-peak range; angles have range two.
+    This fits timing/shape, not physical amplitudes, leg motion or gait acceptance.
+    """
+    if not isinstance(report, Mapping) or report.get('format')!='agent-meshes/gait-curves/1':
+        raise ValueError('Body timing needs an agent-meshes/gait-curves/1 report')
+    n=report.get('samples');curves=report.get('curves')
+    if isinstance(n,bool) or not isinstance(n,int) or n<8 or n%2 or not isinstance(curves,Mapping):
+        raise ValueError('Body timing needs even uniform samples and a curves mapping')
+    if isinstance(phase_shift,bool) or not isinstance(phase_shift,(int,float)) or not math.isfinite(phase_shift):
+        raise ValueError('Body timing phase shift must be finite')
+    fitted={};ranges={}
+    for name in ['pelvisHeight','pelvisRoll','chestPitch','headPitch']:
+        try:values=np.asarray(curves[name],float)
+        except (KeyError,TypeError,ValueError) as exc:raise ValueError('Body timing needs four finite matching curves') from exc
+        if values.shape!=(n,) or not np.isfinite(values).all():
+            raise ValueError('Body timing needs four finite matching curves')
+        values=(values+(-1 if name=='pelvisRoll' else 1)*np.roll(values,-n//2))/2
+        values-=values.mean();wave=periodic_curve(np.append(values,values[0]))
+        probe=np.array([wave(p) for p in np.arange(1024)/1024]);span=float(np.ptp(probe))
+        if span<1e-8:raise ValueError('Body timing reference has a flat symmetric '+name)
+        fitted[name]=(wave,span/(1 if name=='pelvisHeight' else 2));ranges[name]=span
+    def sample(name,phase):
+        wave,divisor=fitted[name]
+        return wave((phase+phase_shift)%1)/divisor
+    return sample,{'clip':report.get('clip'),'source':json.loads(json.dumps(report.get('source',{}))),
+                   'phaseShift':phase_shift,'symmetricRanges':ranges,'harmonics':5,
+                   'scope':'body timing only; no leg motion or complete gait acceptance'}
+
+
 def _reference(path):
     """Sample kaiju Walk in Blender; retain measured rhythm, not body proportions."""
     import bpy
@@ -128,8 +163,15 @@ def _reference(path):
                    'bobRange':float(np.ptp(curves['bob'])),'hockRange':float(np.ptp(curves['hock']))}
 
 
-def bake_gaits(objects,a,reference):
-    """Add walk/jog to the shared sprout rig. Returns source and contact metadata."""
+def bake_gaits(objects,a,reference,*,body_references=None):
+    """Add walk/jog with optional clip-specific reference body timing.
+
+    body_references maps walk/jog to gait-curves/1 reports. No supplied report
+    preserves the legacy motion. Contact targets and reach fitting remain active.
+    """
+    if body_references is not None and (not isinstance(body_references,Mapping) or set(body_references)-{'walk','jog'}):
+        raise ValueError('Body references must map walk/jog to gait reports')
+    timings={clip:body_timing(value) for clip,value in (body_references or {}).items()}
     import bpy
     from mathutils import Vector,Quaternion
     arm=next(o for o in objects if o.type=='ARMATURE');s=a['scale'];j={n:np.array(v) for n,v in a['joints'].items()}
@@ -155,10 +197,12 @@ def bake_gaits(objects,a,reference):
     def root_pose(phase,clip,stance,bob):
         cycle=2*math.pi*phase
         for pb in arm.pose.bones:pb.matrix_basis.identity();pb.rotation_mode='QUATERNION'
-        bodybob=sample('bob',phase)/max(report['bobRange'],1e-6)*bob*s
+        timing=timings.get(clip)
+        bodybob=(timing[0]('pelvisHeight',phase) if timing else sample('bob',phase)/max(report['bobRange'],1e-6))*bob*s
         arm.pose.bones['root'].location=rests['root'].to_3x3().inverted()@Vector((0,0,bodybob-(.015 if clip=='walk' else .045)*s))
         rotate('pelvis',(0,0,1),math.radians(5)*math.sin(cycle))
-        rotate('pelvis',(0,1,0),-math.radians(4 if clip=='walk' else 5)*math.sin(cycle+math.pi*(.5-stance)))
+        roll=timing[0]('pelvisRoll',phase) if timing else math.sin(cycle+math.pi*(.5-stance))
+        rotate('pelvis',(0,1,0),-math.radians(4 if clip=='walk' else 5)*roll)
         bpy.context.view_layer.update()
         return cycle
     out=[];report['clips']={}
@@ -190,15 +234,20 @@ def bake_gaits(objects,a,reference):
             'contactPhase':{'metatarsal_l':0.,'metatarsal_r':.5},'requestedLift':lift*s,
             'fittedMaxLift':float(np.max(np.asarray(lifts)*(1-(1-lift_scale)*np.asarray(attenuation)))),
             'peakSwingLiftScale':lift_scale,'attenuation':'sin-fourth-swing-phase','minimumKneeOpening':60}
+        if clip in timings:report['clips'][clip]['bodyTiming']=timings[clip][1]
         for frame in range(frames+1):
             phase=frame/frames;cycle=root_pose(phase,clip,stance,bob)
             # Pitch is distributed over two spine joints; upper spine counters yaw.
-            pitch=math.radians(lean+(3 if clip=='walk' else 4.5)*math.sin(2*cycle))
+            timing=timings.get(clip)
+            rhythm=timing[0]('chestPitch',phase) if timing else math.sin(2*cycle)
+            amplitude=3 if clip=='walk' else 4.5
+            pitch=math.radians(lean+amplitude*rhythm)
             rotate('spine_low',(1,0,0),pitch*.55)
             rotate('spine_high',(1,0,0),pitch*.45)
             rotate('spine_high',(0,0,1),math.radians(-10)*math.sin(cycle))
-            rotate('neck_middle',(1,0,0),-pitch*.25)
-            rotate('neck_upper',(1,0,0),-pitch*.25)
+            neck_pitch=(math.radians(lean*.5+amplitude*.5*timing[0]('headPitch',phase))-pitch)*.5 if timing else -pitch*.25
+            rotate('neck_middle',(1,0,0),neck_pitch)
+            rotate('neck_upper',(1,0,0),neck_pitch)
             rotate('tail_base',(0,0,1),math.radians(10)*math.sin(cycle+.3))
             rotate('tail_tip',(0,0,1),math.radians(6)*math.sin(cycle-.3))
             for i in range(a['crest_count']):rotate(f'crest_{i}_base',(1,0,0),math.radians(3)*math.sin(2*cycle-.4))
