@@ -6,6 +6,7 @@ import { Matrix4, Quaternion, Vector3 } from 'three';
  * verifiers can inspect morph targets and skins exactly as stored, without a renderer.
  */
 export interface GLTFJson {
+  extensionsRequired?: string[];
   scene?: number; scenes?: { nodes?: number[]; extras?: unknown }[];
   nodes?: GLTFNode[]; meshes?: GLTFMesh[]; skins?: { joints: number[]; inverseBindMatrices?: number; skeleton?: number }[];
   materials?: GLTFMaterial[]; accessors?: GLTFAccessor[];
@@ -17,7 +18,7 @@ export interface GLTFMaterial {
   pbrMetallicRoughness?: { baseColorFactor?: number[] } & Record<string, unknown>; extensions?: Record<string, unknown>;
 }
 export interface GLTFNode { name?: string; children?: number[]; mesh?: number; skin?: number; matrix?: number[]; translation?: number[]; rotation?: number[]; scale?: number[]; weights?: number[]; extras?: unknown }
-export interface GLTFPrimitive { attributes: Record<string, number>; indices?: number; material?: number; mode?: number; targets?: Record<string, number>[] }
+export interface GLTFPrimitive { attributes: Record<string, number>; indices?: number; material?: number; mode?: number; targets?: Record<string, number>[]; extensions?: Record<string, unknown> }
 export interface GLTFMesh { name?: string; primitives: GLTFPrimitive[]; weights?: number[]; extras?: { targetNames?: unknown } & Record<string, unknown> }
 interface GLTFAccessor {
   bufferView?: number; byteOffset?: number; componentType: number; normalized?: boolean; count: number; type: string;

@@ -103,13 +103,23 @@ export async function main(args = process.argv): Promise<void> {
     process.stdout.write(`${JSON.stringify({ output, bytes: bytes.length })}\n`);
   });
   program.command('verify <file>').description('Validate an exported GLB without a server; --contract arkit-face/1 also checks the face-rig contract')
-    .option('--contract <name>', 'Also check a rig contract (arkit-face/1)').action(async (file, options) => {
+    .option('--contract <name>', 'Also check a rig contract (arkit-face/1)')
+    .option('--target <name>', 'Also report exported geometry for a target (uefn); budget excesses are warnings')
+    .option('--render-vertex-budget <count>', 'Per-mesh warning budget for --target uefn (default 30000)')
+    .action(async (file, options) => {
+    if (options.target !== undefined && options.target !== 'uefn') throw Object.assign(new Error('--target must be uefn'), { code: 'CLI_ARGUMENT_ERROR' });
+    if (options.renderVertexBudget !== undefined && options.target === undefined) throw Object.assign(new Error('--render-vertex-budget requires --target uefn'), { code: 'CLI_ARGUMENT_ERROR' });
+    const budget = options.renderVertexBudget === undefined ? undefined : Number(options.renderVertexBudget);
+    if (budget !== undefined && (!Number.isSafeInteger(budget) || budget <= 0)) throw Object.assign(new Error('--render-vertex-budget must be a positive safe integer'), { code: 'CLI_ARGUMENT_ERROR' });
+    const geometryOptions = options.target === 'uefn' ? { target: 'uefn' as const, renderVertexBudget: budget } : undefined;
     if (options.contract !== undefined) {
       const { contractExpectations } = await import('./arkit-face.ts');
       contractExpectations(String(options.contract));
       const { verifyFaceContract } = await import('./face-contract.ts');
-      const report = await verifyFaceContract(await readFile(file));
-      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      const bytes = await readFile(file);
+      const report = await verifyFaceContract(bytes);
+      const { auditGeometryBudget } = await import('./geometry-budget.ts');
+      process.stdout.write(`${JSON.stringify(geometryOptions ? { ...report, geometryBudget: auditGeometryBudget(bytes, geometryOptions) } : report, null, 2)}\n`);
       if (!report.ok) {
         const failed = report.checks.filter(check => !check.ok).length;
         process.stderr.write(`${report.contract}: ${failed} check${failed === 1 ? '' : 's'} failed\n${report.failures.map(line => `FAIL ${line}`).join('\n')}\n`);
@@ -120,7 +130,7 @@ export async function main(args = process.argv): Promise<void> {
     const { verifyGLB } = await import('./export.ts');
     const { verifyEnclosures } = await import('./enclosure.ts');
     const bytes = await readFile(file);
-    const result = await verifyGLB(bytes), enclosures = await verifyEnclosures(bytes);
+    const result = await verifyGLB(bytes, geometryOptions), enclosures = await verifyEnclosures(bytes);
     // A file whose nodes declare extras.encloses (a helmet round a head) is also checked at every clip phase and morph.
     process.stdout.write(`${JSON.stringify(enclosures.enclosures.length ? { ...result, ok: result.ok && enclosures.ok, enclosures } : result)}\n`);
     if (!enclosures.ok) process.stderr.write(`${enclosures.failures.map(line => `FAIL ${line}`).join('\n')}\n`);

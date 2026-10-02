@@ -4,6 +4,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { validateBytes } from 'gltf-validator';
 import type { ValidationReport } from 'gltf-validator';
 import { validateProject } from './core/model.ts';
+import { auditGeometryBudget, type GeometryBudgetOptions, type GeometryBudgetReport } from './geometry-budget.ts';
 import { buildScene, disposeScene } from './render/scene.ts';
 import { ensureFileReader } from './node-file-reader.ts';
 
@@ -91,8 +92,9 @@ export async function exportGLB(project: Project): Promise<Uint8Array> {
   } finally { built.dispose(); disposeScene(scene); }
 }
 
-export type GLBVerification = ValidationReport & { ok: boolean; errors: number; warnings: number };
-export async function verifyGLB(bytes: Uint8Array): Promise<GLBVerification> {
+export type GLBVerification = ValidationReport & { ok: boolean; errors: number; warnings: number; geometryBudget?: GeometryBudgetReport };
+export async function verifyGLB(bytes: Uint8Array, options?: GeometryBudgetOptions): Promise<GLBVerification> {
   const report = await validateBytes(bytes, { format: 'glb', uri: 'model.glb', writeTimestamp: false, maxIssues: 0 });
-  return { ...report, ok: report.issues.numErrors === 0, errors: report.issues.numErrors, warnings: report.issues.numWarnings };
+  return { ...report, ok: report.issues.numErrors === 0, errors: report.issues.numErrors, warnings: report.issues.numWarnings,
+    ...(options && report.issues.numErrors === 0 ? { geometryBudget: auditGeometryBudget(bytes, options) } : {}) };
 }

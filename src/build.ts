@@ -13,8 +13,9 @@ import { authorGLB } from './author.ts';
 const markerName = '.agent-meshes-build.json';
 /** Optional Blender pass over the exported GLB: subdivision, smoothing and a clouds displacement on named meshes. */
 const refineSchema = z.object({ subdivide: z.number().int().min(0).max(3).default(1), noise: z.number().min(0).max(1).default(0), noiseScale: z.number().positive().max(10).default(0.12), only: z.array(z.string().min(1)).optional() }).strict();
-const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), blender: z.object({ script: z.string().min(1) }).strict().optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional() }).strict()
+const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), blender: z.object({ script: z.string().min(1) }).strict().optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional(), target: z.literal('uefn').optional(), renderVertexBudget: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }).strict()
   .refine(config => [config.project, config.operations, config.blender].filter(Boolean).length === 1, 'Exactly one project, operations or blender input is required')
+  .refine(config => config.renderVertexBudget === undefined || config.target !== undefined, 'renderVertexBudget requires an explicit target')
   .refine(config => !(config.blender && config.refine), 'Blender authoring cannot be combined with refine; author modifiers in the source script');
 const markerSchema = z.object({ version: z.literal(1), generator: z.literal('agent-meshes'), config: z.string().min(1), files: z.array(z.string()) }).strict();
 const portable = (path: string) => path.split(sep).join('/');
@@ -84,6 +85,7 @@ export interface AuthoredAsset { name: string }
 export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]>; decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[] }> {
   const configFile = await realpath(resolve(configPath));
   const config = configSchema.parse(JSON.parse(await readFile(configFile, 'utf8')));
+  const geometryTarget = config.target ? { target: config.target, renderVertexBudget: config.renderVertexBudget } : undefined;
   const input = await realpath(resolve(dirname(configFile), config.project ?? config.operations ?? config.blender!.script));
   const requestedOutput = resolve(dirname(configFile), config.output);
   // Resolve parent aliases, but never follow an output symlink into somebody else's directory.
@@ -103,7 +105,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       const source = await readFile(input);
       const result = await authorGLB(input, join(stage, 'model.glb'));
       const authored = await readFile(join(stage, 'model.glb'));
-      const verification = await verifyGLB(authored);
+      const verification = await verifyGLB(authored, geometryTarget);
       if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
       const enclosures = await checkEnclosures(authored);
       files = ['model.glb', 'verification.json', 'authoring.json'];
@@ -122,7 +124,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
         for (const operation of source) project = applyOperation(project, operation as Operation);
       }
       let bytes = await exportGLB(project);
-      let verification = await verifyGLB(bytes);
+      let verification = await verifyGLB(bytes, geometryTarget);
       if (!verification.ok) throw new Error(`GLB verification failed with ${verification.errors} errors`);
       if (config.refine) {
         // The refine pass is part of the recipe, so a missing Blender fails the build rather than quietly shipping a coarser model.
@@ -132,7 +134,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
         await refineGLB(raw, refined, config.refine);
         bytes = new Uint8Array(await readFile(refined));
         await Promise.all([unlink(raw), unlink(refined)]);
-        verification = await verifyGLB(bytes);
+        verification = await verifyGLB(bytes, geometryTarget);
         if (!verification.ok) throw new Error(`Refined GLB verification failed with ${verification.errors} errors`);
       }
       const enclosures = await checkEnclosures(bytes);
