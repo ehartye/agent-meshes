@@ -156,6 +156,153 @@ def sculpt_jaw_weights(vertices, faces, jaw, face_vertices, *, lower_lip, upper_
     raise ValueError('Jaw weight relaxation did not converge; shorten reach or add lip constraints')
 
 
+def replace_sculpt_mouth_pocket(body, *, upper_arc, lower_arc, cavity_faces,
+                                rings, jaw_targets, cavity_color='#35131b'):
+    """Replace only a selected interior disk, retaining exterior mesh data.
+
+    Identity-world Z-up/-Y-forward body must have relative zero-weight morphs,
+    one armature with a deforming head, and explicit POINT/FLOAT face ownership.
+    jaw_targets is a supplied absolute target on the ORIGINAL body topology;
+    this operation does not fit another jaw. Existing morphs follow the exact
+    curved boundary into the new pocket; original exterior vertices, UV loops,
+    deform weights, materials and shape-key animation remain on the same body.
+    New pocket vertices bind to head and receive explicit face membership.
+
+    The selected old pocket must be a connected disk whose boundary is exactly
+    the two arcs. Native BMesh layers retain shape keys, UVs and weights while
+    removing unused pocket vertices. Caller must independently check native
+    partial/mixed triangles, collision, containment and changed-rest appearance.
+    Dentals are not included; no facial-contract or art acceptance is claimed.
+    """
+    import bpy, bmesh
+    from numbers import Integral
+    from agent_meshes_author import material, linear_color
+    from agent_meshes_face import curved_mouth_pocket_geometry, folded_faces
+    if (getattr(body,'type',None)!='MESH' or body.mode!='OBJECT' or body.data.users!=1
+            or body.library or body.data.library or body.override_library):
+        raise ValueError('Pocket replacement needs local single-user body in Object mode')
+    if not np.allclose(np.array(body.matrix_world),np.eye(4),rtol=0,atol=1e-10):
+        raise ValueError('Pocket replacement needs identity world coordinates')
+    modifiers=[m for m in body.modifiers if m.type=='ARMATURE']
+    if len(modifiers)!=1 or modifiers[0].object is None:
+        raise ValueError('Pocket replacement needs one body armature')
+    rig=modifiers[0].object
+    if rig.type!='ARMATURE' or 'head' not in rig.data.bones or not rig.data.bones['head'].use_deform:
+        raise ValueError('Pocket replacement needs a deforming head bone')
+    if 'head' not in body.vertex_groups:
+        raise ValueError('Pocket replacement needs existing head skin weights')
+    keys=body.data.shape_keys
+    if not keys:
+        raise ValueError('Pocket replacement needs an existing Basis and relative expression keys')
+    if keys.key_blocks[0].name!='Basis':
+        raise ValueError('Pocket replacement requires the reference shape key named Basis')
+    if not keys.use_relative or 'jawOpen' in keys.key_blocks or any(k.value!=0 for k in list(keys.key_blocks)[1:]):
+        raise ValueError('Pocket replacement needs relative zero-weight morphs and no jawOpen')
+    if keys and any(k.relative_key!=keys.key_blocks[0] for k in list(keys.key_blocks)[1:]):
+        raise ValueError('Pocket replacement needs all morphs relative to Basis')
+    attribute=body.data.attributes.get('_FACE_REGION')
+    if attribute is None or attribute.domain!='POINT' or attribute.data_type!='FLOAT':
+        raise ValueError('Pocket replacement needs POINT/FLOAT face ownership')
+    linear_color(cavity_color)
+    rest=np.array([p.co[:] for p in (keys.key_blocks[0].data if keys else body.data.vertices)])
+    target=np.asarray(jaw_targets,float)
+    if target.shape!=rest.shape or not np.isfinite(target).all():
+        raise ValueError('Supplied jaw target must match finite original mesh topology')
+    membership=np.array([p.value for p in attribute.data])
+    if np.any((np.linalg.norm(target-rest,axis=1)>1e-12)&(membership<.5)):
+        raise ValueError('Supplied jaw must preserve vertices outside the declared face')
+    faces=[list(p.vertices) for p in body.data.polygons]; selected=list(cavity_faces)
+    if (not selected or len(set(selected))!=len(selected) or any(isinstance(i,bool) or not isinstance(i,Integral)
+            or not 0<=i<len(faces) for i in selected)):
+        raise ValueError('Pocket selection needs distinct existing polygon indices')
+    selected=set(selected); exterior=[f for i,f in enumerate(faces) if i not in selected]
+    morphs={k.name:[p.co[:] for p in k.data] for k in list(keys.key_blocks)[1:]} if keys else {}
+    morphs['jawOpen']=target.tolist()
+    pocket=curved_mouth_pocket_geometry(dict(vertices=rest.tolist(),faces=exterior,morphs=morphs),
+                                       upper_arc,lower_arc,rings=rings)
+    boundary=pocket['boundary']; count=len(boundary); rim=set(boundary)
+    old_vertices={v for i in selected for v in faces[i]}
+    if any(membership[v]<.5 for v in old_vertices):
+        raise ValueError('Selected pocket must belong to the declared face')
+    owners={}
+    for i in selected:
+        for a,b in zip(faces[i],faces[i][1:]+faces[i][:1]):
+            owners.setdefault(tuple(sorted((a,b))),[]).append(i)
+    rim_edges={tuple(sorted((a,b))) for a,b in zip(boundary,boundary[1:]+boundary[:1])}
+    if ({e for e,ids in owners.items() if len(ids)==1}!=rim_edges or any(len(ids)>2 for ids in owners.values())
+            or len(old_vertices)-len(owners)+len(selected)!=1):
+        raise ValueError('Selected pocket must be a disk bounded by exactly the lip arcs')
+    neighbours={i:set() for i in selected}
+    for ids in owners.values():
+        if len(ids)==2:
+            a,b=ids;neighbours[a].add(b);neighbours[b].add(a)
+    seen=set();pending=[next(iter(selected))]
+    while pending:
+        i=pending.pop()
+        if i not in seen:seen.add(i);pending.extend(neighbours[i]-seen)
+    if seen!=selected:
+        raise ValueError('Selected pocket faces must be connected')
+    interior=old_vertices-rim
+    if any(interior.intersection(f) for f in exterior):
+        raise ValueError('Old pocket interior must not own exterior vertices')
+    if any(e.is_loose and interior.intersection(e.vertices) for e in body.data.edges):
+        raise ValueError('Old pocket interior must not own unrelated loose edges')
+    pv=np.array(pocket['vertices'])
+    for name,points in pocket['morphs'].items():
+        points=np.array(points)
+        if any(folded_faces(pv,pv+(points-pv)*phase,pocket['faces']) for phase in [.25,.5,.75,1.]):
+            raise ValueError('New pocket reverses triangles for '+name)
+    bm=bmesh.new()
+    try:
+        bm.from_mesh(body.data);bm.verts.ensure_lookup_table();bm.faces.ensure_lookup_table()
+        # Prepare all custom layers and geometry before committing the mesh.
+        layers={name:bm.verts.layers.shape.get(name) for name in (['Basis']+list(morphs))}
+        if keys and any(layers[k.name] is None for k in keys.key_blocks):
+            raise ValueError('Native BMesh did not retain the original shape layers')
+        for name in layers:
+            if layers[name] is None:layers[name]=bm.verts.layers.shape.new(name)
+        # Adding a custom-data layer can invalidate previously held BMVert refs.
+        layers={name:bm.verts.layers.shape[name] for name in layers}
+        deform=bm.verts.layers.deform.active
+        if deform is None:raise ValueError('Native BMesh did not retain body skin weights')
+        original=list(bm.verts)
+        original_faces=list(bm.faces)
+        for i,v in enumerate(original):
+            v[layers['Basis']]=rest[i];v[layers['jawOpen']]=target[i]
+        ownership=bm.verts.layers.float.get('_FACE_REGION')
+        if ownership is None:raise ValueError('Native BMesh did not retain face ownership')
+        head=body.vertex_groups['head'].index
+        original_index={v:i for i,v in enumerate(original)}
+        owned_edges={e for e in bm.edges if tuple(sorted(original_index[v] for v in e.verts)) in owners}
+        bmesh.ops.delete(bm,geom=[bm.faces[i] for i in selected],context='FACES_ONLY')
+        if interior:bmesh.ops.delete(bm,geom=[original[i] for i in interior],context='VERTS')
+        # Remove only orphan edges from the selected patch, preserving other data.
+        orphan=[e for e in bm.edges if not e.link_faces and e in owned_edges]
+        if orphan:bmesh.ops.delete(bm,geom=orphan,context='EDGES')
+        vertices=[original[i] for i in boundary]
+        for i,point in enumerate(pocket['vertices'][count:],count):
+            v=bm.verts.new(point);v[layers['Basis']]=point
+            for name,points in pocket['morphs'].items():v[layers[name]]=points[i]
+            v[deform][head]=1.;v[ownership]=1.;vertices.append(v)
+        slot=len(body.data.materials)
+        for f in pocket['faces']:
+            p=bm.faces.new([vertices[i] for i in f]);p.material_index=slot;p.smooth=True
+        # BMesh can reuse storage holes for new vertices/faces. Return explicit
+        # correspondence instead of assuming old survivors form a sorted prefix.
+        bm.verts.index_update();bm.faces.index_update()
+        vertex_map=[-1 if i in interior else v.index for i,v in enumerate(original)]
+        face_map=[-1 if i in selected else f.index for i,f in enumerate(original_faces)]
+        # Native conversion creates the new key from its shape layer. Adding an
+        # object key first would create a second key with a different layer UID.
+        body.data.materials.append(material('mouth_cavity',cavity_color,roughness=.85,double_sided=True))
+        bm.to_mesh(body.data);body.data.update()
+    finally:bm.free()
+    return {'removedPocketFaces':len(selected),'removedInteriorVertices':len(interior),
+            'addedPocketFaces':len(pocket['faces']),'newInteriorVertices':len(pocket['vertices'])-count,
+            'originalVertexMap':vertex_map,'originalPolygonMap':face_map,
+            'fullFaceContractClaim':False}
+
+
 def add_sculpt_mouth(body, rig, jaw, *, face_vertices, lower_lip, upper_lip,
                      cavity_faces, parts, fixed_vertices=(), reach=.035,
                      min_chin_drop=.1, cavity_color='#35131b'):

@@ -13,6 +13,7 @@ import unittest
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
 import agent_meshes_author
+from curved_mouth_pocket import CurvedMouth
 from agent_meshes_face import _clip, _quality, _refine, _sharp_edges
 from agent_meshes_face import (
     DEFAULT_LID_FOLLOW, ATTACH_TOLERANCE, lash_geometry, attach_to_skin, follow_skin, nose_geometry, prune_glb_morphs, sculpt_lips, sculpt_skin, skin_tints, eye_hole, eye_hole_mask, eye_window, shutter_hole, skin_brow_geometry, skin_contact,
