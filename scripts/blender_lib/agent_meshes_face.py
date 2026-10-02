@@ -21,7 +21,7 @@ __all__ = [
     'JawHinge', 'SEAM_TOLERANCE', 'chin_drop', 'front_surface', 'cut_hole', 'exposed_teeth_geometry', 'brow_ridge_geometry', 'brow_plate_geometry', 'split_plates', 'rubber_mouth_geometry', 'teeth_row_geometry', 'mouth_cavity_geometry', 'tongue_geometry', 'soft_offset',
     'symmetric_offsets', 'smooth_surface', 'smooth_skin', 'nose_geometry', 'sculpt_skin', 'sculpt_lips', 'sdf_blank', 'ellipsoid_sdf', 'smooth_min', 'smooth_max', 'skin_tints', 'tint_for', 'outward_faces', 'paint_vertices', 'use_vertex_colors', 'PAINT_LAYER', 'ATTACH_TOLERANCE', 'attach_to_skin', 'follow_skin', 'skin_contact', 'mirror_x', 'cut_faces', 'ellipsoid_geometry', 'folded_faces', 'join_geometry', 'join_face_parts', 'face_contract_extras', 'validate_face_contract_extras',
     'merge_glb_node_extras', 'prune_glb_morphs', 'MORPH_POSITION_EPSILON', 'MORPH_NORMAL_EPSILON', 'face_skeleton', 'add_eye_bones', 'bind_rigid', 'build_eye', 'add_jaw_open', 'slit_mouth',
-    'mesh_from_geometry', 'lip_lining_geometry', 'build_lip_lining', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
+    'mesh_from_geometry', 'lip_lining_geometry', 'curved_mouth_pocket_geometry', 'build_lip_lining', 'collect_morph_names', 'SEAM_ATTRIBUTE', 'set_face_contract', 'face_contract', 'EXTRAS_PROPERTY',
     'mark_face_region',
 ]
 
@@ -2893,6 +2893,93 @@ def lip_lining_geometry(skin, mouth_z, half_width, *, front_y, offsets, center_x
         faces.extend([tuple(reversed(f)) for f in cap] if sign < 0 else cap)
     return {'vertices': rings(rest), 'faces': faces, 'morphs': {name: rings(targets) for name, targets in morphs.items()},
             'boundary': boundary}
+
+
+def curved_mouth_pocket_geometry(skin, upper_arc, lower_arc, *, rings):
+    """Connected inward pocket attached to explicitly selected curved lip arcs.
+
+    Both ordered arcs run between the same two corner vertex IDs, with disjoint
+    interiors. Their edges must each have one exterior owner: remove the old
+    pocket faces from the input first. World coordinates are Z-up, -Y forward.
+    Each ring is (positive inward Y depth, X width scale in (0,1], Z rise).
+    Depths increase strictly; rise is nonnegative and fades to zero at corners
+    by arc length. Boundary IDs are unique and occupy the first vertex ring;
+    a caller can weld those indices to the exterior without moving its skin.
+    A rear triangle fan closes this disk; it does not certify containment.
+
+    Every ring follows its source boundary vertex's exact morph displacement.
+    The rear center follows the mean boundary displacement. No nearest-point
+    transfer or jaw solve occurs. Collision and partial-pose checks are required.
+    The original flat-slit lip_lining_geometry constructor remains unchanged.
+    """
+    from numbers import Integral
+    rest, skin_faces, morphs = _skin_data(skin)
+    rest = [_vector(p, 3, 'Skin vertex') for p in rest]
+    if not rest:
+        raise ValueError('Curved pocket needs skin vertices')
+    for f in skin_faces:
+        if (len(f) < 3 or len(set(f)) != len(f) or any(isinstance(i, bool) or not isinstance(i, Integral)
+                or not 0 <= i < len(rest) for i in f)):
+            raise ValueError('Skin faces need distinct valid vertex indices')
+    arcs = [list(upper_arc), list(lower_arc)]
+    for arc in arcs:
+        if (len(arc) < 3 or len(set(arc)) != len(arc) or any(isinstance(i, bool) or not isinstance(i, Integral)
+                or not 0 <= i < len(rest) for i in arc)):
+            raise ValueError('Lip arcs need distinct valid vertex indices')
+    if arcs[0][0] != arcs[1][0] or arcs[0][-1] != arcs[1][-1] or set(arcs[0][1:-1]) & set(arcs[1][1:-1]):
+        raise ValueError('Lip arcs must share exactly their ordered corners')
+    boundary = arcs[0] + list(reversed(arcs[1][1:-1]))
+    owners = {}
+    for f in skin_faces:
+        for a, b in zip(f, f[1:] + f[:1]):
+            owners.setdefault(tuple(sorted((a, b))), []).append((a, b))
+    orientations = []
+    for a, b in zip(boundary, boundary[1:] + boundary[:1]):
+        owner = owners.get(tuple(sorted((a, b))), [])
+        if len(owner) != 1:
+            raise ValueError('Lip arcs must follow an open exterior boundary')
+        orientations.append(owner[0] == (a, b))
+    if len(set(orientations)) != 1:
+        raise ValueError('Exterior boundary winding must be consistent')
+    rings = [_vector(r, 3, 'Pocket ring') for r in rings]
+    if not rings or any(depth <= (rings[i-1][0] if i else 0) or not 0 < scale <= 1 or rise < 0
+                        for i, (depth, scale, rise) in enumerate(rings)):
+        raise ValueError('Pocket rings need increasing positive depths, width scales in (0,1], and nonnegative rises')
+    targets = {name: [_vector(p, 3, 'Morph vertex') for p in points] for name, points in morphs.items()}
+    if any(len(points) != len(rest) for points in targets.values()):
+        raise ValueError('Morph topology mismatch')
+    signed = {}
+    for arc, sign in zip(arcs, (1, -1)):
+        lengths = [0.]
+        for a, b in zip(arc, arc[1:]):
+            length = math.dist(rest[a], rest[b])
+            if length <= 1e-12:
+                raise ValueError('Lip arc edges must have positive length')
+            lengths.append(lengths[-1] + length)
+        for i, length in zip(arc, lengths):
+            signed[i] = sign * math.sin(math.pi * length / lengths[-1]) if i not in (arc[0], arc[-1]) else 0.
+    center_x = (rest[arcs[0][0]][0] + rest[arcs[0][-1]][0]) / 2
+    v = [rest[i] for i in boundary]
+    for depth, scale, rise in rings:
+        v.extend((center_x + (rest[i][0]-center_x)*scale, rest[i][1]+depth,
+                  rest[i][2]+signed[i]*rise) for i in boundary)
+    count = len(boundary)
+    v.append(tuple(sum(p[k] for p in v[-count:])/count for k in range(3)))
+    faces = [(r*count+i, r*count+(i+1)%count, (r+1)*count+(i+1)%count, (r+1)*count+i)
+             for r in range(len(rings)) for i in range(count)]
+    last = len(rings)*count
+    faces.extend((last+i, last+(i+1)%count, len(v)-1) for i in range(count))
+    # Pocket boundary must oppose its exterior owner; internal owners cancel.
+    if orientations[0]:
+        faces = [tuple(reversed(f)) for f in faces]
+    moved = {}
+    for name, points in targets.items():
+        delta = [tuple(points[i][k]-rest[i][k] for k in range(3)) for i in boundary]
+        mean = tuple(sum(d[k] for d in delta)/count for k in range(3))
+        moved[name] = [tuple(p[k]+delta[i%count][k] for k in range(3)) for i, p in enumerate(v[:-1])]
+        moved[name][:count] = [points[i] for i in boundary]
+        moved[name].append(tuple(v[-1][k]+mean[k] for k in range(3)))
+    return {'vertices': v, 'faces': faces, 'morphs': moved, 'boundary': boundary}
 
 
 def _near_box(points, margin):

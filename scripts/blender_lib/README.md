@@ -99,6 +99,60 @@ color the mouth, merge skinned meshes or establish the complete face contract.
 the seeded side of its seam loop. It checks that the loop separates that region
 from the exterior before returning polygon indices for material assignment.
 
+`add_sculpt_mouth(body, rig, jaw, face_vertices=..., lower_lip=...,
+upper_lip=..., cavity_faces=..., parts=..., fixed_vertices=(), reach=.035)`
+orchestrates those selections, a `jawOpen` target, pocket material assignment,
+head binding and native join into the existing body. Each part is a tuple
+`(semantic_name, geometry_dict, color, jaw_carried)`; supply `teeth_upper`,
+`teeth_lower`, `tongue` and optionally `gums_upper`/`gums_lower` using shared
+geometry helpers and authored dimensions. Only lower teeth, tongue and lower
+gums are jaw carried. The body must have identity world coordinates, relative
+shape keys at zero weights, existing POINT/FLOAT `_FACE_REGION` membership,
+local single-user data and visibility/selectability in the active view layer.
+The rig must be local and have a deforming `head` bone. Unsupported ownership,
+invalid geometry, insufficient chin drop and sampled orientation reversals
+reject before body mutation. Native join must finish and transfer every part.
+Existing rest geometry, UVs, weights, morph targets, NLA and body face membership
+are preserved; new dental vertices are explicitly head bound and face tagged.
+Quarter/half/three-quarter/full orientation checks are preliminary: separately
+check cavity crossings, containment, combined expressions and fixed-view art.
+This assembly does not claim the complete facial contract.
+
+`curved_mouth_pocket_geometry(skin, upper_arc, lower_arc, rings=...)` supports
+curved lip boundaries after removing the old pocket faces from the input.
+The explicit ordered arcs share their two corner vertex IDs; every arc edge
+must have exactly one exterior owner. Rings are `(inward_Y_depth, X_width_scale,
+Z_rise)` with increasing positive depths, width scales in `(0,1]`, and
+nonnegative rises. The rise fades at corners by arc length. The first ring
+contains unique source boundary IDs in `boundary`; weld these to the exterior
+and retain its positions. Further rings copy exact boundary morph displacement;
+the rear fan center follows the mean. Existing flat-slit construction is unchanged.
+
+`agent_meshes_sculpt_face.replace_sculpt_mouth_pocket(body, upper_arc=...,
+lower_arc=..., cavity_faces=..., rings=..., jaw_targets=...)` replaces one
+connected interior disk using those boundaries. Supply a frozen absolute jaw
+target on the original mesh topology; no new jaw solve occurs. Use a local,
+single-user, identity-world body in Object mode with relative zero-weight shape
+keys, a reference key named `Basis`, no existing `jawOpen`, one armature with a
+deforming `head`, head weights, and explicit POINT/FLOAT `_FACE_REGION` membership.
+All original morphs must be relative to Basis. It retains exterior coordinates,
+UV loops, deform weights, materials and shape-key animation through native
+BMesh layers; new interior vertices are head bound and face tagged. Interior
+vertices attached to unrelated loose edges reject; unrelated wires survive.
+The result includes `originalVertexMap` and `originalPolygonMap` (old index to
+new index, `-1` for removed elements); BMesh can reuse storage holes, so retained
+elements need not form a contiguous prefix. Use these maps for dependent data.
+`cavity_color` defaults to `'#35131b'`. Dentals are not included.
+
+Sampled orientation checks and a connected patch do not prove collision,
+containment or art quality. Check native Blender triangles at partial/mixed
+poses and compare strict crossings against strict baseline classifications.
+Any changed interior rest requires matched before/after views and a human
+identity checkpoint before adoption. The focused geometry tests run within
+`tests/blender_face_geometry.py`; `tests/curved-pocket-blender.test.ts` exercises
+preservation and the exported GLB. Neither constructor certifies a closed mouth
+volume or the complete facial contract.
+
 ## Cutting weighted clothing
 
 `agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,
