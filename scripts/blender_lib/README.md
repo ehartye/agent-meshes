@@ -153,6 +153,42 @@ identity checkpoint before adoption. The focused geometry tests run within
 preservation and the exported GLB. Neither constructor certifies a closed mouth
 volume or the complete facial contract.
 
+After pocket construction or another authored `jawOpen`, use
+`agent_meshes_sculpt_face.attach_sculpt_dentals(body, rig, parts=...)` to add
+dental geometry without fitting the body jaw again. Each part is
+`(semantic_name, geometry_dict, color)`; supply `teeth_upper`, `teeth_lower`,
+`tongue` and optionally `gums_upper`/`gums_lower`. Lower teeth, tongue and lower
+gums require absolute `geometry_dict['morphs']['jawOpen']` coordinates with
+nonzero motion. Upper parts stay fixed; their jaw target may be omitted or
+equal their rest vertices. Other dental morph names are rejected.
+
+```python
+lower['morphs'] = {'jawOpen': authored_lower_target}
+tongue['morphs'] = {'jawOpen': authored_tongue_target}
+receipt = attach_sculpt_dentals(body, rig, parts=[
+    ('teeth_upper', upper, '#fff5df'),
+    ('teeth_lower', lower, '#fff5df'),
+    ('tongue', tongue, '#a44f58'),
+])
+assert receipt['existingJawReused'] and receipt['newBodyJawFits'] == 0
+```
+
+Use local single-user, identity-world body data, existing POINT/FLOAT
+`_FACE_REGION`, one skin modifier for the supplied rig and a deforming `head`
+bone. The visible/selectable body and rig must be in Object mode in the active
+view layer. Existing shape keys must be relative to `Basis`, have zero weights
+and include a finite, nonzero, unmasked and unmuted `jawOpen`. The rig world
+transform and its inverse must be finite and invertible; unsupported rigs or
+jaw masks reject before creating objects or materials. The helper joins into the active body,
+preserving original coordinates, polygons, material slots, UVs, skin, morphs,
+point attributes and NLA. Added vertices are head bound and face tagged, with
+zero deltas for other body expressions. Selection changes to the joined body.
+The receipt reports added vertex/face counts and sampled dental orientation at
+quarter/half/three-quarter/full jaw. It does not certify fitting, collision,
+containment, expression combinations or parent-transform animation. The native
+fixture `tests/frozen-dentals-blender.test.ts` checks preservation and GLB export;
+it is not a character art evaluation or a complete facial-contract claim.
+
 ## Cutting weighted clothing
 
 `agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,

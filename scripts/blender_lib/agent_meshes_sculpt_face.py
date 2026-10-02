@@ -413,6 +413,126 @@ def add_sculpt_mouth(body, rig, jaw, *, face_vertices, lower_lip, upper_lip,
             'checkedJawWeights':phases,'dentalParts':sorted(names),'foldedFaces':0,'fullFaceContractClaim':False}
 
 
+def attach_sculpt_dentals(body, rig, *, parts):
+    """Join explicit dental targets to a body with an already authored jawOpen.
+
+    Each part is (semantic name, geometry dict, color). Required names are
+    teeth_upper, teeth_lower and tongue; gums_upper/gums_lower are optional.
+    Lower teeth, tongue and lower gums require absolute morphs['jawOpen']
+    coordinates. Upper parts stay fixed. No body jaw fitting is performed.
+    Masked or muted jaw keys and singular rig transforms are unsupported.
+
+    Uses identity-world coordinates on a local, selectable, single-user body
+    bound to rig's deforming head. Existing Basis-relative keys must be at zero
+    with an authored jawOpen and POINT/FLOAT _FACE_REGION. Native join retains
+    the original body vertices, polygons, materials, UVs, skin, keys and NLA.
+    Dental vertices get head binding, face membership and zero deltas for other
+    body expressions. Selection changes to the joined body.
+
+    Preflights inputs and sampled dental orientation before creating objects.
+    This does not certify fit, collision, containment, combined expressions,
+    parent-transform animation or the complete facial contract.
+    """
+    import bpy
+    from numbers import Integral
+    from collections.abc import Mapping
+    from agent_meshes_author import make_mesh, material, shape_key, bind_skin, linear_color
+    from agent_meshes_face import folded_faces, mark_face_region
+    if getattr(body,'type',None)!='MESH' or getattr(rig,'type',None)!='ARMATURE' or body.mode!='OBJECT' or rig.mode!='OBJECT':
+        raise ValueError('Dental attachment needs body and rig in Object mode')
+    if body.data.users!=1 or body.library or body.data.library or body.override_library:
+        raise ValueError('Dental attachment needs local single-user body data')
+    if rig.library or rig.data.library or rig.override_library or bpy.context.view_layer.objects.get(rig.name)!=rig or bpy.context.view_layer.objects.get(body.name)!=body:
+        raise ValueError('Dental attachment needs local editable body and rig in the active view layer')
+    bpy.context.view_layer.update()
+    if not np.isfinite(np.array(rig.matrix_world)).all():
+        raise ValueError('Dental attachment needs a finite rig world transform')
+    try:inverse=rig.matrix_world.inverted()
+    except ValueError as exc:
+        raise ValueError('Dental attachment needs an invertible rig world transform') from exc
+    if not np.isfinite(np.array(inverse)).all():
+        raise ValueError('Dental attachment needs a finite rig inverse transform')
+    if not body.visible_get() or body.hide_select or body not in bpy.context.selectable_objects:
+        raise ValueError('Dental attachment needs a visible selectable body')
+    if not np.allclose(np.array(body.matrix_world),np.eye(4),rtol=0,atol=1e-10):
+        raise ValueError('Dental attachment needs identity world body coordinates')
+    membership=body.data.attributes.get('_FACE_REGION')
+    if membership is None or membership.domain!='POINT' or membership.data_type!='FLOAT':
+        raise ValueError('Dental attachment needs existing POINT/FLOAT body face membership')
+    armatures=[m for m in body.modifiers if m.type=='ARMATURE']
+    if len(armatures)!=1 or armatures[0].object!=rig or 'head' not in rig.data.bones or not rig.data.bones['head'].use_deform:
+        raise ValueError('Dental attachment needs one body skin modifier for the rig and a deforming head bone')
+    keys=body.data.shape_keys
+    if not keys or not keys.use_relative or keys.reference_key.name!='Basis' or 'jawOpen' not in keys.key_blocks:
+        raise ValueError('Dental attachment needs an existing relative Basis and jawOpen')
+    if any(k.value!=0 or k.relative_key!=keys.reference_key for k in list(keys.key_blocks)[1:]):
+        raise ValueError('Dental attachment needs zero Basis-relative morph weights')
+    if keys.key_blocks['jawOpen'].vertex_group or keys.key_blocks['jawOpen'].mute:
+        raise ValueError('Dental attachment does not support a masked or muted jawOpen')
+    rest=np.array([p.co[:] for p in keys.reference_key.data])
+    jaw=np.array([p.co[:] for p in keys.key_blocks['jawOpen'].data])
+    if not np.isfinite(rest).all() or not np.isfinite(jaw).all() or not np.any(jaw!=rest):
+        raise ValueError('Dental attachment needs finite body rest and nonzero jaw motion')
+    prepared=[];names=set();allowed={'teeth_upper','teeth_lower','tongue','gums_upper','gums_lower'}
+    phases=[.25,.5,.75,1.]
+    for part in parts:
+        if not isinstance(part,(tuple,list)) or len(part)!=3:
+            raise ValueError('Dental parts need name, geometry and color')
+        name,geometry,color=part
+        if not isinstance(name,str) or name not in allowed or name in names:
+            raise ValueError('Dental semantic names must be supported and unique')
+        names.add(name);linear_color(color)
+        if not isinstance(geometry,Mapping) or 'vertices' not in geometry or 'faces' not in geometry:
+            raise ValueError('Dental geometry needs vertices and faces')
+        try:
+            points=np.asarray(geometry['vertices'],float)
+            polygons=[list(f) for f in geometry['faces']]
+        except (TypeError,ValueError) as exc:
+            raise ValueError('Dental geometry needs finite vertices and polygons') from exc
+        if points.ndim!=2 or points.shape[1]!=3 or not len(points) or not np.isfinite(points).all() or not polygons:
+            raise ValueError('Dental geometry needs finite vertices and polygons')
+        if any(len(f)<3 or any(isinstance(i,bool) or not isinstance(i,Integral) or not 0<=i<len(points) for i in f) or len(set(f))!=len(f) for f in polygons):
+            raise ValueError('Dental geometry needs distinct valid polygon indices')
+        morphs=geometry.get('morphs',{})
+        if not isinstance(morphs,Mapping) or set(morphs)-{'jawOpen'}:
+            raise ValueError('Dental attachment supports only explicit jawOpen targets')
+        moving=name in {'teeth_lower','tongue','gums_lower'}
+        if moving and 'jawOpen' not in morphs:
+            raise ValueError('Moving dental parts require explicit jawOpen targets')
+        try:target=np.asarray(morphs.get('jawOpen',points),float)
+        except (TypeError,ValueError) as exc:
+            raise ValueError('Dental jaw target must match finite rest geometry') from exc
+        if target.shape!=points.shape or not np.isfinite(target).all():
+            raise ValueError('Dental jaw target must match finite rest geometry')
+        if bool(np.any(target!=points))!=moving:
+            raise ValueError('Dental jaw motion must agree with upper/lower ownership')
+        if any(folded_faces(points,points+(target-points)*phase,polygons) for phase in phases):
+            raise ValueError('Dental jaw target reverses triangles')
+        prepared.append((name,points,polygons,color,moving,target))
+    if not {'teeth_upper','teeth_lower','tongue'}<=names:
+        raise ValueError('Dental attachment requires upper teeth, lower teeth and tongue')
+    dental=[]
+    for name,points,polygons,color,moving,target in prepared:
+        part=make_mesh(name,points,polygons,material(name,color,roughness=.4))
+        for polygon in part.data.polygons:polygon.use_smooth=True
+        bind_skin(part,rig,[{'head':1.} for _ in points]);mark_face_region(part,range(len(points)))
+        if moving:shape_key(part,'jawOpen',target)
+        world=part.matrix_world.copy();part.parent=None;part.matrix_world=world;dental.append(part)
+    old_vertices=len(body.data.vertices);old_faces=len(body.data.polygons)
+    added_vertices=sum(len(p[1]) for p in prepared);added_faces=sum(len(p[2]) for p in prepared)
+    dental_names=[p.name for p in dental]
+    bpy.ops.object.select_all(action='DESELECT');body.select_set(True)
+    for part in dental:part.select_set(True)
+    bpy.context.view_layer.objects.active=body
+    if bpy.ops.object.join()!={'FINISHED'}:
+        raise RuntimeError('Dental attachment native join did not finish')
+    if len(body.data.vertices)!=old_vertices+added_vertices or len(body.data.polygons)!=old_faces+added_faces or any(name in bpy.data.objects for name in dental_names):
+        raise RuntimeError('Dental attachment native join did not transfer all geometry')
+    return {'existingJawReused':True,'newBodyJawFits':0,'addedDentalVertices':added_vertices,
+            'addedDentalFaces':added_faces,'dentalParts':sorted(names),
+            'checkedJawWeights':phases,'fullFaceContractClaim':False}
+
+
 def rig_sculpt_eyes(body, rig, eye_vertices, centers, *, parts=None, head='head', gaze=None):
     """Give embedded, disconnected eye surfaces independent gaze without replacing their geometry.
 
