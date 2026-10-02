@@ -335,6 +335,164 @@ def transfer_sculpt_morphs(vertices, source_vertices, source_faces, source_morph
     return result
 
 
+def transfer_sculpt_paths(vertices, faces, source_vertices, source_morphs,
+                          source_landmarks, target_landmarks, *, paths,
+                          face_vertices, fixed_vertices=(), followers=None, reach=.035):
+    """Transfer motion through explicit ordered anatomical arcs and mesh edges.
+
+    Each paths entry is (target vertex indices, donor vertex indices), ordered
+    in the same anatomical direction. Open arcs may have different vertex
+    counts; normalized rest arclength interpolates registered donor motion.
+    Target arcs must follow mesh edges. Source arcs are explicit caller-owned
+    selections: this API does not infer or certify their anatomical ownership.
+    followers maps additional target vertices to vertices on these pinned arcs,
+    copying exactly their displacement (e.g. corresponding inner lip rows).
+
+    A positive inverse-edge-length harmonic field propagates the pinned motion
+    within reach metres along selected target mesh edges. Fixed, unselected and
+    farther vertices stay exactly at rest; no nearest-surface lookup crosses
+    anatomical gaps. Both donor rest and absolute targets use landmark TPS
+    registration. Inputs are read-only and outputs are absolute targets.
+    This is a correspondence tool, not an orientation, collision, containment
+    or full facial-contract guarantee; validate the resulting poses separately.
+    Active edge conductances spanning more than 1e6 are rejected as numerically
+    ill-conditioned. Refine degenerate edges rather than accepting a false field.
+    """
+    from numbers import Integral, Real
+    import heapq
+    from agent_meshes_reproportion import tps_fit, tps_apply
+    def points(values, label):
+        try: out=np.asarray(values,dtype=float)
+        except (TypeError,ValueError) as exc: raise ValueError(label+' needs finite Nx3 points') from exc
+        if out.ndim!=2 or out.shape[1]!=3 or not len(out) or not np.isfinite(out).all():
+            raise ValueError(label+' needs finite Nx3 points')
+        return out
+    v,source=points(vertices,'Sculpt'),points(source_vertices,'Donor')
+    a,b=points(source_landmarks,'Source landmarks'),points(target_landmarks,'Target landmarks')
+    if a.shape!=b.shape or len(a)<4 or any(len(np.unique(p,axis=0))!=len(p) or
+            np.linalg.matrix_rank(p-p.mean(0))!=3 for p in (a,b)):
+        raise ValueError('Path transfer needs matching unique noncoplanar landmark pairs')
+    if isinstance(reach,bool) or not isinstance(reach,Real) or not math.isfinite(reach) or reach<=0:
+        raise ValueError('Path reach must be positive and finite')
+    def indices(values,count,label):
+        ids=list(values)
+        if any(isinstance(i,bool) or not isinstance(i,Integral) or not 0<=i<count for i in ids) or len(set(ids))!=len(ids):
+            raise ValueError(label+' needs distinct valid integer vertex indices')
+        return [int(i) for i in ids]
+    region=set(indices(face_vertices,len(v),'Face region'))
+    fixed=set(indices(fixed_vertices,len(v),'Fixed region'))
+    adjacency=[{} for _ in v]
+    for face in faces:
+        f=indices(face,len(v),'Target polygon')
+        if len(f)<3: raise ValueError('Target polygons need three or more vertices')
+        for i,j in zip(f,f[1:]+f[:1]):
+            d=float(np.linalg.norm(v[i]-v[j]))
+            if d<=0: raise ValueError('Target edges need positive rest length')
+            adjacency[i][j]=d;adjacency[j][i]=d
+    path_pairs=[];seeds=set()
+    for pair in paths:
+        if len(pair)!=2: raise ValueError('Each path needs target and donor indices')
+        target_ids=indices(pair[0],len(v),'Target arc');source_ids=indices(pair[1],len(source),'Donor arc')
+        if min(len(target_ids),len(source_ids))<2 or not set(target_ids)<=region:
+            raise ValueError('Paths need at least two vertices and selected target arcs')
+        if any(j not in adjacency[i] for i,j in zip(target_ids,target_ids[1:])):
+            raise ValueError('Target arcs must follow mesh edges in order')
+        path_pairs.append((target_ids,source_ids));seeds.update(target_ids)
+    if not path_pairs: raise ValueError('Path transfer needs explicit anatomical paths')
+    if followers is None: followers={}
+    if not isinstance(followers,dict): raise ValueError('Followers must map target indices to pinned arc indices')
+    followed={}
+    for i,j in followers.items():
+        i=indices([i],len(v),'Follower')[0];j=indices([j],len(v),'Follower source')[0]
+        if i not in region or j not in seeds: raise ValueError('Followers need selected vertices and a pinned arc source')
+        followed[i]=j
+    pins=seeds|set(followed)
+    if pins&fixed: raise ValueError('Pinned paths/followers conflict with fixed vertices')
+    if not isinstance(source_morphs,dict) or not source_morphs: raise ValueError('Path transfer needs named donor morphs')
+    morphs={}
+    for name,values in source_morphs.items():
+        if not isinstance(name,str) or not name or name.strip()!=name: raise ValueError('Morph names must be nonempty strings')
+        target=points(values,'Donor target '+name)
+        if target.shape!=source.shape: raise ValueError('Donor targets need matching topology')
+        morphs[name]=target
+    fit=tps_fit(a,b);registered=tps_apply(fit,source)
+    def parameter(curve):
+        lengths=np.linalg.norm(np.diff(curve,axis=0),axis=1)
+        if np.any(lengths<=0) or not np.isfinite(lengths).all(): raise ValueError('Anatomical arcs need positive finite edge lengths')
+        p=np.r_[0.,np.cumsum(lengths)];return p/p[-1]
+    parameters=[(t,s,parameter(v[t]),parameter(registered[s])) for t,s in path_pairs]
+    distance=np.full(len(v),np.inf);pending=[]
+    for i in pins:distance[i]=0;heapq.heappush(pending,(0.,i))
+    while pending:
+        d,i=heapq.heappop(pending)
+        if d!=distance[i]:continue
+        for j,length in adjacency[i].items():
+            candidate=d+length
+            if j in region-fixed and candidate<reach and candidate<distance[j]:
+                distance[j]=candidate;heapq.heappush(pending,(candidate,j))
+    free=sorted(i for i in region-pins-fixed if distance[i]<reach and adjacency[i])
+    offsets=np.cumsum([0]+[len(adjacency[i]) for i in free])[:-1]
+    neighbors=np.array([j for i in free for j in adjacency[i]],dtype=int)
+    weights=np.array([1/d for i in free for d in adjacency[i].values()])
+    totals=np.add.reduceat(weights,offsets) if free else np.array([])
+    if not np.isfinite(weights).all() or not np.isfinite(totals).all():
+        raise ValueError('Target edge conductances must remain finite')
+    if free and weights.max()/weights.min()>1e6:
+        raise ValueError('Anatomical path field is numerically ill-conditioned: active edge ratio exceeds 1e6')
+    # Solve the Dirichlet graph Laplacian, rather than accepting a small Jacobi
+    # step: a very short edge can make that step tiny while the field is wrong.
+    owners=np.repeat(np.arange(len(free)),[len(adjacency[i]) for i in free])
+    local=np.full(len(v),-1,dtype=int);local[free]=np.arange(len(free))
+    neighbor_free=local[neighbors];inside=neighbor_free>=0
+    def laplacian(values):
+        differences=values[owners].copy()
+        differences[inside]-=values[neighbor_free[inside]]
+        return np.add.reduceat(differences*weights[:,None],offsets,axis=0)
+    result={}
+    for name,target in morphs.items():
+        donor_delta=tps_apply(fit,target)-registered;field=np.zeros_like(v);assigned={}
+        for target_ids,source_ids,tp,sp in parameters:
+            delta=donor_delta[source_ids];sample=np.stack([np.interp(tp,sp,delta[:,k]) for k in range(3)],axis=1)
+            for i,value in zip(target_ids,sample):
+                if i in assigned and not np.allclose(assigned[i],value,rtol=0,atol=1e-12):
+                    raise ValueError('Anatomical paths give conflicting motion to a shared pin')
+                assigned[i]=value;field[i]=value
+        for i,j in followed.items():
+            if i in assigned and not np.allclose(assigned[i],field[j],rtol=0,atol=1e-12):
+                raise ValueError('Follower conflicts with a pinned path')
+            field[i]=field[j]
+        if np.max(np.linalg.norm(field,axis=1))<1e-6: raise ValueError('No transferred motion on the anatomical paths for '+name)
+        if free:
+            rhs=np.add.reduceat(field[neighbors]*weights[:,None],offsets,axis=0)
+            values=np.zeros((len(free),3));residual=rhs.copy()
+            # A large/stiff component must not hide residuals in a weaker one.
+            # Normalize each equation by its weakest incident conductance.
+            weakest=np.minimum.reduceat(weights,offsets)[:,None]
+            tolerance=max(float(np.max(np.abs(field)))*1e-10,1e-14)
+            def certified(error):return float(np.max(np.abs(error)/weakest))<=tolerance
+            preconditioned=residual/totals[:,None];direction=preconditioned.copy()
+            energy=float(np.sum(residual*preconditioned))
+            for _ in range(10000):
+                if certified(residual):
+                    # Certify the actual equation, not only the recurrence.
+                    residual=rhs-laplacian(values)
+                    if certified(residual):break
+                    preconditioned=residual/totals[:,None];direction=preconditioned.copy()
+                    energy=float(np.sum(residual*preconditioned))
+                action=laplacian(direction);curvature=float(np.sum(direction*action))
+                if not math.isfinite(curvature) or curvature<=0:
+                    raise ValueError('Anatomical path field is numerically ill-conditioned')
+                step=energy/curvature;values+=step*direction;residual-=step*action
+                preconditioned=residual/totals[:,None];next_energy=float(np.sum(residual*preconditioned))
+                direction=preconditioned+(next_energy/energy)*direction;energy=next_energy
+            else:raise ValueError('Anatomical path field did not converge; shorten reach or add constraints')
+            field[free]=values
+        out=v.copy();active=sorted(pins|set(free));out[active]+=field[active]
+        if not np.isfinite(out).all():raise ValueError('Transferred path motion must remain finite')
+        result[name]=out
+    return result
+
+
 def expression_fields(vertices, eye_centers, eye_radii, mouth_center):
     """Return brow/smile deltas scaled by the sculpt's interocular distance.
 

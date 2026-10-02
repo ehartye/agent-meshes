@@ -30,6 +30,26 @@ shapes. Inspect individual expressions and combinations from front, oblique and
 profile views, checking folds, mouth lining and preserved old shapes. This helper
 does not declare the full face contract or repair an existing eyelid defect.
 
+`transfer_sculpt_paths(vertices, faces, source_vertices, source_morphs,
+source_landmarks, target_landmarks, paths=..., face_vertices=...,
+fixed_vertices=(), followers=None, reach=.035)` uses explicit ordered open
+anatomical arcs instead of nearest donor surfaces. Each `paths` pair contains
+target and donor indices; counts may differ. Target arcs must follow mesh edges,
+and caller-owned donor arcs must select the corresponding anatomy and direction.
+Registered donor rest arclength samples its registered absolute-target motion.
+Optional `followers` maps selected inner-row vertices to pinned arc vertices and
+copies their displacement exactly. Shared pins must agree. A positive graph
+Laplacian propagates motion through selected topology within `reach` metres;
+fixed, unselected, disconnected and farther vertices stay at rest.
+
+The solver checks residuals and rejects active edge conductance ratios above
+1e6 rather than silently accepting an ill-conditioned field. This method can
+preserve coherent arcs while still creating triangle crossings: copying a rim
+does not unfold an already overlapping closed-mouth lining. Check rest contact,
+intermediate expression poses, orientation, collision and containment separately.
+The Mara numerical trial failed its collision gate; this API is an unreleased
+prototype on its feature branch, with no normal-model adoption or full-face claim.
+
 `agent_meshes_sculpt_face.add_sculpt_face(body, arm, objects, eyes,
 head_min_z=..., mouth_center=..., attachments=...)` fits bilateral eyelids to
 the original skin and adds blink/squint/wide, brow and smile morphs. Supply the
