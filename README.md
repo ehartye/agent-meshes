@@ -165,6 +165,34 @@ Or use `{"version":1,"name":"creature","operations":"operations.json","output":"
 
 Rendering requires the built workbench (`npm run build`) and Chromium (`npx playwright install chromium`). `build build.json --no-preview` produces the project, GLB and validation report without a browser. `--no-preview-page` keeps the PNG renders and contact sheets but skips the 1 MB `preview.html`, for pipelines that embed the GLB in their own page. Each build uses isolated state, stages and verifies outputs, then replaces only a directory marked as owned by that config. Extra files, symlinks, and concurrent builds are rejected. Failures preserve the last published build. After a crashed process, check that it has stopped before manually removing the adjacent `.agent-meshes.lock` file.
 
+For an optional UEFN geometry preflight, add `"target":"uefn"` to the build config.
+`verification.json` then includes `geometryBudget` measured from the **final exported
+GLB**, after any Blender authoring or refinement. For an existing export, use:
+
+```text
+node scripts/agent-meshes.mjs verify model.glb --target uefn
+node scripts/agent-meshes.mjs verify model.glb --target uefn --render-vertex-budget 20000
+```
+
+The configurable `renderVertexBudget` build field defaults to **30,000 per mesh**.
+Exceeding it adds a named warning and keeps a structurally valid build successful;
+it is a workflow warning threshold, **not a universal UEFN hard validation limit**.
+The report separates referenced exported `renderVertices` (including normal/UV
+splits), exact distinct XYZ `positionVertices`, and `triangles`. A UV-seamed quad
+can have four positions, six render records and two triangles. `sourceVertices`
+is `null`: the original authoring topology cannot be reconstructed from a GLB,
+and the position-only count is not mislabeled as that source count. Material
+primitives are counted using their actual index ranges; shared mesh instances
+are listed but do not multiply the per-asset budget. Unreadable/compressed geometry
+reports unknown counts and warnings instead of claiming to be below budget.
+
+This is an export audit, not native LOD certification: import can weld, split or
+recompute vertex attributes. Inspect actual native LOD0 vertices, generated LODs
+and memory/performance in UEFN. Epic's [Fortnite-ready asset guidance](https://dev.epicgames.com/documentation/en-us/fortnite/fortniteready-assets-best-practices-in-fortnite)
+uses reference budgets and advises care with assets exceeding 20k vertices unless
+proper LODs exist. The reusable report API is `auditGeometryBudget` in
+`src/geometry-budget.ts`; existing generic verification remains unchanged.
+
 `node scripts/check-animated-build.mjs` exercises rendered builds and offline exported playback. `node scripts/check-animation-browser.mjs` then verifies scrubbing, key recording and pose editing in the workbench. These write ignored evidence under `artifacts/`.
 
 ## Optional Blender stage
