@@ -2740,15 +2740,19 @@ def _closest_on_triangle(p, a, b, c):
 class _SkinIndex:
     """Nearest-point queries on a skin's triangles through a uniform grid (outward normals give the sign)."""
 
-    def __init__(self, vertices, faces, near=None, cell=.003):
+    def __init__(self, vertices, faces, near=None, cell=.003, grid_bounds=None):
         self.vertices = [tuple(v) for v in vertices]
         self.cell = cell
+        bounds = getattr(near, 'bounds', None)
         self.triangles, self.normals, self.grid = [], [], {}
         for face in faces:
             for k in range(1, len(face) - 1):
                 tri = (face[0], face[k], face[k + 1])
                 points = [self.vertices[i] for i in tri]
-                if near is not None and not any(near(p) for p in points): continue
+                if bounds is not None:
+                    if any(max(p[a] for p in points) < bounds[0][a] or
+                           min(p[a] for p in points) > bounds[1][a] for a in range(3)): continue
+                elif near is not None and not any(near(p) for p in points): continue
                 normal = _cross(_sub(points[1], points[0]), _sub(points[2], points[0]))
                 length = math.hypot(*normal)
                 if length < 1e-18: continue
@@ -2757,6 +2761,12 @@ class _SkinIndex:
                 self.normals.append(_mul(normal, 1 / length))
                 lo = [math.floor(min(p[k] for p in points) / cell) for k in range(3)]
                 hi = [math.floor(max(p[k] for p in points) / cell) for k in range(3)]
+                if grid_bounds is not None:
+                    # A coarse crossing triangle may have no vertex inside the
+                    # query box. Clip only when every query stays in that box;
+                    # skin_contact also queries a part's own moved positions.
+                    lo = [max(lo[k], math.floor(grid_bounds[0][k] / cell)) for k in range(3)]
+                    hi = [min(hi[k], math.floor(grid_bounds[1][k] / cell)) for k in range(3)]
                 for i in range(lo[0], hi[0] + 1):
                     for j in range(lo[1], hi[1] + 1):
                         for k in range(lo[2], hi[2] + 1): self.grid.setdefault((i, j, k), []).append(index)
@@ -2888,7 +2898,9 @@ def lip_lining_geometry(skin, mouth_z, half_width, *, front_y, offsets, center_x
 def _near_box(points, margin):
     lo = [min(p[k] for p in points) - margin for k in range(3)]
     hi = [max(p[k] for p in points) + margin for k in range(3)]
-    return lambda p: all(lo[k] <= p[k] <= hi[k] for k in range(3))
+    def contains(p): return all(lo[k] <= p[k] <= hi[k] for k in range(3))
+    contains.bounds = (lo, hi)
+    return contains
 
 
 def skin_contact(part, skin, tolerance=ATTACH_TOLERANCE, slices=None):
@@ -3025,7 +3037,8 @@ def follow_skin(part, skin, reach, skip=()):
     if not vertices: raise ValueError('The part has no vertices')
     own = {name: [_vector(v, 3, 'Morph vertex') for v in targets] for name, targets in (part.get('morphs') or {}).items()}
     skin_vertices, skin_faces, skin_morphs = _skin_data(skin)
-    index = _SkinIndex(skin_vertices, skin_faces, near=_near_box(vertices, reach))
+    near = _near_box(vertices, reach)
+    index = _SkinIndex(skin_vertices, skin_faces, near=near, grid_bounds=near.bounds)
     feet = []
     for v in vertices:
         hit = index.nearest(v, limit=reach)

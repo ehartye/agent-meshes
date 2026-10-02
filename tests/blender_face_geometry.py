@@ -923,6 +923,13 @@ class AttachTests(unittest.TestCase):
         self.assertGreater(contact['gap'], .003)
         self.assertEqual(contact['floating'], contact['slices'], 'no slice touches')
 
+    def test_skin_contact_follows_own_motion_beyond_its_rest_query_box(self):
+        skin = {'vertices': [[0, 0, 0], [.2, 0, 0], [0, .2, 0]], 'faces': [[0, 1, 2]]}
+        part = {'vertices': [[.005, .005, 0]], 'faces': [], 'morphs': {'slide': [[.08, .04, 0]]}}
+        contact = skin_contact(part, skin)
+        self.assertAlmostEqual(contact['poses']['slide']['gap'], 0, delta=1e-12)
+        self.assertEqual(contact['poses']['slide']['floating'], 0)
+
 
 def moved(rest, morphs, weights):
     """Positions at named morph weights (linear, as engines mix them)."""
