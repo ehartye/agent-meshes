@@ -5,7 +5,7 @@ from agent_meshes_author import (make_mesh, material, bind_skin, shape_key, mark
 from agent_meshes_sculpt_face import rig_sculpt_eyes
 
 
-def build():
+def build(partial=False):
     data = bpy.data.armatures.new('rig')
     rig = bpy.data.objects.new('rig', data)
     bpy.context.collection.objects.link(rig)
@@ -52,12 +52,31 @@ def build():
                 tuple(p.material_index for p in body.data.polygons), len(body.data.materials),
                 tuple(tuple(v.co) for v in body.data.shape_keys.key_blocks['jawOpen'].data))
     before = snapshot()
+    if partial:
+        import json
+        from agent_meshes_face import EXTRAS_PROPERTY
+        rig[EXTRAS_PROPERTY] = json.dumps({'artist': {'name': 'unchanged'}})
+        for gaze in ({'yawMax': 0, 'pitchMax': 9}, {'yawMax': True, 'pitchMax': 9},
+                     {'yawMax': 14}, {'yawMax': 14, 'pitchMax': float('nan')}):
+            try: rig_sculpt_eyes(body, rig, selected, centers, parts=parts, gaze=gaze)
+            except ValueError: pass
+            else: raise AssertionError('Invalid gaze declaration accepted')
+            assert snapshot() == before, 'Invalid gaze mutated rig or mesh'
+            assert json.loads(rig[EXTRAS_PROPERTY]) == {'artist': {'name': 'unchanged'}}
+        for existing in ('not-json', '[]', '{"arkitFace":{}}', '{"eyeGaze":{}}'):
+            rig[EXTRAS_PROPERTY] = existing
+            try: rig_sculpt_eyes(body, rig, selected, centers, parts=parts, gaze={'yawMax': 14, 'pitchMax': 9})
+            except ValueError: pass
+            else: raise AssertionError('Invalid or conflicting rig metadata accepted')
+            assert snapshot() == before and rig[EXTRAS_PROPERTY] == existing
+        rig[EXTRAS_PROPERTY] = json.dumps({'artist': {'name': 'unchanged'}})
     for bad in ({'L': [0], 'R': selected['R']}, {'L': selected['L'], 'R': selected['L']}):
         try: rig_sculpt_eyes(body, rig, bad, centers, parts=parts)
         except ValueError: pass
         else: raise AssertionError('Invalid eye ownership accepted')
         assert snapshot() == before, 'Invalid eye selection mutated rig or skin'
-    rig_sculpt_eyes(body, rig, selected, centers, parts=parts)
+    rig_sculpt_eyes(body, rig, selected, centers, parts=parts,
+                    **({'gaze': {'yawMax': 14, 'pitchMax': 9}} if partial else {}))
     after = snapshot()
     assert before[1] == after[1] and before[5] == after[5], 'Eye rig changed sculpt or morph positions'
     assert before[2][:6] == after[2][:6], 'Eye rig changed non-eye weights'
@@ -96,5 +115,5 @@ def build():
     bpy.context.view_layer.update()
     # Keep the anatomy declaration separate from the incomplete face contract fixture.
     from agent_meshes_face import EXTRAS_PROPERTY
-    rig[EXTRAS_PROPERTY] = '{"arkitFace":{"skeleton":"body"}}'
+    if not partial: rig[EXTRAS_PROPERTY] = '{"arkitFace":{"skeleton":"body"}}'
     return [body, rig] + parts['L'] + parts['R']

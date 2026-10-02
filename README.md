@@ -150,7 +150,7 @@ For a repeatable build, save `build.json` beside your source project:
 {"version":1,"project":"source.mesh.json","output":"dist"}
 ```
 
-Or use `{"version":1,"name":"creature","operations":"operations.json","output":"dist"}` for a JSON array of authoring operations. Paths resolve relative to the config. Run `node scripts/agent-meshes.mjs build build.json`. It produces editable project JSON, `model.glb`, validation report, front/side/perspective PNGs, a contact sheet per clip, and `preview.html`. The self-contained preview loads the actual GLB and works offline, with orbit, playback, scrub and download. A model with morph targets gets a slider per target (a multi-primitive face is driven through its mesh group), plus a button per emotion preset in `extras.arkitFace.emotions`; a morph-only model (a talking head) hides the clip controls. A single compatible `arkit-face/1` rig also gets horizontal/vertical eye-gaze sliders and Reset gaze. Angles use each authored eye frame and the exported gaze limits. Lid follow combines with expressions and animated blinks; reset releases gaze while preserving the current clip and expression. Models without that contract keep their existing controls. PNGs use the exported rest rig and clips; direct `view` also supports inspecting a saved authoring pose.
+Or use `{"version":1,"name":"creature","operations":"operations.json","output":"dist"}` for a JSON array of authoring operations. Paths resolve relative to the config. Run `node scripts/agent-meshes.mjs build build.json`. It produces editable project JSON, `model.glb`, validation report, front/side/perspective PNGs, a contact sheet per clip, and `preview.html`. The self-contained preview loads the actual GLB and works offline, with orbit, playback, scrub and download. A model with morph targets gets a slider per target (a multi-primitive face is driven through its mesh group), plus a button per emotion preset in `extras.arkitFace.emotions`; a morph-only model (a talking head) hides the clip controls. A single compatible `arkit-face/1` rig also gets horizontal/vertical eye-gaze sliders and Reset gaze. Angles use each authored eye frame and the exported gaze limits. Lid follow combines with expressions and animated blinks; reset releases gaze while preserving the current clip and expression. A partial sculpt can opt into the same gaze sliders through `extras.eyeGaze` without declaring a complete face; see [partial sculpt gaze](#gaze-on-a-partially-finished-sculpt). Models with neither supported declaration keep their existing controls. PNGs use the exported rest rig and clips; direct `view` also supports inspecting a saved authoring pose.
 
 Rendering requires the built workbench (`npm run build`) and Chromium (`npx playwright install chromium`). `build build.json --no-preview` produces the project, GLB and validation report without a browser. `--no-preview-page` keeps the PNG renders and contact sheets but skips the 1 MB `preview.html`, for pipelines that embed the GLB in their own page. Each build uses isolated state, stages and verifies outputs, then replaces only a directory marked as owned by that config. Extra files, symlinks, and concurrent builds are rejected. Failures preserve the last published build. After a crashed process, check that it has stopped before manually removing the adjacent `.agent-meshes.lock` file.
 
@@ -415,6 +415,20 @@ MeshViewer.countColors(image);   // {'#0000ff': 812, '#ff0000': 40110, ...}
 ```
 
 Precedence is `part#slot`, then `part`, then material name, and a `model/` key beats an unscoped one. Unmatched surfaces take `other`, which defaults to the background color so they still occlude. Colors must be `#rrggbb`, and a key that matches nothing throws, listing the names that exist. Outline hulls and the floor are not drawn. `screenshot({id: options})` returns the same render as a lossless PNG data URL.
+
+## Gaze on a partially finished sculpt
+
+The shared preview can expose eye controls before a sculpt has a complete facial rig. When adding its eye bones, opt into explicit gaze metadata:
+
+```python
+from agent_meshes_sculpt_face import rig_sculpt_eyes
+rig_sculpt_eyes(body, rig, eye_vertices, centers, parts=parts,
+                gaze={'yawMax': 14, 'pitchMax': 9})
+```
+
+This preserves the existing sculpt, expressions and body clips, and writes the armature's `extras.eyeGaze` as `{"contract":"eye-gaze/1","forward":"+Z","gaze":{"yawMax":14,"pitchMax":9}}`. Limits are authored degrees in `(0,90]`; `+Z` is forward in each exported eye bone's local frame, the convention produced by this helper. The option preserves unrelated extras and refuses existing face/gaze declarations. Omitting it keeps existing exports unchanged.
+
+For an already authored compatible rig, declare that same metadata on its rig root through the supported extras export path. Preview requires exactly one declaration and one uniquely named `eye_L`/`eye_R` pair within it. Unsupported frames, ambiguous declarations and invalid limits suppress gaze controls. Controls use the existing authored-frame rotation, clamping and reset behavior; partial rigs do not receive automatic lid follow. This declaration does not assert jaw, teeth, expressions, anatomy quality or `arkit-face/1` compliance. A complete face should retain its existing `extras.arkitFace` declaration instead of declaring both.
 
 ## Face rigs: the `arkit-face/1` contract
 

@@ -3,21 +3,22 @@ import type { Bone, Object3D, SkinnedMesh } from 'three';
 import type { Puppet } from '../render/puppet.ts';
 import { morphControls } from './preview-morphs.ts';
 
-/** Preview-only gaze offsets for the exported arkit-face/1 convention: eye-local +Z is forward. */
+/** Preview gaze for arkit-face/1 or an explicit eye-gaze/1 declaration: eye-local +Z is forward. */
 export function previewGaze(source: Puppet) {
-  const faces: Object3D[] = [], eyes: Bone[] = [];
+  const declarations: { root: Object3D; contract: Object3D['userData']; partial: boolean }[] = [], eyes: Bone[] = [];
   source.root.traverse(node => {
-    if (node.userData.arkitFace) faces.push(node);
+    if (node.userData.arkitFace) declarations.push({ root: node, contract: node.userData.arkitFace, partial: false });
+    if (node.userData.eyeGaze) declarations.push({ root: node, contract: node.userData.eyeGaze, partial: true });
     if ((node as Bone).isBone && ['eye_L', 'eye_R'].includes(node.name)) eyes.push(node as Bone);
   });
-  if (faces.length !== 1 || eyes.length !== 2 || new Set(eyes.map(eye => eye.name)).size !== 2) return null;
-  const face = faces[0], contract = face.userData.arkitFace;
+  if (declarations.length !== 1 || eyes.length !== 2 || new Set(eyes.map(eye => eye.name)).size !== 2) return null;
+  const { root: face, contract, partial } = declarations[0];
   const within = (node: Object3D): boolean => node === face || !!node.parent && within(node.parent);
-  if (contract.contract !== 'arkit-face/1' || !eyes.every(within)) return null;
+  if (contract.contract !== (partial ? 'eye-gaze/1' : 'arkit-face/1') || partial && contract.forward !== '+Z' || !eyes.every(within)) return null;
   const valid = (value: unknown, max: number): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= max;
   if (!valid(contract.gaze?.yawMax, 90) || !valid(contract.gaze?.pitchMax, 90) || !contract.gaze.yawMax || !contract.gaze.pitchMax) return null;
   const limits = { yaw: contract.gaze.yawMax as number, pitch: contract.gaze.pitchMax as number };
-  const follow = { up: valid(contract.lidFollow?.up, 1) ? contract.lidFollow.up as number : 0, down: valid(contract.lidFollow?.down, 1) ? contract.lidFollow.down as number : 0 };
+  const follow = { up: !partial && valid(contract.lidFollow?.up, 1) ? contract.lidFollow.up as number : 0, down: !partial && valid(contract.lidFollow?.down, 1) ? contract.lidFollow.down as number : 0 };
   const controls = morphControls(source);
   // Face meshes can be siblings of the armature. Their skin identifies the rig they belong to.
   const belongs = (owner: string) => {
@@ -30,7 +31,7 @@ export function previewGaze(source: Puppet) {
   const owners = new Set(controls.targets.filter(control => /^eye(Blink|Wide)(Left|Right)$/.test(control.target))
     .flatMap(control => control.owners.filter(belongs)));
   let yaw = 0, pitch = 0;
-  const layers = [...owners].map(owner => source.addMorphTransform(owner, weights => {
+  const layers = (partial ? [] : [...owners]).map(owner => source.addMorphTransform(owner, weights => {
     const derived: Record<string, number> = {};
     for (const side of ['Left', 'Right']) {
       const blink = `eyeBlink${side}`, wide = `eyeWide${side}`;
