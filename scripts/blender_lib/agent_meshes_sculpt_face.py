@@ -156,24 +156,40 @@ def sculpt_jaw_weights(vertices, faces, jaw, face_vertices, *, lower_lip, upper_
     raise ValueError('Jaw weight relaxation did not converge; shorten reach or add lip constraints')
 
 
-def rig_sculpt_eyes(body, rig, eye_vertices, centers, *, parts=None, head='head'):
+def rig_sculpt_eyes(body, rig, eye_vertices, centers, *, parts=None, head='head', gaze=None):
     """Give embedded, disconnected eye surfaces independent gaze without replacing their geometry.
 
     eye_vertices maps L/R to body vertex indices; centers maps L/R to authored world-space pivots.
     Optional parts maps L/R to already skinned iris/pupil/highlight objects. All meshes must use this
     armature in Object mode. Selected eye polygons get equivalent, side-specific materials so GLB
     keeps each eye in a distinct primitive. No coordinates, shape keys or animation curves change.
+    Optional gaze={'yawMax': degrees, 'pitchMax': degrees} declares eye-gaze/1 preview controls,
+    with exported eye-local +Z forward. Both limits must be in (0, 90]. This declares eye control
+    only, with no automatic lid following or claim of complete facial-contract support.
     """
     import bpy
-    from numbers import Integral
+    import json
+    from numbers import Integral, Real
     from mathutils import Vector
-    from agent_meshes_face import add_eye_bones
+    from agent_meshes_face import add_eye_bones, EXTRAS_PROPERTY
     if getattr(rig, 'type', None) != 'ARMATURE' or rig.mode != 'OBJECT':
         raise ValueError('Eye rig requires an armature in Object mode')
     if rig.data.users != 1 or rig.library or rig.data.library or rig.override_library:
         raise ValueError('Eye rig requires local single-user armature data')
     if head not in rig.data.bones or any(n in rig.data.bones for n in ('eye_L', 'eye_R')):
         raise ValueError('Eye rig requires the head bone and no existing eye_L/eye_R bones')
+    extras = None
+    if gaze is not None:
+        if not isinstance(gaze, dict) or set(gaze) != {'yawMax', 'pitchMax'}:
+            raise ValueError('Gaze needs yawMax and pitchMax in degrees')
+        if any(isinstance(v, bool) or not isinstance(v, Real) or not math.isfinite(v) or not 0 < v <= 90 for v in gaze.values()):
+            raise ValueError('Gaze limits must be finite numbers in (0, 90] degrees')
+        try: extras = json.loads(rig.get(EXTRAS_PROPERTY, '{}'))
+        except (TypeError, ValueError) as exc: raise ValueError('Rig extras must be a JSON object') from exc
+        if not isinstance(extras, dict) or 'arkitFace' in extras or 'eyeGaze' in extras:
+            raise ValueError('Gaze declaration requires object extras without an existing face/gaze declaration')
+        extras['eyeGaze'] = {'contract': 'eye-gaze/1', 'forward': '+Z',
+                            'gaze': {k: float(v) for k, v in gaze.items()}}
     if set(eye_vertices) != {'L', 'R'} or set(centers) != {'L', 'R'}:
         raise ValueError('Eye vertices and centers must each declare L and R')
     centers = {s: np.asarray(centers[s], float) for s in ('L', 'R')}
@@ -238,6 +254,7 @@ def rig_sculpt_eyes(body, rig, eye_vertices, centers, *, parts=None, head='head'
                 if group.name in deform: group.remove(vertices)
             obj.vertex_groups.new(name='eye_' + side).add(vertices, 1., 'REPLACE')
     bpy.context.view_layer.update()
+    if extras is not None: rig[EXTRAS_PROPERTY] = json.dumps(extras)
     return {'centers': {s: centers[s].tolist() for s in centers},
             'vertices': {s: len(v) for s, v in selected.items()}, 'parts': {s: [p.name for p in parts[s]] for s in parts}}
 

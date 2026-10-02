@@ -416,6 +416,20 @@ MeshViewer.countColors(image);   // {'#0000ff': 812, '#ff0000': 40110, ...}
 
 Precedence is `part#slot`, then `part`, then material name, and a `model/` key beats an unscoped one. Unmatched surfaces take `other`, which defaults to the background color so they still occlude. Colors must be `#rrggbb`, and a key that matches nothing throws, listing the names that exist. Outline hulls and the floor are not drawn. `screenshot({id: options})` returns the same render as a lossless PNG data URL.
 
+## Gaze on a partially finished sculpt
+
+The shared preview can expose eye controls before a sculpt has a complete facial rig. When adding its eye bones, opt into explicit gaze metadata:
+
+```python
+from agent_meshes_sculpt_face import rig_sculpt_eyes
+rig_sculpt_eyes(body, rig, eye_vertices, centers, parts=parts,
+                gaze={'yawMax': 14, 'pitchMax': 9})
+```
+
+This preserves the existing sculpt, expressions and body clips, and writes the armature's `extras.eyeGaze` as `{"contract":"eye-gaze/1","forward":"+Z","gaze":{"yawMax":14,"pitchMax":9}}`. Limits are authored degrees in `(0,90]`; `+Z` is forward in each exported eye bone's local frame, the convention produced by this helper. The option preserves unrelated extras and refuses existing face/gaze declarations. Omitting it keeps existing exports unchanged.
+
+For an already authored compatible rig, declare that same metadata on its rig root through the supported extras export path. Preview requires exactly one declaration and one uniquely named `eye_L`/`eye_R` pair within it. Unsupported frames, ambiguous declarations and invalid limits suppress gaze controls. Controls use the existing authored-frame rotation, clamping and reset behavior; partial rigs do not receive automatic lid follow. This declaration does not assert jaw, teeth, expressions, anatomy quality or `arkit-face/1` compliance. A complete face should retain its existing `extras.arkitFace` declaration instead of declaring both.
+
 ## Face rigs: the `arkit-face/1` contract
 
 Talking heads (blinking, gazing, squinting, emoting, with a toothed puppet jaw) share one portable rig contract, `arkit-face/1`: a GLB with a single skin of `head`, `eye_L` and `eye_R` (left is the character's left, +X), the 21 required ARKit morph targets (`eyeBlink`, `eyeSquint` and `eyeWide` per eye, `jawOpen`, seven mouth shapes, five brow shapes and two cheek squints) at zero rest weight, gaze as eye-bone rotations, and a root-node `extras.arkitFace` object with the gaze limits, lid follow, emotion presets and declared exposed teeth. three.js reads it with the stock `GLTFLoader` (`morphTargetDictionary`, `userData.arkitFace`), and Unreal imports it through Interchange (see `verify-unreal`).

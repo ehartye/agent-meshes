@@ -7,6 +7,20 @@ import { findBlender } from '../src/refine.ts';
 import { verifyFaceContract } from '../src/face-contract.ts';
 import { readGLB, readAccessor } from '../src/gltf-read.ts';
 
+(findBlender() ? it : it.skip)('exports explicit partial gaze limits and preserves unrelated author extras', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'mesh-partial-gaze-'));
+  try {
+    const output = join(dir, 'partial.glb');
+    await authorGLB(resolve('tests/blender_partial_gaze_fixture.py'), output);
+    const { json } = readGLB(await readFile(output));
+    const declaration = json.nodes!.find(node => (node.extras as Record<string, unknown> | undefined)?.eyeGaze)?.extras;
+    expect(declaration).toMatchObject({ artist: { name: 'unchanged' }, eyeGaze: {
+      contract: 'eye-gaze/1', forward: '+Z', gaze: { yawMax: 14, pitchMax: 9 },
+    } });
+    expect(declaration).not.toHaveProperty('arkitFace');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+}, 120_000);
+
 (findBlender() ? it : it.skip)('rigs embedded sculpt eyes and decorations while preserving the body and its animation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mesh-sculpt-eyes-'));
   try {
