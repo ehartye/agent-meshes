@@ -6,6 +6,10 @@ when_to_use: Use when a model looks blocky, boxy, lumpy, robotic or like floatin
 
 # Believable shapes
 
+For characters and their clothing, hair or facial attachments, read the
+[construction checklist](../../scripts/blender_lib/references/character-construction.md)
+before adding detail. It covers anatomy, connected construction and scoped evidence.
+
 Separate primitives read as floating pieces. Believability comes from a few mechanisms, applied
 in this order, and from looking at renders between steps. Commands run through the managed
 launcher from `mesh-setup`; operation shapes are in

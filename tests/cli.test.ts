@@ -5,12 +5,40 @@ import { createServer as createHttpServer } from 'node:http';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createServer } from '../src/server.ts';
 
 const run = promisify(execFile);
 const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 const cli = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args], { timeout: 10000, windowsHide: true });
+
+it('makes construction guidance readable through help and capabilities outside the package directory', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-guidance-'));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const invoke = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args], {
+    cwd: directory, timeout: 10000, windowsHide: true,
+  });
+  const contract = JSON.parse((await invoke('capabilities')).stdout);
+  expect(contract.guidance).toBeDefined();
+  const reference = contract.guidance.references.find((item: { topic: string }) => item.topic === 'character-construction');
+  expect(reference).toBeDefined();
+  const path = fileURLToPath(new URL(reference.path, contract.guidance.baseUrl));
+  expect(path).toBe(resolve('scripts/blender_lib/references/character-construction.md'));
+  expect((await invoke('--help')).stdout).toContain(path);
+  expect((await invoke('capabilities', '--help')).stdout).toContain(path);
+  const guide = await readFile(path, 'utf8');
+  expect(guide).toMatch(/^# Character construction/m);
+  // Follow the procedure's API links: an installed guide must not refer to omitted skills.
+  for (const target of [...guide.matchAll(/\]\(([^)]+)\)/g)].map(match => match[1])) {
+    const url = new URL(target, new URL(reference.path, contract.guidance.baseUrl));
+    expect(url.protocol).toBe('file:');
+    expect(fileURLToPath(url)).toBe(resolve('scripts/blender_lib/README.md'));
+    const api = await readFile(url, 'utf8');
+    const anchors = [...api.matchAll(/^## (.+)$/gm)].map(match => match[1].toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s/g, '-'));
+    expect(anchors).toContain(url.hash.slice(1));
+  }
+});
 
 it('reports the installed package version from another project directory', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-version-'));

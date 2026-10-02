@@ -6,6 +6,10 @@ when_to_use: Use when asked to make, model, or edit a 3D object, character, crea
 
 # Mesh authoring
 
+For skinned characters, clothing or hair, read the
+[construction checklist](../../scripts/blender_lib/references/character-construction.md)
+before authoring. Preserve approved proportions and define ownership before binding.
+
 Load `mesh-setup` and pass its check before the first command in a session. Every command below
 runs through the managed launcher, written here as `mesh`:
 
