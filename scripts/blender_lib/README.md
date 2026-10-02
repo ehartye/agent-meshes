@@ -99,6 +99,25 @@ color the mouth, merge skinned meshes or establish the complete face contract.
 the seeded side of its seam loop. It checks that the loop separates that region
 from the exterior before returning polygon indices for material assignment.
 
+`add_sculpt_mouth(body, rig, jaw, face_vertices=..., lower_lip=...,
+upper_lip=..., cavity_faces=..., parts=..., fixed_vertices=(), reach=.035)`
+orchestrates those selections, a `jawOpen` target, pocket material assignment,
+head binding and native join into the existing body. Each part is a tuple
+`(semantic_name, geometry_dict, color, jaw_carried)`; supply `teeth_upper`,
+`teeth_lower`, `tongue` and optionally `gums_upper`/`gums_lower` using shared
+geometry helpers and authored dimensions. Only lower teeth, tongue and lower
+gums are jaw carried. The body must have identity world coordinates, relative
+shape keys at zero weights, existing POINT/FLOAT `_FACE_REGION` membership,
+local single-user data and visibility/selectability in the active view layer.
+The rig must be local and have a deforming `head` bone. Unsupported ownership,
+invalid geometry, insufficient chin drop and sampled orientation reversals
+reject before body mutation. Native join must finish and transfer every part.
+Existing rest geometry, UVs, weights, morph targets, NLA and body face membership
+are preserved; new dental vertices are explicitly head bound and face tagged.
+Quarter/half/three-quarter/full orientation checks are preliminary: separately
+check cavity crossings, containment, combined expressions and fixed-view art.
+This assembly does not claim the complete facial contract.
+
 ## Cutting weighted clothing
 
 `agent_meshes_garments.cut_surface(vertices, faces, normals, weights, fields,

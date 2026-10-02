@@ -156,6 +156,116 @@ def sculpt_jaw_weights(vertices, faces, jaw, face_vertices, *, lower_lip, upper_
     raise ValueError('Jaw weight relaxation did not converge; shorten reach or add lip constraints')
 
 
+def add_sculpt_mouth(body, rig, jaw, *, face_vertices, lower_lip, upper_lip,
+                     cavity_faces, parts, fixed_vertices=(), reach=.035,
+                     min_chin_drop=.1, cavity_color='#35131b'):
+    """Open an authored sculpt pocket and join dental parts into its body skin.
+
+    Geometry and hinge coordinates are world-space metres on an identity-world
+    body, already bound to rig. Caller-owned cavity_faces select the existing
+    pocket; anatomical upper/lower arcs belong to face_vertices. Each dental
+    tuple is (semantic name, geometry dict, color, jaw_carried), using names
+    teeth_upper, teeth_lower, tongue and optional gums_upper/gums_lower.
+    Existing rest geometry, weights, UVs, morphs and NLA are retained by native
+    join; dental vertices receive head binding and explicit face membership.
+    Body must be visible/selectable in the active layer and already have a
+    POINT/FLOAT _FACE_REGION attribute; its original membership is preserved.
+
+    Preflights selections, targets and quarter/half/three-quarter/full jaw
+    orientation before body mutation. This does not certify cavity collision,
+    containment, expression combinations or the complete facial contract.
+    """
+    import bpy
+    from numbers import Integral, Real
+    from agent_meshes_author import make_mesh, material, shape_key, bind_skin, linear_color
+    from agent_meshes_face import folded_faces, chin_drop, mark_face_region
+    if getattr(body,'type',None)!='MESH' or getattr(rig,'type',None)!='ARMATURE' or body.mode!='OBJECT' or rig.mode!='OBJECT':
+        raise ValueError('Sculpt mouth needs body and rig in Object mode')
+    if body.data.users!=1 or body.library or body.data.library or body.override_library:
+        raise ValueError('Sculpt mouth needs local single-user body data')
+    if rig.library or rig.data.library or rig.override_library or bpy.context.view_layer.objects.get(rig.name)!=rig or bpy.context.view_layer.objects.get(body.name)!=body:
+        raise ValueError('Sculpt mouth needs local editable body and rig in the active view layer')
+    if not body.visible_get() or body.hide_select or body not in bpy.context.selectable_objects:
+        raise ValueError('Sculpt mouth needs a visible selectable body for native join')
+    membership=body.data.attributes.get('_FACE_REGION')
+    if membership is None or membership.domain!='POINT' or membership.data_type!='FLOAT':
+        raise ValueError('Sculpt mouth needs existing POINT/FLOAT body face membership')
+    if not np.allclose(np.array(body.matrix_world),np.eye(4),rtol=0,atol=1e-10):
+        raise ValueError('Sculpt mouth needs identity world body coordinates')
+    armatures=[m for m in body.modifiers if m.type=='ARMATURE']
+    if len(armatures)!=1 or armatures[0].object!=rig or 'head' not in rig.data.bones:
+        raise ValueError('Sculpt mouth needs one body skin modifier for the rig and a head bone')
+    if not rig.data.bones['head'].use_deform:
+        raise ValueError('Sculpt mouth needs a deforming head bone')
+    keys=body.data.shape_keys
+    if keys and not keys.use_relative:
+        raise ValueError('Sculpt mouth needs relative shape keys')
+    if keys and ('jawOpen' in keys.key_blocks or any(k.value!=0 for k in list(keys.key_blocks)[1:])):
+        raise ValueError('Sculpt mouth needs zero existing morph weights and no jawOpen: '+str([(k.name,k.value) for k in keys.key_blocks]))
+    if isinstance(min_chin_drop,bool) or not isinstance(min_chin_drop,Real) or not math.isfinite(min_chin_drop) or not 0<min_chin_drop<=1:
+        raise ValueError('Minimum chin drop must be a fraction in (0,1]')
+    linear_color(cavity_color)
+    vertices=np.array([p.co[:] for p in (keys.key_blocks[0].data if keys else body.data.vertices)])
+    faces=[list(p.vertices) for p in body.data.polygons]
+    region=list(face_vertices);cavity=list(cavity_faces)
+    if not cavity or len(set(cavity))!=len(cavity) or any(isinstance(i,bool) or not isinstance(i,Integral) or not 0<=i<len(faces) for i in cavity):
+        raise ValueError('Cavity faces need distinct existing polygon indices')
+    if any(not set(faces[i])<=set(region) for i in cavity):
+        raise ValueError('Cavity faces must belong to the authored face region')
+    prepared=[];names=set();allowed={'teeth_upper','teeth_lower','tongue','gums_upper','gums_lower'}
+    for part in parts:
+        if len(part)!=4:raise ValueError('Dental parts need name, geometry, color and jaw ownership')
+        name,geometry,color,moving=part
+        if name not in allowed or name in names or type(moving)!=bool or moving!=(name in {'teeth_lower','tongue','gums_lower'}):
+            raise ValueError('Dental semantic names and jaw ownership must be unique and consistent')
+        names.add(name);linear_color(color)
+        points=np.asarray(geometry['vertices'],float);polygons=[list(f) for f in geometry['faces']]
+        if points.ndim!=2 or points.shape[1]!=3 or not len(points) or not np.isfinite(points).all() or not polygons:
+            raise ValueError('Dental geometry needs finite vertices and polygons')
+        if any(len(f)<3 or len(set(f))!=len(f) or any(isinstance(i,bool) or not isinstance(i,Integral) or not 0<=i<len(points) for i in f) for f in polygons):
+            raise ValueError('Dental geometry needs distinct valid polygon indices')
+        target=np.asarray(jaw.targets(points,1.),float) if moving else points.copy()
+        if target.shape!=points.shape or not np.isfinite(target).all():raise ValueError('Dental jaw target must match finite rest geometry')
+        if any(folded_faces(points,points+(target-points)*phase,polygons) for phase in [.25,.5,.75,1.]):
+            raise ValueError('Dental jaw target reverses triangles')
+        prepared.append((name,points,polygons,color,moving,target))
+    if not {'teeth_upper','teeth_lower','tongue'}<=names:
+        raise ValueError('Sculpt mouth requires upper teeth, lower teeth and tongue')
+    weights=sculpt_jaw_weights(vertices,faces,jaw,region,lower_lip=lower_lip,
+                              upper_lip=upper_lip,fixed_vertices=fixed_vertices,reach=reach)
+    targets=np.asarray(jaw.targets(vertices,weights),float)
+    if targets.shape!=vertices.shape or not np.isfinite(targets).all():raise ValueError('Sculpt jaw target must match finite rest geometry')
+    phases=[.25,.5,.75,1.]
+    for phase in phases:
+        if folded_faces(vertices,vertices+(targets-vertices)*phase,faces):
+            raise ValueError(f'Sculpt jaw reverses triangles at weight {phase}')
+    drop=chin_drop(vertices[region],targets[region])
+    if drop['ratio']<min_chin_drop:raise ValueError('Sculpt jaw does not lower the chin sufficiently')
+    cavity_slot=len(body.data.materials)
+    body.data.materials.append(material('mouth_cavity',cavity_color,roughness=.85,double_sided=True))
+    for i in cavity:body.data.polygons[i].material_index=cavity_slot
+    shape_key(body,'jawOpen',targets)
+    dental=[]
+    for name,points,polygons,color,moving,target in prepared:
+        part=make_mesh(name,points,polygons,material(name,color,roughness=.4))
+        for polygon in part.data.polygons:polygon.use_smooth=True
+        bind_skin(part,rig,[{'head':1.} for _ in points]);mark_face_region(part,range(len(points)))
+        if moving:shape_key(part,'jawOpen',target)
+        world=part.matrix_world.copy();part.parent=None;part.matrix_world=world;dental.append(part)
+    bpy.ops.object.select_all(action='DESELECT');body.select_set(True)
+    for part in dental:part.select_set(True)
+    bpy.context.view_layer.objects.active=body
+    expected_vertices=len(vertices)+sum(len(p[1]) for p in prepared)
+    expected_faces=len(faces)+sum(len(p[2]) for p in prepared)
+    dental_names=[p.name for p in dental]
+    if bpy.ops.object.join()!={'FINISHED'}:
+        raise RuntimeError('Sculpt mouth native join did not finish')
+    if len(body.data.vertices)!=expected_vertices or len(body.data.polygons)!=expected_faces or any(name in bpy.data.objects for name in dental_names):
+        raise RuntimeError('Sculpt mouth native join did not transfer all dental geometry')
+    return {'chin':drop,'mouthPocketFaces':len(cavity),'jawWeights':{'moving':int(np.count_nonzero(weights))},
+            'checkedJawWeights':phases,'dentalParts':sorted(names),'foldedFaces':0,'fullFaceContractClaim':False}
+
+
 def rig_sculpt_eyes(body, rig, eye_vertices, centers, *, parts=None, head='head', gaze=None):
     """Give embedded, disconnected eye surfaces independent gaze without replacing their geometry.
 
