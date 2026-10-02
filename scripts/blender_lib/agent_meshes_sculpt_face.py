@@ -259,6 +259,82 @@ def rig_sculpt_eyes(body, rig, eye_vertices, centers, *, parts=None, head='head'
             'vertices': {s: len(v) for s, v in selected.items()}, 'parts': {s: [p.name for p in parts[s]] for s in parts}}
 
 
+def transfer_sculpt_morphs(vertices, source_vertices, source_faces, source_morphs,
+                          source_landmarks, target_landmarks, *, face_vertices,
+                          fixed_vertices=(), reach=.02):
+    """Transfer donor expressions without replacing a sculpt's rest geometry.
+
+    Both meshes and paired landmarks use the same coordinate frame. At least
+    four noncoplanar, unique landmark pairs register the donor by a thin-plate
+    spline. Absolute donor targets are warped along with rest positions, so
+    rotation, scale and local registration transport their displacement too.
+    Barycentric nearest-surface interpolation follows the registered donor
+    within reach metres, fading beyond reach/4. Only explicit face_vertices
+    receive motion; fixed_vertices remain exact. Inputs are read-only.
+
+    Returns name -> absolute Nx3 targets. Missing motion in the selected region
+    fails instead of producing placeholder shapes. This does not prove facial
+    anatomy, lid clearance, mouth containment or safety of combined expressions;
+    inspect and verify the resulting sculpt through those states separately.
+    """
+    from numbers import Integral, Real
+    from agent_meshes_reproportion import tps_fit, tps_apply
+    from agent_meshes_face import follow_skin
+    def points(values, label):
+        try: out = np.asarray(values, dtype=float)
+        except (TypeError, ValueError) as exc: raise ValueError(label + ' must be finite Nx3 points') from exc
+        if out.ndim != 2 or out.shape[1] != 3 or not len(out) or not np.isfinite(out).all():
+            raise ValueError(label + ' must be finite Nx3 points')
+        return out
+    v, donor = points(vertices, 'Sculpt'), points(source_vertices, 'Donor')
+    a, b = points(source_landmarks, 'Source landmarks'), points(target_landmarks, 'Target landmarks')
+    if a.shape != b.shape or len(a) < 4 or any(
+            len(np.unique(p, axis=0)) != len(p) or np.linalg.matrix_rank(p - p.mean(0)) != 3 for p in (a, b)):
+        raise ValueError('Transfer needs matching unique noncoplanar landmark pairs')
+    if isinstance(reach, bool) or not isinstance(reach, Real) or not math.isfinite(reach) or reach <= 0:
+        raise ValueError('Transfer reach must be finite and positive')
+    def indices(values, count, label):
+        ids = list(values)
+        if any(isinstance(i, bool) or not isinstance(i, Integral) or i < 0 or i >= count for i in ids):
+            raise ValueError(label + ' must contain valid integer vertex indices')
+        if len(set(ids)) != len(ids): raise ValueError(label + ' must not repeat vertex indices')
+        return ids
+    region = indices(face_vertices, len(v), 'Face region')
+    fixed = set(indices(fixed_vertices, len(v), 'Fixed region'))
+    selected = [i for i in region if i not in fixed]
+    if not selected: raise ValueError('Transfer needs an unfixed face region')
+    polygons = []
+    for face in source_faces:
+        ids = indices(face, len(donor), 'Donor polygon')
+        if len(ids) < 3: raise ValueError('Donor polygons need at least three vertices')
+        polygons.append(ids)
+    if not polygons: raise ValueError('Transfer needs a donor surface')
+    if not isinstance(source_morphs, dict) or not source_morphs:
+        raise ValueError('Transfer needs named donor morphs')
+    morphs = {}
+    for name, target in source_morphs.items():
+        if not isinstance(name, str) or not name or name.strip() != name:
+            raise ValueError('Donor morph names must be nonempty strings')
+        target = points(target, 'Donor morph ' + name)
+        if target.shape != donor.shape or not np.any(target != donor):
+            raise ValueError('Donor morph ' + name + ' needs motion with matching topology')
+        morphs[name] = target
+    registration = tps_fit(a, b)
+    registered = tps_apply(registration, donor)
+    skin = {'vertices': registered.tolist(), 'faces': polygons,
+            'morphs': {name: tps_apply(registration, target).tolist() for name, target in morphs.items()}}
+    followed = follow_skin({'vertices': v[selected].tolist()}, skin, reach)
+    result = {}
+    for name in morphs:
+        if name not in followed['morphs']:
+            raise ValueError('No transferred motion for ' + name + ' within the selected face/reach')
+        target = v.copy()
+        target[selected] = followed['morphs'][name]
+        if not np.isfinite(target).all(): raise ValueError('Registered motion must remain finite')
+        result[name] = target
+    return result
+
+
 def expression_fields(vertices, eye_centers, eye_radii, mouth_center):
     """Return brow/smile deltas scaled by the sculpt's interocular distance.
 

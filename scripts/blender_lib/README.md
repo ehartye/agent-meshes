@@ -13,6 +13,23 @@ animation_mode='NLA_TRACKS')`; other values are rejected.
 
 ## Expressions on an existing sculpt
 
+`transfer_sculpt_morphs(vertices, source_vertices, source_faces, source_morphs,
+source_landmarks, target_landmarks, face_vertices=..., fixed_vertices=..., reach=.02)`
+transfers existing donor expressions while retaining the sculpt's rest positions.
+Supply absolute donor targets with matching topology and at least four unique,
+noncoplanar landmark pairs in the same coordinate frame. Thin-plate registration
+transports both rest and expression positions; nearest-triangle interpolation
+carries motion within `reach` metres, fading beyond `reach/4`. Explicit face
+indices receive motion; fixed and unselected vertices remain exact. The returned
+dictionary contains absolute targets suitable for `shape_key`.
+
+Use anatomical selections to exclude eyes, teeth, hair and garments. Registration
+is an approximate correspondence, not proof of matching anatomy. Missing donor
+motion or motion lost outside the selected reach fails instead of creating empty
+shapes. Inspect individual expressions and combinations from front, oblique and
+profile views, checking folds, mouth lining and preserved old shapes. This helper
+does not declare the full face contract or repair an existing eyelid defect.
+
 `agent_meshes_sculpt_face.add_sculpt_face(body, arm, objects, eyes,
 head_min_z=..., mouth_center=..., attachments=...)` fits bilateral eyelids to
 the original skin and adds blink/squint/wide, brow and smile morphs. Supply the
