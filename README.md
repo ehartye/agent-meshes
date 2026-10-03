@@ -2,6 +2,12 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.13.1 includes opt-in UEFN exported render-vertex budgeting:
+`verify model.glb --target uefn` or `"target":"uefn"` in a build config.
+The configurable 30,000-per-mesh default reports warnings; it does not reject an
+otherwise valid export or certify the imported native LOD. Run `mesh-setup` after
+updating the plugin so its managed runtime includes the checker.
+
 ## Compare rigged motion
 
 Use `node scripts/compare-rigs.mjs comparison.json review.html` to compare a reference
