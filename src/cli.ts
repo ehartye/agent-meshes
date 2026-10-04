@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Project } from './core/types.ts';
-import { capabilities, techniqueGuidance } from './agent-contract.ts';
+import { capabilities, capabilitiesFor, techniqueGuidance } from './agent-contract.ts';
 import { errorDetails } from './errors.ts';
 
 export async function main(args = process.argv): Promise<void> {
@@ -56,7 +56,8 @@ export async function main(args = process.argv): Promise<void> {
     const value = await requestValue('project');
     return (program.opts().workspace === undefined ? value : (value as { project: Project }).project) as Project;
   };
-  program.command('capabilities').description('Print operation schemas, examples, constraints and technique reference locations').action(() => print(capabilities()));
+  program.command('capabilities [name]').description('Print operation schemas, examples, constraints and technique reference locations; name one operation or geometry (lathe, prism, add, shell.set) for just its contract')
+    .action((name?: string) => print(name === undefined ? capabilities() : capabilitiesFor(name)));
   program.command('inspect [selector]').description('Summarize the project or inspect a named part, bone or clip').action(async selector => {
     if (program.opts().workspace !== undefined) await request('inspect', { selection: selector });
     else await request(`inspect${selector ? `?select=${encodeURIComponent(selector)}` : ''}`);
