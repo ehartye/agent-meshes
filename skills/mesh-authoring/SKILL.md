@@ -95,6 +95,55 @@ of JSON on one line). Redirect that output to a file or trim it. `inspect` witho
 also one long line: counts first, then every part, bone and clip; read the counts, and use a
 selector such as `inspect clip:walk` for one item.
 
+## Static props and sets: use build.json only
+
+A deliverable static prop, or a set of them (chess pieces, a furniture kit, props in colour variants), needs no
+workspace, no `batch` and no undo history. Skip everything above `Operations` that mentions `--workspace`:
+
+1. Write the operations in code, one function per piece, and emit `ops.json` plus a `build.json` per output.
+2. `mesh build <dir>/build.json --no-preview` (about a second per piece) writes `dist/model.glb` and
+   `verification.json`. Add `--preview` only for a final look.
+3. Check the whole set at once with `recipes/set-stats.mjs` and `recipes/set-sheet.mjs` (see
+   [mesh-build](../mesh-build/SKILL.md)); never judge a set from per-model auto-framed renders.
+
+Parametrised variants come from one JS function, not from `build.json`, which has no variables or templating.
+Generate the operations per variant and write one config for each:
+
+```js
+// pieces.mjs: the single source of truth. pieceOps(type, colour) returns agent-meshes operations.
+const colours = { white: { color: '#e9ddc2', roughness: 0.55 }, black: { color: '#2a1d16', roughness: 0.45 } };
+// A lathe from a profile in real metres [[radius, y], ...] with y from 0. The unit-profile convention is hidden here:
+// radius = r * size[0] (NOT size[0] / 2), the part origin is the lathe centre, so its bottom is at -size[1] / 2.
+function lathe(name, prof, mat, segments = 32) {
+  const D = 2 * Math.max(...prof.map(p => p[0])), ymin = Math.min(...prof.map(p => p[1])), H = Math.max(...prof.map(p => p[1])) - ymin;
+  return { op: 'add', part: { name, geometry: { type: 'lathe', size: [D, H, D], profile: prof.map(([r, y]) => [r / D, (y - ymin) / H - 0.5]), segments },
+                              position: [0, ymin + H / 2, 0], ...mat } };
+}
+export const pieceOps = (type, colour) => pieces[type]({ color: colours[colour].color, material: { metalness: 0, roughness: colours[colour].roughness } });
+
+// build.mjs: for each type x colour write work/<colour>_<type>/{ops.json,build.json}, then run the build.
+fs.writeFileSync(join(dir, 'ops.json'), JSON.stringify(pieceOps(type, colour)));
+fs.writeFileSync(join(dir, 'build.json'), JSON.stringify({ version: 1, name: `${colour}_${type}`, operations: 'ops.json', output: 'dist' }));
+execFileSync('node', [runManaged, 'build', join(dir, 'build.json'), '--no-preview']);
+```
+
+Keep a shared piece (a base moulding, a collar) as a function returning profile points, so every piece composes the
+same shape. Confirm which piece is the outlier with a side-by-side lineup before refactoring all of them.
+
+**Materials today (0.13.1): this is a workaround, not a feature.** Every `add` part exports its own glTF material, even
+when colour and finish are identical, and a part has no `material.name`: a rook exports with 7 materials and a queen with
+10, all unnamed. Named, shared materials are coming from a separate change; until it ships and you have confirmed it in
+`capabilities`, do not rely on a field that is not there. If the deliverable must have one named material today:
+- Prefer the Blender route for a prop that needs it (one mesh, one named material; see mesh-build "Blender-authored
+  static props").
+- Otherwise post-process the exported GLB after the build: parse the JSON chunk, keep `materials[0]`, set its `name`,
+  point every primitive's `material` at 0, and rewrite the chunk (pad to 4 bytes, fix both lengths). It is brittle binary
+  surgery: unused accessors stay in the BIN chunk (the validator reports info only), so run `mesh verify` on the result.
+- A `shell.set` surface also bakes tint and ambient occlusion into `COLOR_0`/`COLOR_1`, which multiplies the base colour
+  (ivory comes out tan, ebony light and glossy). In the same post-process, delete those two attributes from every
+  primitive, or leave the shell out of flat-colour props.
+- Check with `set-stats.mjs --max-materials 1 --require-named-materials`.
+
 ## Working method
 
 1. Sketch the model as a short list of named parts with rough sizes and positions in meters,

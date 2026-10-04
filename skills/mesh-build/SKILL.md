@@ -1,7 +1,7 @@
 ---
 name: mesh-build
-description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, fast Workbench previews of Blender-authored sources (matcap, wire, cavity, posed shape keys) with an optional persistent worker, the optional Blender refine stage, and the headless Unreal import check.
-when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, smooth and feather a model in Blender, preview a Blender-authored model quickly (matcap, wireframe, blink or jaw poses) without a full build, or check that a GLB imports into Unreal with its morphs and bones intact.
+description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, fast Workbench previews of Blender-authored sources (matcap, wire, cavity, posed shape keys) with an optional persistent worker, the optional Blender refine stage, the headless Unreal import check, Blender-authored static props, and shared-camera contact sheets and budget stats for a set of GLBs.
+when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, smooth and feather a model in Blender, preview a Blender-authored model quickly (matcap, wireframe, blink or jaw poses) without a full build, or check that a GLB imports into Unreal with its morphs and bones intact, author a static prop in Blender with booleans, compare or budget a set of GLBs (a chess set, a furniture kit), or bring a GLB into Unity.
 ---
 
 # Mesh build and delivery
@@ -72,6 +72,96 @@ the PNGs but skips the 1 MB preview page when your own page embeds the GLB. The 
 is replaced only when it is marked as owned by that config, so never point `output` at a
 directory holding other work. A failed build leaves the previous output in place; after a crash,
 confirm the process is gone before removing the adjacent `.agent-meshes.lock`.
+
+## Blender-authored static props
+
+For a prop that needs real booleans, a carved slot, a fluted rim or a sculpted head, author it in Blender
+and export one mesh with one named material. A 12-piece chess set was built this way; every rule below cost
+a render round to learn. Reusable helpers are in `scripts/blender_lib/agent_meshes_props.py` (see its
+section in [blender_lib](../../scripts/blender_lib/README.md)); `from agent_meshes_props import *` after adding
+`scripts/blender_lib` to `sys.path`.
+
+**Axes and export.** glTF is Y-up with the model facing +Z; Blender is Z-up with forward = -Y. Author in
+Blender as (x, -z, y), that is glTF z = -Blender y (`P(x, y, z)` in the helper module), and export with
+`export_yup=True`, so nothing is rotated afterwards. Export with `export_vertex_color='NONE'` (Blender before
+4.2 spells it `export_colors=False`), `export_cameras=False`, `export_lights=False`, and `export_texcoords=False`
+when nothing samples a texture. Give the mesh ONE named material (`static_material('PieceWhite', '#e9ddc2', .55)`)
+and strip colour attributes (`finish_static`); a leftover `COLOR_0` multiplies the base colour in viewers.
+`export_static_glb(path, objects)` has all of this.
+
+**Boolean order that avoids ragged edges.**
+1. Build the clean body (screw lathe, or metaball converted to a mesh).
+2. Decimate the body FIRST, if it needs it. Decimating after a boolean roughens every cut edge.
+3. Locally subdivide the triangles around each planned cut (`refine_near`), so the cutter lands in small even
+   triangles, not needle fans.
+4. Boolean with the EXACT solver.
+5. Weld at 0.5 mm, dissolve degenerate faces, triangulate with beauty (`clean_after_boolean`).
+6. Never decimate after the boolean.
+
+Cut first and JOIN LAST (a plain join, no boolean). An exact boolean union of many small shells into a body once
+returned only the shells, and joining shells before the cuts let later cuts swallow them. Compare triangle counts
+before and after a union.
+
+**Count real triangles.** Booleans leave n-gons, so Blender's polygon count under-reports. Count
+`sum(len(p.vertices) - 2 for p in mesh.polygons)` (`count_tris`), or read the exported GLB with
+`recipes/set-stats.mjs`. A body reported as 6,162 faces had more triangles than that.
+
+**Metaballs (smooth fusion of ellipsoids) have a unit trap.** An isolated element's surface lies at
+0.558 x `radius` x `size`, so `radius = max(semi) / 0.558` and each `size = semi / (0.558 * radius)`; `meta_ellipsoid`
+does this. Fields ADD, so overlapping elements bulge: shrink radii about 15% where they overlap, and elements spaced
+closer than about 2 radii fuse into one lump (separate tufts need separate shells). A capsule's `size_x` is an
+ABSOLUTE half-length in metres, not scaled by radius (`meta_capsule`). For an unrotated element `size_y` and `size_z`
+are Blender Y and Z, so an ellipsoid authored in glTF axes comes out with depth and height swapped unless you swap
+them (the helper does); the mistake is invisible while members are nearly round and makes a neck paper-thin when
+they are not. Coarser metaball `resolution` (0.0095 for a 0.4 m piece) is the practical triangle lever.
+
+**Join order for tufts and other add-ons:** cuts first, join last. Tuft roots must start outside the surface, or the
+visible part is a needle.
+
+**Dispatching a bpy script.** Either way the result is a GLB you then `verify` and render:
+- From a Node build script, run Blender directly and keep exporter control, which is what lets one script take a
+  colour or variant argument:
+  ```js
+  import { execFileSync, spawnSync } from 'node:child_process';
+  // setup --check exits 1 before the first install, so read stdout with spawnSync; `blender` is a path, null when absent.
+  const check = spawnSync(process.execPath, [`${pluginRoot}/scripts/setup.js`, '--check', '--json'], { encoding: 'utf8' });
+  const blender = process.env.AGENT_MESHES_BLENDER ?? JSON.parse(check.stdout).blender;
+  if (!blender) throw new Error('Blender not found; see mesh-setup');
+  execFileSync(blender, ['-b', '--python-exit-code', '1', '--python', 'knight_blender.py', '--', 'white', 'white_knight.glb'], { stdio: ['ignore', 'pipe', 'pipe'] });
+  ```
+  `execFileSync` throws on a nonzero Blender exit; print `err.stdout` and `err.stderr` on failure. Blender exits 0 after
+  a Python error unless you pass `--python-exit-code 1`, as above.
+- Through `build.json`: `{"version":1,"name":"knight","blender":{"script":"knight.py"},"output":"dist"}`, where the
+  source defines `build()` returning the list of bpy objects. It takes no arguments (generate one source per variant,
+  or read an environment variable) and exports through the managed `export_glb`, then verifies and renders as for any build.
+
+## Static sets: contact sheet and stats
+
+Two recipes in `recipes/` check a SET of GLBs together. Run them with the plugin's Node; they need no build step.
+
+```text
+node "<plugin-root>/recipes/set-stats.mjs" --budget 'knight=6500' --max-tris 3700 --max-materials 1 \
+  --require-named-materials --pivot bottom-centre *.glb
+node "<plugin-root>/recipes/set-sheet.mjs" --out renders/sheet.png --views front,side,q34,top --cell-scale 0.5 *.glb
+node "<plugin-root>/recipes/set-sheet.mjs" --out renders/bases.png --views front,side --crop-bottom 0.3 white_*.glb
+```
+
+`set-stats` prints real triangles, world size and bounds with every node matrix applied (a part exported as a
+`matrix` node or rotated makes accessor min/max useless), the base centre (the pivot check), material names and
+unused materials, and exits 1 with a `FLAG` line per violation. `set-sheet` draws one row per model and one column
+per view from ONE camera shared by every cell (target and distance from the union bounds, or `--target` and
+`--dist`), so a tall piece looks tall next to a short one, which per-model auto-framing hides. `--crop-bottom F`
+keeps the lower fraction of each frame (bases, plinth junctions); `--camera name=px,py,pz>tx,ty,tz` adds a close-up
+view. Both fail with a clear message when the managed runtime is missing; run `mesh-setup` first.
+
+## Importing into Unity (glTFast)
+
+Checked with glTFast 6.20.0; the agent-engine plugin's `engine-asset-import` skill has the full import detail.
+agent-meshes exports each part as its own node with a `matrix` (not translation/rotation/scale), and glTFast
+handles those nodes correctly; other importers may warn. glTF +Z forward stays +Z forward in Unity (glTFast
+flips handedness for you). Verified with an orthographic top-down render of the imported pieces: a knight authored
+facing +Z faces +Z in the scene. Every part is a node, so a prop of 15 parts becomes 15 child GameObjects; for a
+static prop prefer one mesh with one material (the Blender route above) when the engine will instance many copies.
 
 ## Fast Blender previews while iterating
 
