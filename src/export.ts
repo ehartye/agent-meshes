@@ -7,6 +7,7 @@ import { validateProject } from './core/model.ts';
 import { auditGeometryBudget, type GeometryBudgetOptions, type GeometryBudgetReport } from './geometry-budget.ts';
 import { buildScene, disposeScene } from './render/scene.ts';
 import { ensureFileReader } from './node-file-reader.ts';
+import { shareIdenticalMaterials } from './export-materials.ts';
 
 /** The parts of three's GLTFWriter that its type declaration leaves out but plugins may reach. */
 interface GLTFWriterInternals {
@@ -65,6 +66,7 @@ export async function exportGLB(project: Project): Promise<Uint8Array> {
       }
     }
     scene.updateMatrixWorld(true);
+    for (const material of shareIdenticalMaterials(scene)) material.dispose();
     ensureFileReader();
     const exporter = new GLTFExporter();
     exporter.register(plugin => {

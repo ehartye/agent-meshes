@@ -22,7 +22,7 @@ export type Binding =
  * Surface finish, 0 to 1 each: metalness 1 is bare metal, roughness 0 is a mirror. Glass adds opacity below 1 (glTF
  * alphaMode BLEND), transmission (KHR_materials_transmission), ior (KHR_materials_ior, 1 to 2.333) and doubleSided.
  */
-export interface Material { metalness: number; roughness: number; opacity?: number; transmission?: number; ior?: number; doubleSided?: boolean }
+export interface Material { metalness: number; roughness: number; /** glTF material name; identical name, colour and finish share one exported material. */ name?: string; opacity?: number; transmission?: number; ior?: number; doubleSided?: boolean }
 export interface Part {
   name: string;
   geometry: { type: GeometryKind; size: Vec3; segments: number; mirrorX?: boolean; profile?: Vec2[]; outline?: Vec2[] };

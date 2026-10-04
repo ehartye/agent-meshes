@@ -18,6 +18,7 @@ export function finishMaterial(color: string, vertexColors: boolean, finish: Mat
   const material = transmission !== undefined || ior !== undefined
     ? new MeshPhysicalMaterial({ ...base, transmission: transmission ?? 0, ior: ior ?? 1.5 })
     : new MeshStandardMaterial(base);
+  if (finish.name) material.name = finish.name;
   if (opacity < 1) { material.transparent = true; material.opacity = opacity; material.depthWrite = false; }
   return material;
 }

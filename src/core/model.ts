@@ -39,6 +39,8 @@ export const materialSchema = z.object({
   metalness: z.number().min(0).max(1).default(0), roughness: z.number().min(0).max(1).default(0.65),
   opacity: z.number().min(0).max(1).optional(), transmission: z.number().min(0).max(1).optional(),
   ior: z.number().min(1).max(2.333).optional(), doubleSided: z.boolean().optional(),
+  /** glTF material name, for example PieceWhite. Parts with the same name, colour and finish export one shared material. */
+  name: z.string().trim().min(1).max(100).optional(),
 }).strict();
 const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 /** A painted pattern baked into vertex colors in world space. `size` is the dot spacing, stripe period or check size in meters. */
