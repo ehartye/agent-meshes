@@ -1,10 +1,11 @@
 import { z } from 'zod';
-import { Quaternion, Vector3 } from 'three';
-import type { Project, Operation, PartInput, Part, Vec3, Quat } from './types.ts';
+import { Euler, Quaternion, Vector3 } from 'three';
+import type { Project, Operation, PartInput, Part, Shell, Vec3, Quat } from './types.ts';
 import { nameSchema, vec3Schema, quatSchema, boneSchema, bindingSchema, validateRig, applyRigOperation, boneRestWorld } from './rig.ts';
 import { clipSchema, validateAnimation } from './animation.ts';
 import { applyAssemblyCopy } from './assembly.ts';
 import { applyPoseTarget } from './pose-target.ts';
+import { ModelError } from '../errors.ts';
 export { nameSchema, vec3Schema, quatSchema } from './rig.ts';
 
 const vec2Schema = z.tuple([z.number().finite(), z.number().finite()]);
@@ -17,17 +18,60 @@ const geometrySchema = z.object({
   profile: z.array(vec2Schema).min(3, 'A lathe profile needs at least 3 points').max(64).optional(),
   /** prism only: [x, y] points of a unit outline within -0.5 to 0.5, extruded along z from -0.5 to 0.5. */
   outline: z.array(vec2Schema).min(3, 'A prism outline needs at least 3 points').max(64).optional(),
+  /** lathe only: 'metres' makes profile points real [radius, height] in meters, height up from the part origin; size is then ignored. Default 'unit'. */
+  profileUnits: z.enum(['unit', 'metres']).optional(),
+  /** lathe only: profile point indices that are hard edges; normals are split there so a ledge shades crisply. */
+  corners: z.array(z.number().int().min(0).max(63)).max(64).optional(),
+  /** lathe only: [startDeg, endDeg] revolves just that sector (about +y, from +z toward +x) and caps its radial ends. */
+  angleRange: z.tuple([z.number().finite(), z.number().finite()]).optional(),
+  /** lathe only: phase of the segment grid in degrees. Lathes and sectors with equal segments and startAngle share vertex angles. */
+  startAngle: z.number().finite().optional(),
+  /** prism only: 'metres' makes outline points real meters and extrudes from the part origin to size along the axis. Default 'unit'. */
+  outlineUnits: z.enum(['unit', 'metres']).optional(),
+  /** prism only: extrusion axis. 'z' (default) takes an XY outline; 'y' takes an XZ outline and extrudes upward. */
+  axis: z.enum(['y', 'z']).optional(),
+  /** prism only: chamfer width on both cap edges, in outline units; footprint and length are unchanged. */
+  bevel: z.number().positive().finite().optional(),
 }).strict();
+const LIMIT = 1000;
+const unitRangeHint = 'Unit profiles are size-normalised: radius 0..0.5, height -0.5..0.5, scaled by size. For real meters set profileUnits: "metres".';
 /** Shape-specific rules kept out of the schema so contract schemas can still be made partial. */
 export function validateGeometry(g: Part['geometry']): void {
+  const only = (kind: string, fields: (keyof Part['geometry'])[]) => {
+    for (const field of fields) if (g[field] !== undefined && g.type !== kind) throw new ModelError(`Only a ${kind} takes ${field}, not a ${g.type}`, { path: `geometry.${field}`, value: g[field], hint: `Remove ${field}, or change the geometry type to ${kind}.` });
+  };
+  only('lathe', ['profileUnits', 'corners', 'angleRange', 'startAngle']);
+  only('prism', ['outlineUnits', 'axis', 'bevel']);
   if (g.type === 'lathe') {
-    if (!g.profile) throw new Error('A lathe needs a profile');
-    if (g.profile.some(([r, y]) => r < 0 || r > 0.5 || y < -0.5 || y > 0.5)) throw new Error('Profile radius must be 0 to 0.5 and height -0.5 to 0.5');
-  } else if (g.profile) throw new Error(`Only a lathe takes a profile, not a ${g.type}`);
+    if (!g.profile) throw new ModelError('A lathe needs a profile', { path: 'geometry.profile', hint: 'Give [radius, height] points bottom to top; a zero-radius first or last point closes the cap.' });
+    const metres = g.profileUnits === 'metres';
+    g.profile.forEach(([r, y], i) => {
+      const bad = metres ? r < 0 || r > LIMIT || Math.abs(y) > LIMIT : r < 0 || r > 0.5 || y < -0.5 || y > 0.5;
+      if (bad) throw new ModelError(metres ? `Profile point ${i} [${r}, ${y}]: radius must be 0 to ${LIMIT} and height within +-${LIMIT} meters` : `Profile point ${i} [${r}, ${y}]: radius must be 0 to 0.5 and height -0.5 to 0.5 (unit profile)`,
+        { path: `geometry.profile[${i}]`, value: [r, y], hint: metres ? 'Radius cannot be negative.' : unitRangeHint });
+    });
+    for (const index of g.corners ?? []) {
+      if (index >= g.profile.length) throw new ModelError(`Corner index ${index} is outside the ${g.profile.length}-point profile`, { path: 'geometry.corners', value: index, hint: `corners lists zero-based profile point indices, 0 to ${g.profile.length - 1}.` });
+    }
+    if (g.corners && new Set(g.corners).size !== g.corners.length) throw new ModelError('corners lists a profile point twice', { path: 'geometry.corners', value: g.corners });
+    if (g.angleRange) {
+      const [a, b] = g.angleRange;
+      if (!(b > a) || b - a > 360 || Math.abs(a) > 720 || Math.abs(b) > 720) throw new ModelError(`angleRange [${a}, ${b}] must have start < end, a span of at most 360 degrees, and angles within +-720`, { path: 'geometry.angleRange', value: g.angleRange, hint: 'Degrees about +y, measured from +z toward +x; [0, 45] is one eighth.' });
+    }
+  } else if (g.profile) throw new ModelError(`Only a lathe takes a profile, not a ${g.type}`, { path: 'geometry.profile', hint: 'Remove profile, or change the geometry type to lathe.' });
   if (g.type === 'prism') {
-    if (!g.outline) throw new Error('A prism needs an outline');
-    if (g.outline.some(([x, y]) => Math.abs(x) > 0.5 || Math.abs(y) > 0.5)) throw new Error('Outline points must be within -0.5 to 0.5');
-  } else if (g.outline) throw new Error(`Only a prism takes an outline, not a ${g.type}`);
+    if (!g.outline) throw new ModelError('A prism needs an outline', { path: 'geometry.outline', hint: 'Give at least 3 [x, y] points; with axis "y" they are [x, z] points.' });
+    const metres = g.outlineUnits === 'metres';
+    g.outline.forEach(([x, y], i) => {
+      const bad = metres ? Math.abs(x) > LIMIT || Math.abs(y) > LIMIT : Math.abs(x) > 0.5 || Math.abs(y) > 0.5;
+      if (bad) throw new ModelError(`Outline point ${i} [${x}, ${y}] is out of range: outline points must be within ${metres ? `+-${LIMIT}` : '-0.5 to 0.5'}`,
+        { path: `geometry.outline[${i}]`, value: [x, y], hint: metres ? undefined : 'Outline coordinates are size-normalised -0.5..0.5 units (scaled by size) unless outlineUnits is "metres"; divide real-meter coordinates by size or set outlineUnits: "metres".' });
+    });
+    if (g.bevel !== undefined) {
+      const axis = g.axis ?? 'z', length = g.outlineUnits === 'metres' ? g.size[axis === 'y' ? 1 : 2] : 1;
+      if (g.bevel * 2 >= length) throw new ModelError(`bevel ${g.bevel} is too wide: twice the bevel must be less than the extrusion length ${length}`, { path: 'geometry.bevel', value: g.bevel, hint: 'The bevel is cut from both caps, in outline units; use a smaller value.' });
+    }
+  } else if (g.outline) throw new ModelError(`Only a prism takes an outline, not a ${g.type}`, { path: 'geometry.outline', hint: 'Remove outline, or change the geometry type to prism.' });
 }
 /**
  * Surface finish: metalness 0 is paint or plastic, 1 is bare metal; roughness 0 is a mirror, 1 is chalk. Absent means the scene's default finish.
@@ -60,7 +104,17 @@ export const partSchema = z.object({
   pattern: patternSchema.optional(),
 }).strict();
 /** `update` changes: any part field but the name; `pattern: null` removes a pattern. */
-export const partChangesSchema = partSchema.omit({ name: true }).partial().extend({ pattern: patternSchema.nullable().optional() });
+/** Euler angles in degrees, three.js 'XYZ' order (a world-axis rotation about z, then y, then x), as an easier alternative to `rotation`. */
+export const rotationEulerSchema = vec3Schema;
+/** Unit quaternion for Euler degrees [x, y, z]; positive angles turn counter-clockwise looking down the axis toward the origin. */
+export function eulerToQuat(degrees: Vec3): Quat {
+  const q = new Quaternion().setFromEuler(new Euler(...degrees.map(d => d * Math.PI / 180) as [number, number, number], 'XYZ'));
+  return q.normalize().toArray() as Quat;
+}
+function bothRotations(where: string): never {
+  throw new ModelError(`${where} gives both rotation and rotationEuler`, { path: 'rotation', hint: 'Give one: rotation is a unit quaternion [x,y,z,w]; rotationEuler is [x,y,z] degrees (three.js XYZ order).' });
+}
+export const partChangesSchema = partSchema.omit({ name: true }).partial().extend({ pattern: patternSchema.nullable().optional(), rotationEuler: rotationEulerSchema.optional() });
 export const shellSchema = z.object({
   name: nameSchema, parts: z.array(nameSchema).min(1).max(200),
   /** Parts subtracted from the field (holes and hollows); never rendered on their own, never a member. */
@@ -75,6 +129,12 @@ export const shellSchema = z.object({
   pattern: patternSchema.optional(),
 }).strict();
 export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]), shells: z.array(shellSchema).max(50).default([]) }).strict();
+const shapeOptionKeys = ['profileUnits', 'corners', 'angleRange', 'startAngle', 'outlineUnits', 'axis', 'bevel'] as const;
+/** The shell's signed-distance fields model the default unit shapes only. */
+function checkShellShape(shell: Shell, part: Part): void {
+  const used = shapeOptionKeys.filter(key => part.geometry[key] !== undefined);
+  if (used.length) throw new ModelError(`Shell ${shell.name} cannot include ${part.name}: shells support only default unit lathes and prisms, not ${used.join(', ')}`, { path: 'geometry', value: used, hint: `Keep ${part.name} as a separate part, or remove ${used.join(', ')} to use it in a shell.` });
+}
 function validateShells(project: Project): void {
   const partNames = new Set(project.parts.map(p => p.name)), boneNames = new Set(project.bones.map(b => b.name)), seen = new Set<string>();
   for (const shell of project.shells ?? []) {
@@ -86,6 +146,7 @@ function validateShells(project: Project): void {
       const part = project.parts.find(p => p.name === name);
       if (!part) throw new Error(`Unknown shell part: ${name}`);
       if (part.geometry.type === 'group') throw new Error(`Shell ${shell.name} cannot include group ${name}`);
+      checkShellShape(shell, part);
       if (part.binding && part.binding.type !== 'rigid') throw new Error(`Shell ${shell.name} member ${name} must be rigid-bound or unbound`);
     }
     const bound = shell.parts.filter(name => project.parts.find(p => p.name === name)!.binding);
@@ -97,6 +158,7 @@ function validateShells(project: Project): void {
       if (!part) throw new Error(`Unknown shell cutter: ${name}`);
       if (shell.parts.includes(name)) throw new Error(`Shell ${shell.name}: ${name} cannot be both a member and a cutter`);
       if (part.geometry.type === 'group') throw new Error(`Shell ${shell.name} cannot cut with group ${name}`);
+      checkShellShape(shell, part);
       if (part.binding && part.binding.type !== 'rigid') throw new Error(`Shell ${shell.name} cutter ${name} must be rigid-bound or unbound`);
     }
   }
@@ -119,7 +181,9 @@ export function checkHierarchy(items: { name: string; parent: string | null }[],
 }
 export function validateProject(value: unknown): Project {
   const project = projectSchema.parse(value);
-  for (const part of project.parts) validateGeometry(part.geometry);
+  for (const part of project.parts) {
+    try { validateGeometry(part.geometry); } catch (error) { throw error instanceof ModelError ? error.forPart(part.name) : error; }
+  }
   checkHierarchy(project.parts, 'part');
   checkHierarchy(project.bones, 'bone');
   validateRig(project);
@@ -129,7 +193,11 @@ export function validateProject(value: unknown): Project {
 }
 export function createProject(name: string): Project { return validateProject({ version: 1, name, parts: [] }); }
 function makePart(project: Project, input: PartInput): Part {
-  const { anchor, ...rest } = input;
+  const { anchor, rotationEuler, ...rest } = input;
+  if (rotationEuler !== undefined) {
+    if (rest.rotation !== undefined) bothRotations('Part');
+    rest.rotation = eulerToQuat(rotationEulerSchema.parse(rotationEuler));
+  }
   const part = partSchema.parse({
     color: '#64b9c4', position: [0, 0, 0], rotation: [0, 0, 0, 1], scale: [1, 1, 1], parent: null,
     ...rest, geometry: { type: 'box', size: [1, 1, 1], segments: 12, ...input.geometry },
@@ -151,7 +219,11 @@ export function applyOperation(project: Project, operation: Operation): Project 
     case 'update': {
       const part = next.parts.find(p => p.name === operation.name);
       if (!part) throw new Error(`Unknown part: ${operation.name}`);
-      const { pattern, ...changes } = partChangesSchema.parse(operation.changes);
+      const { pattern, rotationEuler, ...changes } = partChangesSchema.parse(operation.changes);
+      if (rotationEuler) {
+        if (changes.rotation) bothRotations('Changes');
+        changes.rotation = eulerToQuat(rotationEuler);
+      }
       if (part.binding && changes.geometry) throw new Error('Unbind the part before changing its geometry');
       Object.assign(part, changes);
       if (pattern === null) delete part.pattern; else if (pattern) part.pattern = pattern;

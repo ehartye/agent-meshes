@@ -39,9 +39,12 @@ mesh --workspace .agent-meshes/fox save fox.mesh.json
 mesh --workspace .agent-meshes/fox export fox.glb
 ```
 
-`capabilities` prints the versioned JSON schema, defaults and one example per operation. Run it
-once and read it instead of guessing field names. Coordinates are meters, +Y up, rotations are
-unit quaternions `[x,y,z,w]`.
+`capabilities` prints the versioned JSON schema, defaults and one example per operation (about 40 KB
+on one line). Read one contract instead of the whole dump with `capabilities lathe`,
+`capabilities prism` or `capabilities shell.set`; it prints that geometry's or operation's
+conventions, schema and examples. Coordinates are meters, +Y up, rotations are unit quaternions
+`[x,y,z,w]` or, easier, `rotationEuler: [x,y,z]` degrees (three.js XYZ order: world z first, then y,
+then x; positive angles are right-handed, so +x rotation takes +y toward +z). Give one, not both.
 
 ## Operations
 
@@ -51,7 +54,7 @@ fails, without changing anything. Always dry-run a batch you have not applied be
 
 | Operation | Purpose |
 | --- | --- |
-| `add` | A named part: `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe` (unit `[radius,height]` profile), `prism` (unit `[x,y]` outline) or `group`; `size` scales the unit shape in meters, `segments` sets tessellation |
+| `add` | A named part: `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe` (`[radius,height]` profile), `prism` (`[x,y]` outline) or `group`; `size` scales the unit shape in meters, `segments` is the facet count around round shapes (a box ignores it) |
 | `update`, `remove` | Edit or delete a part; `update` never renames; unbind before changing geometry |
 | `shell.set`, `shell.remove` | Blend listed parts into one smooth surface (see mesh-believable) |
 | `bone.*`, `bind`, `unbind`, `pose*`, `clip.*`, `assembly.copy` | Rigging and animation (see mesh-rigging) |
@@ -61,6 +64,33 @@ makes `position` and `rotation` relative to that bone's rest frame instead, whic
 or a hand is placed at the end of a limb without computing world coordinates. Names start with a
 letter and contain letters, numbers, underscores, hyphens or dots, and are unique across parts and
 bones. See [operations](references/operations.md) for a worked example of every operation.
+
+## Turned and extruded shapes
+
+Static props (a chess set, a tower, a column) need only `add` operations in a `build.json`
+`operations` file; no workspace is required. The conventions that used to be found by experiment:
+
+- **Unit lathe profile** (default): radius 0 to 0.5 and height -0.5 to 0.5, world radius
+  `r * size[0]` (not `size[0] / 2`), height `h * size[1]`, centred on the part origin so the
+  bottom is at `-size[1] / 2`. A zero-radius first or last point closes the cap.
+- **Real units**: `"profileUnits":"metres"` takes `[radius, height]` in meters with height up from
+  the part origin (start at 0 and the part stands on its origin) and ignores `size`. Prefer it for
+  anything measured; it needs no normalise-and-offset helper.
+- **Hard edges**: `"corners":[2,3]` splits normals at those profile points, so a ledge, collar or
+  step is crisp while the surface between corners stays smooth around the circumference. It adds
+  one vertex ring per corner and no triangles. Do not fake a corner with two points 0.4 mm apart.
+- **Sectors**: `"angleRange":[45,90]` revolves one capped sector (a merlon, a wedge, an annular
+  segment when the profile has an inner radius). With the same `segments` and `startAngle` as a
+  full lathe it shares that lathe's vertex angles and sits exactly flush when its range ends are on
+  the grid; pick `segments` divisible by the sector fraction (48 for eighths).
+- **Horizontal prisms**: `"axis":"y"` with `"outlineUnits":"metres"` extrudes an `[x,z]` outline
+  upward from the origin to `size[1]`; no quaternion math. `"bevel":0.004` chamfers the caps. The
+  default prism outline is size-normalised (-0.5 to 0.5), which is what the "outline points must be
+  within -0.5 to 0.5" error means.
+- Shells cannot include parts that use these options.
+
+When an operation fails the message names the zero-based operation index, the part, the field path,
+the value and a hint; fix that one operation rather than guessing.
 
 ## Recipes
 
