@@ -110,13 +110,14 @@ export async function createServer(options: { port?: number; projectPath?: strin
     queue = operation.catch(() => {}); operation.catch(next);
   });
   mutate('open', (_request, candidate, prepared) => { candidate.replace(prepared!); }, request => loadProject(request.body?.path));
-  app.post('/api/export', async (_request, response, next) => {
+  app.post('/api/export', async (request, response, next) => {
     try {
       await queue;
       refresh();
       const project = editor.project;
       const { exportGLB } = await import('./export.ts');
-      const bytes = await exportGLB(project);
+      const merge = request.body?.merge;
+      const bytes = await exportGLB(project, merge === undefined ? {} : { merge });
       response.type('model/gltf-binary').send(Buffer.from(bytes));
     } catch (error) { next(error); }
   });

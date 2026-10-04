@@ -9,14 +9,39 @@ import { exportGLB, verifyGLB } from './export.ts';
 import { verifyEnclosures, type EnclosuresReport } from './enclosure.ts';
 import { findBlender, refineGLB } from './refine.ts';
 import { authorGLB } from './author.ts';
+import { mergeModes, type MergeMode } from './export-merge.ts';
+import { checkLimits, limitsSchema } from './glb-limits.ts';
+import { lintSilhouette, silhouette } from './silhouette.ts';
 
 const markerName = '.agent-meshes-build.json';
 /** Optional Blender pass over the exported GLB: subdivision, smoothing and a clouds displacement on named meshes. */
 const refineSchema = z.object({ subdivide: z.number().int().min(0).max(3).default(1), noise: z.number().min(0).max(1).default(0), noiseScale: z.number().positive().max(10).default(0.12), only: z.array(z.string().min(1)).optional() }).strict();
-const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), blender: z.object({ script: z.string().min(1) }).strict().optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional(), target: z.literal('uefn').optional(), renderVertexBudget: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional() }).strict()
+/**
+ * Optional `verify` section: triangle, material, pivot and height limits plus an optional silhouette lint, all checked
+ * on the final GLB. A violation fails the build with VERIFY_LIMITS_FAILED unless `warnOnly` is set.
+ */
+const buildVerifySchema = limitsSchema.extend({
+  lintProfile: z.object({
+    axis: z.enum(['x', 'y', 'z']).default('y'), bins: z.number().int().min(2).max(2000).default(100),
+    tolerance: z.number().min(0).finite().optional(), allow: z.array(z.tuple([z.number(), z.number()])).optional(),
+  }).strict().optional(),
+}).strict();
+const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), blender: z.object({ script: z.string().min(1) }).strict().optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional(), target: z.literal('uefn').optional(), renderVertexBudget: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(), merge: z.enum(mergeModes as [MergeMode, ...MergeMode[]]).optional(), verify: buildVerifySchema.optional() }).strict()
+  .refine(config => !(config.merge && config.blender), 'merge applies to project and operations inputs; a Blender-authored GLB is not merged by agent-meshes')
   .refine(config => [config.project, config.operations, config.blender].filter(Boolean).length === 1, 'Exactly one project, operations or blender input is required')
   .refine(config => config.renderVertexBudget === undefined || config.target !== undefined, 'renderVertexBudget requires an explicit target')
   .refine(config => !(config.blender && config.refine), 'Blender authoring cannot be combined with refine; author modifiers in the source script');
+/** Check a built GLB against the config's verify section; returns what verification.json records, or null when no section. */
+function checkBuildLimits(bytes: Uint8Array, verify: z.infer<typeof buildVerifySchema> | undefined) {
+  if (!verify) return null;
+  const { lintProfile, ...limits } = verify;
+  const report = checkLimits(bytes, limits);
+  const lint = lintProfile ? { ...lintProfile, findings: lintSilhouette(silhouette(bytes, lintProfile), lintProfile) } : undefined;
+  const failures = [...report.failures, ...(lint?.findings.map(finding => finding.message) ?? [])];
+  const result = { ...report, ok: failures.length === 0, failures, ...(lint ? { lintProfile: lint } : {}) };
+  if (!result.ok && !result.warnOnly) throw Object.assign(new Error(`Verify limits failed:\n${failures.join('\n')}`), { code: 'VERIFY_LIMITS_FAILED' });
+  return result;
+}
 const markerSchema = z.object({ version: z.literal(1), generator: z.literal('agent-meshes'), config: z.string().min(1), files: z.array(z.string()) }).strict();
 const portable = (path: string) => path.split(sep).join('/');
 const inside = (directory: string, path: string) => { const rel = relative(directory, path); return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`)); };
@@ -108,9 +133,10 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       const verification = await verifyGLB(authored, geometryTarget);
       if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
       const enclosures = await checkEnclosures(authored);
+      const limits = checkBuildLimits(authored, config.verify);
       files = ['model.glb', 'verification.json', 'authoring.json'];
       await Promise.all([
-        writeFile(join(stage, 'verification.json'), `${JSON.stringify(enclosures ? { ...verification, enclosures } : verification, null, 2)}\n`),
+        writeFile(join(stage, 'verification.json'), `${JSON.stringify({ ...verification, ...(enclosures ? { enclosures } : {}), ...(limits ? { limits } : {}) }, null, 2)}\n`),
         writeFile(join(stage, 'authoring.json'), `${JSON.stringify({ version: 1, source: { script: portable(relative(dirname(configFile), input)), sha256: createHash('sha256').update(source).digest('hex') }, blender: result.blender, meshes: result.meshes }, null, 2)}\n`),
       ]);
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
@@ -123,7 +149,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
         project = createProject(config.name ?? basename(configFile).replace(/\.[^.]+$/, ''));
         for (const operation of source) project = applyOperation(project, operation as Operation);
       }
-      let bytes = await exportGLB(project);
+      let bytes = await exportGLB(project, { merge: config.merge });
       let verification = await verifyGLB(bytes, geometryTarget);
       if (!verification.ok) throw new Error(`GLB verification failed with ${verification.errors} errors`);
       if (config.refine) {
@@ -138,11 +164,12 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
         if (!verification.ok) throw new Error(`Refined GLB verification failed with ${verification.errors} errors`);
       }
       const enclosures = await checkEnclosures(bytes);
+      const limits = checkBuildLimits(bytes, config.verify);
       files = ['project.mesh.json', 'model.glb', 'verification.json'];
       await Promise.all([
         writeFile(join(stage, files[0]), `${JSON.stringify(project, null, 2)}\n`),
         writeFile(join(stage, files[1]), bytes),
-        writeFile(join(stage, files[2]), `${JSON.stringify(enclosures ? { ...verification, enclosures } : verification, null, 2)}\n`),
+        writeFile(join(stage, files[2]), `${JSON.stringify({ ...verification, ...(enclosures ? { enclosures } : {}), ...(limits ? { limits } : {}) }, null, 2)}\n`),
       ]);
       if (options.decorate) files.push(...await options.decorate(structuredClone(project), stage));
     }

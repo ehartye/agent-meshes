@@ -95,10 +95,13 @@ export async function main(args = process.argv): Promise<void> {
   program.command('open <file>').action(file => request('open', { path: resolve(file) }));
   program.command('undo').action(() => request('undo', {}));
   program.command('redo').action(() => request('redo', {}));
-  program.command('export <file>').description('Export the current project as animated GLB').action(async file => {
+  program.command('export <file>').description('Export the current project as animated GLB')
+    .option('--merge <mode>', 'byMaterial: fuse a static model into one mesh with one primitive per material (part names are lost; refused for skinned or animated models)')
+    .action(async (file, options) => {
+    if (options.merge !== undefined && options.merge !== 'byMaterial') throw Object.assign(new Error('--merge must be byMaterial'), { code: 'CLI_ARGUMENT_ERROR' });
     const bytes = program.opts().workspace === undefined
-      ? new Uint8Array(await (await requestRaw('export', {})).arrayBuffer())
-      : await (await import('./export.ts')).exportGLB(await currentProject());
+      ? new Uint8Array(await (await requestRaw('export', options.merge ? { merge: options.merge } : {})).arrayBuffer())
+      : await (await import('./export.ts')).exportGLB(await currentProject(), { merge: options.merge });
     const output = resolve(file); await mkdir(dirname(output), { recursive: true }); await writeFile(output, bytes);
     process.stdout.write(`${JSON.stringify({ output, bytes: bytes.length })}\n`);
   });
@@ -106,7 +109,35 @@ export async function main(args = process.argv): Promise<void> {
     .option('--contract <name>', 'Also check a rig contract (arkit-face/1)')
     .option('--target <name>', 'Also report exported geometry for a target (uefn); budget excesses are warnings')
     .option('--render-vertex-budget <count>', 'Per-mesh warning budget for --target uefn (default 30000)')
+    .option('--max-triangles <count>', 'Fail when the drawn scene (every node instance) has more triangles')
+    .option('--max-materials <count>', 'Fail when the drawn meshes reference more distinct materials')
+    .option('--expect-pivot <name>', 'Fail unless the world bounds put this at the origin: bottom-center (base centre) or center')
+    .option('--expect-height <meters>', 'Fail unless the world-space height (y extent) is this many metres')
+    .option('--tolerance <meters>', 'Slack for --expect-pivot and --expect-height (default 0.001)')
+    .option('--warn-only', 'Report limit violations in the JSON but exit 0')
     .action(async (file, options) => {
+    const { limitsSchema, checkLimits } = await import('./glb-limits.ts');
+    const number = (value: string | undefined, label: string, integer = false) => {
+      if (value === undefined) return undefined;
+      const n = Number(value);
+      if (!Number.isFinite(n) || n <= 0 || (integer && !Number.isSafeInteger(n))) throw Object.assign(new Error(`${label} must be a positive ${integer ? 'integer' : 'number'}`), { code: 'CLI_ARGUMENT_ERROR' });
+      return n;
+    };
+    if (options.expectPivot !== undefined && !['bottom-center', 'bottom-centre', 'center', 'centre'].includes(options.expectPivot)) throw Object.assign(new Error('--expect-pivot must be bottom-center or center'), { code: 'CLI_ARGUMENT_ERROR' });
+    const tolerance = options.tolerance === undefined ? undefined : Number(options.tolerance);
+    if (tolerance !== undefined && (!Number.isFinite(tolerance) || tolerance < 0)) throw Object.assign(new Error('--tolerance must be a non-negative number'), { code: 'CLI_ARGUMENT_ERROR' });
+    const limitOptions = limitsSchema.parse({ maxTriangles: number(options.maxTriangles, '--max-triangles', true), maxMaterials: number(options.maxMaterials, '--max-materials', true),
+      expectPivot: options.expectPivot, expectHeight: number(options.expectHeight, '--expect-height'), tolerance, warnOnly: options.warnOnly ? true : undefined });
+    const hasLimits = Object.entries(limitOptions).some(([key, value]) => value !== undefined && key !== 'warnOnly' && key !== 'tolerance');
+    const reportLimits = (bytes: Uint8Array) => {
+      if (!hasLimits) return undefined;
+      const limits = checkLimits(bytes, limitOptions);
+      if (!limits.ok) {
+        process.stderr.write(`${limits.failures.map(line => `${limits.warnOnly ? 'WARN' : 'FAIL'} ${line}`).join('\n')}\n`);
+        if (!limits.warnOnly) process.exitCode = 1;
+      }
+      return limits;
+    };
     if (options.target !== undefined && options.target !== 'uefn') throw Object.assign(new Error('--target must be uefn'), { code: 'CLI_ARGUMENT_ERROR' });
     if (options.renderVertexBudget !== undefined && options.target === undefined) throw Object.assign(new Error('--render-vertex-budget requires --target uefn'), { code: 'CLI_ARGUMENT_ERROR' });
     const budget = options.renderVertexBudget === undefined ? undefined : Number(options.renderVertexBudget);
@@ -119,7 +150,8 @@ export async function main(args = process.argv): Promise<void> {
       const bytes = await readFile(file);
       const report = await verifyFaceContract(bytes);
       const { auditGeometryBudget } = await import('./geometry-budget.ts');
-      process.stdout.write(`${JSON.stringify(geometryOptions ? { ...report, geometryBudget: auditGeometryBudget(bytes, geometryOptions) } : report, null, 2)}\n`);
+      const limits = reportLimits(bytes);
+      process.stdout.write(`${JSON.stringify({ ...report, ...(geometryOptions ? { geometryBudget: auditGeometryBudget(bytes, geometryOptions) } : {}), ...(limits ? { limits } : {}) }, null, 2)}\n`);
       if (!report.ok) {
         const failed = report.checks.filter(check => !check.ok).length;
         process.stderr.write(`${report.contract}: ${failed} check${failed === 1 ? '' : 's'} failed\n${report.failures.map(line => `FAIL ${line}`).join('\n')}\n`);
@@ -131,10 +163,50 @@ export async function main(args = process.argv): Promise<void> {
     const { verifyEnclosures } = await import('./enclosure.ts');
     const bytes = await readFile(file);
     const result = await verifyGLB(bytes, geometryOptions), enclosures = await verifyEnclosures(bytes);
+    const limits = result.ok ? reportLimits(bytes) : undefined;
     // A file whose nodes declare extras.encloses (a helmet round a head) is also checked at every clip phase and morph.
-    process.stdout.write(`${JSON.stringify(enclosures.enclosures.length ? { ...result, ok: result.ok && enclosures.ok, enclosures } : result)}\n`);
+    process.stdout.write(`${JSON.stringify({ ...(enclosures.enclosures.length ? { ...result, ok: result.ok && enclosures.ok, enclosures } : result), ...(limits ? { limits } : {}) })}\n`);
     if (!enclosures.ok) process.stderr.write(`${enclosures.failures.map(line => `FAIL ${line}`).join('\n')}\n`);
     if (!result.ok || !enclosures.ok) process.exitCode = 1;
+  });
+  program.command('silhouette <file>').description('Radius against height of a GLB (largest distance from the axis per height bin, node matrices applied); --lint reports notches')
+    .option('--axis <axis>', 'Height axis: x, y or z', 'y')
+    .option('--bins <count>', 'Height bins', '100')
+    .option('--center <a,b>', 'Where the axis passes, in the other two coordinates (default 0,0)')
+    .option('--lint', 'Report every local radius minimum followed by a larger radius; exits 1 when any is found')
+    .option('--allow <y0:y1>', 'Height zone where a notch is intended; repeatable', (value: string, list: string[]) => [...list, value], [] as string[])
+    .option('--lint-tolerance <meters>', 'Smallest radius change that counts (default 0.001)')
+    .option('--json', 'Print one compact JSON line').action(async (file, options) => {
+    const { silhouette, lintSilhouette } = await import('./silhouette.ts');
+    if (!['x', 'y', 'z'].includes(options.axis)) throw Object.assign(new Error('--axis must be x, y or z'), { code: 'CLI_ARGUMENT_ERROR' });
+    const bins = Number(options.bins);
+    if (!Number.isInteger(bins) || bins < 1) throw Object.assign(new Error('--bins must be a positive integer'), { code: 'CLI_ARGUMENT_ERROR' });
+    const center = options.center === undefined ? undefined : String(options.center).split(',').map(Number);
+    if (center && (center.length !== 2 || center.some(v => !Number.isFinite(v)))) throw Object.assign(new Error('--center must be a,b'), { code: 'CLI_ARGUMENT_ERROR' });
+    const allow = (options.allow as string[]).flatMap(zone => zone.split(',')).map(zone => {
+      const [a, b, ...rest] = zone.split(':').map(Number);
+      if (rest.length || !Number.isFinite(a) || !Number.isFinite(b)) throw Object.assign(new Error('--allow must be y0:y1'), { code: 'CLI_ARGUMENT_ERROR' });
+      return [a, b] as [number, number];
+    });
+    const tolerance = options.lintTolerance === undefined ? undefined : Number(options.lintTolerance);
+    if (tolerance !== undefined && (!Number.isFinite(tolerance) || tolerance < 0)) throw Object.assign(new Error('--lint-tolerance must be a non-negative number'), { code: 'CLI_ARGUMENT_ERROR' });
+    const profile = silhouette(await readFile(file), { axis: options.axis, bins, ...(center ? { center: center as [number, number] } : {}) });
+    const findings = options.lint ? lintSilhouette(profile, { allow, tolerance }) : undefined;
+    const report = findings ? { ...profile, findings } : profile;
+    process.stdout.write(`${options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2)}\n`);
+    if (findings?.length) { process.stderr.write(`${findings.map(f => `FAIL ${f.message}`).join('\n')}\n`); process.exitCode = 1; }
+  });
+  program.command('stats <file>').description('Fingerprint a GLB: triangles, materials, world bounds, base centre and a silhouette profile hash').action(async file => {
+    const { glbStats } = await import('./glb-stats.ts');
+    print(glbStats(await readFile(file)));
+  });
+  program.command('diff <a> <b>').description('Compare two GLBs by triangles, materials, bounds and silhouette hash; exits 1 when they differ, to verify a revert')
+    .option('--bytes', 'Also require identical file bytes').action(async (a, b, options) => {
+    const { glbStats, diffStats } = await import('./glb-stats.ts');
+    const left = glbStats(await readFile(a)), right = glbStats(await readFile(b));
+    const differences = diffStats(left, right, { bytes: Boolean(options.bytes) });
+    print({ same: differences.length === 0, differences, a: left, b: right });
+    if (differences.length) { process.stderr.write(`${differences.map(d => `DIFF ${d.field}: ${JSON.stringify(d.a)} -> ${JSON.stringify(d.b)}`).join('\n')}\n`); process.exitCode = 1; }
   });
   program.command('verify-unreal <file>').description('Import a GLB into a scratch Unreal project headlessly (Interchange) and report what Unreal created; import only, no runtime render')
     .option('--contract <name>', 'Require a rig contract\'s names verbatim, for example arkit-face/1')
