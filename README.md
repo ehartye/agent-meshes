@@ -44,7 +44,7 @@ node scripts/agent-meshes.mjs --workspace .agent-meshes/fox redo
 node scripts/agent-meshes.mjs --workspace .agent-meshes/fox export fox.glb
 ```
 
-`capabilities` returns versioned JSON schemas, defaults, constraints and operation examples without a running server. `inspect` summarizes named parts, bones, bindings and clip/key counts; `part:`, `bone:` and `clip:` selectors include one exact entity. A batch file contains an operation array. `--dry-run` runs the same state-dependent validation as a real batch, reports named additions/removals/changes, and leaves revision and undo history intact. Use its base revision with `--expect-revision` to reject edits planned against stale state.
+`capabilities` returns versioned JSON schemas, defaults, constraints and operation examples without a running server (about 40 KB on one line); `capabilities lathe`, `capabilities prism` or `capabilities shell.set` prints only that geometry's or operation's contract (conventions, fields, schema and examples), and an unknown name fails with `UNKNOWN_CAPABILITY` and lists the valid ones. `inspect` summarizes named parts, bones, bindings and clip/key counts; `part:`, `bone:` and `clip:` selectors include one exact entity. A batch file contains an operation array. `--dry-run` runs the same state-dependent validation as a real batch, reports named additions/removals/changes, and leaves revision and undo history intact. Use its base revision with `--expect-revision` to reject edits planned against stale state.
 
 Workspace `state` and mutation responses contain `{project, revision, undo, redo}`. Each failure writes a JSON error record to stderr with a stable code, message, zero-based failing operation index and validation fields where available; failures exit nonzero. Workspace state lives in `workspace.sqlite`, using Node's bundled SQLite with transactions and crash recovery. Confirmed edits are committed before success is returned. Undo/redo survive commands and restarts, bounded to 20 steps and 16 MiB of history. Corrupt or unknown workspace state is rejected without replacement. Use current Node 24 LTS (tested 24.21) or Node 26 for clean machine-readable stderr; early Node 24 releases also print runtime experimental warnings. Project JSON remains the portable exchange format: use `save file.mesh.json` and `open file.mesh.json`.
 
@@ -80,7 +80,7 @@ node scripts/agent-meshes.mjs state
 node scripts/agent-meshes.mjs recipe biped
 ```
 
-Geometry types are `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe`, `prism` and `group`. `size` is the bounding box of the shape in meters. A `lathe` revolves a `profile` of `[radius, height]` points (radius 0 to 0.5, height -0.5 to 0.5) around y, for vases, birds and turned forms. A `prism` extrudes an `outline` of `[x, y]` points (each within -0.5 to 0.5) along z, for flat cut-outs and silhouettes:
+Geometry types are `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe`, `prism` and `group`. `size` is the bounding box of the shape in meters. `segments` (3 to 64) is the number of facets around the circumference of round shapes (sphere, cylinder, cone, capsule, lathe); a `box` ignores it. A `lathe` revolves a `profile` of `[radius, height]` points around y, for vases, birds, towers and turned forms. A `prism` extrudes an `outline` of `[x, y]` points along z, for flat cut-outs and silhouettes:
 
 ```json
 [
@@ -88,6 +88,42 @@ Geometry types are `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe`, `pri
   {"op":"add","part":{"name":"star","geometry":{"type":"prism","size":[1,1,0.05],"outline":[[0,0.5],[0.5,0.1],[0.3,-0.5],[-0.3,-0.5],[-0.5,0.1]]}}}
 ]
 ```
+
+#### Lathe conventions
+
+- **Unit profile (default).** Points are normalised: radius 0 to 0.5, height -0.5 to 0.5. The world radius is `r * size[0]` (not `size[0] / 2`) and the height is `h * size[1]`. The lathe is centred on the part origin, so its bottom is at `y = -size[1] / 2`. A first or last point with radius 0 closes that end on the axis; profiles take 3 to 64 points ordered bottom to top.
+- **`profileUnits: "metres"`.** Points are real `[radius, height]` in meters, height measured upward from the part origin, so a profile starting at height 0 stands on `y = 0` with no offset helper. `size` is ignored (use the part `scale` to resize). Radius must be 0 or more; it need not stay within 0.5.
+- **`corners: [indices]`.** Normals are smooth across every profile joint by default, so a ledge or collar shades as a rounded blob. List the zero-based profile indices that are hard edges and the normals split there: surfaces between corners stay smooth around the circumference, while the corner itself shades crisply. Only the duplicated vertices are added (one extra ring per corner), never triangles. Indices must be within the profile; an endpoint is already a one-sided edge.
+- **`angleRange: [startDeg, endDeg]`.** Revolves only that sector (angles about +y, measured from +z toward +x; `[0, 45]` is an eighth). The profile is closed with a wall back to its first point and both radial ends are capped, so a profile with an inner radius gives an annular sector with flat end faces. A span of 360 or more is a full lathe; a span may not exceed 360.
+- **Shared segment grid (`segments`, `startAngle`).** `segments` counts steps around the full circle. A full lathe has vertices at `startAngle + k * 360 / segments` (default `startAngle` 0); a sector uses the grid points inside its range plus its two exact ends. A sector and a full lathe with the same `segments` and `startAngle` therefore share vertex angles, and a sector whose range ends are on the grid (a `[45, 90]` merlon on a 48-segment lathe; choose `segments` divisible by the sector fraction) sits exactly flush, with no sliver or z-fighting.
+
+```json
+[
+  {"op":"add","part":{"name":"keep","geometry":{"type":"lathe","segments":48,"profileUnits":"metres","corners":[2,3],"profile":[[0,0],[0.4,0],[0.4,0.1],[0.2,0.1],[0.2,0.5],[0,0.5]]}}},
+  {"op":"add","part":{"name":"merlon","geometry":{"type":"lathe","segments":48,"profileUnits":"metres","angleRange":[45,90],"corners":[1,2],"profile":[[0.3,0.5],[0.4,0.5],[0.4,0.62],[0.3,0.62]]}}}
+]
+```
+
+Shell members and cutters must be default unit lathes and prisms; a shell refuses a part that uses any option on this page, because the shell's distance fields cannot model them.
+
+#### Prism conventions
+
+- **Unit outline (default).** Points within -0.5 to 0.5 (size-normalised, scaled by `size`), an XY outline extruded along z from `-size[2] / 2` to `size[2] / 2`.
+- **`axis: "y"`.** The outline is `[x, z]` points in the horizontal plane and the extrusion runs along y with height `size[1]`, so a horizontal plate or sector outline needs no rotation and no quaternion composition.
+- **`outlineUnits: "metres"`.** Outline points are real meters and `size` is not applied to them. The extrusion runs from the part origin to `size` along the axis (`size[1]` for `axis: "y"`, `size[2]` for `axis: "z"`), so a plate stands on `y = 0`.
+- **`bevel`.** Chamfers both cap edges by that width (meters with `outlineUnits: "metres"`, otherwise a fraction of the unit outline). Footprint and overall length are unchanged; twice the bevel must be less than the length. Prism faces are flat shaded.
+
+```json
+{"op":"add","part":{"name":"slab","geometry":{"type":"prism","axis":"y","outlineUnits":"metres","size":[1,0.05,1],"bevel":0.004,"outline":[[0,0],[2,0],[2,1],[0,1]]}}}
+```
+
+#### Rotations
+
+`rotation` is a unit quaternion `[x, y, z, w]`. `rotationEuler: [x, y, z]` in degrees is an alternative on `add` and on `update` changes (with or without `anchor`); the stored part always holds the quaternion. The order is three.js `XYZ`: world-axis rotations applied z first, then y, then x, equal to the quaternion product `qx * qy * qz`. Angles are right-handed: a positive rotation about +x turns +y toward +z, about +y turns +z toward +x, about +z turns +x toward +y. Giving both `rotation` and `rotationEuler` is an error.
+
+#### Errors
+
+Failures in `build`, `batch`, `op` and `--dry-run` carry the zero-based operation index, the operation, the part name, the field path, the offending value and a one-line hint, for example `Operation 1: add "plinth": part.geometry.segments = 1: Too small: expected number to be >=3. Hint: A box ignores segments ...` or `Operation 0: add "horse": part.geometry.outline[2] = [0.9,0.2]: Outline point 2 [0.9, 0.2] is out of range ... Hint: Outline coordinates are size-normalised -0.5..0.5 units ... unless outlineUnits is "metres"`. The same data is in the error JSON as `operationIndex`, `op`, `part`, `field`, `value`, `hint` and `issues`. Codes are unchanged: `OPERATION_FAILED` for `batch` and `op`, and `VALIDATION_ERROR` (schema) or `AUTHORING_ERROR` (state or geometry rules) for `build`.
 
 Separate primitives read as floating pieces on an animal or a figure. A **shell** blends a set of parts into one smooth surface that replaces them when rendered or exported:
 
