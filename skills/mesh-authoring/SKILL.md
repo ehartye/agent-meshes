@@ -160,19 +160,18 @@ execFileSync('node', [runManaged, 'build', join(dir, 'build.json'), '--no-previe
 Keep a shared piece (a base moulding, a collar) as a function returning profile points, so every piece composes the
 same shape. Confirm which piece is the outlier with a side-by-side lineup before refactoring all of them.
 
-**Materials today (0.13.1): this is a workaround, not a feature.** Every `add` part exports its own glTF material, even
-when colour and finish are identical, and a part has no `material.name`: a rook exports with 7 materials and a queen with
-10, all unnamed. Named, shared materials are coming from a separate change; until it ships and you have confirmed it in
-`capabilities`, do not rely on a field that is not there. If the deliverable must have one named material today:
-- Prefer the Blender route for a prop that needs it (one mesh, one named material; see mesh-build "Blender-authored
-  static props").
-- Otherwise post-process the exported GLB after the build: parse the JSON chunk, keep `materials[0]`, set its `name`,
-  point every primitive's `material` at 0, and rewrite the chunk (pad to 4 bytes, fix both lengths). It is brittle binary
-  surgery: unused accessors stay in the BIN chunk (the validator reports info only), so run `mesh verify` on the result.
-- A `shell.set` surface also bakes tint and ambient occlusion into `COLOR_0`/`COLOR_1`, which multiplies the base colour
-  (ivory comes out tan, ebony light and glossy). In the same post-process, delete those two attributes from every
-  primitive, or leave the shell out of flat-colour props.
-- Check with `set-stats.mjs --max-materials 1 --require-named-materials`.
+**Materials (0.14.0 and later).** Give a part `material.name`; parts with the same name, colour and finish share one exported
+glTF material, so a rook is no longer 7 materials. For a flat-colour prop:
+- Name the material on every part (`"material": {"name": "PieceWhite", ...}`) and the GLB carries one named material.
+- Add `"merge": "byMaterial"` to the build config to fuse the static parts into one mesh with one primitive per material
+  (named parts are lost in the GLB; a model with bound parts or clips is refused with `MERGE_NOT_STATIC`).
+- A `shell.set` surface bakes tint and ambient occlusion into `COLOR_0`/`COLOR_1`, which multiplies the base colour (ivory
+  comes out tan). Set `vertexColors: false` on the shell, or leave the shell out of flat-colour props.
+- Check the result with `verify model.glb --max-materials 1` or `set-stats.mjs --max-materials 1 --require-named-materials`.
+
+Before 0.14.0 none of these fields exist (every part exported its own unnamed material), so check `capabilities` and
+`package.json` before relying on them; on an older release, post-process the GLB (keep `materials[0]`, name it, point every
+primitive at 0, delete `COLOR_0`/`COLOR_1`) or use the Blender route in mesh-build "Blender-authored static props".
 
 ## Working method
 

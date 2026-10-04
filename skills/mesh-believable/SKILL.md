@@ -103,11 +103,12 @@ or step by about 1 mm. Generate the added vertices on the lathe's own step angle
 repeats, for example 8 merlons on 48 or 56 segments) and union exactly, or cut the feature out of a high-resolution drum so it inherits the drum's curvature:
 additive merlons on a 48-step grid read as flat facets, crenels cut from a 76-segment drum read as one round tower.
 
-**Corners and ripples.** In 0.13.1 a lathe's normals are averaged across every profile joint, so a ledge with real corners
-shades as a rounded blob. Check `capabilities` for a per-point corner flag first; without one, either put two points about
-0.4 mm either side of the corner (3 corners at 32 segments cost about 500 triangles, 1,472 to 1,984) or build the lathe in
-Blender and use `shade_smooth_by_angle` (35 degrees keeps ring corners crisp and still selects no circumferential neighbour
-at 4.7 degrees; 55 degrees softens them). Two nearly collinear profile points on a flare ripple under smooth shading:
+**Corners and ripples.** A lathe's normals are averaged across every profile joint, so a ledge with real corners shades as a
+rounded blob. From 0.14.0, list the corner points in `corners: [indices]` on the lathe: normals split there and nothing else
+changes (one extra vertex ring per corner, no extra triangles). On an older release, either put two points about 0.4 mm either
+side of the corner (3 corners at 32 segments cost about 500 triangles, 1,472 to 1,984) or build the lathe in Blender and use
+`shade_smooth_by_angle` (35 degrees keeps ring corners crisp and still selects no circumferential neighbour at 4.7 degrees;
+55 degrees softens them). Two nearly collinear profile points on a flare ripple under smooth shading:
 spacing and curvature continuity matter more than point count.
 
 **Notch and lip vocabulary.** Name the feature before you model it, in profile order from the ground up.
