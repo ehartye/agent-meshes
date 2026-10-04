@@ -121,8 +121,29 @@ export function checkDependencies(root) {
 
 /** Blender is optional; report where it was found, or null. */
 export function findBlenderFrom(root) {
-  try { return JSON.parse(node(root, "const { findBlender } = await import('./src/refine.ts'); console.log(JSON.stringify(findBlender()?.command ?? null));")); }
-  catch { return null; }
+  return findBlenderDetailsFrom(root)?.command ?? null;
+}
+
+/** Like findBlenderFrom, with the discovery rule that found it: `{ command, source }` or null. */
+export function findBlenderDetailsFrom(root) {
+  try {
+    const found = JSON.parse(node(root, "const { findBlender } = await import('./src/refine.ts'); const b = findBlender(); console.log(JSON.stringify(b ? { command: b.command, source: b.source } : null));"));
+    return found ?? null;
+  } catch { return null; }
+}
+
+/** What to do when Blender is missing; Blender is optional and only the refine and authored-source stages need it. */
+export function blenderInstallHint(platform = process.platform) {
+  const folder = '~/tools/blender';
+  const archive = platform === 'win32' ? 'blender-<ver>-windows-x64.zip' : platform === 'darwin' ? 'blender-<ver>-macos-arm64.dmg (or macos-x64)' : 'blender-<ver>-linux-x64.tar.xz';
+  return [
+    'Blender is optional (refine stage, Blender-authored sources, mesh preview). To enable it, either install it normally or unpack a portable copy:',
+    `1. Download ${archive} from the official mirror https://mirrors.ocf.berkeley.edu/blender/release/Blender<major.minor>/ (for example Blender5.2/blender-5.2.2-windows-x64.zip).`,
+    '   download.blender.org sits behind a bot challenge that returns 403 to curl and winget, and `winget install` can return 403 too; the mirror serves the same files.',
+    `2. Unzip it into ${folder} so the executable is ${folder}/blender-<ver>-<platform>/${platform === 'win32' ? 'blender.exe' : platform === 'darwin' ? 'Blender.app/Contents/MacOS/Blender' : 'blender'}. ` +
+      'Folders under ~/tools/blender/* and ~/.agent-meshes/blender/* are discovered automatically, newest version first.',
+    '3. Or point AGENT_MESHES_BLENDER at the executable (it always wins). Then rerun setup --check.',
+  ].join('\n');
 }
 
 export function installRuntime(source, { home = managedHome(), npm = runNpm, checkDependencies: check = checkDependencies, installBrowser: browser = installBrowser } = {}) {

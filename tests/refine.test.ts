@@ -1,5 +1,5 @@
-import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { afterEach, describe, expect, it } from 'vitest';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Mesh, SkinnedMesh } from 'three';
@@ -23,6 +23,46 @@ function project() {
 
 const blender = findBlender();
 const maybe = blender ? it : it.skip;
+
+describe('findBlender discovery', () => {
+  const exe = process.platform === 'win32' ? 'blender.exe' : process.platform === 'darwin' ? 'Blender.app/Contents/MacOS/Blender' : 'blender';
+  async function fakeBlender(root: string, ...parts: string[]) {
+    const path = join(root, ...parts, exe); await mkdir(join(path, '..'), { recursive: true });
+    await writeFile(path, ''); await chmod(path, 0o755); return path;
+  }
+  async function sandbox() { const home = await mkdtemp(join(tmpdir(), 'mesh-find-blender-')); directories.push(home); return home; }
+  // PATH is emptied so a Blender installed on the test machine cannot satisfy a search.
+  const options = (home: string, env: NodeJS.ProcessEnv = {}) => ({ home, env: { PATH: '', ...env } });
+
+  it('lets AGENT_MESHES_BLENDER win and says so', async () => {
+    const home = await sandbox(); await fakeBlender(home, 'tools', 'blender', 'blender-5.2.2-windows-x64');
+    expect(findBlender(options(home, { AGENT_MESHES_BLENDER: '/opt/blender' }))).toEqual({ command: '/opt/blender', detached: false, source: 'AGENT_MESHES_BLENDER' });
+  });
+  it('finds a portable copy under ~/tools/blender/* and prefers the newest version', async () => {
+    const home = await sandbox();
+    for (const version of ['4.5.0', '5.9.9', '5.10.0', '5.2.2']) await fakeBlender(home, 'tools', 'blender', `blender-${version}-windows-x64`);
+    // 5.10.0 is newer than 5.9.9: versions compare numerically, not as text.
+    expect(findBlender(options(home))).toMatchObject({ command: join(home, 'tools', 'blender', 'blender-5.10.0-windows-x64', exe), source: 'tools-blender' });
+  });
+  it('searches ~/.agent-meshes/blender/* first, and honours AGENT_MESHES_HOME', async () => {
+    const home = await sandbox(); const managed = join(home, 'elsewhere');
+    await fakeBlender(home, 'tools', 'blender', 'blender-5.2.2-windows-x64');
+    const inHome = await fakeBlender(home, '.agent-meshes', 'blender', 'blender-4.2.3-windows-x64');
+    expect(findBlender(options(home))).toMatchObject({ command: inHome, source: 'agent-meshes-home' });
+    const custom = await fakeBlender(managed, 'blender', 'blender-4.5.0-windows-x64');
+    expect(findBlender(options(home, { AGENT_MESHES_HOME: managed }))).toMatchObject({ command: custom, source: 'agent-meshes-home' });
+  });
+  it('skips folders without an executable and returns null when nothing is installed', async () => {
+    const home = await sandbox(); await mkdir(join(home, 'tools', 'blender', 'blender-5.2.2-windows-x64'), { recursive: true });
+    expect(findBlender(options(home, { PATH: '' }))).toBeNull();
+  });
+  it('falls back to PATH and labels it', async () => {
+    const home = await sandbox(); const bin = join(home, 'bin'); await fakeBlender(bin);
+    const name = process.platform === 'win32' ? 'blender.exe' : 'blender';
+    if (process.platform === 'darwin') return; // macOS PATH lookup expects a plain `blender` file
+    expect(findBlender(options(home, { PATH: bin }))).toMatchObject({ command: join(bin, name), source: 'path' });
+  });
+});
 
 it('reports whether Blender is available without throwing', () => {
   expect(blender === null || typeof blender.command === 'string').toBe(true);

@@ -9,20 +9,54 @@ import { accessSync, constants, lstatSync, readdirSync } from 'node:fs';
  * Optional Blender stage: subdivide, smooth and displace a GLB while keeping its skeleton and
  * clips. Blender is never required; `findBlender` says whether the stage is available.
  */
-export interface BlenderLocation { command: string; /** The Windows Store launcher exits at once, so completion is read from a sentinel file. */ detached: boolean }
+export type BlenderSource = 'AGENT_MESHES_BLENDER' | 'agent-meshes-home' | 'tools-blender' | 'program-files' | 'windows-store' | 'applications' | 'path';
+export interface BlenderLocation {
+  command: string;
+  /** The Windows Store launcher exits at once, so completion is read from a sentinel file. */
+  detached: boolean;
+  /** Which discovery rule found it, so `setup --check` can say where Blender came from. */
+  source: BlenderSource;
+}
+export interface FindBlenderOptions { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; home?: string }
 
-export function findBlender(): BlenderLocation | null {
-  const explicit = process.env.AGENT_MESHES_BLENDER;
-  if (explicit) return { command: explicit, detached: /blender-launcher/i.test(explicit) };
+/** Version-like directory names sort newest first (`blender-5.2.2-...` before `blender-4.5.0-...`). */
+function newestFirst(names: string[]): string[] {
+  const version = (name: string) => (/(\d+(?:\.\d+)+)/.exec(name)?.[1] ?? '0').split('.').map(Number);
+  return [...names].sort((a, b) => {
+    const [x, y] = [version(a), version(b)];
+    for (let i = 0; i < Math.max(x.length, y.length); i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (y[i] ?? 0) - (x[i] ?? 0);
+    return b.localeCompare(a);
+  });
+}
+
+/** A portable Blender is an unzipped release folder: `<root>/<blender-x.y.z-platform>/blender(.exe)` (macOS: Blender.app inside it). */
+function portableCandidates(root: string, platform: NodeJS.Platform, source: BlenderSource): BlenderLocation[] {
+  let names: string[];
+  try { names = readdirSync(root); } catch { return []; }
+  const executables = platform === 'win32' ? ['blender.exe'] : platform === 'darwin' ? ['Blender.app/Contents/MacOS/Blender', 'Contents/MacOS/Blender'] : ['blender'];
+  return newestFirst(names).flatMap(dir => executables.map(exe => ({ command: join(root, dir, exe), detached: false, source })));
+}
+
+/**
+ * Find Blender. Order: AGENT_MESHES_BLENDER, a portable copy under `<managed home>/blender/*` (default `~/.agent-meshes/blender`),
+ * a portable copy under `~/tools/blender/*`, the usual system installs, then PATH. Portable folders are searched
+ * before system installs because putting one there is a deliberate choice (the installers can be blocked by a bot challenge).
+ */
+export function findBlender(options: FindBlenderOptions = {}): BlenderLocation | null {
+  const env = options.env ?? process.env, platform = options.platform ?? process.platform, home = options.home ?? homedir();
+  const explicit = env.AGENT_MESHES_BLENDER;
+  if (explicit) return { command: explicit, detached: /blender-launcher/i.test(explicit), source: 'AGENT_MESHES_BLENDER' };
   const candidates: BlenderLocation[] = [];
-  if (process.platform === 'win32') {
+  candidates.push(...portableCandidates(join(env.AGENT_MESHES_HOME ? resolve(env.AGENT_MESHES_HOME) : join(home, '.agent-meshes'), 'blender'), platform, 'agent-meshes-home'));
+  candidates.push(...portableCandidates(join(home, 'tools', 'blender'), platform, 'tools-blender'));
+  if (platform === 'win32') {
     for (const root of ['C:/Program Files/Blender Foundation', 'C:/Program Files (x86)/Blender Foundation']) {
-      try { for (const dir of readdirSync(root)) candidates.push({ command: join(root, dir, 'blender.exe'), detached: false }); } catch { /* not installed there */ }
+      try { for (const dir of readdirSync(root)) candidates.push({ command: join(root, dir, 'blender.exe'), detached: false, source: 'program-files' }); } catch { /* not installed there */ }
     }
-    const apps = join(homedir(), 'AppData/Local/Microsoft/WindowsApps');
-    try { for (const dir of readdirSync(apps)) if (/^BlenderFoundation\.Blender/i.test(dir)) candidates.push({ command: join(apps, dir, 'blender-launcher.exe'), detached: true }); } catch { /* no store apps */ }
-  } else if (process.platform === 'darwin') candidates.push({ command: '/Applications/Blender.app/Contents/MacOS/Blender', detached: false });
-  for (const dir of (process.env.PATH ?? '').split(process.platform === 'win32' ? ';' : ':')) if (dir) candidates.push({ command: join(dir, process.platform === 'win32' ? 'blender.exe' : 'blender'), detached: false });
+    const apps = join(home, 'AppData/Local/Microsoft/WindowsApps');
+    try { for (const dir of readdirSync(apps)) if (/^BlenderFoundation\.Blender/i.test(dir)) candidates.push({ command: join(apps, dir, 'blender-launcher.exe'), detached: true, source: 'windows-store' }); } catch { /* no store apps */ }
+  } else if (platform === 'darwin') candidates.push({ command: '/Applications/Blender.app/Contents/MacOS/Blender', detached: false, source: 'applications' });
+  for (const dir of (env.PATH ?? '').split(platform === 'win32' ? ';' : ':')) if (dir) candidates.push({ command: join(dir, platform === 'win32' ? 'blender.exe' : 'blender'), detached: false, source: 'path' });
   // A Store app's launcher is an execution alias: stat refuses it, lstat calls it a link, access allows it.
   for (const candidate of candidates) {
     try { if (lstatSync(candidate.command).isDirectory()) continue; accessSync(candidate.command, constants.X_OK); return candidate; } catch { /* keep looking */ }
