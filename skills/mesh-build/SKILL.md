@@ -73,6 +73,27 @@ is replaced only when it is marked as owned by that config, so never point `outp
 directory holding other work. A failed build leaves the previous output in place; after a crash,
 confirm the process is gone before removing the adjacent `.agent-meshes.lock`.
 
+## Static props for a game engine: names, merge, budgets
+
+For a static prop or a set of them, use `build.json` only; no workspace is needed.
+
+- `material.name` (for example `PieceWhite`) becomes the glTF material name, and parts or shells with the same
+  name, colour and finish share one exported material.
+- `"merge":"byMaterial"` fuses every part into one mesh with one primitive per material. Part names are lost in
+  the GLB, so use it only for deliverables nobody addresses part by part. Skinned or animated models are refused
+  (`MERGE_NOT_STATIC`).
+- A `shell.set` colour that looks tan or glossy next to lathe parts is the baked tint and occlusion multiplying the
+  base colour; set `"vertexColors":false` (one member colour, no pattern) so it matches.
+- State the numbers in the build: `"verify":{"maxTriangles":2500,"maxMaterials":2,"expectPivot":"bottom-center",
+  "expectHeight":0.58}` or `mesh verify model.glb --max-triangles N --max-materials N --expect-pivot bottom-center
+  --expect-height H [--tolerance m]`. Bounds are world-space from the final vertices, so rotated parts are measured
+  correctly; do not read accessor min/max.
+- `mesh silhouette model.glb --axis y --bins 80 --json` charts radius against height. `--lint` flags notches (a
+  radius minimum with larger radii above and below; exit 1) and `--allow y0:y1` exempts intended collars. State the
+  invariant first ("radius never grows above the plinth"), then lint it.
+- Before a revert, `mesh stats model.glb` records triangles, materials, bounds and a profile hash; afterwards
+  `mesh diff before.glb after.glb` proves nothing changed.
+
 ## Fast Blender previews while iterating
 
 `mesh preview <build.json|source.py>` runs a Blender-authored source's `build()` headlessly and

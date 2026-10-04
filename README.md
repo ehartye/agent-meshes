@@ -199,6 +199,86 @@ uses reference budgets and advises care with assets exceeding 20k vertices unles
 proper LODs exist. The reusable report API is `auditGeometryBudget` in
 `src/geometry-budget.ts`; existing generic verification remains unchanged.
 
+### Named materials and static merge
+
+Name a finish with `material.name` (parts and shells): `{"material":{"name":"PieceWhite","metalness":0,"roughness":0.5}}`.
+The exporter writes it as the glTF material `name` and shares **one glTF material between
+every part or shell with the same name, colour and finish** (a rook of seven white parts exports one
+material, not seven). Unnamed identical materials are shared too, and different colours or finishes
+never merge. Give materials that mean the same thing the same colour as well as the same name; two
+parts with the same name but different colours export two materials with the same name.
+
+For game-engine import, `"merge":"byMaterial"` in `build.json` (or `export model.glb --merge byMaterial`)
+fuses all parts into **one mesh with one primitive per material**, in world space, so an engine
+creates one object per model instead of one per part. The trade-off: **named parts, groups and the
+node hierarchy are lost in the GLB** (they stay in `project.mesh.json`), so nothing can address a
+single part afterwards. It only applies to a static model: a model with skinned (bound) parts or
+animation clips is refused with the stable error code `MERGE_NOT_STATIC`, and a Blender-authored
+build is not merged. Where some materials use vertex colours (patterned parts, default shells), plain
+parts in the merged mesh carry an all-white COLOR_0 so every primitive has the same attributes; it
+multiplies to no change. Default output is unchanged without the option.
+
+### Shell colour: `vertexColors`
+
+A shell bakes its member colours, blend and ambient occlusion into vertex colours (COLOR_0 and the
+base COLOR_1). glTF multiplies COLOR_0 by the material base colour, so a white shell comes out tan and
+a black one lighter next to lathe parts of the same colour: the baked tint and the occlusion shade
+both scale the base colour. `shell.set` with `"vertexColors":false` exports neither attribute and puts
+the single member colour on the material, so the shell matches a plain part with that colour and
+finish (and shares its exported material). It requires every member to share one colour and no
+`pattern` (patterns are baked into vertex colours); the default is unchanged. The cost is no
+occlusion shading in the crevices.
+
+### Budgets, bounds and pivot checks
+
+```text
+node scripts/agent-meshes.mjs verify model.glb --max-triangles 2500 --max-materials 2
+node scripts/agent-meshes.mjs verify model.glb --expect-pivot bottom-center --expect-height 0.58 --tolerance 0.002
+```
+
+Options: `--max-triangles N` (triangles drawn by the default scene, every node instance counted),
+`--max-materials N` (distinct materials the drawn meshes reference), `--expect-pivot bottom-center|center`
+(the base centre `[centre x, lowest y, centre z]`, or the bounds centre, must sit at the origin),
+`--expect-height H` (world y extent), `--tolerance m` (default 0.001), `--warn-only`. The JSON gains a
+`limits` object with `ok`, `triangles`, `materials`, `checks`, `failures` and `bounds` (`min`, `max`,
+`size`, `center`, `yMin`, `baseCenter`). A violation prints `FAIL ...` lines on stderr and exits 1
+(`--warn-only` prints `WARN`, exits 0). Bounds come from the final vertices with node matrices
+applied, not accessor min/max, which are wrong for rotated parts exported as `matrix` nodes; a skinned
+node's own transform is ignored as glTF specifies, and morphs and animation are not applied.
+
+The same checks run in `build.json` on the final GLB (after Blender authoring or refine), and are
+written to `verification.json` under `limits`:
+
+```json
+{"version":1,"operations":"ops.json","output":"dist","merge":"byMaterial",
+ "verify":{"maxTriangles":2500,"maxMaterials":2,"expectPivot":"bottom-center","expectHeight":0.58,"tolerance":0.002,
+           "lintProfile":{"axis":"y","bins":100,"allow":[[0.05,0.12]]}}}
+```
+
+A violation fails the build with error code `VERIFY_LIMITS_FAILED` unless `"warnOnly":true`.
+
+### Silhouette and profile lint
+
+```text
+node scripts/agent-meshes.mjs silhouette model.glb --axis y --bins 80 --json
+node scripts/agent-meshes.mjs silhouette model.glb --lint --allow 0.05:0.12 --allow 0.40:0.45
+```
+
+`silhouette` prints the radius against height of the exported geometry: for each of `--bins` slabs
+along the axis (`x`, `y` or `z`) the largest distance from the axis of any surface in it, with triangles
+clipped to the slab so long walls are measured in every bin (`radius` is `null` for empty bins). The axis
+passes through the origin unless `--center a,b` moves it (the other two coordinates, in axis order).
+`--lint` also reports every **notch**: a local radius minimum with a larger radius below and above it,
+with its height, radius, the radii around it and its depth, and exits 1 when any exists. `--allow y0:y1`
+(repeatable) exempts heights where a narrowing is intended (a collar, a bead); `--lint-tolerance m`
+(default 0.001) ignores radius changes smaller than that. The same lint is available as `verify.lintProfile`
+in `build.json`.
+
+To check that a revert or refactor left a model unchanged, `stats model.glb` prints a fingerprint
+(triangles, materials, meshes, world bounds, base centre and a silhouette `profileHash`) and
+`diff a.glb b.glb` compares two files by those fields and exits 1 with the differences listed (`--bytes`
+also requires identical bytes).
+
 `node scripts/check-animated-build.mjs` exercises rendered builds and offline exported playback. `node scripts/check-animation-browser.mjs` then verifies scrubbing, key recording and pose editing in the workbench. These write ignored evidence under `artifacts/`.
 
 ## Optional Blender stage
