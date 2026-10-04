@@ -22,7 +22,7 @@ export type Binding =
  * Surface finish, 0 to 1 each: metalness 1 is bare metal, roughness 0 is a mirror. Glass adds opacity below 1 (glTF
  * alphaMode BLEND), transmission (KHR_materials_transmission), ior (KHR_materials_ior, 1 to 2.333) and doubleSided.
  */
-export interface Material { metalness: number; roughness: number; opacity?: number; transmission?: number; ior?: number; doubleSided?: boolean }
+export interface Material { metalness: number; roughness: number; /** glTF material name; identical name, colour and finish share one exported material. */ name?: string; opacity?: number; transmission?: number; ior?: number; doubleSided?: boolean }
 /**
  * Optional shape refinements. Absent means the original behaviour exactly.
  * lathe: profileUnits, corners, angleRange, startAngle. prism: outlineUnits, axis, bevel.
@@ -59,7 +59,7 @@ export interface Keyframe { time: number; value: Vec3 | Quat }
 export interface Track { bone: string; property: 'rotation' | 'position'; keys: Keyframe[] }
 export interface Clip { name: string; duration: number; tracks: Track[] }
 /** A smooth surface blended from several parts; it replaces them when rendered or exported. */
-export interface Shell { name: string; parts: string[]; cut?: string[]; blend: number; colorBlend?: number; resolution: number; material?: Material; pattern?: Pattern }
+export interface Shell { name: string; parts: string[]; cut?: string[]; blend: number; colorBlend?: number; resolution: number; material?: Material; pattern?: Pattern; /** false omits the baked COLOR_0/COLOR_1 (member tint times occlusion); the material carries the single member colour. Default true. */ vertexColors?: boolean }
 export interface Project { version: 1; name: string; parts: Part[]; bones: BoneDef[]; clips: Clip[]; shells?: Shell[] }
 export type PartInput = Pick<Part, 'name'> & Partial<Omit<Part, 'name' | 'geometry' | 'material'>> & {
   geometry?: { type: GeometryKind; size?: Vec3; segments?: number; mirrorX?: boolean; profile?: Vec2[]; outline?: Vec2[] } & ShapeOptions;

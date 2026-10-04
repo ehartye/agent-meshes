@@ -7,6 +7,8 @@ import { validateProject } from './core/model.ts';
 import { auditGeometryBudget, type GeometryBudgetOptions, type GeometryBudgetReport } from './geometry-budget.ts';
 import { buildScene, disposeScene } from './render/scene.ts';
 import { ensureFileReader } from './node-file-reader.ts';
+import { shareIdenticalMaterials } from './export-materials.ts';
+import { assertMergeable, mergeByMaterial, mergeModes, type MergeMode } from './export-merge.ts';
 
 /** The parts of three's GLTFWriter that its type declaration leaves out but plugins may reach. */
 interface GLTFWriterInternals {
@@ -15,12 +17,28 @@ interface GLTFWriterInternals {
   processSkin(object: SkinnedMesh): number | null;
 }
 
-export async function exportGLB(project: Project): Promise<Uint8Array> {
+export interface ExportOptions {
+  /** `byMaterial` fuses a static model into one mesh with one primitive per material; part names are lost. */
+  merge?: MergeMode;
+}
+export async function exportGLB(project: Project, options: ExportOptions = {}): Promise<Uint8Array> {
+  if (options.merge !== undefined && !mergeModes.includes(options.merge)) throw Object.assign(new Error(`Unknown merge mode: ${String(options.merge)}; use byMaterial`), { code: 'MERGE_MODE_UNKNOWN' });
   const clean = validateProject(structuredClone(project));
+  if (options.merge) assertMergeable(clean);
   for (const bone of clean.bones) bone.pose = [0, 0, 0, 1];
   const built = buildScene(clean);
   const scene = new Scene(); scene.name = clean.name; scene.add(built.root);
   try {
+    if (options.merge) {
+      const fused = new Scene(); fused.name = clean.name;
+      fused.add(mergeByMaterial(built.root, clean.name));
+      fused.updateMatrixWorld(true);
+      ensureFileReader();
+      const output = await new GLTFExporter().parseAsync(fused, { binary: true });
+      if (!(output instanceof ArrayBuffer)) throw new Error('Exporter did not produce a binary GLB');
+      disposeScene(fused);
+      return new Uint8Array(output);
+    }
     // glTF skins need one common skeleton root. A project may have several root bones (a chair
     // whose every rod has its own bone), so gather them under one identity bone for the export.
     const rootBones = [...built.bones.values()].filter(bone => !(bone.parent instanceof Bone));
@@ -65,6 +83,7 @@ export async function exportGLB(project: Project): Promise<Uint8Array> {
       }
     }
     scene.updateMatrixWorld(true);
+    for (const material of shareIdenticalMaterials(scene)) material.dispose();
     ensureFileReader();
     const exporter = new GLTFExporter();
     exporter.register(plugin => {

@@ -83,6 +83,8 @@ export const materialSchema = z.object({
   metalness: z.number().min(0).max(1).default(0), roughness: z.number().min(0).max(1).default(0.65),
   opacity: z.number().min(0).max(1).optional(), transmission: z.number().min(0).max(1).optional(),
   ior: z.number().min(1).max(2.333).optional(), doubleSided: z.boolean().optional(),
+  /** glTF material name, for example PieceWhite. Parts with the same name, colour and finish export one shared material. */
+  name: z.string().trim().min(1).max(100).optional(),
 }).strict();
 const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 /** A painted pattern baked into vertex colors in world space. `size` is the dot spacing, stripe period or check size in meters. */
@@ -127,6 +129,8 @@ export const shellSchema = z.object({
   resolution: z.number().int().min(16).max(96),
   material: materialSchema.optional(),
   pattern: patternSchema.optional(),
+  /** Default true: member colours and ambient occlusion are baked into COLOR_0 and multiply the material colour. false exports no vertex colours, so the shell takes its one member colour from the material and matches a plain part of that colour and finish. */
+  vertexColors: z.boolean().optional(),
 }).strict();
 export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]), shells: z.array(shellSchema).max(50).default([]) }).strict();
 const shapeOptionKeys = ['profileUnits', 'corners', 'angleRange', 'startAngle', 'outlineUnits', 'axis', 'bevel'] as const;
@@ -151,6 +155,11 @@ function validateShells(project: Project): void {
     }
     const bound = shell.parts.filter(name => project.parts.find(p => p.name === name)!.binding);
     if (bound.length && bound.length !== shell.parts.length) throw new Error(`Shell ${shell.name} mixes bound and unbound parts`);
+    if (shell.vertexColors === false) {
+      const colors = new Set(shell.parts.map(name => project.parts.find(p => p.name === name)!.color.toLowerCase()));
+      if (shell.pattern) throw Object.assign(new Error(`Shell ${shell.name}: vertexColors false cannot be combined with a pattern, which is baked into vertex colors`), { code: 'SHELL_VERTEX_COLORS' });
+      if (colors.size > 1) throw Object.assign(new Error(`Shell ${shell.name}: vertexColors false needs every member to share one color, found ${[...colors].join(', ')}`), { code: 'SHELL_VERTEX_COLORS' });
+    }
     const cut = shell.cut ?? [];
     if (new Set(cut).size !== cut.length) throw new Error(`Shell ${shell.name} lists a cutter twice`);
     for (const name of cut) {

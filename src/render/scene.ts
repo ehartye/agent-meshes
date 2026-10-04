@@ -36,7 +36,10 @@ export function buildScene(project: Project) {
   for (const object of objects.values()) if (object instanceof SkinnedMesh) object.bind(skeleton, object.matrixWorld);
   for (const shell of shells) {
     const built = buildShellGeometry(project, shell, [...bones.keys()]);
-    const material = finishMaterial('#ffffff', true, shell.material ?? defaultFinish);
+    // vertexColors false: no baked tint or occlusion, so the shell is the member colour like any plain part.
+    const plain = shell.vertexColors === false;
+    if (plain) { built.geometry.deleteAttribute('color'); built.geometry.deleteAttribute('color_1'); }
+    const material = finishMaterial(plain ? project.parts.find(p => p.name === shell.parts[0])!.color : '#ffffff', !plain, shell.material ?? defaultFinish);
     const object = built.geometry.getAttribute('skinIndex') ? new SkinnedMesh(built.geometry, material) : new Mesh(built.geometry, material);
     object.name = shell.name; object.castShadow = !isGlassFinish(shell.material); object.receiveShadow = true; object.userData.shell = shell.name;
     if (shell.pattern) object.userData.pattern = structuredClone(shell.pattern);
