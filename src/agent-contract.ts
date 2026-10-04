@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { applyOperation, createProject, partChangesSchema, partSchema, projectSchema, validateProject } from './core/model.ts';
+import { applyOperation, createProject, partChangesSchema, partSchema, projectSchema, rotationEulerSchema, validateProject } from './core/model.ts';
 import { bindingBones, bindingSchema, boneSchema, nameSchema, quatSchema } from './core/rig.ts';
 import { clipSchema } from './core/animation.ts';
 import { shellSchema } from './core/model.ts';
@@ -7,7 +7,7 @@ import { assemblyCopySchema } from './core/assembly.ts';
 import { poseTargetSchema } from './core/pose-target.ts';
 import type { BoneDef, Clip, Operation, Part, Project } from './core/types.ts';
 
-const partInputSchema = partSchema.omit({ geometry: true }).partial().required({ name: true }).extend({ anchor: nameSchema.optional() })
+const partInputSchema = partSchema.omit({ geometry: true }).partial().required({ name: true }).extend({ anchor: nameSchema.optional(), rotationEuler: rotationEulerSchema.optional() })
   .extend({ geometry: partSchema.shape.geometry.partial().required({ type: true }).optional() });
 const named = { name: nameSchema };
 

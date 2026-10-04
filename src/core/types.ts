@@ -23,9 +23,29 @@ export type Binding =
  * alphaMode BLEND), transmission (KHR_materials_transmission), ior (KHR_materials_ior, 1 to 2.333) and doubleSided.
  */
 export interface Material { metalness: number; roughness: number; opacity?: number; transmission?: number; ior?: number; doubleSided?: boolean }
+/**
+ * Optional shape refinements. Absent means the original behaviour exactly.
+ * lathe: profileUnits, corners, angleRange, startAngle. prism: outlineUnits, axis, bevel.
+ */
+export interface ShapeOptions {
+  /** lathe: 'metres' reads profile points as real [radius, height] in meters, height up from the part origin, ignoring size. Default 'unit'. */
+  profileUnits?: 'unit' | 'metres';
+  /** lathe: indices of profile points that are hard edges (normals split there). */
+  corners?: number[];
+  /** lathe: [startDeg, endDeg] revolves only that sector and caps its radial ends. Angles run about +y from +z toward +x. */
+  angleRange?: [number, number];
+  /** lathe: degrees of phase of the segment grid (default 0), so lathes and sectors with equal segments and phase share vertices. */
+  startAngle?: number;
+  /** prism: 'metres' reads outline points as real meters and extrudes from the part origin to size along the axis. Default 'unit'. */
+  outlineUnits?: 'unit' | 'metres';
+  /** prism: extrusion axis. 'z' (default) takes an XY outline; 'y' takes an XZ outline and extrudes upward. */
+  axis?: 'y' | 'z';
+  /** prism: chamfer width on both cap edges (outline units), without changing footprint or height. */
+  bevel?: number;
+}
 export interface Part {
   name: string;
-  geometry: { type: GeometryKind; size: Vec3; segments: number; mirrorX?: boolean; profile?: Vec2[]; outline?: Vec2[] };
+  geometry: { type: GeometryKind; size: Vec3; segments: number; mirrorX?: boolean; profile?: Vec2[]; outline?: Vec2[] } & ShapeOptions;
   color: string;
   position: Vec3;
   rotation: Quat;
@@ -42,14 +62,16 @@ export interface Clip { name: string; duration: number; tracks: Track[] }
 export interface Shell { name: string; parts: string[]; cut?: string[]; blend: number; colorBlend?: number; resolution: number; material?: Material; pattern?: Pattern }
 export interface Project { version: 1; name: string; parts: Part[]; bones: BoneDef[]; clips: Clip[]; shells?: Shell[] }
 export type PartInput = Pick<Part, 'name'> & Partial<Omit<Part, 'name' | 'geometry' | 'material'>> & {
-  geometry?: { type: GeometryKind; size?: Vec3; segments?: number; mirrorX?: boolean; profile?: Vec2[]; outline?: Vec2[] };
+  geometry?: { type: GeometryKind; size?: Vec3; segments?: number; mirrorX?: boolean; profile?: Vec2[]; outline?: Vec2[] } & ShapeOptions;
   material?: Partial<Material>;
+  /** Alternative to `rotation`: [x, y, z] degrees, three.js 'XYZ' order (world axes: z first, then y, then x). Giving both is an error. */
+  rotationEuler?: Vec3;
   /** Express position and rotation in this bone's rest frame; the stored part is converted to world coordinates. */
   anchor?: string;
 };
 export type Operation =
   | { op: 'add'; part: PartInput }
-  | { op: 'update'; name: string; changes: Partial<Omit<Part, 'name' | 'material' | 'pattern'>> & { material?: Partial<Material>; pattern?: Pattern | null } }
+  | { op: 'update'; name: string; changes: Partial<Omit<Part, 'name' | 'material' | 'pattern'>> & { material?: Partial<Material>; pattern?: Pattern | null; rotationEuler?: Vec3 } }
   | { op: 'remove'; name: string }
   | RigOperation
   | AssemblyCopyOperation
