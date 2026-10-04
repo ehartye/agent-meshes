@@ -4,6 +4,7 @@ import { morphNameAudit } from './gltf-morphs.ts';
 import { auditSkins } from './gltf-skins.ts';
 import { verifyGLB } from './export.ts';
 import { attachedParts, attachedTriangles, type AttachedPart } from './face-attach.ts';
+import { surfaceCrossings, type SurfaceCrossing } from './surface-crossings.ts';
 import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument, type GLTFMaterial } from './gltf-read.ts';
 
 /**
@@ -156,6 +157,8 @@ export interface FaceContractReport {
     mouthOpen: { height: number; xs: number[]; hits: string[]; rays: number; lightest: number } | null;
     /** Front rays over the teeth rows at rest: how many land on teeth before anything else (declared exposedTeeth may show). */
     restTeeth: { samples: number; visible: number } | null;
+    /** Strict mouth/skin intersections at sampled morph states; bounded examples, not an enclosure proof. */
+    mouthCrossings: { states: number; examples: (SurfaceCrossing & { combo: string })[]; capped: boolean };
     eyes: Partial<Record<'L' | 'R', EyeMeasure>>; teeth: { upperMove: number | null; lowerDrop: number | null };
     /** Small parts joined to the face (brows, ridges, nostrils): their worst gap to the skin at rest and at each morph. */
     attached: AttachedPart[];
@@ -189,10 +192,11 @@ const upperTeeth = (names: string[]) => names.some(n => toothName(n) && (/upper/
 const lowerTeeth = (names: string[]) => names.some(n => toothName(n) && /lower/i.test(n));
 const tongue = (names: string[]) => names.some(n => /tongue/i.test(n));
 const cavity = (names: string[]) => names.some(n => /cavity|throat|mouth[_ -]?interior/i.test(n));
+const gums = (names: string[]) => names.some(n => /gums?/i.test(n));
 const socket = (names: string[]) => names.some(n => /socket/i.test(n));
 /** Parts below the head that the chin measurement ignores (a neck, collar or body does not open with the jaw). */
 const body = (names: string[]) => names.some(n => /neck|collar|body|torso|shoulder/i.test(n));
-const mouthPart = (names: string[]) => upperTeeth(names) || lowerTeeth(names) || tongue(names) || cavity(names);
+const mouthPart = (names: string[]) => upperTeeth(names) || lowerTeeth(names) || tongue(names) || cavity(names) || gums(names);
 
 /** Why a material lets light through (so it hides nothing), or null when it is opaque. */
 function seeThrough(material: GLTFMaterial | undefined): string | null {
@@ -463,7 +467,7 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     if (skippedBecause) checks.push({ id, ok: false, message: `skipped: ${skippedBecause}`, problems: [`skipped because ${skippedBecause}`] });
     else checks.push({ id, ok: problems.length === 0, message: problems.length ? problems[0] : message, problems });
   };
-  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, inversions: [], chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, restTeeth: null, eyes: {}, teeth: { upperMove: null, lowerDrop: null }, attached: [] };
+  const measurements: FaceContractReport['measurements'] = { height: 0, morphs: [], morphMotion: {}, inversionCombos: 0, inversions: [], chinDrop: null, faceHeight: null, chinDropRatio: null, upperLipMove: null, mouthOpen: null, restTeeth: null, mouthCrossings: { states: 0, examples: [], capped: false }, eyes: {}, teeth: { upperMove: null, lowerDrop: null }, attached: [] };
 
   // 1. glTF validator
   const validation = await verifyGLB(bytes);
@@ -1209,6 +1213,53 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
       check('mouth-open', problems, `jawOpen=1 shows ${[...new Set(hits.map(h => h?.label ?? '(nothing)'))].join(', ')} between the lips`);
     }
   } else check('mouth-open', [], '', 'the upper or lower teeth were not found');
+
+  // 19. Interior geometry may show through the mouth aperture, but may not cross skin.
+  // Front visibility and correct binding cannot detect a gum piercing an oblique cheek.
+  const interior = all.filter(i => mouthPart(i.names));
+  // Static, explicitly anatomical skin is a barrier too, even in its own GLB mesh.
+  // The older `skin` selection serves chin/lid measurements with different needs.
+  const crossingSkin = all.filter(i => !mouthPart(i.names) && !socket(i.names) && !eyeballInstances.has(i) && !dressing(i)
+    && (!body(i.names) || !!i.sourceVertices || !!i.faceMembership)
+    && (!bodySkeleton || i.morphMesh || !!i.faceMembership || i.bindingNames.some(n => /skin|skull|face|head|lid/i.test(n))));
+  const mouthStates = new Map<string, { label: string; weights: Record<string, number> }>();
+  const addMouthState = (weights: Record<string, number>) => {
+    const entries = Object.entries(weights).filter(([name, w]) => w && fileMorphs.includes(name)).sort(([a], [b]) => a.localeCompare(b));
+    const label = entries.map(([name, w]) => `${name}=${w}`).join(' + ') || 'rest';
+    mouthStates.set(label, { label, weights: Object.fromEntries(entries) });
+  };
+  // List bare jaw samples first so bounded diagnostics retain intermediate openings.
+  for (const jawOpen of [0, .25, .5, .75, 1]) addMouthState({ jawOpen });
+  for (const curves of Object.values(presets)) {
+    addMouthState(Object.fromEntries(Object.entries(curves).filter(([, w]) => isNumber(w))) as Record<string, number>);
+  }
+  for (const jawOpen of [0, .25, .5, .75, 1]) {
+    for (const name of fileMorphs.filter(n => /^(mouth|cheek|nose|jaw)/.test(n) && n !== 'jawOpen')) {
+      for (const w of [.5, 1]) addMouthState({ jawOpen, [name]: w });
+    }
+    for (const stem of ['mouthSmile', 'mouthFrown', 'mouthStretch', 'cheekSquint']) {
+      for (const w of [.5, 1]) addMouthState({ jawOpen, [stem + 'Left']: w, [stem + 'Right']: w });
+    }
+    for (const curves of Object.values(presets)) {
+      const weights = Object.fromEntries(Object.entries(curves).filter(([, w]) => isNumber(w))) as Record<string, number>;
+      addMouthState({ ...weights, jawOpen });
+    }
+  }
+  if (interior.length && crossingSkin.length) {
+    const report = measurements.mouthCrossings;
+    for (const state of mouthStates.values()) {
+      const posed = (i: Instance) => ({ label: i.label, points: positions(i, state.weights), triangles: i.triangles, sourceTriangles: i.sourceTriangles });
+      const hits = surfaceCrossings(crossingSkin.map(posed), interior.map(posed), 1e-6, 4);
+      report.states++;
+      for (const hit of hits) {
+        if (report.examples.length < 20) report.examples.push({ ...hit, at: hit.at.map(v => round(v)), combo: state.label });
+        else report.capped = true;
+      }
+      if (hits.length === 4) report.capped = true;
+    }
+    check('mouth-skin-intersection', report.examples.map(h => `${h.combo}: ${h.part} triangle ${h.triangle} crosses skin ${h.skin} triangle ${h.skinTriangle} at [${h.at.map(mm).join(', ')}]; fit the mouth interior within the animated face`),
+      `no strict mouth/skin crossings at ${report.states} sampled morph states (contacts allowed; not a proof of enclosure or continuous motion)`);
+  } else check('mouth-skin-intersection', [], '', 'mouth parts or anatomical face skin were not found');
 
   const failures = checks.flatMap(c => c.problems.map(p => `${c.id}: ${p}`));
   return {
