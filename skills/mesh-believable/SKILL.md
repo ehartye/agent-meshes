@@ -55,9 +55,81 @@ Renders already carry environment lighting, soft shadows and shell ambient occlu
 subject needs fur, feathers or a sculpted skin, add the `refine` block to `build.json`
 ([mesh-build](../mesh-build/SKILL.md)): one subdivision level plus a small noise displacement
 (around 0.003 m, scale 0.04) limited with `only` to the shell. Lower the shell resolution first;
-a 96-cell shell subdivided once produces tens of thousands of vertices.
+a 96-cell shell subdivided once produces tens of thousands of vertices. Section 6 has measured
+triangle costs for shells and lathes.
 
-## 6. Verify by looking
+## 6. Turned objects and triangle budgets
+
+Measured on a 12-piece chess set (agent-meshes 0.13.1, Blender 5.2.2). Numbers are for these tools as shipped; recheck
+`capabilities` for anything that may have changed.
+
+**Lathe conventions.** The unit profile is `[radius, height]` with radius 0 to 0.5 and height -0.5 to 0.5. The real
+radius is `r * size[0]` (not `size[0] / 2`), the lathe's centre is the part origin, so the bottom is at `-size[1] / 2`
+(place the part at `y = ymin + size[1] / 2` to stand it on the ground). Profile points with radius 0 at the first and
+last point close the bottom and top caps; no extra cap geometry is needed. Up to 64 points.
+
+**What a lathe costs.** Triangles = `2 * segments * (profile points - 1)`: a pawn of 27 profile points at 32 segments is
+1,664 tris (an earlier, shorter profile measured about 1,400). In Blender's screw lathe each zero-radius endpoint welds its pole
+and saves `segments` triangles. So every profile point you add costs `2 * segments` triangles: at 32 segments, 64 triangles;
+at 76 segments, 152. A reference-faithful queen profile of about 55 points is 3,000 triangles at 28 segments before the
+crown. Spend points on silhouette changes and segments on the largest drum, and use two lathes joined (a body at 40
+segments, a head at 76) rather than one lathe at 76.
+
+**Grooves cost 3 profile points each** (in, bottom, out). Nine ring grooves are 27 of about 62 points and took a king to
+3,356 tris at 24 segments. Chamfering a circumference edge at 76 segments adds about 150 triangles per ring, and a 2-segment
+bevel instead of 1 added about 560 to a rook (3,440 to 4,000). Bake the budget in early with a per-feature count
+(`recipes/set-stats.mjs` after each build).
+
+**`shell.set` is the wrong tool under a mobile budget.** Resolution is a cell size (longest axis / resolution), not a
+quality knob, and nothing predicts the triangles. Measured: a bishop mitre (about 0.4 x 0.55 m, one member, one cut) was
+about 3,300 tris at resolution 22; a knight head shell about 1,600 at 24 (blobby) and about 3,300 at 32; the documented
+"good default" of 48 gives 10k+ for the same mitre, so cost rises about 3x for 2.2x the resolution. A smoothed knight at
+resolution 28 with blend 0.07 was about 3,300 tris. Features are limited by the cell: a `cut` smaller than about twice the
+blend barely registers and a larger one removes thin parts; eyes, nostrils and a mouth as cuts were not readable at 6 cm. A
+shell also bakes tint and ambient occlusion into `COLOR_0`/`COLOR_1`, which shifts a flat colour (see mesh-authoring,
+"Materials today"). Use a shell for organic fusion on a model with a generous budget; use lathes, prisms and Blender
+booleans for hard-surface props with a cap of a few thousand triangles. A piece that must look round at close range needs
+about 3,500 triangles, more than a 2,500 mobile cap, so agree the cap before modelling, not after.
+
+**Shallow recesses are invisible without ambient occlusion.** Flat parts get directional shading only. Judge a recess by the
+depth it has at the SIZE IT IS SHOWN, in real millimetres: 2 mm at authored scale was invisible, 12 mm still a faint band,
+25 to 30 mm (about 1 mm at VR scale) read only faintly in the front view, and 50 mm (about 2 mm at VR scale) finally read
+as a slot. Author arrow loops, ring grooves and engraved lines at a depth that survives the viewer's lighting, then check
+with a close-up camera (`set-sheet.mjs --camera ...`), not the auto-framed render. A recess built from separate raised
+pieces around a gap is never an acceptable stand-in for a cut; if you cannot cut, say so.
+
+**Flushness needs a shared segment grid.** A prism's arc polygon never coincides with a lathe's facets, so flush pieces z-fight
+or step by about 1 mm. Generate the added vertices on the lathe's own step angles (a segment count divisible by the number of
+repeats, for example 8 merlons on 48 or 56 segments) and union exactly, or cut the feature out of a high-resolution drum so it inherits the drum's curvature:
+additive merlons on a 48-step grid read as flat facets, crenels cut from a 76-segment drum read as one round tower.
+
+**Corners and ripples.** In 0.13.1 a lathe's normals are averaged across every profile joint, so a ledge with real corners
+shades as a rounded blob. Check `capabilities` for a per-point corner flag first; without one, either put two points about
+0.4 mm either side of the corner (3 corners at 32 segments cost about 500 triangles, 1,472 to 1,984) or build the lathe in
+Blender and use `shade_smooth_by_angle` (35 degrees keeps ring corners crisp and still selects no circumferential neighbour
+at 4.7 degrees; 55 degrees softens them). Two nearly collinear profile points on a flare ripple under smooth shading:
+spacing and curvature continuity matter more than point count.
+
+**Notch and lip vocabulary.** Name the feature before you model it, in profile order from the ground up.
+- *Plinth*: the flat stepped slab a piece stands on.
+- *Shoulder*: the convex turn where the plinth rounds into the body.
+- *Cove*: a concave quarter-round (radius goes in, then out). Any profile that goes in and then out is a groove, however gentle.
+- *Bead*: a small convex rounded ring. *Collar*: a ring that flares out under a head or neck. *Saucer*: a shallow flared dish
+  of a ring. *Lip* or *notch*: an outward ledge on the profile.
+- *Battlement*: the notched top of a tower wall, made of raised *merlons* and the gaps (*crenels*) between them. An *arrow loop* is a
+  separate narrow slit in the wall below; do not add one unless the brief names it.
+
+**Specify a shape by pointing at one.** The pawn base took four rounds (cove, lip, block ledge, saucer) because each comment
+was a single word with no picture. Say "match the neck collar on this same piece", with the numbers: that reference
+resolved it in one. When asked for a "uniform" element, first state the geometric invariant ("radius never increases up to the
+column") and add a numeric check (a silhouette from the GLB, a local-minimum test on the profile), then design; look at a
+side-by-side lineup first to find which piece is the outlier before changing them all.
+
+**When a brief uses a term you do not recognise, restate it or ask before building.** "Parapets / arrow loops" was misread:
+the arrow loops were invented, the owner meant the battlements, and the workaround construction produced exactly the faceted
+look the owner disliked. One sentence ("I read this as X; correct?") is cheaper than a rebuild.
+
+## 7. Verify by looking
 
 For a deliberate delivery review or recurring anatomy/clothing defects, use
 [mesh-quality-review](../mesh-quality-review/SKILL.md): full orbit, reference fidelity and
