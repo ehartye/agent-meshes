@@ -17,5 +17,7 @@ export function runNpm(args: string[], options?: { cwd?: string; progress?: bool
 export function installBrowser(root: string): void;
 export function checkDependencies(root: string): void;
 export function findBlenderFrom(root: string): string | null;
+export function findBlenderDetailsFrom(root: string): { command: string; source: string } | null;
+export function blenderInstallHint(platform?: string): string;
 export function installRuntime(source: string, options?: InstallOptions): Runtime;
 export function inspectInstallation(source: string, options?: Omit<InstallOptions, 'installBrowser'>): InstallationReport;

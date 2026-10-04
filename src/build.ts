@@ -3,8 +3,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Project } from './core/types.ts';
-import type { Operation } from './core/types.ts';
-import { createProject, applyOperation, validateProject } from './core/model.ts';
+import { createProject, validateProject } from './core/model.ts';
+import { applyOperations } from './agent-contract.ts';
 import { exportGLB, verifyGLB } from './export.ts';
 import { verifyEnclosures, type EnclosuresReport } from './enclosure.ts';
 import { findBlender, refineGLB } from './refine.ts';
@@ -147,7 +147,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       else {
         if (!Array.isArray(source)) throw new Error('Operations input must be a JSON array');
         project = createProject(config.name ?? basename(configFile).replace(/\.[^.]+$/, ''));
-        for (const operation of source) project = applyOperation(project, operation as Operation);
+        project = applyOperations(project, source);
       }
       let bytes = await exportGLB(project, { merge: config.merge });
       let verification = await verifyGLB(bytes, geometryTarget);

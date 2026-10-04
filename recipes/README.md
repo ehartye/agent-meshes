@@ -232,3 +232,26 @@ preview for Blender-authored assets. `--no-preview-page` therefore gives no PNGs
 for authored assets. Consumers must capture their exported GLBs with the viewer;
 Space to Grow saves those outside build-owned model folders. This is a known
 workflow gap for a separate tool change, not a reason to manually patch renders.
+
+## Static set tools
+
+`set-sheet.mjs` and `set-stats.mjs` check a set of static GLBs (a chess set, a furniture kit) together. They are plain Node
+scripts: copy or run them from the source checkout, no build step. `lib/glb.mjs` is the shared GLB reader (node matrices
+applied to every vertex); keep it beside them.
+
+```text
+node recipes/set-stats.mjs [--max-tris N] [--budget <regex>=N ...] [--max-materials N] [--require-named-materials]
+                           [--pivot bottom-centre|bottom|none] [--expect-height H] [--tolerance M] [--json] a.glb b.glb ...
+node recipes/set-sheet.mjs [--out sheet.png] [--views front,side,q34,top] [--camera name=px,py,pz>tx,ty,tz]
+                           [--target x,y,z --dist D] [--size WxH] [--crop-bottom F] [--supersample N] [--cell-scale S]
+                           [--background css] [--label '{name} {view}' | --no-labels] [--frames dir] [--json] a.glb b.glb ...
+```
+
+- `set-stats` exits 1 when a flag fires (triangle budget, material count, unnamed or unused materials, the lowest point not on
+  y = 0, the base centre off the origin, wrong height) and prints one `FLAG` line each. `--budget` matches the file path with a
+  regex, first match wins, so one call covers pieces with different budgets.
+- `set-sheet` gives every cell the same camera: 38 degree vertical field of view, target and distance from the union bounds of
+  all models unless you pass them. Built-in views are `front` (from +Z), `side` (from +X), `q34`, `top`, `back` and `back-q34`.
+  `--crop-bottom 0.3` keeps the lower 30% of each frame at twice the render size, for bases and plinth junctions. It needs the
+  managed runtime (`mesh-setup`) for the viewer and Chromium; `--runtime-root` names an installed release explicitly.
+- Both are covered by `tests/set-recipes.test.ts`.

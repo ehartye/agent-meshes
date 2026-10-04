@@ -1829,3 +1829,49 @@ Run `python tests/motion_style.py` for the numerical/adapter checks. For actual
 Blender evaluation, run `blender --background --factory-startup --python
 tests/blender_motion_style.py -- --report <report.json>`; optionally add
 `--asset <rigged.glb>` to compare imported quaternion tracks with mathutils SLERP.
+
+## Static props (`agent_meshes_props`)
+
+For one-mesh, one-material props (chess pieces, furniture, tools) with real booleans. Every public function takes
+and returns glTF axes (x right, y up, z forward); Blender's (x, -z, y) conversion is inside. The recipe that
+explains why each helper exists is "Blender-authored static props" in the `mesh-build` skill.
+
+```python
+import sys; sys.path.insert(0, '<plugin-root>/scripts/blender_lib')
+import agent_meshes_props as ap
+
+ap.reset_scene()
+body = ap.lathe('body', [(0, 0), (.38, 0), (.3, .2), (.15, .8), (0, .8)], steps=32)   # metres, y up, ground at y = 0
+head = ap.ellipsoid('head', (0, 1.2, .1), (.2, .1, .08), axis=(0, -.64, .77))           # a along axis, b sideways, c normal
+ap.refine_near(head, [(0, 1.1, .3)], .05)                                                # small triangles where we cut
+ap.boolean(head, ap.tube_along('groove', [(-.1, 1.1, .3), (0, 1.1, .32), (.1, 1.1, .3)], .01))
+ap.clean_after_boolean(head)                                                             # weld 0.5 mm, no degenerates
+piece = ap.join_objects([body, head], 'piece')                                           # join last
+ap.finish_static(piece, ap.static_material('Ivory', '#e9ddc2', .55))
+print(ap.count_tris(piece))                                                              # sum(len(poly) - 2)
+ap.export_static_glb('piece.glb', [piece])                                               # Y-up, no vertex colour, no cameras
+```
+
+| Helper | What it does |
+| --- | --- |
+| `P`, `from_blender`, `linear` | glTF to Blender vector, back, and sRGB hex to linear RGB |
+| `reset_scene`, `args_after_dashes` | Empty scene; script arguments after Blender's `--` |
+| `lathe(name, profile, steps)` | Screw lathe from `[(radius, y)]` metres. Zero-radius endpoints close the caps and weld the poles: triangles = `steps * (2 * (points - 1) - zero_radius_endpoints)` |
+| `ellipsoid(name, centre, radii, axis=None)` | UV-sphere ellipsoid. No `axis`: radii are glTF world axes. With `axis`: `a` along it, `b` along `side_hint`, `c` their cross product. Transform baked into the mesh |
+| `tapered_blade(name, base, direction, length, w0, w1, thickness)` | Tapered spike (tuft, ear, thorn) from a point, a direction, a length and two widths |
+| `tube_along(name, points, radius)` | Round tube along a smoothed polyline: a continuous groove cutter, not a scallop of spheres |
+| `surface_hit(obj, origin, direction)` | Ray cast to `(location, normal)`, to offset cutters at a constant depth |
+| `refine_near(obj, centres, radius)` | Subdivide triangles around planned cuts so the boolean lands in even triangles |
+| `boolean(target, cutter, op)`, `decimate_to`, `clean_after_boolean`, `join_objects` | The cut sequence: decimate, refine, boolean, weld and clean, join last |
+| `finish_static`, `static_material` | Outward normals, smooth-by-angle, one named material, colour attributes removed |
+| `new_metaball`, `meta_ellipsoid`, `meta_capsule`, `metaball_to_mesh` | Metaballs with the 0.558 unit and axis-swap traps handled |
+| `count_tris`, `bounds_gltf`, `read_glb_summary` | Real triangle count, glTF-axis bounds, a stdlib GLB summary |
+| `export_static_glb(path, objects)` | `export_vertex_color='NONE'` (or `export_colors=False` on older Blender), `export_yup`, modifiers applied |
+
+Self-test, run in Blender (it prints one `AGENT_MESHES_PROPS_SELFTEST {json}` line and exits 1 on failure):
+
+```text
+blender -b --python scripts/blender_lib/agent_meshes_props.py -- --self-test
+```
+
+`tests/props-blender.test.ts` runs it when Blender is found and skips otherwise. Checked on Blender 4.2.3 and 5.2.2.

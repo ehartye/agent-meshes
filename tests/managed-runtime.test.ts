@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { basename, join, parse } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { describeSource, inspectInstallation, installRuntime, resolveRuntime } from '../scripts/managed-runtime.js';
+import { blenderInstallHint, describeSource, findBlenderDetailsFrom, inspectInstallation, installRuntime, resolveRuntime } from '../scripts/managed-runtime.js';
 
 let sandbox: string, source: string, home: string, globalRoot: string;
 const put = (path: string, text: string) => writeFileSync(path, text);
@@ -159,4 +159,21 @@ test('the plugin manifest, package and lockfile agree on name and version', () =
   expect(name).toBe('agent-meshes');
   expect(JSON.parse(readFileSync('.claude-plugin/plugin.json', 'utf8')).version).toBe(version);
   expect(JSON.parse(readFileSync('.claude-plugin/marketplace.json', 'utf8')).plugins[0].version).toBe(version);
+});
+
+describe('Blender setup guidance', () => {
+  test('the missing-Blender hint names the mirror, the 403 trap, the portable folders and the override', () => {
+    const hint = blenderInstallHint('win32');
+    expect(hint).toContain('https://mirrors.ocf.berkeley.edu/blender/release/Blender<major.minor>/');
+    expect(hint).toContain('blender-<ver>-windows-x64.zip');
+    expect(hint).toMatch(/download\.blender\.org.*403/);
+    expect(hint).toContain('~/tools/blender');
+    expect(hint).toContain('AGENT_MESHES_BLENDER');
+    expect(blenderInstallHint('linux')).toContain('linux-x64.tar.xz');
+  });
+  test('reports which discovery rule found Blender', () => {
+    const previous = process.env.AGENT_MESHES_BLENDER; process.env.AGENT_MESHES_BLENDER = join(sandbox, 'blender-explicit');
+    try { expect(findBlenderDetailsFrom(process.cwd())).toEqual({ command: join(sandbox, 'blender-explicit'), source: 'AGENT_MESHES_BLENDER' }); }
+    finally { if (previous === undefined) delete process.env.AGENT_MESHES_BLENDER; else process.env.AGENT_MESHES_BLENDER = previous; }
+  });
 });

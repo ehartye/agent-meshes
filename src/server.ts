@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createProject, validateProject, Editor } from './core/model.ts';
 import type { Project } from './core/types.ts';
 import { loadProject, saveProject } from './storage.ts';
-import { capabilities, inspectProject, planOperations } from './agent-contract.ts';
+import { capabilities, capabilitiesFor, inspectProject, planOperations } from './agent-contract.ts';
 import { Workspace, RevisionConflict } from './workspace.ts';
 import { errorDetails } from './errors.ts';
 
@@ -78,7 +78,7 @@ export async function createServer(options: { port?: number; projectPath?: strin
     return { directory: workspace.directory, revision: workspaceState!.revision, undo: workspaceState!.undo, redo: workspaceState!.redo };
   };
   app.get('/api/workspace', async (_request, response) => { await queue; refresh(); response.json(workspaceInfo()); });
-  app.get('/api/capabilities', (_request, response) => response.json(capabilities()));
+  app.get('/api/capabilities', (request, response) => response.json(typeof request.query.name === 'string' ? capabilitiesFor(request.query.name) : capabilities()));
   app.get('/api/inspect', async (request, response) => { await queue; refresh(); response.json({ ...inspectProject(editor.project, typeof request.query.select === 'string' ? request.query.select : undefined), workspace: workspaceInfo() }); });
   app.post('/api/plan', async (request, response) => {
     await queue; refresh();

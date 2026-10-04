@@ -19,10 +19,19 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
 
 - Types: `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe`, `prism`, `group`. `size` is the
   full extent in meters along x, y, z of the unit shape; `segments` (default 12) sets tessellation.
-- `lathe` revolves a `profile` of `[radius, height]` points (radius 0 to 0.5, height -0.5 to 0.5,
-  3 to 64 points) around y. Good for hooves, vases, bells, bowls, heads of nails.
-- `prism` extrudes an `outline` of `[x, y]` points within -0.5 to 0.5 along z. Good for plates,
-  fins, silhouettes, letters.
+- `lathe` revolves a `profile` of `[radius, height]` points (3 to 64, bottom to top) around y. Good
+  for hooves, vases, bells, bowls, turned pieces. Default unit profile: radius 0 to 0.5, height -0.5
+  to 0.5, world radius `r * size[0]`, centred on the part origin (bottom at `-size[1] / 2`), a
+  zero-radius first or last point closes the cap. `profileUnits: "metres"` takes real meters with
+  height up from the origin and ignores `size`. `corners: [i, ...]` makes hard edges (split
+  normals, no extra triangles). `angleRange: [a, b]` degrees makes a capped sector that shares the
+  segment grid (`segments`, `startAngle`) of a full lathe. See `capabilities lathe`.
+- `prism` extrudes an `outline` of `[x, y]` points along z. Good for plates, fins, silhouettes,
+  letters. The default outline is size-normalised (-0.5 to 0.5). `axis: "y"` takes `[x, z]` points
+  and extrudes upward; `outlineUnits: "metres"` takes real meters and extrudes from the origin to
+  `size`; `bevel` chamfers the caps. See `capabilities prism`.
+- `rotationEuler: [x, y, z]` degrees (three.js XYZ: world z, then y, then x) replaces `rotation`
+  on `add` and `update`; give one or the other.
 - `parent` makes the transform relative to another part. `anchor` makes it relative to a bone's
   rest frame instead; use it for anything that belongs at a joint.
 - `update` takes `changes` with any part fields except `name`; unbind before changing geometry.
