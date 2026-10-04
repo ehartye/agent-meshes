@@ -1,6 +1,6 @@
 ---
 name: mesh-setup
-description: Install, check and repair the managed agent-meshes runtime outside the plugin cache, including the built workbench, Chromium for renders and the optional Blender stage.
+description: Install, check and repair the managed agent-meshes runtime outside the plugin cache, including the built workbench, Chromium for renders and the optional Blender stage (found automatically, including portable copies).
 when_to_use: Use before the first agent-meshes command in a session, after a plugin update, or when a mesh skill reports "Managed CLI ... is missing", "rerun mesh-setup", a missing dist-web, a missing Chromium, or a version mismatch.
 ---
 
@@ -24,7 +24,35 @@ current project.
    Stop on failure and show the error; never install dependencies in the plugin cache and never
    substitute a checkout or a PATH executable.
 3. Run the check again and require exit 0 and `ok: true`. Report `cliVersion`, `runtimeRoot`,
-   `node`, and `blender` (a path, or `null` when Blender is absent; only the refine stage needs it).
+   `node`, `blender` (a path, or `null` when Blender is absent) and `blenderSource` (which rule found it).
+
+**`--check` exiting 1 on a first run is expected.** It exits 1 whenever `ok` is false, and "not yet installed" is the
+usual reason (`errors` says `Managed CLI ... is missing`, and `nextStep` repeats the instruction). Treat it as "run the
+install", not as a failure, and read the JSON on stdout rather than the exit code alone; a script that shells out to
+`setup --check` must not throw on exit 1 (use `spawnSync`).
+
+## Blender (optional)
+
+Only the refine stage, Blender-authored sources, `mesh preview` and the `recipes/` that drive Blender need it. Discovery
+order, first hit wins, and `--check` reports it as `blenderSource`:
+
+1. The `AGENT_MESHES_BLENDER` environment variable (source `AGENT_MESHES_BLENDER`): always first, trusted without checking.
+2. A portable copy under `~/.agent-meshes/blender/*/` (or `$AGENT_MESHES_HOME/blender/*/`), newest version first
+   (`agent-meshes-home`).
+3. A portable copy under `~/tools/blender/*/` (`tools-blender`): `blender.exe` on Windows, `blender` on Linux,
+   `Blender.app/Contents/MacOS/Blender` on macOS.
+4. The system install: Windows `C:/Program Files/Blender Foundation/*` (`program-files`) or the Store launcher
+   (`windows-store`), macOS `/Applications/Blender.app` (`applications`).
+5. `blender` on PATH (`path`).
+
+When Blender is absent `--check --json` carries `blenderHint`; read it to the person. To install a portable copy:
+1. Download the zip from the official mirror, whose layout is
+   `https://mirrors.ocf.berkeley.edu/blender/release/Blender<major.minor>/blender-<ver>-windows-x64.zip`
+   (for example `Blender5.2/blender-5.2.2-windows-x64.zip`; Linux `-linux-x64.tar.xz`, macOS `-macos-arm64.dmg`).
+   `download.blender.org` sits behind a bot challenge that returns 403 to curl and winget, and `winget install` also
+   returned 403 on the machine this was written against; the mirror serves the same files.
+2. Unzip it into `~/tools/blender`, so the executable is `~/tools/blender/blender-<ver>-windows-x64/blender.exe`.
+3. Optionally set `AGENT_MESHES_BLENDER` to that path (it overrides discovery), then rerun `setup --check`.
 
 A repeated setup reuses a complete matching release and repairs its npm link. A changed plugin
 version or content produces a new release directory; older releases are kept. `AGENT_MESHES_HOME`
