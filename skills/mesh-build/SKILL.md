@@ -18,7 +18,14 @@ mesh --workspace .agent-meshes/fox view review/
 ```
 
 `export` writes an animated GLB with named meshes, materials, skeleton, weights and clips from the
-rest rig. `verify` runs the Khronos glTF Validator and exits nonzero on errors. A build already
+rest rig. **Node layout:** the scene has exactly one root node, an identity-transform wrapper named
+after the project (`mesh new <name>`, the recipe's name, or a build config's `name`, else the config
+file name); parts are its children, nested by `parent`. A `group` part becomes an empty named node
+with its transform, which is how sockets and attachment points are exported; a game looks them up by
+node name under the wrapper. Each glTF mesh carries its part's name as well as its node (0.15.0 and
+later; before that only nodes were named), a shell's mesh carries the shell name, and a merged GLB's
+one mesh carries the project name. So name the workspace after the asset (`mesh new hull-dart`) when
+the root name matters. `verify` runs the Khronos glTF Validator and exits nonzero on errors. A build already
 runs it and writes the same report as `verification.json`, so `verify` after a build is redundant.
 Zero errors and warnings is the bar; `UNUSED_OBJECT` infos about `TEXCOORD_0` are expected on
 every part (the primitives carry UVs that no material samples). `verify` also lints a static model

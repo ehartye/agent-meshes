@@ -17,6 +17,15 @@ interface GLTFWriterInternals {
   processSkin(object: SkinnedMesh): number | null;
 }
 
+/**
+ * three's GLTFExporter names nodes but never meshes. Name every glTF mesh after the object that draws it (the part,
+ * the shell, or the merged model), so loaders that name assets from `mesh.name` see the part names too.
+ */
+function meshNames(exporter: GLTFExporter): GLTFExporter {
+  exporter.register(() => ({ writeMesh: (mesh, meshDef) => { if (mesh.name && meshDef.name === undefined) meshDef.name = mesh.name; } }));
+  return exporter;
+}
+
 export interface ExportOptions {
   /** `byMaterial` fuses a static model into one mesh with one primitive per material; part names are lost. */
   merge?: MergeMode;
@@ -34,7 +43,7 @@ export async function exportGLB(project: Project, options: ExportOptions = {}): 
       fused.add(mergeByMaterial(built.root, clean.name));
       fused.updateMatrixWorld(true);
       ensureFileReader();
-      const output = await new GLTFExporter().parseAsync(fused, { binary: true });
+      const output = await meshNames(new GLTFExporter()).parseAsync(fused, { binary: true });
       if (!(output instanceof ArrayBuffer)) throw new Error('Exporter did not produce a binary GLB');
       disposeScene(fused);
       return new Uint8Array(output);
@@ -85,7 +94,7 @@ export async function exportGLB(project: Project, options: ExportOptions = {}): 
     scene.updateMatrixWorld(true);
     for (const material of shareIdenticalMaterials(scene)) material.dispose();
     ensureFileReader();
-    const exporter = new GLTFExporter();
+    const exporter = meshNames(new GLTFExporter());
     exporter.register(plugin => {
       // GLTFExporter writes one skin per skinned mesh, each with an inverse bind matrix for every
       // joint. Every part here binds the same skeleton at identity, so a rig of a hundred rods would
