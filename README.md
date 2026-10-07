@@ -2,18 +2,19 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
-Release 0.14.0 adds what a game-asset pipeline kept missing, found while building a
-12-piece chess set. Lathes take `corners` (hard edges), `profileUnits: "metres"` and
-`angleRange` sectors; prisms take `axis: "y"`; parts take `rotationEuler`. Parts can
-carry `material.name`, identical materials are shared on export, and `"merge":
-"byMaterial"` fuses static parts. `verify` accepts triangle, material, pivot and height
-limits, `silhouette --lint` finds a lathe profile that narrows and then widens, and
-errors now name the operation, part and field. New skills text covers static sets,
-turned-object budgets and Blender-authored props, with `set-sheet` and `set-stats`
-recipes. The default export now shares identical materials, so some GLBs have fewer
-glTF materials than before. `view --views front,side,top,perspective` renders a chosen
-set of views, including a top view; the default is still front, side and perspective.
-Run `mesh-setup` after updating the plugin.
+Release 0.15.0 adds `agent-meshes assemble`, which builds a verified GLB and a physical
+`robot.json` (bodies, masses, colliders, checked connections) from a manifest, with the
+LEGO Technic connector profile and LDraw geometry adapter as replaceable defaults. Static
+models gain two checks: a lathe profile wound inward raises `LATHE_PROFILE_INWARD` in
+`batch --dry-run`, `batch`, `inspect` and `build` results (profiles run bottom to top),
+and `verify`/`build` warn with `DETACHED_PART` when a part floats clear of the rest
+(default tolerance 0.01 m; `--max-gap` makes it a budget, `--allow-detached` exempts
+parts; rigged and animated models are skipped). Exported glTF meshes are now named after
+their part, and `new` starts a clean undo history (`--quiet` summarizes project output). The sprout gait recipe accepts optional reference body curves so pelvis,
+chest and head share one phase frame; existing callers keep the old timing. Release
+0.14.0 added lathe `corners`, metre profiles and sectors, shared named materials,
+`verify` budgets, `silhouette --lint` and `view --views`. Run `mesh-setup` after updating
+the plugin.
 
 ## Compare rigged motion
 
