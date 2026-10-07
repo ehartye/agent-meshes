@@ -11,7 +11,9 @@ limits, `silhouette --lint` finds a lathe profile that narrows and then widens, 
 errors now name the operation, part and field. New skills text covers static sets,
 turned-object budgets and Blender-authored props, with `set-sheet` and `set-stats`
 recipes. The default export now shares identical materials, so some GLBs have fewer
-glTF materials than before. Run `mesh-setup` after updating the plugin.
+glTF materials than before. `view --views front,side,top,perspective` renders a chosen
+set of views, including a top view; the default is still front, side and perspective.
+Run `mesh-setup` after updating the plugin.
 
 ## Compare rigged motion
 
