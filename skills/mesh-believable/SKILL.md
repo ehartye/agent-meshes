@@ -51,6 +51,17 @@ positions or the root height until stance feet sit within a centimeter of y = 0.
 (wires, chains, ropes) must be authored in the same frame as what they hang from; a wire drawn at
 a bone-local x while its arm sits at a world x is the classic detached-string bug.
 
+Parts must touch each other too. On a static model, `verify` (and every build) measures each mesh
+part's real triangles against every other part and reports a part, or a group of touching parts,
+that is more than 1 cm from the rest as `DETACHED_PART` with the part names, the nearest part and the
+gap in metres (`WARN DETACHED_PART: pod_l touches nothing else: 0.137 m from the nearest part
+(spine)`). It catches what bounds checks miss: a winglet, vane or drum inside the model's bounds that
+touches nothing. Fix it by moving the part onto its neighbour or overlapping them; `--allow-detached
+halo` (or `verify.allowDetached`) exempts a part that floats on purpose. The lint measures contact,
+not support: a winglet whose root overlaps a wing tip by a few centimetres passes even if most of it
+hangs in the air, so still look at the top and side renders. Skinned or animated models are skipped
+(rest-pose gaps between moving parts are often intended); check them on the clip contact sheets.
+
 ## 5. Render polish, then Blender if it earns it
 
 Renders already carry environment lighting, soft shadows and shell ambient occlusion. An
@@ -139,7 +150,8 @@ For a deliberate delivery review or recurring anatomy/clothing defects, use
 [mesh-quality-review](../mesh-quality-review/SKILL.md): full orbit, reference fidelity and
 head-to-toe close-ups, including both hands and soles.
 
-Structure passes when `verify` reports zero errors. Believability passes when the front, side
+Structure passes when `verify` reports zero errors and no `DETACHED_PART` warning you did not
+intend. Believability passes when the front, side
 and perspective renders and every contact sheet match the intent, feet contact the ground, and
 nothing floats. If a shape cannot be made believable with these tools, say so and describe the
 missing capability rather than shipping a compromise; the tool is meant to grow.
