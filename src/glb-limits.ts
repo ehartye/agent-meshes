@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { readGLB, sceneGraph, type GLTFDocument } from './gltf-read.ts';
 import { forEachWorldTriangle } from './glb-geometry.ts';
+import { checkDetached, type DetachedReport } from './verify-detached.ts';
 
 export type Vec3 = [number, number, number];
 export interface GLBBounds {
@@ -29,10 +30,14 @@ export const limitsSchema = z.object({
   tolerance: z.number().min(0).finite().optional(),
   /** Report violations as warnings in the output instead of failing. */
   warnOnly: z.boolean().optional(),
+  /** Fail when a mesh part (or a group of touching parts) of a static model is farther than this many metres from the rest. */
+  maxGap: z.number().min(0).finite().optional(),
+  /** Part names allowed to float (a halo, a hovering orb); never reported by the detached-part lint. */
+  allowDetached: z.array(z.string().min(1)).optional(),
 }).strict();
 export type LimitOptions = z.input<typeof limitsSchema>;
 
-export interface LimitCheck { name: 'maxTriangles' | 'maxMaterials' | 'expectPivot' | 'expectHeight'; ok: boolean; expected: number | string; actual: number | Vec3; message: string }
+export interface LimitCheck { name: 'maxTriangles' | 'maxMaterials' | 'expectPivot' | 'expectHeight' | 'maxGap'; ok: boolean; expected: number | string; actual: number | Vec3; message: string }
 export interface LimitsReport {
   ok: boolean; warnOnly: boolean;
   /** Triangles drawn by the default scene, counting every node instance. */
@@ -42,6 +47,8 @@ export interface LimitsReport {
   bounds: GLBBounds;
   checks: LimitCheck[];
   failures: string[];
+  /** The detached-part lint, present when maxGap is set. */
+  detached?: DetachedReport;
 }
 
 const m = (value: number) => Number(value.toFixed(5));
@@ -88,6 +95,14 @@ export function checkLimits(bytes: Uint8Array, options: LimitOptions): LimitsRep
     checks.push({ name: 'expectHeight', ok, expected: limits.expectHeight, actual: height,
       message: `height is ${m(height)} m; ${limits.expectHeight} m is expected within ${tolerance} m` });
   }
-  const failures = checks.filter(check => !check.ok).map(check => check.message);
-  return { ok: failures.length === 0, warnOnly: limits.warnOnly ?? false, triangles, materials, bounds, checks, failures };
+  let detached: DetachedReport | undefined;
+  if (limits.maxGap !== undefined) {
+    detached = checkDetached(doc, { tolerance: limits.maxGap, allow: limits.allowDetached });
+    const worst = Math.max(0, ...detached.findings.map(finding => finding.gap));
+    checks.push({ name: 'maxGap', ok: detached.ok, expected: limits.maxGap, actual: worst,
+      message: detached.ok ? `every mesh part is within ${limits.maxGap} m of another${detached.skipped ? ` (skipped: ${detached.skipped})` : ''}` : detached.findings.map(finding => finding.message).join('\n') });
+  }
+  // One failure line per floating group, so each prints as its own FAIL line.
+  const failures = checks.filter(check => !check.ok).flatMap(check => check.name === 'maxGap' ? check.message.split('\n') : [check.message]);
+  return { ok: failures.length === 0, warnOnly: limits.warnOnly ?? false, triangles, materials, bounds, checks, failures, ...(detached ? { detached } : {}) };
 }

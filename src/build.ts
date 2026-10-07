@@ -6,6 +6,7 @@ import type { Project } from './core/types.ts';
 import { createProject, validateProject } from './core/model.ts';
 import { applyOperations } from './agent-contract.ts';
 import { lintProject, type ProjectWarning } from './project-lint.ts';
+import { checkDetached, type DetachedFinding, type DetachedReport } from './verify-detached.ts';
 import { exportGLB, verifyGLB } from './export.ts';
 import { verifyEnclosures, type EnclosuresReport } from './enclosure.ts';
 import { findBlender, refineGLB } from './refine.ts';
@@ -108,7 +109,7 @@ async function move(source: string, destination: string): Promise<void> {
 }
 
 export interface AuthoredAsset { name: string }
-export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]>; decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[]; warnings?: ProjectWarning[] }> {
+export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]>; decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding)[] }> {
   const configFile = await realpath(resolve(configPath));
   const config = configSchema.parse(JSON.parse(await readFile(configFile, 'utf8')));
   const geometryTarget = config.target ? { target: config.target, renderVertexBudget: config.renderVertexBudget } : undefined;
@@ -127,7 +128,13 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
     await checkOwnership(output, configFile);
     stage = await mkdtemp(join(dirname(output), `.${basename(output)}.stage-`));
     let files: string[];
-    const warnings: ProjectWarning[] = [];
+    const warnings: (ProjectWarning | DetachedFinding)[] = [];
+    /** The detached-part lint on the final GLB: always recorded; a failing verify.maxGap budget has already stopped the build. */
+    const lintDetached = (bytes: Uint8Array, limits: { detached?: DetachedReport } | null): DetachedReport => {
+      const report = limits?.detached ?? checkDetached(bytes, { allow: config.verify?.allowDetached });
+      warnings.push(...report.findings);
+      return report;
+    };
     if (config.blender) {
       const source = await readFile(input);
       const result = await authorGLB(input, join(stage, 'model.glb'));
@@ -136,9 +143,10 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
       const enclosures = await checkEnclosures(authored);
       const limits = checkBuildLimits(authored, config.verify);
+      const detached = lintDetached(authored, limits);
       files = ['model.glb', 'verification.json', 'authoring.json'];
       await Promise.all([
-        writeFile(join(stage, 'verification.json'), `${JSON.stringify({ ...verification, ...(enclosures ? { enclosures } : {}), ...(limits ? { limits } : {}) }, null, 2)}\n`),
+        writeFile(join(stage, 'verification.json'), `${JSON.stringify({ ...verification, ...(enclosures ? { enclosures } : {}), detached, ...(limits ? { limits } : {}) }, null, 2)}\n`),
         writeFile(join(stage, 'authoring.json'), `${JSON.stringify({ version: 1, source: { script: portable(relative(dirname(configFile), input)), sha256: createHash('sha256').update(source).digest('hex') }, blender: result.blender, meshes: result.meshes }, null, 2)}\n`),
       ]);
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
@@ -168,11 +176,12 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       }
       const enclosures = await checkEnclosures(bytes);
       const limits = checkBuildLimits(bytes, config.verify);
+      const detached = lintDetached(bytes, limits);
       files = ['project.mesh.json', 'model.glb', 'verification.json'];
       await Promise.all([
         writeFile(join(stage, files[0]), `${JSON.stringify(project, null, 2)}\n`),
         writeFile(join(stage, files[1]), bytes),
-        writeFile(join(stage, files[2]), `${JSON.stringify({ ...verification, ...(enclosures ? { enclosures } : {}), ...(limits ? { limits } : {}) }, null, 2)}\n`),
+        writeFile(join(stage, files[2]), `${JSON.stringify({ ...verification, ...(enclosures ? { enclosures } : {}), detached, ...(limits ? { limits } : {}) }, null, 2)}\n`),
       ]);
       if (options.decorate) files.push(...await options.decorate(structuredClone(project), stage));
     }

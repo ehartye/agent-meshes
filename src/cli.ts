@@ -106,7 +106,7 @@ export async function main(args = process.argv): Promise<void> {
     const output = resolve(file); await mkdir(dirname(output), { recursive: true }); await writeFile(output, bytes);
     process.stdout.write(`${JSON.stringify({ output, bytes: bytes.length })}\n`);
   });
-  program.command('verify <file>').description('Validate an exported GLB without a server; --contract arkit-face/1 also checks the face-rig contract')
+  program.command('verify <file>').description('Validate an exported GLB without a server and warn about mesh parts of a static model that touch nothing (DETACHED_PART); --contract arkit-face/1 also checks the face-rig contract')
     .option('--contract <name>', 'Also check a rig contract (arkit-face/1)')
     .option('--target <name>', 'Also report exported geometry for a target (uefn); budget excesses are warnings')
     .option('--render-vertex-budget <count>', 'Per-mesh warning budget for --target uefn (default 30000)')
@@ -115,6 +115,8 @@ export async function main(args = process.argv): Promise<void> {
     .option('--expect-pivot <name>', 'Fail unless the world bounds put this at the origin: bottom-center (base centre) or center')
     .option('--expect-height <meters>', 'Fail unless the world-space height (y extent) is this many metres')
     .option('--tolerance <meters>', 'Slack for --expect-pivot and --expect-height (default 0.001)')
+    .option('--max-gap <meters>', 'Fail when a mesh part of a static model is farther than this from every other part (DETACHED_PART); without it the lint still runs at 0.01 m and only warns')
+    .option('--allow-detached <names>', 'Comma-separated part names allowed to float (never reported as DETACHED_PART)')
     .option('--warn-only', 'Report limit violations in the JSON but exit 0')
     .action(async (file, options) => {
     const { limitsSchema, checkLimits } = await import('./glb-limits.ts');
@@ -127,9 +129,12 @@ export async function main(args = process.argv): Promise<void> {
     if (options.expectPivot !== undefined && !['bottom-center', 'bottom-centre', 'center', 'centre'].includes(options.expectPivot)) throw Object.assign(new Error('--expect-pivot must be bottom-center or center'), { code: 'CLI_ARGUMENT_ERROR' });
     const tolerance = options.tolerance === undefined ? undefined : Number(options.tolerance);
     if (tolerance !== undefined && (!Number.isFinite(tolerance) || tolerance < 0)) throw Object.assign(new Error('--tolerance must be a non-negative number'), { code: 'CLI_ARGUMENT_ERROR' });
+    const maxGap = options.maxGap === undefined ? undefined : Number(options.maxGap);
+    if (maxGap !== undefined && (!Number.isFinite(maxGap) || maxGap < 0)) throw Object.assign(new Error('--max-gap must be a non-negative number of metres'), { code: 'CLI_ARGUMENT_ERROR' });
+    const allowDetached = options.allowDetached === undefined ? undefined : String(options.allowDetached).split(',').map(name => name.trim()).filter(Boolean);
     const limitOptions = limitsSchema.parse({ maxTriangles: number(options.maxTriangles, '--max-triangles', true), maxMaterials: number(options.maxMaterials, '--max-materials', true),
-      expectPivot: options.expectPivot, expectHeight: number(options.expectHeight, '--expect-height'), tolerance, warnOnly: options.warnOnly ? true : undefined });
-    const hasLimits = Object.entries(limitOptions).some(([key, value]) => value !== undefined && key !== 'warnOnly' && key !== 'tolerance');
+      expectPivot: options.expectPivot, expectHeight: number(options.expectHeight, '--expect-height'), tolerance, warnOnly: options.warnOnly ? true : undefined, maxGap, allowDetached });
+    const hasLimits = Object.entries(limitOptions).some(([key, value]) => value !== undefined && !['warnOnly', 'tolerance', 'allowDetached'].includes(key));
     const reportLimits = (bytes: Uint8Array) => {
       if (!hasLimits) return undefined;
       const limits = checkLimits(bytes, limitOptions);
@@ -165,8 +170,12 @@ export async function main(args = process.argv): Promise<void> {
     const bytes = await readFile(file);
     const result = await verifyGLB(bytes, geometryOptions), enclosures = await verifyEnclosures(bytes);
     const limits = result.ok ? reportLimits(bytes) : undefined;
+    // Every static model is also checked for parts that touch nothing (DETACHED_PART): a warning, or a failure under --max-gap.
+    const { checkDetached } = await import('./verify-detached.ts');
+    const detached = result.ok ? limits?.detached ?? checkDetached(bytes, { tolerance: maxGap, allow: allowDetached }) : undefined;
     // A file whose nodes declare extras.encloses (a helmet round a head) is also checked at every clip phase and morph.
-    process.stdout.write(`${JSON.stringify({ ...(enclosures.enclosures.length ? { ...result, ok: result.ok && enclosures.ok, enclosures } : result), ...(limits ? { limits } : {}) })}\n`);
+    process.stdout.write(`${JSON.stringify({ ...(enclosures.enclosures.length ? { ...result, ok: result.ok && enclosures.ok, enclosures } : result), ...(detached ? { detached } : {}), ...(limits ? { limits } : {}) })}\n`);
+    if (detached && !detached.ok && maxGap === undefined) process.stderr.write(`${detached.findings.map(finding => `WARN ${finding.message}`).join('\n')}\n`);
     if (!enclosures.ok) process.stderr.write(`${enclosures.failures.map(line => `FAIL ${line}`).join('\n')}\n`);
     if (!result.ok || !enclosures.ok) process.exitCode = 1;
   });

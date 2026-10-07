@@ -21,7 +21,15 @@ mesh --workspace .agent-meshes/fox view review/
 rest rig. `verify` runs the Khronos glTF Validator and exits nonzero on errors. A build already
 runs it and writes the same report as `verification.json`, so `verify` after a build is redundant.
 Zero errors and warnings is the bar; `UNUSED_OBJECT` infos about `TEXCOORD_0` are expected on
-every part (the primitives carry UVs that no material samples). `view` renders
+every part (the primitives carry UVs that no material samples). `verify` also lints a static model
+for detached parts: every mesh part's world-space triangles (rotations and parent groups applied) are
+measured against every other part, and a part or group of touching parts more than 0.01 m from the
+rest is reported in `detached.findings` and as a `WARN DETACHED_PART: ...` line naming the parts, the
+nearest part and the gap in metres; the exit code is unchanged. `--max-gap 0.01` turns it into a
+budget that fails (with `--warn-only` honoured), and `--allow-detached halo,orb` exempts parts that
+float on purpose. A build records the same report as `detached` in `verification.json` and lists the
+findings under `warnings` in its result. Skinned or animated GLBs are skipped (`detached.skipped`), and
+a merged GLB has one mesh, so lint before merging. `view` renders
 front, side and perspective PNGs plus one contact sheet per clip into a directory; look at them.
 `view --views front,side,top,perspective` picks the views; the default is front, side and perspective.
 
@@ -89,6 +97,8 @@ For a static prop or a set of them, use `build.json` only; no workspace is neede
   "expectHeight":0.58}` or `mesh verify model.glb --max-triangles N --max-materials N --expect-pivot bottom-center
   --expect-height H [--tolerance m]`. Bounds are world-space from the final vertices, so rotated parts are measured
   correctly; do not read accessor min/max.
+- `"maxGap":0.01` (or `--max-gap 0.01`) fails the build when a part floats more than that from every other part
+  (`DETACHED_PART`); `"allowDetached":["halo"]` exempts intended floaters. Without it the lint still runs and warns.
 - `mesh silhouette model.glb --axis y --bins 80 --json` charts radius against height. `--lint` flags notches (a
   radius minimum with larger radii above and below; exit 1) and `--allow y0:y1` exempts intended collars. State the
   invariant first ("radius never grows above the plinth"), then lint it.
