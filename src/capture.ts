@@ -6,7 +6,9 @@ import type { Project } from './core/types.ts';
 import { previewHTML } from './preview-html.ts';
 
 /** Render through the same browser adapter as the editing workbench. */
-export async function captureProject(project: Project, directory: string): Promise<string[]> {
+export async function captureProject(project: Project, directory: string, views: string[] = ['front', 'side', 'perspective']): Promise<string[]> {
+  const known = ['front', 'side', 'top', 'perspective'];
+  for (const view of views) if (!known.includes(view)) throw new Error(`Unknown view "${view}"; use ${known.join(', ')}`);
   if (!project.parts.some(part => part.geometry.type !== 'group')) throw new Error('Add mesh geometry before rendering views');
   await mkdir(directory, { recursive: true });
   const server = await createServer({ port: 0 });
@@ -23,7 +25,7 @@ export async function captureProject(project: Project, directory: string): Promi
     await page.evaluate(() => { const input = document.getElementById('show-bones') as HTMLInputElement; input.checked = false; input.dispatchEvent(new Event('change')); });
     await page.waitForTimeout(100);
     const files: string[] = [];
-    for (const view of ['front', 'side', 'perspective']) {
+    for (const view of views) {
       await page.evaluate(view => { const w = (window as any).meshWorkbench; w.animation.play(false); w.animation.seek(0); w.setCamera(view); w.renderFrame(); }, view);
       const filename = `${view}.png`; await page.locator('#viewport canvas').screenshot({ path: join(directory, filename) }); files.push(filename);
     }

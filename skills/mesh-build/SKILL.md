@@ -23,6 +23,7 @@ runs it and writes the same report as `verification.json`, so `verify` after a b
 Zero errors and warnings is the bar; `UNUSED_OBJECT` infos about `TEXCOORD_0` are expected on
 every part (the primitives carry UVs that no material samples). `view` renders
 front, side and perspective PNGs plus one contact sheet per clip into a directory; look at them.
+`view --views front,side,top,perspective` picks the views; the default is front, side and perspective.
 
 For a deliberate delivery review or recurring anatomy/clothing defects, use
 [mesh-quality-review](../mesh-quality-review/SKILL.md) for reference fidelity, a full orbit
