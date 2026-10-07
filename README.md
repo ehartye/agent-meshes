@@ -884,13 +884,32 @@ Run `node scripts/check-belt-drive-browser.mjs` for a real offline public-factor
 The helper preserves full turns for ratios; it never wraps the driver before deriving the
 output. See `tests/belt-drive.test.ts` and the real viewer-bundle smoke test.
 
-### Local LDraw physical assemblies
+### Physical assemblies
 
 `node src/cli.ts assemble hardware/robot.json artifacts/robot` builds named, catalog-backed
 parts without a running server. This separate version-1 manifest does not change the existing
 Project format. Supply a local LDraw library with `LDConfig.ldr`, `parts/` and `p/` containing
 every referenced dependency. `libraryPath` is relative to the manifest; the output directory
 is relative to the command's working directory. The command performs no network requests.
+
+The manifest names two replaceable parts, both defaulting to the LEGO behavior described
+below so existing manifests build byte-identically:
+
+- `"adapter"` (default `"ldraw"`) reads each part's geometry and must return centered SI
+  geometry (meters, +Y up). The LDraw adapter takes `ldraw` and `color` on each part. An
+  adapter can read its own fields from a part's `source` object, validates them in
+  `validatePart`, and supplies the `sourceTransform` recorded in `robot.json` and the
+  header of `ATTRIBUTION.md`.
+- `"profile"` (default `"lego-technic"`) is the connector vocabulary: which kinds exist,
+  which pairs mate, which kinds occupy an exclusive site (holes) and which have no axis.
+  The position, axis and double-use checks are shared by every profile.
+
+Register either in code with `registerGeometryAdapter` (`src/physical/adapters.ts`) and
+`registerConnectorProfile` (`src/physical/profiles.ts`); `tests/physical-extensibility.test.ts`
+shows a bolt and tapped-hole profile with a box adapter. When a manifest uses a non-default
+profile or adapter, `robot.json` records it as `connectorProfile` / `geometryAdapter`; the
+default is omitted so existing artifacts and their hashes do not change. Only the LDraw
+adapter and LEGO profile ship; others are registered by the code that needs them.
 
 ```json
 {
@@ -997,4 +1016,4 @@ rejects the build before it replaces an existing artifact. These are checks of s
 connector declarations: they do not infer connectors from meshes or establish structural
 strength, insertion depth, keyed axle orientation, interference clearance, or manufacturability.
 Physical joints remain explicitly authored in `bodies`. Run
-`npx vitest run tests/parts-connectivity.test.ts tests/parts-assembly.test.ts` for the checks.
+`npx vitest run tests/physical-connectivity.test.ts tests/physical-assembly.test.ts tests/physical-extensibility.test.ts` for the checks.

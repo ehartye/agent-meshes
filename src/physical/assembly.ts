@@ -6,8 +6,10 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { z } from 'zod';
 import { ensureFileReader } from '../node-file-reader.ts';
 import { verifyGLB } from '../export.ts';
-import { boundsJSON, inside, loadLDrawPart, ldrawMetersPerUnit, type Bounds, type PartSource, type Vector } from './ldraw.ts';
+import { boundsJSON, inside, type Bounds, type PartSource, type Vector } from './ldraw.ts';
 import { validateConnectivity } from './connectivity.ts';
+import { DEFAULT_PROFILE, connectorProfile } from './profiles.ts';
+import { DEFAULT_ADAPTER, geometryAdapter } from './adapters.ts';
 
 const number = z.number().finite();
 const vector = z.tuple([number, number, number]);
@@ -15,7 +17,8 @@ const quaternion = z.tuple([number, number, number, number]).refine(value => Mat
 const transform = { position: vector, rotation: quaternion };
 const name = z.string().min(1).regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/);
 const mass = { massKg: number.positive(), massSource: z.url().refine(url => /^https?:\/\//.test(url), 'Catalog source must be HTTP(S)') };
-const connector = z.object({ name, kind: z.enum(['pin-hole', 'axle-hole', 'pin', 'axle', 'ball', 'socket']), position: vector,
+// Kinds are checked against the manifest's connector profile in validateAssembly.
+const connector = z.object({ name, kind: z.string().min(1), position: vector,
   axis: vector.refine(value => Math.abs(Math.hypot(...value) - 1) < 1e-6, 'Connector axis must have unit length'), source: z.string().trim().min(1),
 }).strict();
 const endpoint = z.object({ part: name, connector: name }).strict();
@@ -26,9 +29,12 @@ const collider = z.discriminatedUnion('shape', [
 ]);
 const schema = z.object({
   version: z.literal(1), name: z.string().min(1), libraryPath: z.string().min(1),
+  /** Connector vocabulary and mate rules (see profiles.ts) and geometry source reader (see adapters.ts). */
+  profile: z.string().min(1).default(DEFAULT_PROFILE), adapter: z.string().min(1).default(DEFAULT_ADAPTER),
   requireConnected: z.boolean().default(false), connections: z.array(z.object({ a: endpoint, b: endpoint }).strict()).default([]),
   bodies: z.array(z.object({ name, parent: name.nullable(), position: vector, rotation: quaternion.default([0, 0, 0, 1]), hingeAxis: vector.refine(value => Math.abs(Math.hypot(...value) - 1) < 1e-6, 'Hinge axis must have unit length').optional(), ballJoint: z.literal(true).optional() }).strict()).min(1),
-  parts: z.array(z.object({ name, ldraw: z.string().min(1), color: z.number().int().nonnegative(), body: name, ...transform, ...mass, massNote: z.string().optional(),
+  // `ldraw`/`color` belong to the LDraw adapter; other adapters read their own fields from `source`.
+  parts: z.array(z.object({ name, ldraw: z.string().min(1).optional(), color: z.number().int().nonnegative().optional(), source: z.record(z.string(), z.unknown()).optional(), body: name, ...transform, ...mass, massNote: z.string().optional(),
     massComponents: z.array(z.object({ name, ...mass }).strict()).min(1).optional(), colliders: z.array(collider).min(1), connectors: z.array(connector).optional(),
   }).strict()).min(1),
 }).strict();
@@ -50,8 +56,13 @@ export function validateAssembly(value: unknown): AssemblyManifest {
     }
     if (!manifest.parts.some(part => part.body === body.name)) throw new Error(`Body requires at least one mass-bearing part: ${body.name}`);
   }
+  const adapter = geometryAdapter(manifest.adapter), profile = connectorProfile(manifest.profile);
   for (const part of manifest.parts) {
     if (!bodies.has(part.body)) throw new Error(`Unknown body: ${part.body}`);
+    adapter.validatePart(part);
+    for (const connector of part.connectors ?? []) {
+      if (!(connector.kind in profile.mates)) throw new Error(`Connector kind ${connector.kind} is not in connector profile ${profile.id}: ${part.name}.${connector.name}`);
+    }
     if (part.massComponents) {
       if (new Set(part.massComponents.map(component => component.name)).size !== part.massComponents.length) throw new Error(`Duplicate mass component: ${part.name}`);
       const sum = part.massComponents.reduce((total, component) => total + component.massKg, 0);
@@ -68,8 +79,9 @@ export async function assemble(value: unknown) {
   const groups = new Map(manifest.bodies.map(body => { const group = new Group(); group.name = body.name; group.position.fromArray(body.position); group.quaternion.fromArray(body.rotation); return [body.name, group] as const; }));
   for (const body of manifest.bodies) (body.parent ? groups.get(body.parent)! : root).add(groups.get(body.name)!);
   const parts: (AssemblyManifest['parts'][number] & { sourceBounds: Bounds; sourceCenter: Vector; sourceFiles: string[] })[] = [], sources = new Map<string, PartSource>();
+  const adapter = geometryAdapter(manifest.adapter);
   for (const part of manifest.parts) {
-    const loaded = await loadLDrawPart(manifest.libraryPath, part.ldraw, part.color);
+    const loaded = await adapter.load(manifest.libraryPath, part);
     loaded.group.name = part.name; loaded.group.position.fromArray(part.position); loaded.group.quaternion.fromArray(part.rotation);
     groups.get(part.body)!.add(loaded.group);
     for (const source of loaded.sources) sources.set(source.file, source);
@@ -92,9 +104,10 @@ export async function assemble(value: unknown) {
     return { ...body, aggregateMassKg, centerOfMassEstimate: local.toArray() as Vector, bounds: boundsJSON(bounds) };
   });
   const robot = { version: 1 as const, name: manifest.name, units: 'meters-kilograms' as const, axes: { up: '+Y', forward: '+Z', wheel: 'X', cylinder: 'Y' },
+    ...(manifest.profile !== DEFAULT_PROFILE ? { connectorProfile: manifest.profile } : {}), ...(manifest.adapter !== DEFAULT_ADAPTER ? { geometryAdapter: manifest.adapter } : {}),
     bodies, parts, connections: manifest.connections, requireConnected: manifest.requireConnected, connectivity: validateConnectivity(manifest), totalMassKg, centerOfMassEstimate: center.toArray() as Vector,
     centerOfMassMethod: 'catalog masses at geometry bounding-box centers; not measured', bounds: boundsJSON(new Box3().setFromObject(root)),
-    sourceTransform: { metersPerLDrawUnit: ldrawMetersPerUnit, rotation: [1, 0, 0, 0], centering: 'per-part geometry bounding-box center' },
+    sourceTransform: adapter.sourceTransform,
     sources: [...sources.values()].sort((a, b) => a.file.localeCompare(b.file)),
   };
   return { root, robot };
@@ -135,7 +148,7 @@ export async function buildAssembly(manifestPath: string, outputPath: string) {
     if (!(binary instanceof ArrayBuffer)) throw new Error('Exporter did not produce GLB');
     const bytes = new Uint8Array(binary), verification = await verifyGLB(bytes);
     if (!verification.ok) throw new Error(`Assembly GLB validation failed: ${verification.errors} errors`);
-    const attribution = ['# LDraw assembly attribution', '', 'Geometry sourced from the local LDraw Parts Library (https://www.ldraw.org/).', 'Each file retains its own author and license metadata below. Geometry provenance is distinct from catalog mass provenance.', 'License links: CC BY 4.0 https://creativecommons.org/licenses/by/4.0/ ; CC BY 2.0 https://creativecommons.org/licenses/by/2.0/ ; original LDraw agreement https://www.ldraw.org/article/227.html . These links explain the per-file declarations below; they do not replace or broaden them.', 'Modification notice: Agent Meshes converts LDraw geometry to meters, rotates axes, centers each part, bakes transforms and assembles surfaces into GLB. Edges and conditional lines are omitted.', '', ...robot.sources.flatMap(source => [`## ${source.file}`, `SHA-256: ${source.sha256}`, `Authors: ${source.authors.join('; ') || '(not declared)'}`, `License: ${source.licenses.join('; ') || '(not declared; consult library distribution)'}`, '']), '# Catalog mass sources', '', ...robot.parts.flatMap(part => [`- ${part.name}: ${part.massKg} kg — ${part.massSource}${part.massNote ? ` (${part.massNote})` : ''}`, ...(part.massComponents ?? []).map(component => `  - ${component.name}: ${component.massKg} kg — ${component.massSource}`)]), ''].join('\n');
+    const attribution = [...geometryAdapter(manifest.adapter).attributionHeader, '', ...robot.sources.flatMap(source => [`## ${source.file}`, `SHA-256: ${source.sha256}`, `Authors: ${source.authors.join('; ') || '(not declared)'}`, `License: ${source.licenses.join('; ') || '(not declared; consult library distribution)'}`, '']), '# Catalog mass sources', '', ...robot.parts.flatMap(part => [`- ${part.name}: ${part.massKg} kg — ${part.massSource}${part.massNote ? ` (${part.massNote})` : ''}`, ...(part.massComponents ?? []).map(component => `  - ${component.name}: ${component.massKg} kg — ${component.massSource}`)]), ''].join('\n');
     await Promise.all([writeFile(join(stage, 'model.glb'), bytes), writeFile(join(stage, 'robot.json'), `${JSON.stringify(robot, null, 2)}\n`), writeFile(join(stage, 'verification.json'), `${JSON.stringify(verification, null, 2)}\n`), writeFile(join(stage, 'ATTRIBUTION.md'), attribution), writeFile(join(stage, marker), JSON.stringify({ version: 1, generator: 'agent-meshes-assembly', manifest: input }))]);
     if (await owned(output, input)) { backup = join(parent, `.${basename(output)}.assembly-backup-${randomUUID()}`); await rename(output, backup); }
     try { await rename(stage, output); stage = undefined; }

@@ -1,15 +1,16 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import type { AssemblyManifest } from './assembly.ts';
 import type { Vector } from './ldraw.ts';
+import { connectorProfile } from './profiles.ts';
 
 const positionToleranceMeters = .0001, axisDotTolerance = 1e-6;
-const mates = { pin: 'pin-hole', 'pin-hole': 'pin', axle: 'axle-hole', 'axle-hole': 'axle', ball: 'socket', socket: 'ball' };
 type Endpoint = AssemblyManifest['connections'][number]['a'];
 type Transform = { position: number[]; rotation: number[] };
 const matrix = (value: Transform) => new Matrix4().compose(new Vector3().fromArray(value.position), new Quaternion().fromArray(value.rotation), new Vector3(1, 1, 1));
 
 /** Checks declared connector geometry at rest, after schema and body hierarchy validation. */
 export function validateConnectivity(manifest: AssemblyManifest) {
+  const profile = connectorProfile(manifest.profile), exclusive = new Set(profile.exclusive), axisless = new Set(profile.axisless);
   const parts = new Map(manifest.parts.map(part => [part.name, part]));
   const bodies = new Map(manifest.bodies.map(body => [body.name, body]));
   const bodyMatrices = new Map<string, Matrix4>(), partMatrices = new Map<string, Matrix4>();
@@ -47,15 +48,15 @@ export function validateConnectivity(manifest: AssemblyManifest) {
       if (used.has(key)) throw new Error(`Connector already connected: ${value.part}.${value.connector}`);
       used.add(key);
     }
-    if (mates[a.kind] !== b.kind) throw new Error(`Incompatible connector types: ${a.kind} and ${b.kind}`);
+    if (profile.mates[a.kind] !== b.kind) throw new Error(`Incompatible connector types: ${a.kind} and ${b.kind}`);
     const positionErrorMeters = a.position.distanceTo(b.position);
-    const axisError = a.kind === 'ball' || a.kind === 'socket' ? null : Math.max(0, 1-Math.abs(a.axis.dot(b.axis)));
+    const axisError = axisless.has(a.kind) ? null : Math.max(0, 1-Math.abs(a.axis.dot(b.axis)));
     const label = `${connection.a.part}.${connection.a.connector} ↔ ${connection.b.part}.${connection.b.connector}`;
     // Allow only 1e-12 m of floating-point roundoff at the 0.1 mm tolerance boundary.
     if (positionErrorMeters > positionToleranceMeters + 1e-12) throw new Error(`Connector position mismatch (${positionErrorMeters} m): ${label}`);
     if (axisError !== null && axisError > axisDotTolerance + 1e-12) throw new Error(`Connector axis mismatch (${axisError} absolute-dot error): ${label}`);
     for (const [reference, anchor] of [[connection.a, a], [connection.b, b]] as const) {
-      if (anchor.kind !== 'pin-hole' && anchor.kind !== 'axle-hole') continue;
+      if (!exclusive.has(anchor.kind)) continue;
       const occupied = occupiedHoles.get(reference.part) ?? [];
       const sameHole = occupied.find(hole => hole.position.distanceTo(anchor.position) <= positionToleranceMeters + 1e-12
         && 1-Math.abs(hole.axis.dot(anchor.axis)) <= axisDotTolerance + 1e-12);

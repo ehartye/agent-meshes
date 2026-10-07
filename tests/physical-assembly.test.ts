@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Box3, Mesh, MeshStandardMaterial, Vector3 } from 'three';
-import { loadLDrawPart } from '../src/parts/ldraw.ts';
-import { assemble, buildAssembly, validateAssembly } from '../src/parts/assembly.ts';
+import { loadLDrawPart } from '../src/physical/ldraw.ts';
+import { assemble, buildAssembly, validateAssembly } from '../src/physical/assembly.ts';
 
 let directory: string;
 const identity = [0, 0, 0, 1];

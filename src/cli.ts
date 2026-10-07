@@ -353,7 +353,7 @@ export async function main(args = process.argv): Promise<void> {
       process.stdout.write(`${JSON.stringify({ output, files })}\n`);
     });
   program.command('assemble <manifest> <directory>').description('Assemble local LDraw parts into a verified GLB and physical robot.json').action(async (manifest, directory) => {
-    const { buildAssembly } = await import('./parts/assembly.ts');
+    const { buildAssembly } = await import('./physical/assembly.ts');
     print(await buildAssembly(manifest, directory));
   });
   program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')

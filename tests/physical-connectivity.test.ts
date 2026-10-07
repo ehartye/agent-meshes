@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildAssembly, validateAssembly } from '../src/parts/assembly.ts';
+import { buildAssembly, validateAssembly } from '../src/physical/assembly.ts';
 
 const identity = [0, 0, 0, 1], turnY = [0, Math.SQRT1_2, 0, Math.SQRT1_2];
 const turnX = [Math.SQRT1_2, 0, 0, Math.SQRT1_2];
