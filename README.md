@@ -2,11 +2,18 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
-Release 0.13.1 includes opt-in UEFN exported render-vertex budgeting:
-`verify model.glb --target uefn` or `"target":"uefn"` in a build config.
-The configurable 30,000-per-mesh default reports warnings; it does not reject an
-otherwise valid export or certify the imported native LOD. Run `mesh-setup` after
-updating the plugin so its managed runtime includes the checker.
+Release 0.14.0 adds what a game-asset pipeline kept missing, found while building a
+12-piece chess set. Lathes take `corners` (hard edges), `profileUnits: "metres"` and
+`angleRange` sectors; prisms take `axis: "y"`; parts take `rotationEuler`. Parts can
+carry `material.name`, identical materials are shared on export, and `"merge":
+"byMaterial"` fuses static parts. `verify` accepts triangle, material, pivot and height
+limits, `silhouette --lint` finds a lathe profile that narrows and then widens, and
+errors now name the operation, part and field. New skills text covers static sets,
+turned-object budgets and Blender-authored props, with `set-sheet` and `set-stats`
+recipes. The default export now shares identical materials, so some GLBs have fewer
+glTF materials than before. `view --views front,side,top,perspective` renders a chosen
+set of views, including a top view; the default is still front, side and perspective.
+Run `mesh-setup` after updating the plugin.
 
 ## Compare rigged motion
 
