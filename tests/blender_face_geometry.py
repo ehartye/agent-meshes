@@ -2,6 +2,7 @@
 
 Coordinates follow Blender: Z up, the face looks down -Y, character left is +X.
 """
+import itertools
 import json
 import math
 from pathlib import Path
@@ -1412,6 +1413,91 @@ def front_folds(vertices, faces, center, radius, angles, reach=1.3, turn=20, spa
 ABOVE, BELOW = list(range(50, 131, 10)), list(range(230, 311, 10))
 
 
+def _edge_pierces(P, a, b, eps=1e-7):
+    """Does an edge of triangle a (three points) pass through the inside of triangle b?"""
+    b0, b1, b2 = b
+    e1, e2 = [b1[k] - b0[k] for k in range(3)], [b2[k] - b0[k] for k in range(3)]
+    for k in range(3):
+        o, q = a[k], a[(k + 1) % 3]
+        d = [q[i] - o[i] for i in range(3)]
+        h = (d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0])
+        det = sum(e1[i] * h[i] for i in range(3))
+        if abs(det) < 1e-30: continue
+        s = [o[i] - b0[i] for i in range(3)]
+        u = sum(s[i] * h[i] for i in range(3)) / det
+        if u <= eps or u >= 1 - eps: continue
+        qq = (s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0])
+        v = sum(d[i] * qq[i] for i in range(3)) / det
+        if v <= eps or u + v >= 1 - eps: continue
+        t = sum(e2[i] * qq[i] for i in range(3)) / det
+        if eps < t < 1 - eps: return True
+    return False
+
+
+def lid_crossings(hole, center, radius, poses, reach=3.0):
+    """The P1a round-8 critic's gap, measured the verifier's way (lid-penetration): for each (blink, squint, wide) pose,
+    the triangle pairs near the eye that pass through each other there but not at rest, at least one of them moving."""
+    vertices, faces = hole['vertices'], hole['faces']
+    moved = {tuple(round(c, 12) for c in rest): targets for rest, targets in hole['motion']}
+    tris = [t for f in faces for t in ((f[0], f[k], f[k + 1]) for k in range(1, len(f) - 1))
+            if all(math.dist(vertices[i], center) <= reach * radius for i in t)]
+    used = sorted({i for t in tris for i in t})
+    delta = {}
+    for i in used:
+        targets = moved.get(tuple(round(c, 12) for c in vertices[i]))
+        if targets: delta[i] = {n: tuple(targets[n][k] - vertices[i][k] for k in range(3)) for n in ('blink', 'squint', 'wide')}
+    moving = [any(i in delta for i in t) for t in tris]
+    size = 2 * sum(math.dist(vertices[t[0]], vertices[t[1]]) for t in tris) / len(tris)
+
+    def crossing(pose):
+        P = {i: tuple(vertices[i][k] + sum(w * delta[i][n][k] for n, w in zip(('blink', 'squint', 'wide'), pose)) if i in delta else vertices[i][k]
+                      for k in range(3)) for i in used}
+        grid, boxes = {}, []
+        for n, t in enumerate(tris):
+            lo = [min(P[i][k] for i in t) for k in range(3)]; hi = [max(P[i][k] for i in t) for k in range(3)]
+            boxes.append((lo, hi))
+            for key in itertools.product(*(range(math.floor(lo[k] / size), math.floor(hi[k] / size) + 1) for k in range(3))):
+                grid.setdefault(key, []).append(n)
+        found = set()
+        for cell in grid.values():
+            for x in range(len(cell)):
+                for y in range(x + 1, len(cell)):
+                    a, b = cell[x], cell[y]
+                    if not (moving[a] or moving[b]) or (a, b) in found or set(tris[a]) & set(tris[b]): continue
+                    (la, ha), (lb, hb) = boxes[a], boxes[b]
+                    if any(la[k] > hb[k] or lb[k] > ha[k] for k in range(3)): continue
+                    pa, pb = [P[i] for i in tris[a]], [P[i] for i in tris[b]]
+                    if _edge_pierces(P, pa, pb) or _edge_pierces(P, pb, pa): found.add((min(a, b), max(a, b)))
+        return found
+    at_rest = crossing((0, 0, 0))
+    return {pose: len(crossing(pose) - at_rest) for pose in poses}
+
+
+def lid_folds(hole, poses):
+    """For each (blink, squint, wide) pose, how many of the patch's triangles turn over against their rest orientation."""
+    vertices = hole['vertices']
+    moved = {tuple(round(c, 12) for c in rest): targets for rest, targets in hole['motion']}
+    faces = [hole['faces'][i] for i in hole['patch']]
+    tris = [t for f in faces for t in ((f[0], f[k], f[k + 1]) for k in range(1, len(f) - 1))]
+    used = sorted({i for t in tris for i in t})
+    targets = {i: moved.get(tuple(round(c, 12) for c in vertices[i])) for i in used}
+    rest_n = normals(vertices, tris)
+    result = {}
+    for pose in poses:
+        P = list(vertices)
+        for i in used:
+            if targets[i]:
+                P[i] = tuple(vertices[i][k] + sum(w * (targets[i][n][k] - vertices[i][k]) for n, w in zip(('blink', 'squint', 'wide'), pose)) for k in range(3))
+        result[pose] = sum(1 for n0, n1 in zip(rest_n, normals(P, tris)) if math.hypot(*n0) > 1e-14 and sum(a * b for a, b in zip(n0, n1)) <= 0)
+    return result
+
+
+# Poses that crossed on the P1a round-8 critic's heads (blink .5-1 with squint .75-1, with and without wide), the squeezed
+# shut eye with everything, an idle blink over lid follow's look-down (blink .35 soft-unioned) and a squinting look-up.
+CROSSING_POSES = ((.5, .75, 0), (.5, 1, 0), (.6, 1, 0), (.675, 1, 0), (.75, .75, 0), (.75, 1, 0), (.9, 1, 0), (1, .75, 0), (1, 1, 0),
+                  (1, 1, .25), (1, 1, 1), (1, .5, .5), (1, 0, 1), (1, 0, 0), (.75, 1, .5), (0, 1, 1), (.35, 1, .25))
+
+
 class ContinuousEyeHoleTests(unittest.TestCase):
     """eye_hole's default (style='continuous'): the skin itself flows over the eyeball as the lids, one surface."""
     KID = ((0, 0, .13), (.088, .085, .11)), (.034, -.066, .152), .017, (46, 40, 30)
@@ -1471,6 +1557,24 @@ class ContinuousEyeHoleTests(unittest.TestCase):
                 seen = eye_coverage(eye, radius, below, {'blink': 1, 'wide': 1}, samples=61)
                 band = [j for _, j in seen['visible'] if abs(j * seen['step'] - radius) <= .6 * radius]
                 self.assertEqual(band, [])
+
+    def test_the_lids_never_pass_through_each_other_when_blink_and_squint_add_up(self):
+        # The P1a round-8 critic: once eyeSquint reached ~0.75 with eyeBlink 0.5 or more, the lower lid's skin came up
+        # in front of the closing upper lid (the lash line tore into two stubs), on both heads, and nothing caught it.
+        # Consumers soft-union blink with squint (an idle blink while squinting), so every mix is reached.
+        for which in ('KID', 'FROG'):
+            with self.subTest(which):
+                hole, (_, eye, radius, _) = self.hole(which), getattr(self, which)
+                crossed = {pose: n for pose, n in lid_crossings(hole, eye, radius, CROSSING_POSES).items() if n}
+                self.assertEqual(crossed, {}, 'triangle pairs that pass through each other, per (blink, squint, wide)')
+
+    def test_no_lid_triangle_folds_at_any_mix_including_a_squeezed_shut_eye(self):
+        # Round 8 exempted blink 1 + squint 1 from the fold check; the contract names it (invariant 1), so no longer.
+        poses = [(b, s, w) for b in (0, .5, 1) for s in (0, .5, 1) for w in (0, .5, 1)] + [(.35, 1, 0), (1, 1, .25), (.75, .75, 0)]
+        for which in ('KID', 'FROG'):
+            with self.subTest(which):
+                folds = {pose: n for pose, n in lid_folds(self.hole(which), poses).items() if n}
+                self.assertEqual(folds, {})
 
     def test_the_margins_meet_in_one_point_at_each_corner_and_stay_there(self):
         hole = self.hole()

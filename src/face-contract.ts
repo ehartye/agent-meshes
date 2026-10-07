@@ -4,6 +4,7 @@ import { morphNameAudit } from './gltf-morphs.ts';
 import { auditSkins } from './gltf-skins.ts';
 import { verifyGLB } from './export.ts';
 import { attachedParts, attachedTriangles, type AttachedPart } from './face-attach.ts';
+import { eyePenetration, PENETRATION_WEIGHTS, type EyePenetration, type LidSurface } from './face-lids.ts';
 import { readAccessor, readGLB, sceneGraph, triangles, type GLTFDocument, type GLTFMaterial } from './gltf-read.ts';
 
 /**
@@ -132,6 +133,8 @@ export interface EyeCrease {
 interface EyeMeasure {
   center: number[]; radius: number; minLidClearance: number | null; eyeballs: string[]; lidVertices: number; coverage: EyeCoverage | null;
   oblique: EyeOblique | null; lidFollow: EyeLidFollow | null; crease: EyeCrease | null;
+  /** Lid penetration and folds over the blink x squint x wide grid (see `eyePenetration`). */
+  penetration?: EyePenetration;
 }
 export interface FaceContractReport {
   contract: typeof ARKIT_FACE_CONTRACT; ok: boolean; failures: string[]; warnings: string[]; checks: FaceCheck[];
@@ -938,6 +941,31 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
     }
     check('eye-crease', creaseProblems, `along ${CREASE_LINES.above.length + CREASE_LINES.below.length} radial lines round each eye, at most ${CREASE_ABOVE} fold above (the lid crease) and ${CREASE_BELOW} below (the lid meeting the cheek): no terraced socket`);
   } else check('eye-crease', [], '', 'the eyes were not found');
+
+  // 10h. lid penetration: over every blink x squint x wide mix (and lid follow's extremes), no lid passes through the
+  // other lid or the skin round it, and no lid triangle folds over
+  if (eyes.L && eyes.R) {
+    const surfaces = all.filter(i => !eyeballInstances.has(i) && !i.transparent);
+    const eyeList = (['L', 'R'] as const).map(side => ({ center: eyes[side]!.center.toArray() as [number, number, number], radius: eyes[side]!.radius, suffix: side === 'L' ? 'Left' as const : 'Right' as const }));
+    const parts = attachedTriangles(surfaces, eyeList);
+    const penetrationProblems: string[] = [];
+    for (const side of ['L', 'R'] as const) {
+      const suffix = side === 'L' ? 'Left' : 'Right', { center, radius } = eyes[side]!;
+      const lidSurfaces: LidSurface[] = surfaces.map((instance, n) => ({
+        label: instance.label, rest: instance.rest, triangles: instance.triangles, skip: parts[n],
+        blink: instance.targets.get(`eyeBlink${suffix}`), squint: instance.targets.get(`eyeSquint${suffix}`), wide: instance.targets.get(`eyeWide${suffix}`),
+      }));
+      if (!lidSurfaces.some(s => s.blink)) continue;
+      const result = eyePenetration(lidSurfaces, center.toArray() as [number, number, number], radius, follow, suffix);
+      measurements.eyes[side]!.penetration = result;
+      if (result.worstCrossing) {
+        const w = result.worstCrossing;
+        penetrationProblems.push(`eye_${side}: in ${result.crossingPoses} of ${result.poses} blink, squint and wide mixes the lids pass through each other or the skin round them; worst at ${w.pose}: ${w.pairs} triangle pairs cross${w.lowerThroughUpper ? ` (${w.lowerThroughUpper} of them the lower lid through the upper lid)` : ''}, between ${w.heights[0]} and ${w.heights[1]} eyeball radii about the eye center. Morphs add, and consumers soft-union blink with squint (an idle blink while squinting), so every mix is reached: keep the lower lid's rising margin behind the upper lid's at every mix (eye_hole(style='continuous') solves this)`);
+      }
+      if (result.worstFold) penetrationProblems.push(`eye_${side}: in ${result.foldPoses} of ${result.poses} blink, squint and wide mixes lid triangles fold over; worst at ${result.worstFold.pose}: ${result.worstFold.triangles} triangles turn over against their rest orientation`);
+    }
+    check('lid-penetration', penetrationProblems, `over ${PENETRATION_WEIGHTS.length ** 3} blink x squint x wide mixes per eye (weights ${PENETRATION_WEIGHTS.join('/')}) and lid follow's extremes, no lid passes through the other lid or the skin round it, and no lid triangle folds over`);
+  } else check('lid-penetration', [], '', 'the eyes were not found');
 
   // 11-12. extras
   const carriers = [...graph.world.keys()].filter(n => isRecord(nodes[n]?.extras) && isRecord((nodes[n].extras as Record<string, unknown>).arkitFace));
