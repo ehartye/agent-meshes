@@ -344,11 +344,14 @@ export async function main(args = process.argv): Promise<void> {
     await mkdir(dirname(output), { recursive: true }); await writeFile(output, code);
     process.stdout.write(`${JSON.stringify({ output, bytes: Buffer.byteLength(code) })}\n`);
   });
-  program.command('view <directory>').description('Render fixed views and animation contact sheets').action(async directory => {
-    const project = await currentProject();
-    const { captureProject } = await import('./capture.ts'); const output = resolve(directory);
-    const files = await captureProject(project, output); process.stdout.write(`${JSON.stringify({ output, files })}\n`);
-  });
+  program.command('view <directory>').description('Render fixed views and animation contact sheets')
+    .option('--views <list>', 'Comma-separated views: front, side, top, perspective', 'front,side,perspective')
+    .action(async (directory, options) => {
+      const project = await currentProject();
+      const { captureProject } = await import('./capture.ts'); const output = resolve(directory);
+      const files = await captureProject(project, output, String(options.views).split(',').map(v => v.trim()).filter(Boolean));
+      process.stdout.write(`${JSON.stringify({ output, files })}\n`);
+    });
   program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')
     .option('--no-preview', 'Skip browser renders and the standalone preview page')
     .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html').action(async (config, options) => {
