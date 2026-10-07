@@ -58,7 +58,7 @@ export async function main(args = process.argv): Promise<void> {
   };
   program.command('capabilities [name]').description('Print operation schemas, examples, constraints and technique reference locations; name one operation or geometry (lathe, prism, add, shell.set) for just its contract')
     .action((name?: string) => print(name === undefined ? capabilities() : capabilitiesFor(name)));
-  program.command('inspect [selector]').description('Summarize the project or inspect a named part, bone or clip').action(async selector => {
+  program.command('inspect [selector]').description('Summarize the project or inspect a named part, bone or clip; lists authoring warnings (LATHE_PROFILE_INWARD) under warnings').action(async selector => {
     if (program.opts().workspace !== undefined) await request('inspect', { selection: selector });
     else await request(`inspect${selector ? `?select=${encodeURIComponent(selector)}` : ''}`);
   });
@@ -88,7 +88,7 @@ export async function main(args = process.argv): Promise<void> {
   });
   program.command('state').action(() => request('project'));
   program.command('op <json>').action(json => request('op', JSON.parse(json)));
-  program.command('batch <file>').option('--dry-run', 'Validate and report changes without saving or adding undo history').action(async (file, options) => {
+  program.command('batch <file>').description('Apply a JSON array of operations atomically (one undo step); the result carries any authoring warnings, such as LATHE_PROFILE_INWARD for an inside-out lathe').option('--dry-run', 'Validate and report changes without saving or adding undo history').action(async (file, options) => {
     const value = JSON.parse(await readFile(file, 'utf8'));
     return request(options.dryRun ? 'plan' : 'batch', { operations: Array.isArray(value) ? value : value?.operations });
   });

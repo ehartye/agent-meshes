@@ -1,6 +1,6 @@
 import { Workspace } from './workspace.ts';
 import { createProject } from './core/model.ts';
-import { inspectProject, planOperations } from './agent-contract.ts';
+import { inspectProject, planOperations, withWarnings } from './agent-contract.ts';
 import { loadProject, saveProject } from './storage.ts';
 import type { Project } from './core/types.ts';
 
@@ -22,7 +22,7 @@ export async function workspaceCommand(directory: string, path: string, body?: u
     if (path === 'save') {
       const state = workspace.read(); await saveProject(value?.path, state.project); return state;
     }
-    return workspace.transact(editor => {
+    const result = workspace.transact(editor => {
       switch (path) {
         case 'new': editor.replace(createProject(value?.name as string)); break;
         case 'project': editor.replace(body as Project); break;
@@ -38,5 +38,6 @@ export async function workspaceCommand(directory: string, path: string, body?: u
         default: throw new Error(`Unsupported workspace command: ${path}`);
       }
     }, expectedRevision);
+    return { ...result, ...withWarnings(result.project) };
   } finally { workspace.close(); }
 }

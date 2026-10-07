@@ -38,6 +38,9 @@ bowl) and the shell subtracts it with the same blend instead of rendering it.
 A `lathe` profile gives hooves, vases, bells, lamp bases, heads of pins and rounded bellies with
 a real curve instead of a stack of cylinders. A `prism` outline gives fins, ears, leaves, plates
 and letters with a drawn silhouette. Both accept up to 64 points, so trace the reference shape.
+Trace a lathe profile bottom to top along the outside (a hollow bell: down the inner wall, back up
+the outer wall). A model that renders dark or as a black silhouette inside its outline is usually a
+profile traced the other way; the `LATHE_PROFILE_INWARD` warning names the part.
 
 ## 4. Anchor at joints and touch the ground
 

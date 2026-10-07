@@ -20,7 +20,9 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
 - Types: `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe`, `prism`, `group`. `size` is the
   full extent in meters along x, y, z of the unit shape; `segments` (default 12) sets tessellation.
 - `lathe` revolves a `profile` of `[radius, height]` points (3 to 64, bottom to top) around y. Good
-  for hooves, vases, bells, bowls, turned pieces. Default unit profile: radius 0 to 0.5, height -0.5
+  for hooves, vases, bells, bowls, turned pieces. A hollow piece runs down the inner wall and back up
+  the outer wall; a profile run the other way renders inside out and is reported as the warning
+  `LATHE_PROFILE_INWARD` (reverse the array to fix it). Default unit profile: radius 0 to 0.5, height -0.5
   to 0.5, world radius `r * size[0]`, centred on the part origin (bottom at `-size[1] / 2`), a
   zero-radius first or last point closes the cap. `profileUnits: "metres"` takes real meters with
   height up from the origin and ignores `size`. `corners: [i, ...]` makes hard edges (split

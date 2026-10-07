@@ -6,6 +6,7 @@ import { shellSchema } from './core/model.ts';
 import { assemblyCopySchema } from './core/assembly.ts';
 import { poseTargetSchema } from './core/pose-target.ts';
 import { ModelError } from './errors.ts';
+import { lintProject } from './project-lint.ts';
 import type { BoneDef, Clip, GeometryKind, Operation, Part, Project } from './core/types.ts';
 
 const partInputSchema = partSchema.omit({ geometry: true }).partial().required({ name: true }).extend({ anchor: nameSchema.optional(), rotationEuler: rotationEulerSchema.optional() })
@@ -116,6 +117,7 @@ const geometryGuides: Record<GeometryKind, GeometryGuide> = {
       'Unit profile (default, profileUnits "unit"): radius 0 to 0.5 and height -0.5 to 0.5. The world radius is r * size[0] (not size[0] / 2), the height is h * size[1]; the shape is centred on the part origin, so the bottom is at y = -size[1] / 2.',
       'Metre profile (profileUnits "metres"): points are real [radius, height] in meters, height measured upward from the part origin (a profile starting at height 0 puts the bottom at y = 0). size is ignored; scale the part with `scale` if needed.',
       'Order points bottom to top with the outside facing away from the axis. A first or last point with radius 0 closes the cap on the axis. Profiles take 3 to 64 points.',
+      'Faces point to the right of the direction of travel in the [radius, height] plane, so a profile runs counter-clockwise: up the outside, or for a hollow piece (a bell, a cup) down the inner wall and back up the outer wall. A profile run the other way is accepted but renders inside out; batch --dry-run, batch, op, inspect and build report it as the warning LATHE_PROFILE_INWARD with the part name. Fix it by reversing the profile array (and mapping each corner index i to n - 1 - i).',
       'Normals are smooth across every profile joint. corners lists zero-based profile indices that are hard edges: normals split there (a ledge, collar or step shades crisply) and only the duplicated vertices are added, no extra triangles.',
       'angleRange [startDeg, endDeg] revolves one sector (angles about +y, measured from +z toward +x; [0, 45] is an eighth). The profile is closed with a wall back to its first point and both radial ends are capped, so a profile with an inner radius gives an annular sector. Spans of 360 or more are a full lathe.',
       'segments counts steps around the full circle. A sector uses the grid angles startAngle + k * 360 / segments inside its range plus its two exact ends, so a sector and a full lathe with the same segments and startAngle share vertex angles and sit flush when the range ends are on the grid (use a segment count divisible by the sector fraction).',
@@ -229,7 +231,14 @@ export function inspectProject(input: Project, selection?: string) {
     bones: project.bones.map(bone => ({ name: bone.name, parent: bone.parent })),
     clips: project.clips.map(clip => ({ name: clip.name, duration: clip.duration, tracks: clip.tracks.length, keys: clip.tracks.reduce((sum, track) => sum + track.keys.length, 0) })),
     ...(selected ? { selection: selected } : {}),
+    ...withWarnings(project),
   };
+}
+
+/** `{ warnings }` when the project has authoring warnings (an inside-out lathe), otherwise nothing, so clean output is unchanged. */
+export function withWarnings(project: Project) {
+  const warnings = lintProject(project);
+  return warnings.length ? { warnings } : {};
 }
 
 const SHOWN_ISSUES = 3;
@@ -339,5 +348,5 @@ export function planOperations(input: Project, operations: unknown[]) {
   }
   return { project, report: { ok: true as const, operations: operations.length, changes: {
     parts: changes(original.parts, project.parts), bones: changes(original.bones, project.bones), clips: changes(original.clips, project.clips),
-  } } };
+  }, ...withWarnings(project) } };
 }
