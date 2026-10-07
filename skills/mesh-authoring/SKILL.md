@@ -26,7 +26,16 @@ CLI prints one JSON line and exits nonzero with `error` and details.
 `--workspace <dir>` keeps the project on disk with undo history and a revision counter; no server
 runs. Use one workspace per model, inside the project you are working in (for example
 `.agent-meshes/<name>`), and keep it out of version control. `--expect-revision <n>` refuses a
-mutation when someone else changed the workspace first.
+mutation when someone else changed the workspace first. `mesh new <name>` on an existing workspace
+replaces the project and starts an empty undo and redo history (from 0.15.0; before that the old
+project stayed one `undo` away), but the revision keeps counting up: it is the `--expect-revision`
+token, so resetting it would let a stale expectation match a changed workspace. `<name>` also names
+the exported GLB's root node, so name the workspace project after the asset.
+
+```text
+mesh --workspace .agent-meshes/hull-dart new hull-dart --quiet   # {"name":"hull-dart","revision":1,"undo":0,...}
+mesh --workspace .agent-meshes/hull-dart batch hull-dart.json --quiet
+```
 
 ```text
 mesh --workspace .agent-meshes/fox recipe vulpine --gaits walk,trot
@@ -127,10 +136,12 @@ default; `transmission=1` for KHR_materials_transmission); in the operation mode
 The character recipe's vacuum suit shows the pattern: a helmet fitted to the head it holds
 (`helmet_fit`), clear glass over a living face, an opaque shell and rims (recipes/README.md).
 
-`recipe`, `state`, `save` and `open` print the whole project (a recipe is a few hundred kilobytes
-of JSON on one line). Redirect that output to a file or trim it. `inspect` without a selector is
-also one long line: counts first, then every part, bone and clip; read the counts, and use a
-selector such as `inspect clip:walk` for one item.
+`new`, `recipe`, `op`, `batch`, `open`, `undo`, `redo`, `save` and `state` print the whole project by
+default (a recipe is a few hundred kilobytes of JSON on one line). Add `--quiet` to any of them to
+print one short line instead: `{"name","revision","undo","redo","counts",...}` plus `warnings` when
+there are any (with `--url`, no undo or redo). Use it in scripts and builds; leave it off when you
+want the project JSON. `inspect` without a selector is also one long line: counts first, then every
+part, bone and clip; read the counts, and use a selector such as `inspect clip:walk` for one item.
 
 ## Static props and sets: use build.json only
 

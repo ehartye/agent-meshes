@@ -294,6 +294,11 @@ export class Editor {
     this.current = next; this.future = [];
     return this.project;
   }
+  /** Start over with this project and no undo or redo history (what `new` does). */
+  reset(project: Project): Project {
+    this.current = validateProject(project); this.past = []; this.future = [];
+    return this.project;
+  }
   undo(): Project {
     const previous = this.past.pop();
     if (!previous) throw new Error('Nothing to undo');

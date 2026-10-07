@@ -3,7 +3,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Project } from './core/types.ts';
-import { capabilities, capabilitiesFor, techniqueGuidance } from './agent-contract.ts';
+import { capabilities, capabilitiesFor, inspectProject, techniqueGuidance } from './agent-contract.ts';
 import { errorDetails } from './errors.ts';
 
 export async function main(args = process.argv): Promise<void> {
@@ -17,7 +17,8 @@ export async function main(args = process.argv): Promise<void> {
     .option('--expect-revision <revision>', 'Require this workspace revision before mutation', value => {
       if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new InvalidArgumentError('Revision must be a nonnegative safe integer');
       return Number(value);
-    });
+    })
+    .option('--quiet', 'For commands that print the project (new, recipe, op, batch, open, undo, redo, save, state): print only name, revision, undo/redo depth, counts and any warnings');
   program.addHelpText('afterAll', () => {
     const guidance = techniqueGuidance();
     return `\nCharacter construction checklist: ${fileURLToPath(new URL(guidance.references[0].path, guidance.baseUrl))}\nUse for skinned characters; static props use the operation schemas.\n`;
@@ -27,6 +28,7 @@ export async function main(args = process.argv): Promise<void> {
       throw Object.assign(new Error('--workspace and --url cannot be used together'), { code: 'CLI_ARGUMENT_ERROR' });
     }
   });
+  let serverRevision: number | undefined;
   const requestRaw = async (path: string, body?: unknown) => {
     const base = String(program.opts().url).replace(/\/$/, '');
     const health = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(5000) });
@@ -42,6 +44,8 @@ export async function main(args = process.argv): Promise<void> {
       const value = await response.json() as { error?: string; details?: Record<string, unknown> };
       throw Object.assign(new Error(value.error ?? `Server returned ${response.status}`), value.details ?? {});
     }
+    const header = response.headers.get('x-agent-meshes-revision');
+    serverRevision = header === null ? undefined : Number(header);
     return response;
   };
   const requestValue = async (path: string, body?: unknown): Promise<unknown> => {
@@ -51,7 +55,16 @@ export async function main(args = process.argv): Promise<void> {
     }
     return (await requestRaw(path, body)).json();
   };
-  const request = async (path: string, body?: unknown) => { print(await requestValue(path, body)); };
+  /** --quiet: a one-line summary in place of a project that can be hundreds of kilobytes (a recipe). */
+  const summary = (value: unknown) => {
+    const record = value as { project?: Project; revision?: number; undo?: number; redo?: number; warnings?: unknown[] } & Partial<Project>;
+    const project = record.project ?? (Array.isArray(record.parts) && typeof record.name === 'string' ? record as Project : undefined);
+    if (!project) return value;
+    const { counts, warnings } = inspectProject(project);
+    const revision = record.project ? record.revision : serverRevision;
+    return { name: project.name, ...(revision === undefined ? {} : { revision }), ...(record.project ? { undo: record.undo, redo: record.redo } : {}), counts, ...(warnings ? { warnings } : {}) };
+  };
+  const request = async (path: string, body?: unknown) => { const value = await requestValue(path, body); print(program.opts().quiet ? summary(value) : value); };
   const currentProject = async () => {
     const value = await requestValue('project');
     return (program.opts().workspace === undefined ? value : (value as { project: Project }).project) as Project;
@@ -75,7 +88,7 @@ export async function main(args = process.argv): Promise<void> {
       process.once('SIGINT', shutdown);
       process.once('SIGTERM', shutdown);
     });
-  program.command('new <name>').action(name => request('new', { name }));
+  program.command('new <name>').description('Replace the project with an empty one named <name> (the exported root node takes this name); in a workspace, undo and redo history start empty and the revision keeps counting up').action(name => request('new', { name }));
   program.command('recipe <kind>').description('Load biped, equine, vulpine, insectoid, arachnid or strandbeest (quadruped aliases vulpine)')
     .option('--gaits <list>', 'Comma-separated clips for equine or vulpine: walk, trot, gallop (default walk,trot)')
     .option('--shell', 'Equine or vulpine: blend every part into one smooth skin with lathe hooves')
