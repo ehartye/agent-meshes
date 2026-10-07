@@ -61,6 +61,7 @@ halo` (or `verify.allowDetached`) exempts a part that floats on purpose. The lin
 not support: a winglet whose root overlaps a wing tip by a few centimetres passes even if most of it
 hangs in the air, so still look at the top and side renders. Skinned or animated models are skipped
 (rest-pose gaps between moving parts are often intended); check them on the clip contact sheets.
+The lint is 0.15.0 and later; on an older release, look for floating pieces in the top and side renders.
 
 ## 5. Render polish, then Blender if it earns it
 

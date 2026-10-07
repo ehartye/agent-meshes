@@ -86,7 +86,8 @@ Static props (a chess set, a tower, a column) need only `add` operations in a `b
   cup, a nozzle) run down the inner wall and back up the outer wall. A profile run the other way
   is accepted but renders inside out (dark, or only the outline hull shows), so `batch --dry-run`,
   `batch`, `op`, `inspect` and `build` report it under `warnings` as `LATHE_PROFILE_INWARD` with the
-  part name and the fix: reverse the profile array (corner index `i` becomes `n - 1 - i`).
+  part name and the fix: reverse the profile array (corner index `i` becomes `n - 1 - i`). The
+  warning is 0.15.0 and later; on an older release, check the direction yourself.
 - **Real units**: `"profileUnits":"metres"` takes `[radius, height]` in meters with height up from
   the part origin (start at 0 and the part stands on its origin) and ignores `size`. Prefer it for
   anything measured; it needs no normalise-and-offset helper.
@@ -140,7 +141,8 @@ The character recipe's vacuum suit shows the pattern: a helmet fitted to the hea
 default (a recipe is a few hundred kilobytes of JSON on one line). Add `--quiet` to any of them to
 print one short line instead: `{"name","revision","undo","redo","counts",...}` plus `warnings` when
 there are any (with `--url`, no undo or redo). Use it in scripts and builds; leave it off when you
-want the project JSON. `inspect` without a selector is also one long line: counts first, then every
+want the project JSON. `--quiet` is 0.15.0 and later; on an older release, redirect the output to a
+file. `inspect` without a selector is also one long line: counts first, then every
 part, bone and clip; read the counts, and use a selector such as `inspect clip:walk` for one item.
 
 ## Static props and sets: use build.json only

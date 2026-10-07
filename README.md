@@ -2,18 +2,22 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
-Release 0.14.0 adds what a game-asset pipeline kept missing, found while building a
-12-piece chess set. Lathes take `corners` (hard edges), `profileUnits: "metres"` and
-`angleRange` sectors; prisms take `axis: "y"`; parts take `rotationEuler`. Parts can
-carry `material.name`, identical materials are shared on export, and `"merge":
-"byMaterial"` fuses static parts. `verify` accepts triangle, material, pivot and height
-limits, `silhouette --lint` finds a lathe profile that narrows and then widens, and
-errors now name the operation, part and field. New skills text covers static sets,
-turned-object budgets and Blender-authored props, with `set-sheet` and `set-stats`
-recipes. The default export now shares identical materials, so some GLBs have fewer
-glTF materials than before. `view --views front,side,top,perspective` renders a chosen
-set of views, including a top view; the default is still front, side and perspective.
-Run `mesh-setup` after updating the plugin.
+Release 0.15.0 turns what building a 12-part ship kit kept missing into checks. `verify` (and every
+build) now lints a static model for detached parts: a mesh part, or a group of touching parts, more
+than 0.01 m from the rest is reported as `DETACHED_PART` with the part names, the nearest part and
+the gap in metres, measured on the real exported triangles. A lathe profile wound the wrong way
+(it renders inside out) is reported as the warning `LATHE_PROFILE_INWARD` by `batch --dry-run`,
+`batch`, `op`, `inspect` and `build`. Every exported glTF mesh is named after its part. `mesh new
+<name>` starts an empty undo history, and `--quiet` prints a one-line summary instead of the whole
+project. Also new: physical assemblies with connector profiles and geometry adapters (LDraw), and
+reference body timing for sprout gaits.
+
+Behaviour changes: a model that passed before may now print `WARN DETACHED_PART` lines and carry a
+`detached` report in `verify` output and `verification.json` (the exit code changes only with the new
+`--max-gap` / `verify.maxGap` budget; `--allow-detached` exempts intended floaters; skinned and
+animated models are skipped). Results of a project with an inside-out lathe gain a `warnings` array.
+GLBs carry mesh names, so they grow by a few bytes. `undo` straight after `new` no longer returns to the
+previous project (the revision still counts up). Run `mesh-setup` after updating the plugin.
 
 ## Compare rigged motion
 
@@ -53,7 +57,7 @@ node scripts/agent-meshes.mjs --workspace .agent-meshes/fox export fox.glb
 
 `capabilities` returns versioned JSON schemas, defaults, constraints and operation examples without a running server (about 40 KB on one line); `capabilities lathe`, `capabilities prism` or `capabilities shell.set` prints only that geometry's or operation's contract (conventions, fields, schema and examples), and an unknown name fails with `UNKNOWN_CAPABILITY` and lists the valid ones. `inspect` summarizes named parts, bones, bindings and clip/key counts; `part:`, `bone:` and `clip:` selectors include one exact entity. A batch file contains an operation array. `--dry-run` runs the same state-dependent validation as a real batch, reports named additions/removals/changes, and leaves revision and undo history intact. Use its base revision with `--expect-revision` to reject edits planned against stale state.
 
-Workspace `state` and mutation responses contain `{project, revision, undo, redo}`. Each failure writes a JSON error record to stderr with a stable code, message, zero-based failing operation index and validation fields where available; failures exit nonzero. Workspace state lives in `workspace.sqlite`, using Node's bundled SQLite with transactions and crash recovery. Confirmed edits are committed before success is returned. Undo/redo survive commands and restarts, bounded to 20 steps and 16 MiB of history. Corrupt or unknown workspace state is rejected without replacement. Use current Node 24 LTS (tested 24.21) or Node 26 for clean machine-readable stderr; early Node 24 releases also print runtime experimental warnings. Project JSON remains the portable exchange format: use `save file.mesh.json` and `open file.mesh.json`.
+Workspace `state` and mutation responses contain `{project, revision, undo, redo}`, plus `warnings` when the project has authoring warnings (`LATHE_PROFILE_INWARD`). `--quiet` replaces the project with `{name, revision, undo, redo, counts, warnings?}` for any command that prints it (a recipe is hundreds of kilobytes); without it the output is unchanged. `new <name>` replaces the project with an empty one and starts an empty undo and redo history; the revision keeps counting up, because it is the `--expect-revision` token and a reset would let a stale expectation match a changed workspace. Each failure writes a JSON error record to stderr with a stable code, message, zero-based failing operation index and validation fields where available; failures exit nonzero. Workspace state lives in `workspace.sqlite`, using Node's bundled SQLite with transactions and crash recovery. Confirmed edits are committed before success is returned. Undo/redo survive commands and restarts, bounded to 20 steps and 16 MiB of history. Corrupt or unknown workspace state is rejected without replacement. Use current Node 24 LTS (tested 24.21) or Node 26 for clean machine-readable stderr; early Node 24 releases also print runtime experimental warnings. Project JSON remains the portable exchange format: use `save file.mesh.json` and `open file.mesh.json`.
 
 `--workspace <directory> serve` opens a live editor backed by the same workspace. CLI and browser changes share serialized database transactions; the editor observes external workspace revisions. `--workspace` and an explicit `--url` are mutually exclusive. `serve --project` is a separate, in-memory mode and cannot be combined with a workspace. Existing HTTP command responses keep their project shape; workspace servers additionally return the `x-agent-meshes-revision` header on mutations and project reads. `GET /api/workspace` reports durability/revision/history, `GET /api/capabilities` exposes contracts, and `POST /api/plan` accepts `{operations:[...]}` for a nonmutating dry run.
 
@@ -99,6 +103,7 @@ Geometry types are `box`, `sphere`, `cylinder`, `cone`, `capsule`, `lathe`, `pri
 #### Lathe conventions
 
 - **Unit profile (default).** Points are normalised: radius 0 to 0.5, height -0.5 to 0.5. The world radius is `r * size[0]` (not `size[0] / 2`) and the height is `h * size[1]`. The lathe is centred on the part origin, so its bottom is at `y = -size[1] / 2`. A first or last point with radius 0 closes that end on the axis; profiles take 3 to 64 points ordered bottom to top.
+- **Direction.** Faces point to the right of the direction of travel in the `[radius, height]` plane, so a profile runs up the outside, or for a hollow piece (a bell, a cup) down the inner wall and back up the outer wall. A profile run the other way is accepted but renders inside out; `batch --dry-run`, `batch`, `op`, `inspect` and `build` report it as the warning `LATHE_PROFILE_INWARD` naming the part. Reverse the profile array to fix it (corner index `i` becomes `n - 1 - i`).
 - **`profileUnits: "metres"`.** Points are real `[radius, height]` in meters, height measured upward from the part origin, so a profile starting at height 0 stands on `y = 0` with no offset helper. `size` is ignored (use the part `scale` to resize). Radius must be 0 or more; it need not stay within 0.5.
 - **`corners: [indices]`.** Normals are smooth across every profile joint by default, so a ledge or collar shades as a rounded blob. List the zero-based profile indices that are hard edges and the normals split there: surfaces between corners stay smooth around the circumference, while the corner itself shades crisply. Only the duplicated vertices are added (one extra ring per corner), never triangles. Indices must be within the profile; an endpoint is already a one-sided edge.
 - **`angleRange: [startDeg, endDeg]`.** Revolves only that sector (angles about +y, measured from +z toward +x; `[0, 45]` is an eighth). The profile is closed with a wall back to its first point and both radial ends are capped, so a profile with an inner radius gives an annular sector with flat end faces. A span of 360 or more is a full lathe; a span may not exceed 360.
@@ -202,7 +207,7 @@ node scripts/agent-meshes.mjs verify model.glb
 node scripts/agent-meshes.mjs view review
 ```
 
-GLB includes named meshes, materials, skeletons, weights and clips. Export uses the rest rig, independent of the editor's current pose. Skinned mesh transforms are baked and skinned nodes placed at scene root to follow glTF semantics; the bone hierarchy and editable source project remain intact. The exported model is checked with Khronos glTF Validator; structural validity alone does not certify a convincing gait.
+GLB includes named meshes, materials, skeletons, weights and clips. The scene has one root node, an identity wrapper named after the project (`new <name>`, a recipe's name or a build config's `name`); parts are its children, nested by `parent`, and `group` parts are empty named nodes (sockets). Each glTF mesh carries its part's name (a shell's mesh the shell name, a merged mesh the project name). Export uses the rest rig, independent of the editor's current pose. Skinned mesh transforms are baked and skinned nodes placed at scene root to follow glTF semantics; the bone hierarchy and editable source project remain intact. The exported model is checked with Khronos glTF Validator; structural validity alone does not certify a convincing gait.
 
 For a repeatable build, save `build.json` beside your source project:
 
@@ -299,6 +304,27 @@ written to `verification.json` under `limits`:
 ```
 
 A violation fails the build with error code `VERIFY_LIMITS_FAILED` unless `"warnOnly":true`.
+
+### Detached parts
+
+```text
+node scripts/agent-meshes.mjs verify model.glb
+node scripts/agent-meshes.mjs verify model.glb --max-gap 0.01 --allow-detached halo
+```
+
+Every `verify` of a static GLB builds a connectivity graph over its mesh parts from their world-space
+triangles (node matrices, `group` parents and rotations applied; exact triangle-to-triangle distance,
+and a part wholly inside a closed one counts as held). The largest connected group is the body; every
+other group is reported once in `detached.findings` as `DETACHED_PART` with `parts`, `nearest` and
+`gap` in metres, and as a `WARN DETACHED_PART: ...` line on stderr. The default join distance is
+0.01 m: a part placed against the ideal surface of a 0.5 m radius round part at 16 segments can sit
+9.6 mm off its facets. Without options this is a warning and the exit code is unchanged. `--max-gap m`
+(`verify.maxGap` in `build.json`) makes it a budget like the others (`FAIL` lines, exit 1,
+`--warn-only` honoured), and `--allow-detached a,b` (`verify.allowDetached`) exempts parts that float
+on purpose. Builds record the report as `detached` in `verification.json` and list the findings under
+`warnings` in their result. Skinned or animated GLBs are skipped (`detached.skipped` says why), a merged
+GLB has a single mesh, and the lint measures contact, not support: a part whose root overlaps its
+neighbour passes even if most of it hangs in the air.
 
 ### Silhouette and profile lint
 
@@ -638,7 +664,7 @@ def build():
 - **One morph mesh.** Unreal discards every morph name in a file when a name repeats across glTF meshes, and `jawOpen` moves the skin, teeth, tongue and cavity. `join_face_parts` joins all morph-bearing parts into one mesh (one glTF primitive per material). Only the eyeballs stay separate.
 - **Extras.** `face_contract` writes `extras.arkitFace` on the rig, the scene's single root node. `export_glb` writes these extras into the GLB, because Blender's exporter drops JSON-shaped custom properties. It also drops the float-noise morph deltas Blender writes (NORMAL deltas of about 1e-7 on every vertex of every shape key, about 1.2 MB a head against E8's 3 MB) and stores the remaining morphs as sparse accessors (`prune_glb_morphs`, epsilon 1e-6 m for positions and 1e-4 for normals).
 
-**Verifying.** `node scripts/agent-meshes.mjs verify head.glb --contract arkit-face/1` prints a JSON report and exits 1 with a list of failures (`FAIL <check>: <problem>` on stderr) when any check fails. Without `--contract`, `verify` still runs only the glTF validator. The checks, in report order:
+**Verifying.** `node scripts/agent-meshes.mjs verify head.glb --contract arkit-face/1` prints a JSON report and exits 1 with a list of failures (`FAIL <check>: <problem>` on stderr) when any check fails. Without `--contract`, `verify` runs the glTF validator and, on a static model, the detached-part lint (see "Detached parts"). The checks, in report order:
 
 | Check | Fails when |
 | --- | --- |
