@@ -352,6 +352,10 @@ export async function main(args = process.argv): Promise<void> {
       const files = await captureProject(project, output, String(options.views).split(',').map(v => v.trim()).filter(Boolean));
       process.stdout.write(`${JSON.stringify({ output, files })}\n`);
     });
+  program.command('assemble <manifest> <directory>').description('Assemble local LDraw parts into a verified GLB and physical robot.json').action(async (manifest, directory) => {
+    const { buildAssembly } = await import('./physical/assembly.ts');
+    print(await buildAssembly(manifest, directory));
+  });
   program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')
     .option('--no-preview', 'Skip browser renders and the standalone preview page')
     .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html').action(async (config, options) => {

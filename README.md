@@ -883,3 +883,137 @@ remains valid; consumers should bound or restart a long-running demonstration ex
 Run `node scripts/check-belt-drive-browser.mjs` for a real offline public-factory proof.
 The helper preserves full turns for ratios; it never wraps the driver before deriving the
 output. See `tests/belt-drive.test.ts` and the real viewer-bundle smoke test.
+
+### Physical assemblies
+
+`node src/cli.ts assemble hardware/robot.json artifacts/robot` builds named, catalog-backed
+parts without a running server. This separate version-1 manifest does not change the existing
+Project format. Supply a local LDraw library with `LDConfig.ldr`, `parts/` and `p/` containing
+every referenced dependency. `libraryPath` is relative to the manifest; the output directory
+is relative to the command's working directory. The command performs no network requests.
+
+The manifest names two replaceable parts, both defaulting to the LEGO behavior described
+below so existing manifests build byte-identically:
+
+- `"adapter"` (default `"ldraw"`) reads each part's geometry and must return centered SI
+  geometry (meters, +Y up). The LDraw adapter takes `ldraw` and `color` on each part. An
+  adapter can read its own fields from a part's `source` object, validates them in
+  `validatePart`, and supplies the `sourceTransform` recorded in `robot.json` and the
+  header of `ATTRIBUTION.md`.
+- `"profile"` (default `"lego-technic"`) is the connector vocabulary: which kinds exist,
+  which pairs mate, which kinds occupy an exclusive site (holes) and which have no axis.
+  The position, axis and double-use checks are shared by every profile.
+
+Register either in code with `registerGeometryAdapter` (`src/physical/adapters.ts`) and
+`registerConnectorProfile` (`src/physical/profiles.ts`); `tests/physical-extensibility.test.ts`
+shows a bolt and tapped-hole profile with a box adapter. When a manifest uses a non-default
+profile or adapter, `robot.json` records it as `connectorProfile` / `geometryAdapter`; the
+default is omitted so existing artifacts and their hashes do not change. Only the LDraw
+adapter and LEGO profile ship; others are registered by the code that needs them.
+
+```json
+{
+  "version": 1,
+  "name": "SPIKE hub assembly",
+  "libraryPath": "../assets/ldraw",
+  "bodies": [{ "name": "chassis", "parent": null, "position": [0, 0, 0] }],
+  "parts": [{
+    "name": "hub-with-battery", "ldraw": "45601c01.dat", "color": 15,
+    "body": "chassis", "position": [0, 0, 0], "rotation": [0, 0, 0, 1],
+    "massKg": 0.14982,
+    "massSource": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=53444c01",
+    "massNote": "Hub plus installed battery; geometry already includes battery.",
+    "massComponents": [
+      { "name": "hub", "massKg": 0.06312, "massSource": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=53444c01" },
+      { "name": "battery", "massKg": 0.0867, "massSource": "https://www.bricklink.com/v2/catalog/catalogitem.page?P=55422c01" }
+    ],
+    "colliders": [{ "shape": "box", "size": [0.056, 0.032, 0.088],
+      "position": [0, 0, 0], "rotation": [0, 0, 0, 1] }]
+  }]
+}
+```
+
+All lengths are meters, masses kilograms, rotations unit quaternions `[x,y,z,w]`.
+Coordinates are right-handed, +Y up and +Z forward; wheel axles conventionally use X.
+Body transforms are relative to the named parent; root bodies use `parent: null`. Body
+rotation defaults to identity. A child may declare a unit `hingeAxis` in its body frame or
+`ballJoint: true`, exclusively. Its body origin is the joint anchor. Bodies without either
+declaration represent fixed attachments. Every body requires at least one mass-bearing part.
+
+Each part's transform is relative to its body. Its origin is the imported geometry's
+bounding-box center. LDraw units become meters at 0.0004 m/unit, with a proper 180° rotation
+about X taking source -Y to +Y (and source +Z to -Z). `sourceBounds` and `sourceCenter` record
+the SI-converted bounds and center before centering. LDraw reference transforms and surface
+colors survive; `color` is an integer LDraw material code for inherited color 16.
+
+Each part requires positive catalog `massKg`, an HTTP(S) `massSource`, and explicit
+`colliders`. Optional `massComponents` document included items and must sum to `massKg`;
+they are provenance only and are never counted again. Supported colliders are a box with
+full `size: [x,y,z]`, a sphere with `radius`, or a cylinder with `radius` and full `height`.
+Cylinders use local Y. Every collider supplies `position` and `rotation`, relative to the
+centered part before its part/body transforms. Collider dimensions are authored proxies;
+the importer does not infer them from meshes.
+
+The output includes `model.glb` with named body and part groups, renderer-independent
+`robot.json`, Khronos `verification.json`, and `ATTRIBUTION.md` with source hashes, file
+authors/licenses and mass citations. Body `aggregateMassKg`, `centerOfMassEstimate` and
+`bounds` cover only that body's directly assigned parts in its local frame, excluding
+articulated child bodies. Assembly totals and bounds include every part once in world
+coordinates. COM estimates place catalog mass at geometry centers; these are **not measured
+centers of mass**. The output does not claim measured inertia, friction, motor performance,
+mechanical compatibility, valid LEGO connections, or physical calibration.
+
+Dependencies must stay inside the library, including symlinks; missing files, cycles,
+unsafe paths, duplicate names, invalid masses and non-unit transforms fail. Plain `.dat`
+files are supported; source MPD/embedded `FILE` sections, `TEXMAP`, and embedded texture data
+are rejected. Line and conditional-line overlays are omitted from the surface GLB.
+Licensing metadata is preserved per source; absent declarations are reported as absent.
+
+Builds stage and validate the GLB before publishing. Rebuilds replace only directories
+owned by the same manifest through `.agent-meshes-assembly.json`; unowned directories or
+extra files cause an error. A failed import or validation leaves the previous build intact.
+`npx vitest run tests/parts-assembly.test.ts` exercises local import, transforms, colors,
+dependency failures, mass accounting, hierarchy, CLI export, validation and rebuild safety.
+
+Assemblies can also declare sourced connector anchors. Each part accepts optional
+`connectors`; each anchor has a part-local unique `name`, `kind`, `position` in meters
+relative to the centered mesh, unit `axis`, and a nonempty `source` describing the evidence
+(for example, an LDraw primitive path and transform). Supported kinds are `pin-hole`,
+`axle-hole`, `pin`, `axle`, `ball`, and `socket`. The assembly accepts optional `connections`
+and `requireConnected` (default `false`):
+
+```json
+{
+  "requireConnected": true,
+  "connections": [
+    { "a": { "part": "beam", "connector": "hole-1" },
+      "b": { "part": "joining-pin", "connector": "beam-end" } }
+  ]
+}
+```
+
+For example, `beam.connectors` can contain
+`{"name":"hole-1","kind":"pin-hole","position":[0,0,0],"axis":[1,0,0],"source":"parts/beam.dat: declared hole primitive"}`.
+The pin declares its corresponding `pin` anchor. Every endpoint must exist and may appear
+in only one connection; a shaft with multiple engagements needs a separate named anchor
+at each engagement position. Connections must join distinct parts. Only pin↔pin-hole,
+axle↔axle-hole, and ball↔socket pairs are accepted; two holes do not constitute an attachment.
+Consumed pin/axle-hole anchors on the same part must also occupy distinct physical holes:
+different names cannot reuse a coincident position and parallel axis within the same
+0.1 mm / 1e-6 tolerances. Unconsumed aliases do not grant additional engagements.
+
+Validation transforms anchors through the part and full body hierarchy at rest. Positions
+must coincide within 0.0001 m (0.1 mm). Axes must be parallel or antiparallel with
+`1 - abs(dot(axisA, axisB)) <= 1e-6`; ball/socket pairs ignore axis alignment. When
+`requireConnected` is true, these valid connections must place **every part** in a single
+connected component. Declared connections are checked even when that flag is false.
+
+`robot.json` preserves connectors, their sources, connections, and `requireConnected`.
+Its `connectivity` report contains sorted `connectedComponents`, `allPartsConnected`, the
+tolerances, and a `residuals` entry per connection with endpoint references, world anchor
+positions, `positionErrorMeters`, and `axisError` (`null` for ball/socket). A failed check
+rejects the build before it replaces an existing artifact. These are checks of supplied
+connector declarations: they do not infer connectors from meshes or establish structural
+strength, insertion depth, keyed axle orientation, interference clearance, or manufacturability.
+Physical joints remain explicitly authored in `bodies`. Run
+`npx vitest run tests/physical-connectivity.test.ts tests/physical-assembly.test.ts tests/physical-extensibility.test.ts` for the checks.
