@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { Project } from './core/types.ts';
 import { createProject, validateProject } from './core/model.ts';
 import { applyOperations } from './agent-contract.ts';
+import { lintProject, type ProjectWarning } from './project-lint.ts';
 import { exportGLB, verifyGLB } from './export.ts';
 import { verifyEnclosures, type EnclosuresReport } from './enclosure.ts';
 import { findBlender, refineGLB } from './refine.ts';
@@ -107,7 +108,7 @@ async function move(source: string, destination: string): Promise<void> {
 }
 
 export interface AuthoredAsset { name: string }
-export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]>; decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[] }> {
+export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]>; decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[]; warnings?: ProjectWarning[] }> {
   const configFile = await realpath(resolve(configPath));
   const config = configSchema.parse(JSON.parse(await readFile(configFile, 'utf8')));
   const geometryTarget = config.target ? { target: config.target, renderVertexBudget: config.renderVertexBudget } : undefined;
@@ -126,6 +127,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
     await checkOwnership(output, configFile);
     stage = await mkdtemp(join(dirname(output), `.${basename(output)}.stage-`));
     let files: string[];
+    const warnings: ProjectWarning[] = [];
     if (config.blender) {
       const source = await readFile(input);
       const result = await authorGLB(input, join(stage, 'model.glb'));
@@ -149,6 +151,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
         project = createProject(config.name ?? basename(configFile).replace(/\.[^.]+$/, ''));
         project = applyOperations(project, source);
       }
+      warnings.push(...lintProject(project));
       let bytes = await exportGLB(project, { merge: config.merge });
       let verification = await verifyGLB(bytes, geometryTarget);
       if (!verification.ok) throw new Error(`GLB verification failed with ${verification.errors} errors`);
@@ -184,7 +187,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
     try { await move(stage, output); stage = undefined; }
     catch (error) { if (backup) { await move(backup, output); backup = undefined; } throw error; }
     if (backup) { await rm(backup, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); backup = undefined; }
-    return { output, files };
+    return { output, files, ...(warnings.length ? { warnings } : {}) };
   } finally {
     if (stage) await rm(stage, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     await lock.close(); await unlink(lockPath);

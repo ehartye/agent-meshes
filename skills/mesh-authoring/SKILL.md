@@ -73,6 +73,11 @@ Static props (a chess set, a tower, a column) need only `add` operations in a `b
 - **Unit lathe profile** (default): radius 0 to 0.5 and height -0.5 to 0.5, world radius
   `r * size[0]` (not `size[0] / 2`), height `h * size[1]`, centred on the part origin so the
   bottom is at `-size[1] / 2`. A zero-radius first or last point closes the cap.
+- **Profile direction**: points run bottom to top along the outside. For a hollow piece (a bell, a
+  cup, a nozzle) run down the inner wall and back up the outer wall. A profile run the other way
+  is accepted but renders inside out (dark, or only the outline hull shows), so `batch --dry-run`,
+  `batch`, `op`, `inspect` and `build` report it under `warnings` as `LATHE_PROFILE_INWARD` with the
+  part name and the fix: reverse the profile array (corner index `i` becomes `n - 1 - i`).
 - **Real units**: `"profileUnits":"metres"` takes `[radius, height]` in meters with height up from
   the part origin (start at 0 and the part stands on its origin) and ignores `size`. Prefer it for
   anything measured; it needs no normalise-and-offset helper.
@@ -90,7 +95,9 @@ Static props (a chess set, a tower, a column) need only `add` operations in a `b
 - Shells cannot include parts that use these options.
 
 When an operation fails the message names the zero-based operation index, the part, the field path,
-the value and a hint; fix that one operation rather than guessing.
+the value and a hint; fix that one operation rather than guessing. A `warnings` array in a result
+(each with `code`, `part`, `message` and `hint`) does not stop anything, but it names a part that
+will render wrong: fix it before exporting.
 
 ## Recipes
 
