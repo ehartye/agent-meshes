@@ -36,7 +36,8 @@ nearest part and the gap in metres; the exit code is unchanged. `--max-gap 0.01`
 budget that fails (with `--warn-only` honoured), and `--allow-detached halo,orb` exempts parts that
 float on purpose. A build records the same report as `detached` in `verification.json` and lists the
 findings under `warnings` in its result. Skinned or animated GLBs are skipped (`detached.skipped`), and
-a merged GLB has one mesh, so lint before merging. `view` renders
+a merged GLB has one mesh, so lint before merging (0.15.0 and later; older releases run the validator
+only). `view` renders
 front, side and perspective PNGs plus one contact sheet per clip into a directory; look at them.
 `view --views front,side,top,perspective` picks the views; the default is front, side and perspective.
 

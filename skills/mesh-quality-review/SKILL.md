@@ -58,7 +58,8 @@ clay, wire and skeleton views diagnose problems but do not replace that inspecti
 
 For every finding record the region, observed defect, reference expectation, severity,
 view/clip/time, evidence path and proposed cause. Separate observations from hypotheses.
-Prioritize broken anatomy, intersections, detached parts and identity errors before polish.
+Prioritize broken anatomy, intersections, detached parts and identity errors before polish. For a
+static model, `verify` names detached parts with their gap (`DETACHED_PART`); quote it as evidence.
 
 Within the authorized scope, fix the authoring source or the underlying tool, rebuild and
 recheck the same angles/phases plus adjacent regions for regressions. Preserve before/after
