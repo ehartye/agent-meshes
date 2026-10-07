@@ -30,7 +30,8 @@ it('discovers contracts without a server and structures command-line errors', as
 it('persists authoring and undo/redo across separate CLI processes without HTTP', async () => {
   const { directory, invoke } = await setup();
   expect(await invoke('new', 'Agent asset')).toMatchObject({ revision: 1, project: { name: 'Agent asset' } });
-  expect(await invoke('op', '{"op":"add","part":{"name":"body"}}')).toMatchObject({ revision: 2, undo: 2 });
+  // `new` starts a clean history, so the first edit is the only undo step.
+  expect(await invoke('op', '{"op":"add","part":{"name":"body"}}')).toMatchObject({ revision: 2, undo: 1 });
   expect(await invoke('state')).toMatchObject({ revision: 2, project: { parts: [expect.objectContaining({ name: 'body' })] } });
   expect(await invoke('inspect', 'part:body')).toMatchObject({ workspace: { revision: 2 }, counts: { parts: 1 }, selection: { kind: 'part' } });
   expect(await invoke('undo')).toMatchObject({ revision: 3, project: { parts: [] }, redo: 1 });
@@ -65,3 +66,29 @@ it('returns parse and field validation details and opens recipes without a serve
   expect(await invoke('recipe', 'biped')).toMatchObject({ project: { name: 'Copper courier' }, revision: 1 });
   expect(await invoke('undo')).toMatchObject({ project: { parts: [] } });
 }, 30000);
+
+it('new on an existing workspace starts a clean history while the revision keeps counting', async () => {
+  const { directory, invoke } = await setup();
+  await invoke('new', 'hull-dart');
+  await invoke('op', '{"op":"add","part":{"name":"body"}}');
+  const again = await invoke('new', 'hull-dart');
+  // The revision is a concurrency token: a reset to 0 would let a stale --expect-revision 0 (or a server's cached
+  // revision) match a workspace that has changed, so it stays monotonic.
+  expect(again).toMatchObject({ revision: 3, undo: 0, redo: 0, project: { name: 'hull-dart', parts: [] } });
+  expect(await failure('--workspace', directory, 'undo')).toMatchObject({ error: { message: 'Nothing to undo' } });
+  expect(await failure('--workspace', directory, '--expect-revision', '0', 'op', '{"op":"add","part":{"name":"x"}}')).toMatchObject({ error: { code: 'REVISION_CONFLICT', actual: 3 } });
+}, 60000);
+
+it('--quiet prints a one-line summary instead of the whole project, and the default output is unchanged', async () => {
+  const { directory, invoke } = await setup();
+  const file = join(directory, 'batch.json');
+  await writeFile(file, JSON.stringify([{ op: 'add', part: { name: 'body' } }, { op: 'add', part: { name: 'bell', geometry: { type: 'lathe', size: [1, 1, 1], profile: [[0.5, 0.5], [0.5, -0.5], [0, -0.5]] } } }]));
+  expect(await invoke('new', 'kit', '--quiet')).toEqual({ name: 'kit', revision: 1, undo: 0, redo: 0, counts: { parts: 0, bones: 0, clips: 0, boundParts: 0, tracks: 0, keys: 0 } });
+  const quiet = await invoke('--quiet', 'batch', file);
+  expect(quiet).toEqual({ name: 'kit', revision: 2, undo: 1, redo: 0, counts: expect.objectContaining({ parts: 2 }), warnings: [expect.objectContaining({ code: 'LATHE_PROFILE_INWARD', part: 'bell' })] });
+  expect(quiet).not.toHaveProperty('project');
+  expect(await invoke('recipe', 'biped', '--quiet')).toMatchObject({ name: 'Copper courier', revision: 3, counts: { parts: expect.any(Number), clips: expect.any(Number) } });
+  expect(await invoke('undo')).toHaveProperty('project.name', 'kit');
+  await writeFile(file, JSON.stringify([{ op: 'add', part: { name: 'fin' } }]));
+  expect(await invoke('batch', file, '--dry-run', '--quiet')).toMatchObject({ ok: true, operations: 1, changes: { parts: { added: ['fin'] } } });
+}, 60000);

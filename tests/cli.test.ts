@@ -121,3 +121,16 @@ it('inspects and dry-runs a server workspace and preserves structured revision e
   try { await invoke('--expect-revision', '0', 'new', 'Stale'); } catch (error) { failure = error as { stderr: string }; }
   expect(JSON.parse(failure!.stderr)).toMatchObject({ ok: false, error: { code: 'REVISION_CONFLICT', expected: 0, actual: 1 } });
 }, 30000);
+
+it('--quiet summarizes a server workspace result with its revision, and new clears the server history', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-cli-server-quiet-'));
+  const server = await createServer({ port: 0, workspacePath: directory });
+  cleanup.push(server.close, () => rm(directory, { recursive: true, force: true }));
+  const invoke = async (...args: string[]) => JSON.parse((await cli('--url', server.url, ...args)).stdout);
+  const file = join(directory, 'batch.json');
+  await writeFile(file, '[{"op":"add","part":{"name":"body"}}]');
+  expect(await invoke('--quiet', 'batch', file)).toEqual({ name: 'Untitled', revision: 1, counts: expect.objectContaining({ parts: 1 }) });
+  expect(await invoke('new', 'kit', '--quiet')).toEqual({ name: 'kit', revision: 2, counts: expect.objectContaining({ parts: 0 }) });
+  expect(await invoke('inspect')).toMatchObject({ workspace: { revision: 2, undo: 0, redo: 0 } });
+  expect((await invoke('state')).name).toBe('kit');
+}, 30000);

@@ -94,7 +94,7 @@ export async function createServer(options: { port?: number; projectPath?: strin
   });
   mutate('new', (request, candidate) => {
     if (typeof request.body?.name !== 'string' || !request.body.name.trim()) throw new Error('A project name is required');
-    candidate.replace(createProject(request.body.name));
+    candidate.reset(createProject(request.body.name));
   });
   mutate('op', (request, candidate) => { candidate.replace(planOperations(candidate.project, [request.body]).project); });
   mutate('project', (request, candidate) => { candidate.replace(validateProject(request.body)); });

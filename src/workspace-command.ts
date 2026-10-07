@@ -24,7 +24,8 @@ export async function workspaceCommand(directory: string, path: string, body?: u
     }
     const result = workspace.transact(editor => {
       switch (path) {
-        case 'new': editor.replace(createProject(value?.name as string)); break;
+        // A new project starts a clean history; the revision still counts up (it is the --expect-revision token).
+        case 'new': editor.reset(createProject(value?.name as string)); break;
         case 'project': editor.replace(body as Project); break;
         case 'open': editor.replace(opened!); break;
         case 'op': editor.replace(planOperations(editor.project, [body]).project); break;
