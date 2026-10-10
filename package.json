@@ -1,0 +1,21 @@
+{
+  "name": "agent-meshes-runtime",
+  "version": "0.15.0",
+  "description": "Browser-safe runtime of agent-meshes: model data in, three.js scene graph out. Generated; do not edit.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ehartye/agent-meshes.git"
+  },
+  "peerDependencies": {
+    "three": ">=0.185.0 <0.187.0"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
