@@ -193,6 +193,10 @@ Before 0.14.0 none of these fields exist (every part exported its own unnamed ma
 `package.json` before relying on them; on an older release, post-process the GLB (keep `materials[0]`, name it, point every
 primitive at 0, delete `COLOR_0`/`COLOR_1`) or use the Blender route in mesh-build "Blender-authored static props".
 
+## Generating variants at runtime
+
+A game can build hulls with no shipped GLB: write a template (a Project plus a `params` table, numbers as `{"$param":...}` or `{"$expr":...}`), then `instantiate` and `seedParams` it and verify with `checkSockets` from `src/runtime.ts`. See README "Runtime use in games".
+
 ## Working method
 
 1. Sketch the model as a short list of named parts with rough sizes and positions in meters,

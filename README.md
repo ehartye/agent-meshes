@@ -448,6 +448,21 @@ Species references are measurements, not certificates that the source clip passe
 
 `--reference <curves.json>` scores the clip's pelvis height and roll, chest and head pitch, knees, ankles and foot heights against reference curves after one circular phase shift shared by all curves; `--compare` does the same for information only. Each comparison also has `symmetric` scores of the mirror-symmetric parts of both (even harmonics of body curves, odd harmonics of lateral ones, each leg averaged with the other half a cycle later), for scoring a symmetric gait against a reference that limps. `--gait walk|jog` adds an `evaluation` of the natural-gait ranges in `NATURAL_GAIT` and exits 1 when any fails: ground error < 5 mm, grounded speed within ±10% of travel with no grounded sole vertex skating more than 10%, seam < 2 mm, no contact velocity jump of half the travel speed, no knee past 180° or changing more than 25° a frame, flight only in the jog, a stride of 1.4–2.2 leg lengths walking and 2–4 jogging, arms counterswinging (r ≤ −0.5), head bob 2.5–6 cm walking and 5–10 cm jogging with two bobs a cycle, head pitch range 30–70% of the chest's, trunk lean 3–8° and 8–15°, at least two spine joints moving 2° and 4°, counter-rotation of 8° and 12° with shoulders against the pelvis, swing-side pelvis drop of 3–7°, hands hanging naturally at rest and through the clip (palm −20° to 45° from facing the thigh, thumb-forward cosine ≥ 0.5, finger curl ≥ 0.05; a rig without skinned hands fails), and every scored curve at r ≥ 0.8 against every `--reference` (`--curve-score symmetric` uses the symmetric scores). `--out` writes the full report and prints a summary; `--commit`, `--license` and `--source-url` record provenance in `source` beside the file's SHA-256. `analyzeGait`, `evaluateGait` and the curve helpers are exported from `src/gait-analysis.ts`.
 
+## Runtime use in games
+
+`src/runtime.ts` is the browser-safe entry: it reaches only `three` and `zod` (no filesystem, workspace, CLI or exporter; `tests/runtime-entry.test.ts` fails if that changes). A game that generates meshes from model data imports from it.
+
+- `buildScene(project)` returns `{root, objects, dispose}`, the same graph the viewer and GLB exporter build (same part names and vertex counts). Socket parts (`socket_*`) are empty groups.
+- `instantiate(template, values?)` turns a parametric template into a validated Project. A template is Project-shaped JSON plus `params: {name: {default, min, max, integer?}}`. Any number may be `{"$param":"width"}` or `{"$expr":"width*0.5+0.2"}`; a colour may be `{"$hsl":[hue, sat, light]}` (entries numbers or those objects). Expressions are parsed by a small hand-written evaluator (numbers, parameter names, `pi`, `+ - * / % ^`, parentheses, `min max abs sqrt floor ceil round sin cos clamp mix`), never `eval`. Values outside a range, unknown names and bad expressions throw `ModelError` with the field path.
+- `seedParams(template, seed)` derives every parameter from an integer seed: per parameter, FNV-1a over the seed and name feeds mulberry32; the first output scales into `[min, max]`. Same seed, same values on every platform, and adding a parameter does not change the others.
+- `checkSockets(project, contract)` returns a list of violations (`missing-socket`, `socket-not-empty`, `socket-offset`, `envelope-exceeded`, `envelope-empty`) against `{tolerance?, sockets: {role: {name, position, tolerance?}}, envelopes?: {name: {min, max, parts?}}}`, in ship space and metres.
+
+```ts
+import { buildScene, instantiate, seedParams, checkSockets } from 'agent-meshes/src/runtime.ts';
+const params = seedParams(hullTemplate, 12345);
+const hull = instantiate(hullTemplate, params);
+if (checkSockets(hull, contract).length === 0) scene.add(buildScene(hull).root);
+```
 ## Embedding a model in your own page
 
 `node scripts/agent-meshes.mjs viewer lib/mesh-viewer.js` writes the standalone viewer runtime: one script, no build step, no network. It defines `window.MeshViewer`. `preview.html` is built on the same runtime.
