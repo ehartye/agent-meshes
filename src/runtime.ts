@@ -6,6 +6,8 @@
  * CLI, the preview server or the exporter. tests/runtime-entry.test.ts fails if a Node-only
  * import ever becomes reachable from this file, so keep additions to pure geometry and model code.
  *
+ * Also here: parametric templates (instantiate, seedParams) and the socket-fit checker (checkSockets).
+ *
  * The scene graph is the one the browser viewer and the GLB exporter both build, so a part has
  * the same name, vertices and transform whichever way it reaches the screen.
  */
@@ -13,3 +15,7 @@ export { buildScene, disposeScene } from './render/scene.ts';
 export { createProject, validateProject, applyOperation } from './core/model.ts';
 export { geometryFor } from './geometry.ts';
 export type { Operation, Part, Project } from './core/types.ts';
+export { instantiate, seedParams, resolveParams } from './params.ts';
+export type { ParamSpec, ParamValues, Template } from './params.ts';
+export { checkSockets } from './sockets.ts';
+export type { SocketContract, SocketViolation } from './sockets.ts';
