@@ -90,7 +90,7 @@ def build():
             shape_key(skin, name, [(x, y, z + .002) for x, y, z in rest])
     rejects(lambda: slit_mouth(skin, .075, .02), 'before adding shape keys')
 
-    teeth = mesh_from_geometry('teeth_lower', {'vertices': [(0, -.08, .07), (.01, -.08, .07), (0, -.08, .08), (.01, -.08, .08)], 'faces': [(0, 1, 3, 2)]}, [material('teeth_lower', (.9, .9, .85))])
+    teeth = mesh_from_geometry('teeth_lower', {'vertices': [(0, -.06, .07), (.01, -.06, .07), (0, -.06, .08), (.01, -.06, .08)], 'faces': [(0, 1, 3, 2)]}, [material('teeth_lower', (.9, .9, .85))])
     add_jaw_open(teeth, jaw, rigid=True)
     eyes = [build_eye(rig, side, center, .012) for side, center in (('L', (.03, -.07, .14)), ('R', (-.03, -.07, .14)))]
     parts = [skin, teeth] + [e['lids'] for e in eyes] + [e['socket'] for e in eyes]

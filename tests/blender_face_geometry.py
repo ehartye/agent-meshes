@@ -748,12 +748,26 @@ class SurfaceFitTests(unittest.TestCase):
                 teeth = exposed_teeth_geometry(front, (-.02, .02), mouth_z, length=.011, width=.007, style=style)
                 self.assertEqual(teeth['count'], 2)
                 self.assertAlmostEqual(min(v[2] for v in teeth['vertices']), mouth_z - .011, places=6)
-                self.assertGreater(max(v[2] for v in teeth['vertices']), mouth_z, 'the root tucks under the upper lip')
+                self.assertGreater(max(v[2] for v in teeth['vertices']), mouth_z, 'the root reaches up the upper lip')
                 for v in teeth['vertices']:
-                    if v[2] < mouth_z: self.assertLessEqual(v[1], front(v[0], v[2]) - teeth['clearance'] + 1e-9)
+                    # The skin is one surface: a root behind the upper lip would pierce it, so the whole tooth stands in front.
+                    self.assertLessEqual(v[1], front(v[0], v[2]) - teeth['clearance'] + 1e-9)
                 self.assertGreaterEqual(teeth['clearance'], .0005)
                 self.assertGreater(signed_volume(teeth['vertices'], teeth['faces']), 0)
                 closed_and_consistent(self, teeth['vertices'], teeth['faces'])
+
+    def test_exposed_teeth_follow_the_skin_morphs_but_not_the_jaw(self):
+        head = ellipsoid_geometry(self.frog['center'], self.frog['radii'], rings=48, segments=64)
+        front = front_surface(head['vertices'], head['faces'])
+        mouth_z = self.frog['mouth_z']
+        funnel = [(x, y - .004 * math.exp(-((x * x + (z - mouth_z) ** 2) / (2 * .02 ** 2))), z) for x, y, z in head['vertices']]
+        jaw = [(x, y, z - (.01 if z < mouth_z else 0)) for x, y, z in head['vertices']]
+        skin = dict(head, morphs={'mouthFunnel': funnel, 'jawOpen': jaw})
+        teeth = exposed_teeth_geometry(front, (-.01, .01), mouth_z, length=.011, width=.007, skin=skin)
+        self.assertEqual(sorted(teeth['morphs']), ['mouthFunnel'], 'the upper teeth ride the skull: no jawOpen')
+        moved = [min(c[1] - v[1] for v, c in zip(teeth['vertices'], teeth['morphs']['mouthFunnel']))]
+        self.assertLess(moved[0], -.0015, 'a funnelled lip carries the teeth forward')
+        self.assertNotIn('morphs', exposed_teeth_geometry(front, (-.01, .01), mouth_z, length=.011, width=.007))
 
     def test_cut_hole_leaves_a_smooth_rim_where_cut_faces_leaves_stairs(self):
         head = ellipsoid_geometry((0, 0, .12), (.085, .09, .115), rings=48, segments=64)

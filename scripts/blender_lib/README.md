@@ -1015,12 +1015,17 @@ exposed-teeth material listed in `exposedTeeth`, and any listed name that is not
 one.
 
 `exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw',
-root=None, thickness=None, clearance=.0005, sizes=None)` makes upper teeth that
+root=None, thickness=None, clearance=.0005, sizes=None, skin=None)` makes upper teeth that
 show with the mouth closed: Mossjaw's fangs, Pip's buck teeth. One tooth hangs
-at each x, `length` below the mouth line, its root tucked `root` (default 0.35 *
-length) under the upper lip. Each stands at least `clearance` in front of the
-skin below the line (measured on its vertices, reported as `clearance`), so the
-closed lower lip never cuts it and drops away behind it when the jaw opens.
+at each x, `length` below the mouth line, its root reaching `root` (default 0.35 *
+length) up the upper lip. Each stands at least `clearance` in front of the
+skin along its whole height, root included (measured on its vertices, reported as
+`clearance`), so the closed lips never cut it and the lower lip drops away behind
+it when the jaw opens. The skin is one surface, so a root tucked behind the lip
+would pierce it, which the `mouth-skin-intersection` check fails. Pass the head as
+`skin` and the result carries `morphs` that follow the skin under the teeth (all but
+`jawOpen`: these teeth ride the skull); add each with `shape_key` on the teeth
+object, or a funnelled lip swallows the teeth.
 `surface` is the skin's front: `front_surface(vertices, faces)` returns a
 function (x, z) -> y of the frontmost skin point (None beside the head). Name
 the material `teeth_exposed` (`EXPOSED_TEETH_MATERIAL`), bind it to `head` and
