@@ -69,8 +69,9 @@ def build():
     lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('saw', (0, my + .007, MOUTH_Z - .002), .058, .035, 18, .006, row='lower'),
                                [material('teeth_lower', (.9, .87, .72), roughness=.3)])
     add_jaw_open(lower, jaw, rigid=True)
-    fangs = mesh_from_geometry('fangs', exposed_teeth_geometry(front, (-.03, .03), MOUTH_Z, length=.012, width=.007),
-                               [material('teeth_exposed', (.95, .93, .8), roughness=.3)])
+    fang_geometry = exposed_teeth_geometry(front, (-.03, .03), MOUTH_Z, length=.012, width=.007, skin=head)
+    fangs = mesh_from_geometry('fangs', fang_geometry, [material('teeth_exposed', (.95, .93, .8), roughness=.3)])
+    for name, targets in fang_geometry['morphs'].items(): shape_key(fangs, name, targets)
     tongue = mesh_from_geometry('tongue', tongue_geometry((0, my + .032, MOUTH_Z - .015), length=.045, width=.06, thickness=.009),
                                 [material('tongue', (.55, .12, .16), roughness=.5)])
     add_jaw_open(tongue, jaw, rigid=True)

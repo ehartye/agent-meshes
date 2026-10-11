@@ -4,7 +4,7 @@
 export interface CrossingSurface { label: string; points: Float64Array; triangles: Uint32Array; sourceTriangles?: Uint32Array }
 export interface SurfaceCrossing { part: string; skin: string; triangle: number; skinTriangle: number; at: number[] }
 type V = [number, number, number];
-interface Tri { surface: CrossingSurface; index: number; p: V[]; normal: V; lo: V; hi: V; neighbors?: Tri[][] }
+interface Tri { surface: CrossingSurface; index: number; ids: [number, number, number]; p: V[]; normal: V; lo: V; hi: V; neighbors?: Tri[][]; link?: { built: boolean; build(): void } }
 interface Tree { lo: V; hi: V; children?: [Tree, Tree]; tris?: Tri[] }
 const sub = (a: V, b: V): V => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a: V, b: V) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -14,16 +14,15 @@ const overlap = (a: {lo: V; hi: V}, b: {lo: V; hi: V}) => [0, 1, 2].every(k => a
 function triangles(surface: CrossingSurface, window?: { lo: V; hi: V }): Tri[] {
   const out: Tri[] = [];
   for (let index = 0; index < surface.triangles.length / 3; index++) {
-    const p = [0, 1, 2].map(k => {
-      const offset = surface.triangles[index * 3 + k] * 3;
-      return [surface.points[offset], surface.points[offset + 1], surface.points[offset + 2]] as V;
-    });
-    const lo = [0, 1, 2].map(k => Math.min(...p.map(v => v[k]))) as V;
-    const hi = [0, 1, 2].map(k => Math.max(...p.map(v => v[k]))) as V;
+    const a = surface.triangles[index * 3] * 3, b = surface.triangles[index * 3 + 1] * 3, c = surface.triangles[index * 3 + 2] * 3, q = surface.points;
+    const lo: V = [Math.min(q[a], q[b], q[c]), Math.min(q[a + 1], q[b + 1], q[c + 1]), Math.min(q[a + 2], q[b + 2], q[c + 2])];
+    const hi: V = [Math.max(q[a], q[b], q[c]), Math.max(q[a + 1], q[b + 1], q[c + 1]), Math.max(q[a + 2], q[b + 2], q[c + 2])];
+    // Cull against the window before building any per-triangle arrays: most skin triangles lie far from the mouth.
     if (window && !overlap({ lo, hi }, window)) continue;
+    const p: V[] = [[q[a], q[a + 1], q[a + 2]], [q[b], q[b + 1], q[b + 2]], [q[c], q[c + 1], q[c + 2]]];
     const n = cross(sub(p[1], p[0]), sub(p[2], p[0])), length = Math.hypot(...n);
     if (length <= 1e-20) continue; // Degenerate triangles are diagnosed by the inversion check.
-    out.push({ surface, index, p, normal: n.map(v => v / length) as V, lo, hi });
+    out.push({ surface, index, ids: [a / 3, b / 3, c / 3], p, normal: n.map(v => v / length) as V, lo, hi });
   }
   return out;
 }
@@ -39,22 +38,45 @@ function tree(tris: Tri[]): Tree {
 }
 
 /** Weld identical positions across primitive/UV seams for edge ownership. Internal
- * triangulation edges are not surface boundaries and must not hide a crossing. */
+ * triangulation edges are not surface boundaries and must not hide a crossing.
+ * Each distinct vertex is keyed by its position once, then an edge by its two weld ids as a number.
+ * Ownership is only read when a vertex lies within tolerance of the other triangle's plane, so it is built on first use. */
 function connect(tris: Tri[]): void {
-  const edges = new Map<string, Tri[]>();
-  const keys = (t: Tri) => t.p.map((p, i) => [p.join(','), t.p[(i + 1) % 3].join(',')].sort().join('|'));
-  for (const t of tris) for (const key of keys(t)) {
-    const owners = edges.get(key) ?? []; owners.push(t); edges.set(key, owners);
+  const link = { built: false, build() { link.built = true; ownership(tris); } };
+  for (const t of tris) t.link = link;
+}
+
+function ownership(tris: Tri[]): void {
+  const welds = new Map<string, number>(), perSurface = new Map<CrossingSurface, Int32Array>(), edges = new Map<number, Tri[]>();
+  const weld = (t: Tri, k: number): number => {
+    let ids = perSurface.get(t.surface);
+    if (!ids) { ids = new Int32Array(t.surface.points.length / 3).fill(-1); perSurface.set(t.surface, ids); }
+    const vertex = t.ids[k];
+    if (ids[vertex] < 0) {
+      const key = t.p[k][0] + ',' + t.p[k][1] + ',' + t.p[k][2];
+      let id = welds.get(key);
+      if (id === undefined) { id = welds.size; welds.set(key, id); }
+      ids[vertex] = id;
+    }
+    return ids[vertex];
+  };
+  const keys = new Map<Tri, number[]>();
+  for (const t of tris) {
+    const w = [weld(t, 0), weld(t, 1), weld(t, 2)];
+    const edge = [0, 1, 2].map(i => Math.min(w[i], w[(i + 1) % 3]) * 67108864 + Math.max(w[i], w[(i + 1) % 3]));
+    keys.set(t, edge);
+    for (const key of edge) { const owners = edges.get(key); if (owners) owners.push(t); else edges.set(key, [t]); }
   }
-  for (const t of tris) t.neighbors = keys(t).map(key => edges.get(key)!);
+  for (const t of tris) t.neighbors = keys.get(t)!.map(key => edges.get(key)!);
 }
 
 const PLANE_EPSILON = 1e-10;
 function straddles(t: Tri, plane: Tri, distances: number[], tolerance: number): boolean {
-  let low = Math.min(...distances), high = Math.max(...distances);
+  let low = Math.min(distances[0], distances[1], distances[2]), high = Math.max(distances[0], distances[1], distances[2]);
   if (low < -tolerance && high > tolerance) return true;
   for (let i = 0; i < 3; i++) {
     if (Math.abs(distances[i]) > tolerance || Math.abs(distances[(i + 1) % 3]) > tolerance) continue;
+    if (t.link && !t.link.built) t.link.build();
     for (const neighbor of t.neighbors?.[i] ?? []) for (const p of neighbor.p) {
       const d = dot(sub(p, plane.p[0]), plane.normal); low = Math.min(low, d); high = Math.max(high, d);
     }

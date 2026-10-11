@@ -179,7 +179,10 @@ maybe('the face-rig wrappers validate, join and export inside real Blender', asy
   const bytes = await readFile(result.output);
   const report = await verifyFaceContract(bytes);
   const passed = new Set(report.checks.filter(c => c.ok).map(c => c.id));
-  for (const id of ['validator', 'skeleton', 'skinning', 'eyes', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-oblique', 'materials', 'extras', 'exposed-teeth', 'puppet-jaw']) expect(passed, id).toContain(id);
+  for (const id of ['validator', 'skeleton', 'skinning', 'eyes', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-oblique', 'materials', 'extras', 'exposed-teeth', 'puppet-jaw', 'mouth-skin-intersection']) expect(passed, id).toContain(id);
+  // Its lower-tooth quad sits inside the head, so it never pierces the chin skin as the jaw swings (it once hung 6 mm
+  // outside the skin and the check reported it from jawOpen = .25).
+  expect(report.measurements.mouthCrossings).toMatchObject({ examples: [], capped: false });
   // The wrapper fixture has lower teeth only, so the teeth check names the missing upper row; its eyes sit behind an
   // uncut skin, so no lid edge shows to follow the gaze.
   expect(report.failures).toEqual([

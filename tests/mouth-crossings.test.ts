@@ -40,6 +40,15 @@ describe('mouth interiors versus the animated skin', { timeout: 30_000 }, () => 
       expect(await check(head), name).toMatchObject({ ok: false });
     }
   });
+  it('does not take a boot tongue far below the head for a mouth part', async () => {
+    const head = passingHead(); onBody(head);
+    // Static skin and a tongue-named leather piece crossing it a metre below the mouth: no mouth anywhere near.
+    const skin: Vec3[] = [[.05, -1, -.1], [.15, -1, -.1], [.1, -1, .1]];
+    head.meshes.push({ name: 'static_shin', material: 'skin', positions: skin, indices: [0, 1, 2], targets: [], bones: skin.map(() => 'head'), faceRegion: [1, 1, 1] });
+    gum(head, [[.1, -1.05, 0], [.1, -.95, 0], [.1, -1, .05]], undefined, 'boot_tongue_l');
+    expect(await check(head)).toMatchObject({ ok: true });
+    // A tongue-named part by the teeth is still a mouth part: the 'tongue_tip' case above fails.
+  });
   it('checks separate static anatomical skin on a body rig', async () => {
     const head = passingHead(); onBody(head);
     const points: Vec3[] = [[.08, -.02, .05], [.1, -.02, .05], [.09, .02, .05]];

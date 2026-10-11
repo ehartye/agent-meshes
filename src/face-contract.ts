@@ -338,6 +338,41 @@ function positions(instance: Instance, weights: Record<string, number>): Float64
   return out;
 }
 
+interface PosedSurface { label: string; rest: Float64Array; targets: Map<string, Float64Array>; triangles: Uint32Array; sourceTriangles?: Uint32Array }
+
+/**
+ * The part of a skin that can reach `window` under any sampled state, compacted to its own vertices and triangles so each
+ * state poses and tests only that part (a head is tens of thousands of triangles, the mouth a few hundred).
+ * A vertex can move at most the sum over the sampled morphs of (largest sampled weight * its delta) on each axis, and a triangle
+ * stays inside the box of its vertices' reach, so the cull never drops a triangle that could cross; the per-state
+ * crossing test still culls by its exact window, so results equal testing the whole skin.
+ */
+function reachableSurface(skin: Instance, window: { lo: number[]; hi: number[] }, maxWeight: Map<string, number>): PosedSurface {
+  const moves = [...maxWeight].flatMap(([name, w]) => { const d = skin.targets.get(name); return d && w ? [[d, w] as const] : []; });
+  const count = skin.rest.length / 3, reach = new Float64Array(count * 3);
+  for (const [d, w] of moves) for (let k = 0; k < reach.length; k++) reach[k] += w * Math.abs(d[k]);
+  const tris: number[] = [], keep = new Int32Array(count).fill(-1), used: number[] = [];
+  for (let t = 0; t < skin.triangles.length; t += 3) {
+    const a = skin.triangles[t], b = skin.triangles[t + 1], c = skin.triangles[t + 2];
+    let hit = true;
+    for (let k = 0; k < 3 && hit; k++) {
+      const lo = Math.min(skin.rest[a * 3 + k] - reach[a * 3 + k], skin.rest[b * 3 + k] - reach[b * 3 + k], skin.rest[c * 3 + k] - reach[c * 3 + k]);
+      const hi = Math.max(skin.rest[a * 3 + k] + reach[a * 3 + k], skin.rest[b * 3 + k] + reach[b * 3 + k], skin.rest[c * 3 + k] + reach[c * 3 + k]);
+      hit = lo <= window.hi[k] && hi >= window.lo[k];
+    }
+    if (hit) tris.push(t / 3);
+  }
+  for (const t of tris) for (let k = 0; k < 3; k++) { const v = skin.triangles[t * 3 + k]; if (keep[v] < 0) { keep[v] = used.length; used.push(v); } }
+  const gather = (source: Float64Array) => { const out = new Float64Array(used.length * 3); used.forEach((v, i) => { out[i * 3] = source[v * 3]; out[i * 3 + 1] = source[v * 3 + 1]; out[i * 3 + 2] = source[v * 3 + 2]; }); return out; };
+  const targets = new Map<string, Float64Array>();
+  for (const [name] of maxWeight) { const d = skin.targets.get(name); if (d) targets.set(name, gather(d)); }
+  return {
+    label: skin.label, rest: gather(skin.rest), targets,
+    triangles: Uint32Array.from(tris.flatMap(t => [0, 1, 2].map(k => keep[skin.triangles[t * 3 + k]]))),
+    sourceTriangles: Uint32Array.from(tris, t => skin.sourceTriangles?.[t] ?? t),
+  };
+}
+
 function normals(points: Float64Array, tris: Uint32Array): Float64Array {
   const out = new Float64Array(tris.length);
   for (let t = 0; t < tris.length; t += 3) {
@@ -1216,7 +1251,25 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
 
   // 19. Interior geometry may show through the mouth aperture, but may not cross skin.
   // Front visibility and correct binding cannot detect a gum piercing an oblique cheek.
-  const interior = all.filter(i => mouthPart(i.names));
+  const STATE_LIMIT = 4;
+  // A name alone cannot tell a mouth tongue from a boot tongue: a tongue-only part counts when it sits within the teeth,
+  // cavity and gums' own extent (grown by half of it on each side); with no such anchor, the tongue stands alone.
+  const mouthCandidates = all.filter(i => mouthPart(i.names));
+  const anchors = mouthCandidates.filter(i => !(tongue(i.names) && !upperTeeth(i.names) && !lowerTeeth(i.names) && !cavity(i.names) && !gums(i.names)));
+  const anchorBox = { lo: [Infinity, Infinity, Infinity], hi: [-Infinity, -Infinity, -Infinity] };
+  for (const i of anchors) for (let v = 0; v < i.rest.length; v++) {
+    anchorBox.lo[v % 3] = Math.min(anchorBox.lo[v % 3], i.rest[v]); anchorBox.hi[v % 3] = Math.max(anchorBox.hi[v % 3], i.rest[v]);
+  }
+  const nearAnchors = (i: Instance) => {
+    for (let k = 0; k < 3; k++) {
+      let lo = Infinity, hi = -Infinity;
+      for (let v = k; v < i.rest.length; v += 3) { lo = Math.min(lo, i.rest[v]); hi = Math.max(hi, i.rest[v]); }
+      const margin = (anchorBox.hi[k] - anchorBox.lo[k]) / 2;
+      if (hi < anchorBox.lo[k] - margin || lo > anchorBox.hi[k] + margin) return false;
+    }
+    return true;
+  };
+  const interior = anchors.length ? mouthCandidates.filter(i => anchors.includes(i) || nearAnchors(i)) : mouthCandidates;
   // Static, explicitly anatomical skin is a barrier too, even in its own GLB mesh.
   // The older `skin` selection serves chin/lid measurements with different needs.
   const crossingSkin = all.filter(i => !mouthPart(i.names) && !socket(i.names) && !eyeballInstances.has(i) && !dressing(i)
@@ -1247,15 +1300,34 @@ export async function verifyFaceContract(bytes: Uint8Array): Promise<FaceContrac
   }
   if (interior.length && crossingSkin.length) {
     const report = measurements.mouthCrossings;
-    for (const state of mouthStates.values()) {
-      const posed = (i: Instance) => ({ label: i.label, points: positions(i, state.weights), triangles: i.triangles, sourceTriangles: i.sourceTriangles });
-      const hits = surfaceCrossings(crossingSkin.map(posed), interior.map(posed), 1e-6, 4);
+    // Pose the (small) mouth parts in every state first: their union box is the only place a skin triangle can matter.
+    const maxWeight = new Map<string, number>();
+    for (const state of mouthStates.values()) for (const [name, w] of Object.entries(state.weights)) maxWeight.set(name, Math.max(maxWeight.get(name) ?? 0, Math.abs(w)));
+    const posedParts = [...mouthStates.values()].map(state => interior.map(i => ({ label: i.label, points: positions(i, state.weights), triangles: i.triangles, sourceTriangles: i.sourceTriangles })));
+    const zone = { lo: [Infinity, Infinity, Infinity], hi: [-Infinity, -Infinity, -Infinity] };
+    for (const parts of posedParts) for (const part of parts) for (let v = 0; v < part.triangles.length; v++) for (let k = 0; k < 3; k++) {
+      const x = part.points[part.triangles[v] * 3 + k]; zone.lo[k] = Math.min(zone.lo[k], x - 1e-6); zone.hi[k] = Math.max(zone.hi[k], x + 1e-6);
+    }
+    const skins = crossingSkin.map(i => reachableSurface(i, zone, maxWeight));
+    const states = [...mouthStates.values()];
+    for (const [index, state] of states.entries()) {
+      const posed = (s: PosedSurface) => {
+        const points = Float64Array.from(s.rest);
+        for (const [name, weight] of Object.entries(state.weights)) {
+          const deltas = s.targets.get(name);
+          if (!deltas || !weight) continue;
+          for (let i = 0; i < points.length; i++) points[i] += weight * deltas[i];
+        }
+        return { label: s.label, points, triangles: s.triangles, sourceTriangles: s.sourceTriangles };
+      };
+      // Ask for one more than a state may report, so `capped` means "a further crossing exists", not "the limit was reached".
+      const hits = surfaceCrossings(skins.map(posed), posedParts[index], 1e-6, STATE_LIMIT + 1);
       report.states++;
-      for (const hit of hits) {
+      if (hits.length > STATE_LIMIT) report.capped = true;
+      for (const hit of hits.slice(0, STATE_LIMIT)) {
         if (report.examples.length < 20) report.examples.push({ ...hit, at: hit.at.map(v => round(v)), combo: state.label });
         else report.capped = true;
       }
-      if (hits.length === 4) report.capped = true;
     }
     check('mouth-skin-intersection', report.examples.map(h => `${h.combo}: ${h.part} triangle ${h.triangle} crosses skin ${h.skin} triangle ${h.skinTriangle} at [${h.at.map(mm).join(', ')}]; fit the mouth interior within the animated face`),
       `no strict mouth/skin crossings at ${report.states} sampled morph states (contacts allowed; not a proof of enclosure or continuous motion)`);
