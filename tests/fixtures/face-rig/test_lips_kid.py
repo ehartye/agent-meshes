@@ -92,8 +92,9 @@ def build():
     lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('rounded', (0, my + .006, MOUTH_Z - .0015), .016, .011, 6, .0045, row='lower'),
                                [material('teeth_lower', (.9, .88, .8), roughness=.3)])
     add_jaw_open(lower, jaw, rigid=True)
-    buck = mesh_from_geometry('teeth_exposed', exposed_teeth_geometry(front, (-.0033, .0033), MOUTH_Z, length=.0055, width=.0058, style='rounded'),
-                              [material('teeth_exposed', (.96, .95, .9), roughness=.25)])
+    buck_geometry = exposed_teeth_geometry(front, (-.0033, .0033), MOUTH_Z, length=.0055, width=.0058, style='rounded', skin=head)
+    buck = mesh_from_geometry('teeth_exposed', buck_geometry, [material('teeth_exposed', (.96, .95, .9), roughness=.25)])
+    for name, targets in buck_geometry['morphs'].items(): shape_key(buck, name, targets)
     tongue = mesh_from_geometry('tongue', tongue_geometry((0, my + .025, MOUTH_Z - .012), length=.028, width=.024, thickness=.007),
                                 [material('tongue', (.62, .16, .2), roughness=.5)])
     add_jaw_open(tongue, jaw, rigid=True)

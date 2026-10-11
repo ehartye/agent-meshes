@@ -97,7 +97,8 @@ exposed fangs). The rules that are easy to get wrong:
   mouth line never hangs the upper lip on the jaw, and it slides near vertices onto the line so no
   sliver row shades as a seam). Skin faces get soft lips and a lip line from `sculpt_lips` first. Add a dark `mouth_cavity_geometry` bag fitted
   to the face with `surface=front_surface(skin_vertices, skin_faces)` so it never pokes through the
-  cheeks, and make fangs or buck teeth with `exposed_teeth_geometry` (declared in `exposedTeeth`).
+  cheeks, and make fangs or buck teeth with `exposed_teeth_geometry(..., skin=head)` (declared in `exposedTeeth`; they lie against the
+  outside of the lips and ride the lips' morphs, because a tooth tucked behind a one-surface skin pierces it).
 - Open lid eyes with `eye_hole(vertices, faces, center, radius, **lid_options)` (`eye_holes(vertices, faces,
   eye_left, radius, ...)` on a symmetric head: exact mirror images, and each eye's patch may reach the
   other's) and pass it to `build_eye(..., hole=..., skin=head)`: the skin itself becomes the lids (one
@@ -134,6 +135,9 @@ exposed fangs). The rules that are easy to get wrong:
   `face_contract(rig, objects, yaw_max, pitch_max, exposed_teeth=[...])`.
 - Gaze is eye-bone rotation, not morphs: yaw about the eye bone's local Y, pitch about local X.
 
-Check every build with `mesh verify <head>.glb --contract arkit-face/1` (mesh-build) and look at
+Check every build with `mesh verify <head>.glb --contract arkit-face/1` (mesh-build). Its `mouth-skin-intersection`
+check fails teeth, gums, tongue or cavity that cross the skin at rest, at quarter jaw openings or in any mouth, cheek
+or emotion morph (the message names the state, the part and both triangle indices); repair the geometry or make it
+follow the skin, never loosen the check. Then look at
 blink, squint, jaw and emotion renders (front and three-quarter, jawOpen 0, .5 and 1) before calling
 the head done.

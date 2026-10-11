@@ -74,7 +74,11 @@ def build():
     add_jaw_open(lower, jaw, rigid=True)
     # Mossjaw's two exposed fangs hang in front of the closed lower lip, in their own material (declared below).
     fang_enamel = material('teeth_exposed', (.95, .93, .82), roughness=.3)
-    fangs = mesh_from_geometry('fangs', exposed_teeth_geometry(front, (-.02, .02), MOUTH_Z, length=.011, width=.007), [fang_enamel])
+    # They lie against the outside of the lips and ride the skin's own morphs (skin=head), so a funnelled or smiling lip
+    # carries them instead of swallowing them.
+    fang_geometry = exposed_teeth_geometry(front, (-.02, .02), MOUTH_Z, length=.011, width=.007, skin=head)
+    fangs = mesh_from_geometry('fangs', fang_geometry, [fang_enamel])
+    for name, targets in fang_geometry['morphs'].items(): shape_key(fangs, name, targets)
     tongue = mesh_from_geometry('tongue', tongue_geometry((0, my + .03, MOUTH_Z - .014), length=.04, width=.05, thickness=.008), [material('tongue', (.6, .15, .18), roughness=.5)])
     add_jaw_open(tongue, jaw, rigid=True)
 

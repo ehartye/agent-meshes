@@ -4204,19 +4204,27 @@ def _clip(vertices, faces, level, snap=0.0):
     return {'vertices': result, 'faces': kept, 'mapping': mapping, 'source': source, 'origin': origin, 'boundary': sorted(set(boundary))}
 
 
-def exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw', root=None, thickness=None, clearance=.0005, sizes=None):
+def exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw', root=None, thickness=None, clearance=.0005, sizes=None, skin=None):
     """Upper teeth that show with the mouth closed (fangs, buck teeth), hanging over the lower lip.
 
     One tooth per x in `xs`, hanging `length` below the mouth line with its root
-    `root` (default 0.35 * length) above it, tucked under the upper lip. `surface`
+    `root` (default 0.35 * length) above it, against the upper lip. `surface`
     is the skin's front, a function (x, z) -> y such as `front_surface(...)`: each
-    tooth stands just in front of the lower lip, at least `clearance` in front of the
-    skin below the mouth line, so the closed lips never cut it and the lower lip can
-    drop away behind it. Styles as `teeth_row_geometry` ('saw' fangs, 'rounded' buck
+    tooth stands just in front of the lip, at least `clearance` in front of the
+    skin along its whole height, root included, so the closed lips never cut it and
+    the lower lip can drop away behind it. The skin is a single surface, so a tooth
+    cannot be tucked behind it without piercing it (the `mouth-skin-intersection`
+    check fails that): the root lies against the outside of the upper lip instead.
+    Styles as `teeth_row_geometry` ('saw' fangs, 'rounded' buck
     teeth, 'grille'); `sizes` gives (width, length) scales per tooth. Name the object
     and material `teeth_exposed` (`EXPOSED_TEETH_MATERIAL`), bind it to `head`, and
     declare it: `face_contract(..., exposed_teeth=['teeth_exposed'])`.
-    Returns vertices, faces, count and the measured `clearance`.
+    Pass the head as `skin` (the mesh object after its shape keys, or a geometry dict
+    with morphs) and the teeth get `morphs` that follow the skin under them
+    (`attach_to_skin`), so a pouted or funnelled lip carries them forward instead of
+    swallowing them; `jawOpen` is left out, because these teeth ride the skull. Add
+    each as a shape key on the teeth object before `join_face_parts`.
+    Returns vertices, faces, count and the measured `clearance` (plus `morphs` with `skin`).
     """
     if not callable(surface): raise ValueError('surface must be a function (x, z) -> y, such as front_surface(...)')
     if style not in ('rounded', 'saw', 'grille'): raise ValueError("Teeth style must be 'rounded', 'saw' or 'grille'")
@@ -4233,21 +4241,26 @@ def exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw', roo
     vertices, faces, measured = [], [], math.inf
     for x, (scale_w, scale_l) in zip(xs, sizes):
         w, tip = width * scale_w, mouth_z - length * scale_l
-        samples = [surface(x + w * (i / 4 - .5), tip + (mouth_z - tip) * k / 8) for i in range(5) for k in range(9)]
+        top = mouth_z + root
+        samples = [surface(x + w * (i / 4 - .5), tip + (top - tip) * k / 12) for i in range(5) for k in range(13)]
         samples = [y for y in samples if y is not None]
         if not samples: raise ValueError(f'No skin found in front of or behind the tooth at x = {x}')
         local, local_faces = _tooth(style, w, thickness, root + length * scale_l)
         center_y = min(samples) - clearance - thickness / 2
         for _ in range(8):
             world = [(x + p[0], center_y - p[1], mouth_z + root - p[2]) for p in local]
-            gaps = [surface(v[0], v[2]) - v[1] for v in world if v[2] < mouth_z and surface(v[0], v[2]) is not None]
+            gaps = [surface(v[0], v[2]) - v[1] for v in world if surface(v[0], v[2]) is not None]
             gap = min(gaps) if gaps else math.inf
             if gap >= clearance - 1e-12: break
             center_y -= clearance - gap + 1e-7
         measured = min(measured, gap)
         faces += [tuple(k + len(vertices) for k in face) for face in _outward(world, local_faces)]
         vertices += world
-    return {'vertices': vertices, 'faces': faces, 'count': len(xs), 'style': style, 'clearance': measured}
+    result = {'vertices': vertices, 'faces': faces, 'count': len(xs), 'style': style, 'clearance': measured}
+    if skin is not None:
+        followed = attach_to_skin({'vertices': vertices, 'faces': faces}, skin)
+        result['morphs'] = {name: targets for name, targets in followed['morphs'].items() if name != 'jawOpen'}
+    return result
 
 
 def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, height=12, thickness=None, arch=4,
