@@ -716,7 +716,11 @@ lid follow's extremes; `verify --lid-grid` poses all 324), no triangle that move
 the eye may pass through a triangle it is not joined to, unless they already cross at
 rest. The lantern fixtures of `tests/blender_face_geometry.py` pose all of them without Blender,
 and `tests/fixtures/lantern-lids/make.py` regenerates the trimmed before and after lids that
-`tests/face-lids.test.ts` judges.
+`tests/face-lids.test.ts` judges. Only these continuous lids are built nested: the shell
+lids of `build_eye` without `hole` (`style='shells'`, `lid_geometry`) and the rolling skin
+lids of `agent_meshes_hm08.character_face` still pass through themselves at blink + squint
++ wide mixes (7 and 19 of 33 contract poses on the repository's fixtures) and fail the
+check until they are built to the same rule.
 
 The `arkit-face/1` verifier's `eye-crease` check measures the terraces: along 17
 radial lines above and 17 below each eye in a front view, out to 1.3 eyeball radii,
