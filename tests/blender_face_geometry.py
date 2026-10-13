@@ -1863,7 +1863,7 @@ class ContinuousEyeHoleTests(unittest.TestCase):
         self.assertEqual(poses, verifier_poses())
         self.assertEqual(len(poses), 325)
         self.assertEqual(poses, sorted(set(poses)), 'deterministic order, no duplicates')
-        for named in CROSSING_POSES: self.assertIn(named, poses, 'every named crossing pose is in the grid')
+        for named in ((.675, 1, 0), (.8375, 0, 0), (1, 0, .8)): self.assertIn(named, poses, 'the poses an idle blink or a look reaches over lid follow')
         self.assertEqual(lid_poses((0, 1)), verifier_poses((0, 1)))
         self.assertEqual(len(lid_poses((0, 1))), 16)
         follow = {'down': .5, 'up': .2}

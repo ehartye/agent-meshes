@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { verifyFaceContract } from '../src/face-contract.ts';
 import { combinedBody } from './helpers/face-glb.ts';
-import { ballNose, browBar, onBody, tube, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, terracedSocket, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
+import { ballNose, browBar, crossLids, onBody, tube, domeRidge, ear, horn, encodeHead, extras, fringe, mesh, nostril, passingHead, pinhole, relid, shutterEye, socketGap, terracedSocket, REQUIRED, sphere, upperSeam, EYES, JAW_DROP, LID_SWEEPS, MOUTH_Y, type SynthHead, type Vec3 } from './helpers/face-glb.ts';
 
 async function report(mutate?: (head: SynthHead) => void) {
   const head = passingHead(); mutate?.(head);
@@ -16,7 +16,7 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(result.failures).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.contract).toBe('arkit-face/1');
-    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-coverage', 'eye-oblique', 'lid-follow', 'materials', 'attached-parts', 'eye-crease', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open', 'mouth-skin-intersection']);
+    expect(result.checks.map(c => c.id)).toEqual(['validator', 'skeleton', 'skinning', 'eyes', 'orientation', 'morph-names', 'rest-weights', 'morph-motion', 'inversion', 'lid-clearance', 'eye-coverage', 'eye-oblique', 'lid-follow', 'materials', 'attached-parts', 'eye-crease', 'lid-penetration', 'extras', 'exposed-teeth', 'head-binding', 'teeth', 'mouth-parts', 'puppet-jaw', 'upper-lip', 'mouth-open', 'mouth-skin-intersection']);
     expect(result.measurements.eyes.L!.radius).toBeCloseTo(0.012, 5);
     expect(result.measurements.eyes.L!.center[0]).toBeCloseTo(0.03, 5);
     expect(result.measurements.eyes.L!.minLidClearance).toBeGreaterThan(0.0005);
@@ -155,6 +155,58 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(failures.some(f => /eye_L: the skin above the eye folds \d times/.test(f))).toBe(true);
     expect(failures.some(f => /eye_L: the skin below the eye folds \d times/.test(f))).toBe(true);
     expect(failures.some(f => /eye_R/.test(f))).toBe(false);
+  });
+
+  it('judges lid penetration in the contract poses of each eye and reports what it measured', async () => {
+    const result = await report();
+    expect(result.failures.filter(f => f.startsWith('lid-penetration'))).toEqual([]);
+    for (const side of ['L', 'R'] as const) {
+      const penetration = result.measurements.eyes[side]!.penetration!;
+      expect(penetration, `eye ${side} reports its penetration`).toBeDefined();
+      // The 12 coverage states, the 20 named crossing poses and lid follow's extremes: at most 40, every one judged.
+      expect(penetration.mode).toBe('contract');
+      expect(penetration.poses).toBeGreaterThan(30);
+      expect(penetration.poses).toBeLessThanOrEqual(40);
+      expect(penetration.triangles).toBeGreaterThan(100);
+      expect(penetration.moving).toBeGreaterThan(50);
+      expect(penetration.crossingPoses).toBe(0);
+      expect(penetration.worstCrossing).toBeNull();
+    }
+  });
+
+  it('judges all 324 poses of the blink x squint x wide grid on request', async () => {
+    const result = await verifyFaceContract(encodeHead(passingHead()), { lidGrid: true });
+    expect(result.checks.find(c => c.id === 'lid-penetration')).toMatchObject({ ok: true });
+    for (const side of ['L', 'R'] as const) expect(result.measurements.eyes[side]!.penetration).toMatchObject({ mode: 'grid', poses: 324, crossingPoses: 0 });
+  }, 120_000);
+
+  it('fails lid-penetration for lids that pass through each other, naming the eye, the poses, the parts and the heights', async () => {
+    // The round-8 critic's lower lid standing in front of the closing upper lid: here the lower shell stands in the
+    // upper one, so they pass through each other once a blink brings their edges past one another.
+    const result = await report(head => crossLids(head, 'L'));
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('lid-penetration');
+    const failure = result.failures.find(f => f.startsWith('lid-penetration: '))!;
+    expect(failure).toMatch(/^lid-penetration: eye_L: in \d+ of \d+ blink, squint and wide poses /);
+    expect(failure).toMatch(/eyeBlinkLeft=1/);
+    expect(failure).toMatch(/lids_L triangle \d+ passes through lids_L triangle \d+/);
+    expect(failure).toMatch(/between -?\d+\.\d+ and -?\d+\.\d+ eyeball radii/);
+    // The right eye's lids are fine and the left eye's morphs never move them: only eye_L is named.
+    expect(result.failures.filter(f => f.startsWith('lid-penetration')).some(f => /eye_R/.test(f))).toBe(false);
+    const left = result.measurements.eyes.L!.penetration!;
+    expect(left.crossingPoses).toBeGreaterThan(5);
+    expect(left.worstCrossing!.pairs).toBeGreaterThan(0);
+    expect(left.worstCrossing!.examples.length).toBeLessThanOrEqual(4);
+    expect(result.measurements.eyes.R!.penetration!.crossingPoses).toBe(0);
+    // The advice must not claim that continuous lids solve it for lids built some other way.
+    expect(failure).not.toMatch(/solves this/);
+  });
+
+  it('names a crossing in each eye whose lids cross', async () => {
+    const result = await report(head => { crossLids(head, 'L'); crossLids(head, 'R'); });
+    const failures = result.failures.filter(f => f.startsWith('lid-penetration'));
+    expect(failures.some(f => /eye_L: /.test(f))).toBe(true);
+    expect(failures.some(f => /eye_R: /.test(f))).toBe(true);
   });
 
   it('names the eye, the state and the uncovered heights when a closed blink leaves eyeball showing', async () => {

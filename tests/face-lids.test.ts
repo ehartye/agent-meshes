@@ -1,0 +1,169 @@
+import { describe, expect, it } from 'vitest';
+import { LID_CONTRACT_MAX_POSES, LID_CROSSING_POSES, LID_FOLLOW_DEFAULT, lidContractPoses, lidGridPoses, eyePenetration, poseLabel, type LidPose, type LidSurface } from '../src/face-lids.ts';
+
+const RADIUS = 0.012, CENTER: [number, number, number] = [0, 0, 0], FOLLOW = { down: 0.35, up: 0.8 };
+type P = [number, number, number];
+const pose = (blink: number, squint = 0, wide = 0): LidPose => ({ blink, squint, wide });
+
+/** A triangle soup as a lid surface: positions and corner indices, with each morph given as absolute target positions. */
+function surface(label: string, points: P[], triangles: number[], targets: Partial<Record<'blink' | 'squint' | 'wide', P[]>> = {}, extra: Partial<LidSurface> = {}): LidSurface {
+  const flat = (list: P[]) => Float64Array.from(list.flat());
+  const deltas = Object.fromEntries(Object.entries(targets).map(([name, moved]) => [name, flat(moved!.map((p, i) => [p[0] - points[i][0], p[1] - points[i][1], p[2] - points[i][2]] as P))]));
+  return { label, rest: flat(points), triangles: Uint32Array.from(triangles), ...deltas, ...extra };
+}
+const shift = (points: P[], d: P): P[] => points.map(p => [p[0] + d[0], p[1] + d[1], p[2] + d[2]]);
+/** Raise points by up to `rise`, by 0 at the plate's left edge (x = -10 mm) and all of it at the right (x = +10 mm): a tilted swing, so the plates cross along a line. */
+const tilt = (points: P[], rise: number): P[] => points.map(p => [p[0], p[1], p[2] + rise * (p[0] + 0.01) / 0.02]);
+/** A horizontal square of side 2 * half at height z, as two triangles. */
+const plate = (z: number, half = 0.01, at: [number, number] = [0, 0]): { points: P[]; triangles: number[] } => ({
+  points: [[at[0] - half, at[1] - half, z], [at[0] + half, at[1] - half, z], [at[0] + half, at[1] + half, z], [at[0] - half, at[1] + half, z]], triangles: [0, 1, 2, 0, 2, 3],
+});
+
+describe('lid-penetration poses', () => {
+  it('poses every weight of blink, squint and wide and the lid-follow unions: 324 poses besides rest', () => {
+    const poses = lidGridPoses(FOLLOW);
+    expect(poses).toHaveLength(324);
+    expect(poses.some(p => !p.blink && !p.squint && !p.wide)).toBe(false);
+    const labels = poses.map(p => poseLabel(p, 'Left'));
+    expect(new Set(labels).size).toBe(324);
+    expect(lidGridPoses(FOLLOW)).toEqual(poses);
+    // eyeLookDown = 1 adds blink `down` (soft-unioned), eyeLookUp = 1 adds wide `up`.
+    expect(poses).toContainEqual(pose(0.8375));
+    expect(poses).toContainEqual(pose(1, 0, 0.8));
+    expect(poses).toContainEqual(pose(0.35, 1, 0.5));
+    expect(lidGridPoses({ down: 0, up: 0 })).toHaveLength(124);
+  });
+
+  it('keeps the contract poses to 40 per eye: the 12 coverage states, the 20 named crossing poses and lid follow', () => {
+    expect(LID_CROSSING_POSES).toHaveLength(20);
+    const coverage = [pose(0.25), pose(0.25, 1), pose(0.5), pose(0.5, 1), pose(0.75), pose(0.75, 1), pose(0, 1), pose(0, 0, 1), pose(1), pose(1, 1), pose(1, 0, 1), pose(1, 1, 1)];
+    const poses = lidContractPoses(FOLLOW, coverage);
+    expect(poses.length).toBeLessThanOrEqual(LID_CONTRACT_MAX_POSES);
+    expect(LID_CONTRACT_MAX_POSES).toBe(40);
+    expect(poses.length).toBeGreaterThan(30);
+    for (const c of coverage) expect(poses).toContainEqual(c);
+    for (const [blink, squint, wide] of LID_CROSSING_POSES) expect(poses).toContainEqual(pose(blink, squint, wide));
+    expect(poses).toContainEqual(pose(0.35));
+    expect(poses).toContainEqual(pose(0, 0, 0.8));
+    expect(new Set(poses.map(p => poseLabel(p, 'Right'))).size).toBe(poses.length);
+    expect(lidContractPoses(FOLLOW, coverage)).toEqual(poses);
+    expect(LID_FOLLOW_DEFAULT).toEqual({ down: 0.35, up: 0.8 });
+  });
+
+  it('labels a pose by its morphs', () => {
+    expect(poseLabel(pose(1, 0.5, 0), 'Left')).toBe('eyeBlinkLeft=1 + eyeSquintLeft=0.5');
+    expect(poseLabel(pose(0, 0, 0.8375), 'Right')).toBe('eyeWideRight=0.8375');
+    expect(poseLabel(pose(0), 'Left')).toBe('rest');
+  });
+});
+
+describe('eyePenetration', () => {
+  const upper = plate(0.005), lower = plate(-0.005);
+  const judge = (surfaces: LidSurface[], poses: LidPose[], options = {}) => eyePenetration(surfaces, CENTER, RADIUS, FOLLOW, 'Left', { poses, ...options });
+
+  it('counts the poses in which a moving triangle passes through another one, and names the pair', () => {
+    // The lower plate rises by up to 16 mm at blink 1, more toward its right edge: it passes through the upper plate (10 mm above
+    // it) from a blink of 0.625 on.
+    const result = judge([
+      surface('upper', upper.points, upper.triangles),
+      surface('lower', lower.points, lower.triangles, { blink: tilt(lower.points, 0.016) }),
+    ], [pose(0.25), pose(0.5), pose(0.75), pose(1)]);
+    expect(result).toMatchObject({ poses: 4, crossingPoses: 2, triangles: 4, moving: 2, restPairs: 0 });
+    expect(result.crossing.map(c => c.pose)).toEqual(['eyeBlinkLeft=0.75', 'eyeBlinkLeft=1']);
+    expect(result.worstCrossing!.pairs).toBeGreaterThan(0);
+    const example = result.worstCrossing!.examples[0];
+    expect([example.part, example.other].sort()).toEqual(['lower', 'upper']);
+    expect(result.worstCrossing!.heights[0]).toBeLessThanOrEqual(result.worstCrossing!.heights[1]);
+  });
+
+  it('adds morphs: blink and squint each carry the plate part of the way, together they pass through', () => {
+    const result = judge([
+      surface('upper', upper.points, upper.triangles),
+      surface('lower', lower.points, lower.triangles, { blink: tilt(lower.points, 0.006), squint: tilt(lower.points, 0.006) }),
+    ], [pose(1), pose(0, 1), pose(1, 1), pose(0.5, 0.5)]);
+    expect(result.crossingPoses).toBe(1);
+    expect(result.worstCrossing!.pose).toBe('eyeBlinkLeft=1 + eyeSquintLeft=1');
+  });
+
+  it('judges nothing that does not move with the eye, and nothing far from it', () => {
+    const still = judge([surface('upper', upper.points, upper.triangles), surface('lower', shift(upper.points, [0, 0, -0.01]), upper.triangles)], [pose(1)]);
+    expect(still).toMatchObject({ moving: 0, crossingPoses: 0 });
+    // Triangles more than three eyeball radii from the center are not judged.
+    const far = judge([
+      surface('upper', shift(upper.points, [0.1, 0, 0]), upper.triangles),
+      surface('lower', shift(lower.points, [0.1, 0, 0]), lower.triangles, { blink: tilt(shift(lower.points, [0.1, 0, 0]), 0.016) }),
+    ], [pose(1)]);
+    expect(far).toMatchObject({ triangles: 0, crossingPoses: 0 });
+  });
+
+  it('leaves out the triangles marked as attached parts', () => {
+    const result = judge([
+      surface('upper', upper.points, upper.triangles),
+      surface('lower', lower.points, lower.triangles, { blink: tilt(lower.points, 0.016) }, { skip: Uint8Array.from([1, 1]) }),
+    ], [pose(1)]);
+    expect(result).toMatchObject({ triangles: 2, moving: 0, crossingPoses: 0 });
+  });
+
+  it('does not call two triangles that share a welded corner a crossing (the canthus where the lids meet)', () => {
+    // Both lids' triangles meet at the corner point (a vertex in each surface at the same rest position); the lower one
+    // swings up through the upper one's plane about it. Pivoting about a shared corner is how two lids close.
+    const corner: P = [0, 0, 0];
+    const fixed: P[] = [corner, [0.02, 0, 0], [0, 0.02, 0]];
+    const swing: P[] = [corner, [0.012, 0.002, -0.003], [0.002, 0.012, -0.003]];
+    const swung: P[] = [corner, [0.012, 0.002, -0.003], [0.002, 0.012, 0.003]];
+    const welded = judge([surface('upper', fixed, [0, 1, 2]), surface('lower', swing, [0, 1, 2], { blink: swung })], [pose(0.75), pose(1)]);
+    expect(welded.crossingPoses).toBe(0);
+    // The same triangles with the corners 0.5 mm apart (no longer one welded point) do cross.
+    const apart: P[] = [[-0.0005, -0.0005, 0], ...swing.slice(1)];
+    const apartSwung: P[] = [[-0.0005, -0.0005, 0], ...swung.slice(1)];
+    const loose = judge([surface('upper', fixed, [0, 1, 2]), surface('lower', apart, [0, 1, 2], { blink: apartSwung })], [pose(0.75), pose(1)]);
+    expect(loose.crossingPoses).toBe(2);
+  });
+
+  it('does not judge a blade that slides through a well it already passes through at rest (a robot lens)', () => {
+    // A well wall in the plane y = 0 (two triangles split along the diagonal) and a narrow blade across it. The blade
+    // stands through the wall at rest and slides down 30 mm: half way it crosses the wall's other triangle, which is a
+    // new pair of triangles but the same two pieces.
+    const wall: P[] = [[-0.02, 0, -0.02], [0.02, 0, -0.02], [0.02, 0, 0.02], [-0.02, 0, 0.02]];
+    const bladeAt = (y0: number, y1: number): P[] => [[-0.002, y0, 0.015], [0.002, y0, 0.015], [0.002, y1, 0.015], [-0.002, y1, 0.015]];
+    const rest = bladeAt(-0.008, 0.008);
+    const well = surface('well', wall, [0, 1, 2, 0, 2, 3]);
+    const slid = judge([well, surface('blade', rest, [0, 1, 2, 0, 2, 3], { blink: shift(rest, [0, 0, -0.03]) })], [pose(0.25), pose(0.5), pose(0.75), pose(1)]);
+    expect(slid.restPairs).toBeGreaterThan(0);
+    expect(slid.restPieces).toBe(1);
+    expect(slid.crossingPoses).toBe(0);
+    // A blade that starts clear of the wall and slides through it is a crossing.
+    const clear = bladeAt(0.012, 0.028);
+    const through = judge([well, surface('blade', clear, [0, 1, 2, 0, 2, 3], { blink: shift(clear, [0, -0.03, 0]) })], [pose(0.25), pose(0.5), pose(0.75)]);
+    expect(through.restPairs).toBe(0);
+    expect(through.restPieces).toBe(0);
+    expect(through.crossingPoses).toBe(2);
+  });
+
+  it('reports bounded examples however many triangles cross', () => {
+    const fine = (z: number) => {
+      const points: P[] = [], triangles: number[] = [], n = 12;
+      for (let i = 0; i <= n; i++) for (let j = 0; j <= n; j++) points.push([-0.01 + 0.02 * i / n, -0.01 + 0.02 * j / n, z]);
+      for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { const a = i * (n + 1) + j; triangles.push(a, a + n + 1, a + n + 2, a, a + n + 2, a + 1); }
+      return { points, triangles };
+    };
+    const a = fine(0.005), b = fine(-0.005);
+    const result = judge([surface('upper', a.points, a.triangles), surface('lower', b.points, b.triangles, { blink: tilt(b.points, 0.016) })], [pose(1)], { pairLimit: 12 });
+    expect(result.crossingPoses).toBe(1);
+    expect(result.worstCrossing!.pairs).toBeGreaterThan(0);
+    expect(result.worstCrossing!.pairs).toBeLessThanOrEqual(12);
+    expect(result.worstCrossing!.examples.length).toBeLessThanOrEqual(4);
+  });
+
+  it('judges the whole 324-pose grid in grid mode', () => {
+    const result = eyePenetration([
+      surface('upper', upper.points, upper.triangles),
+      surface('lower', lower.points, lower.triangles, { blink: tilt(lower.points, 0.016) }),
+    ], CENTER, RADIUS, FOLLOW, 'Left', { grid: true });
+    expect(result.mode).toBe('grid');
+    expect(result.poses).toBe(324);
+    // The plates cross from a blink of 0.625 on: more than a quarter and fewer than all of the poses.
+    expect(result.crossingPoses).toBeGreaterThan(100);
+    expect(result.crossingPoses).toBeLessThan(324);
+  });
+});
