@@ -174,10 +174,12 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     }
   });
 
-  it('judges all 324 poses of the blink x squint x wide grid on request', async () => {
+  it('judges the whole blink x squint x wide grid on request', async () => {
+    // 324 poses besides rest with the library's lid follow (down .35, up .8); this head declares up 1, where eyeWide
+    // unions land on the grid's own weights, so 224.
     const result = await verifyFaceContract(encodeHead(passingHead()), { lidGrid: true });
     expect(result.checks.find(c => c.id === 'lid-penetration')).toMatchObject({ ok: true });
-    for (const side of ['L', 'R'] as const) expect(result.measurements.eyes[side]!.penetration).toMatchObject({ mode: 'grid', poses: 324, crossingPoses: 0 });
+    for (const side of ['L', 'R'] as const) expect(result.measurements.eyes[side]!.penetration).toMatchObject({ mode: 'grid', poses: 224, crossingPoses: 0 });
   }, 120_000);
 
   it('fails lid-penetration for lids that pass through each other, naming the eye, the poses, the parts and the heights', async () => {
@@ -188,8 +190,9 @@ describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
     expect(failed(result)).toContain('lid-penetration');
     const failure = result.failures.find(f => f.startsWith('lid-penetration: '))!;
     expect(failure).toMatch(/^lid-penetration: eye_L: in \d+ of \d+ blink, squint and wide poses /);
-    expect(failure).toMatch(/eyeBlinkLeft=1/);
-    expect(failure).toMatch(/lids_L triangle \d+ passes through lids_L triangle \d+/);
+    expect(failure).toMatch(/\(first eyeBlinkLeft=\d/);
+    expect(failure).toMatch(/worst at eyeBlinkLeft=/);
+    expect(failure).toMatch(/\S+ triangle \d+ passes through \S+ triangle \d+/);
     expect(failure).toMatch(/between -?\d+\.\d+ and -?\d+\.\d+ eyeball radii/);
     // The right eye's lids are fine and the left eye's morphs never move them: only eye_L is named.
     expect(result.failures.filter(f => f.startsWith('lid-penetration')).some(f => /eye_R/.test(f))).toBe(false);

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { LID_CONTRACT_MAX_POSES, LID_CROSSING_POSES, LID_FOLLOW_DEFAULT, lidContractPoses, lidGridPoses, eyePenetration, poseLabel, type LidPose, type LidSurface } from '../src/face-lids.ts';
 
@@ -166,4 +167,36 @@ describe('eyePenetration', () => {
     expect(result.crossingPoses).toBeGreaterThan(100);
     expect(result.crossingPoses).toBeLessThan(324);
   });
+});
+
+describe('real lantern lids', () => {
+  // The lids of a lantern head (big round eyes on a plain ellipsoid, 48 degrees wide, squint share .35), built by eye_hole in
+  // pure Python and trimmed to the eye: before the lids were nested by construction, and after. tests/fixtures/lantern-lids/make.py
+  // regenerates them.
+  const lantern = (name: string): { surface: LidSurface; center: [number, number, number]; radius: number } => {
+    const data = JSON.parse(readFileSync(new URL(`./fixtures/lantern-lids/${name}.json`, import.meta.url), 'utf8'));
+    const rest = Float64Array.from(data.vertices.flat() as number[]);
+    const deltas = { blink: new Float64Array(rest.length), squint: new Float64Array(rest.length), wide: new Float64Array(rest.length) };
+    for (const [v, ...d] of data.moving as number[][]) { deltas.blink.set(d.slice(0, 3), v * 3); deltas.squint.set(d.slice(3, 6), v * 3); deltas.wide.set(d.slice(6, 9), v * 3); }
+    return { surface: { label: 'lantern', rest, triangles: Uint32Array.from((data.triangles as number[][]).flat()), ...deltas }, center: data.center, radius: data.radius };
+  };
+
+  it('finds the lids passing through each other before the fix, in many contract poses and the lone blink', () => {
+    const { surface, center, radius } = lantern('before-fix');
+    const result = eyePenetration([surface], center, radius, FOLLOW, 'Left', { coverage: [pose(0.25), pose(0.5), pose(1)] });
+    expect(result.moving).toBeGreaterThan(500);
+    expect(result.restPairs).toBe(0);
+    expect(result.crossingPoses).toBeGreaterThanOrEqual(12);
+    expect(result.crossing.map(c => c.pose)).toContain('eyeBlinkLeft=0.75');
+    expect(result.worstCrossing!.pairs).toBeGreaterThan(10);
+  }, 60_000);
+
+  it('finds no pose in which the nested lids pass through each other: the contract poses, then the whole grid', () => {
+    const { surface, center, radius } = lantern('after-fix');
+    const contract = eyePenetration([surface], center, radius, FOLLOW, 'Left');
+    expect(contract.poses).toBeGreaterThanOrEqual(28);
+    expect(contract).toMatchObject({ crossingPoses: 0, worstCrossing: null, restPairs: 0 });
+    const grid = eyePenetration([surface], center, radius, FOLLOW, 'Left', { grid: true });
+    expect(grid).toMatchObject({ mode: 'grid', poses: 324, crossingPoses: 0 });
+  }, 120_000);
 });
