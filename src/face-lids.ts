@@ -82,7 +82,7 @@ export function lidGridPoses(follow: { down: number; up: number } = LID_FOLLOW_D
 /**
  * The poses `contract` mode judges: the eye-coverage states the caller names, the named crossing poses, and lid follow
  * alone and with the other lid morphs (looking down adds blink `down`, looking up adds wide `up`): at most
- * `LID_CONTRACT_MAX_POSES`, 34 with the 12 coverage states.
+ * `LID_CONTRACT_MAX_POSES`, 33 with the 12 coverage states and lid follow's defaults.
  */
 export function lidContractPoses(follow: { down: number; up: number } = LID_FOLLOW_DEFAULT, coverage: LidPose[] = []): LidPose[] {
   const { down: d, up: u } = follow;
