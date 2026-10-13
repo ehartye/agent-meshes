@@ -1672,6 +1672,49 @@ def lid_crossings(hole, center, radius, poses, reach=3.0):
 CROSSING_POSES = ((.5, .75, 0), (.5, 1, 0), (.6, 1, 0), (.675, 1, 0), (.75, .75, 0), (.75, 1, 0), (.9, 1, 0), (1, .75, 0), (1, 1, 0),
                   (1, 1, .25), (1, 1, 1), (1, .5, .5), (1, 0, 1), (1, 0, 0), (.75, 1, .5), (0, 1, 1), (.35, 1, .25),
                   (.75, 0, 0), (.8375, 0, 0), (1, 0, .8))
+# A lone blink: the lids cross beside the corners without any squint or wide to add up (blink .75 on the lantern head, 1 on the
+# kid and frog), and these are the weights an idle blink holds (.8375 is blink .75 soft-unioned with lid follow's look-down).
+LONE_BLINKS = ((.75, 0, 0), (.8375, 0, 0), (1, 0, 0))
+
+
+def verifier_poses(weights=WEIGHTS, follow=None):
+    """The (blink, squint, wide) poses a consumer reaches, defined here from the contract and not from the library: every
+    weight of each morph, and the same grid with lid follow's extremes soft-unioned in (eyeLookDown = 1 adds blink
+    `follow['down']`, eyeLookUp = 1 adds wide `follow['up']`). The reference `lid_poses` is tested against."""
+    follow = follow or DEFAULT_LID_FOLLOW
+    union = lambda a, b: 1 - (1 - a) * (1 - b)
+    poses = set()
+    for b, s, w in itertools.product(weights, repeat=3):
+        poses |= {(b, s, w), (union(b, follow['down']), s, w), (b, s, union(w, follow['up']))}
+    return sorted(poses)
+
+
+def lid_folds(hole, poses):
+    """For each (blink, squint, wide) pose with a fold, how many of the patch's triangles turn over against their rest
+    orientation (the lids' own faces, judged apart from the library's check)."""
+    vertices = hole['vertices']
+    moved = {tuple(round(c, 12) for c in rest): targets for rest, targets in hole['motion']}
+    faces = [hole['faces'][i] for i in hole['patch']]
+    tris = [t for f in faces for t in ((f[0], f[k], f[k + 1]) for k in range(1, len(f) - 1))]
+    used = sorted({i for t in tris for i in t})
+    targets = {i: moved.get(tuple(round(c, 12) for c in vertices[i])) for i in used}
+    rest_n = normals(vertices, tris)
+    result = {}
+    for pose in poses:
+        P = list(vertices)
+        for i in used:
+            if targets[i]:
+                P[i] = tuple(vertices[i][k] + sum(w * (targets[i][n][k] - vertices[i][k]) for n, w in zip(('blink', 'squint', 'wide'), pose)) for k in range(3))
+        n_folded = sum(1 for n0, n1 in zip(rest_n, normals(P, tris)) if math.hypot(*n0) > 1e-14 and sum(a * b for a, b in zip(n0, n1)) <= 0)
+        if n_folded: result[pose] = n_folded
+    return result
+
+
+def library(test, name):
+    """A function the lid fix adds to agent_meshes_face (a failure, not an import error, while it does not exist)."""
+    import agent_meshes_face
+    if not hasattr(agent_meshes_face, name): test.fail(f'agent_meshes_face.{name} does not exist yet')
+    return getattr(agent_meshes_face, name)
 
 
 class ContinuousEyeHoleTests(unittest.TestCase):
@@ -1681,7 +1724,11 @@ class ContinuousEyeHoleTests(unittest.TestCase):
     # Big round lantern eyes, with the lid settings of the talking-heads Mossjaw head (opening (56, 32, 40), corner 1.6,
     # overlap 8, wide (15, 5)) on a plain ellipsoid: a wider opening and bigger swings than the kid and the frog.
     LANTERN = ((0, .006, .146), (.164, .118, .096)), (.064, -.064, .146), .034, (56, 32, 40)
-    OPTIONS = {'LANTERN': dict(corner=1.6, overlap=8, wide=(15, 5))}
+    # The same lantern eyes at the settings a real head of this kind can be built with (an opening wider than 48 degrees
+    # cannot be joined to a blank this size): the hardest fixture, with the largest swings and the lowest squint share.
+    LANTERN48 = ((0, .006, .146), (.164, .118, .096)), (.064, -.064, .146), .034, (48, 32, 40)
+    OPTIONS = {'LANTERN': dict(corner=1.6, overlap=8, wide=(15, 5)),
+               'LANTERN48': dict(corner=1.6, overlap=8, wide=(15, 5), squint_upper_share=.35, column_step=3, max_edge=.24 * .034)}
     _cache = {}
 
     def hole(self, which='KID'):
@@ -1784,11 +1831,119 @@ class ContinuousEyeHoleTests(unittest.TestCase):
         # add, and consumers soft-union blink with squint (an idle blink while squinting), so every mix is reached. The
         # P1a round-9 red test (origin/wip/face-lids-continuous-skin): on main it fails as it did there, and also on a
         # lone blink (1 on the kid and frog, .75 on the lantern head), where the lids cross beside the corners.
-        for which in ('KID', 'FROG', 'LANTERN'):
+        for which in ('KID', 'FROG', 'LANTERN', 'LANTERN48'):
             with self.subTest(which):
                 hole, (_, eye, radius, _) = self.hole(which), getattr(self, which)
                 crossed = {pose: n for pose, n in lid_crossings(hole, eye, radius, CROSSING_POSES).items() if n}
                 self.assertEqual(crossed, {}, 'triangle pairs that pass through each other, per (blink, squint, wide)')
+
+    def test_a_lone_blink_never_crosses_beside_the_corners(self):
+        # The corner defect, apart from the sum of blink and squint: both lids kept their thickness while the standoff
+        # between them faded to nothing at the canthus, so the upper lid's inner surface met the lower lid's outer skin
+        # beside the corner and a blink alone passed through it (blink 1 on the kid and frog, .75 on the lantern heads).
+        for which in ('KID', 'FROG', 'LANTERN', 'LANTERN48'):
+            with self.subTest(which):
+                hole, (_, eye, radius, _) = self.hole(which), getattr(self, which)
+                crossed = {pose: n for pose, n in lid_crossings(hole, eye, radius, LONE_BLINKS).items() if n}
+                self.assertEqual(crossed, {}, 'triangle pairs that pass through each other in a blink alone')
+
+    def test_every_pose_of_the_verifier_grid_is_clear(self):
+        # The verifier's lid-penetration check poses every weight of blink, squint and wide (0, .25, .5, .75, 1) and the
+        # unions with lid follow's extremes: 324 poses besides rest. Judged here on the hardest fixture, whose lids are
+        # the biggest and whose squint share is the lowest; the others keep the 20 named poses above.
+        hole, (_, eye, radius, _) = self.hole('LANTERN48'), self.LANTERN48
+        poses = [pose for pose in verifier_poses() if any(pose)]
+        self.assertEqual(len(poses), 324)
+        crossed = {pose: n for pose, n in lid_crossings(hole, eye, radius, poses).items() if n}
+        self.assertEqual(crossed, {}, 'triangle pairs that pass through each other, per (blink, squint, wide)')
+
+    def test_the_lid_poses_are_the_weight_grid_and_its_lid_follow_unions(self):
+        lid_poses = library(self, 'lid_poses')
+        poses = lid_poses()
+        self.assertEqual(poses, verifier_poses())
+        self.assertEqual(len(poses), 325)
+        self.assertEqual(poses, sorted(set(poses)), 'deterministic order, no duplicates')
+        for named in CROSSING_POSES: self.assertIn(named, poses, 'every named crossing pose is in the grid')
+        self.assertEqual(lid_poses((0, 1)), verifier_poses((0, 1)))
+        self.assertEqual(len(lid_poses((0, 1))), 16)
+        follow = {'down': .5, 'up': .2}
+        self.assertEqual(lid_poses((0, 1), follow), verifier_poses((0, 1), follow))
+        self.assertEqual(len(lid_poses((0, .5, 1), {'down': 0, 'up': 0})), 27, 'no lid follow, no union poses')
+
+    def test_a_segment_gap_is_the_distance_between_two_segments_that_do_not_cross(self):
+        gap = library(self, '_segment_gap')
+        self.assertAlmostEqual(gap((0, 0), (1, 0), (0, 1), (1, 1)), 1.0)          # parallel
+        self.assertAlmostEqual(gap((0, 0), (1, 0), (2, 0), (3, 0)), 1.0)          # collinear, apart
+        self.assertAlmostEqual(gap((0, 0), (2, 0), (1, 1), (1, 3)), 1.0)          # a T, standing off
+        self.assertAlmostEqual(gap((0, 0), (1, 0), (1, 0), (2, 1)), 0.0)          # sharing an end
+        self.assertAlmostEqual(gap((0, 0), (1, 0), (3, 4), (3, 4)), math.hypot(2, 4))   # one is a point
+
+    def test_two_lid_profiles_cross_when_a_pose_carries_one_through_the_other(self):
+        cross = library(self, '_lid_chain_cross')
+
+        # Profiles in a column's plane (the eye at the origin): a point is its position at rest, then at weight 1 of
+        # blink, squint and wide (each defaulting to rest). Coordinates are binary fractions, so the sums are exact.
+        def chain(*points):
+            return [dict(rest=p[0], blink=p[1] if len(p) > 1 else p[0], squint=p[2] if len(p) > 2 else p[0], wide=p[3] if len(p) > 3 else p[0]) for p in points]
+        upper = chain(((1.0, .5),), ((1.0, -.25),))
+        poses = [(0, 0, 0), (.25, 0, 0), (.5, 0, 0), (.75, 0, 0), (1, 0, 0), (0, 1, 0), (1, 1, 1)]
+        # The lower lid's top point swings out at blink 1: it reaches the upper lid at blink .5 and passes through it after.
+        lower = chain(((.5, -.5),), ((.5, .25), (1.5, .25)))
+        self.assertEqual(cross(upper, lower, poses), [(.75, 0, 0), (1, 0, 0), (1, 1, 1)])
+        nested = chain(((.5, -.5),), ((.5, .25), (.75, .25)))
+        self.assertEqual(cross(upper, nested, poses), [], 'a lower lid that stays behind the upper one never crosses it')
+        # Touching is not crossing, unless a tolerance asks for clearance: the point lands on the upper lid at blink 1.
+        touching = chain(((.5, -.5),), ((.5, .25), (1.0, .25)))
+        self.assertEqual(cross(upper, touching, [(1, 0, 0)]), [])
+        self.assertEqual(cross(upper, touching, [(1, 0, 0)], tol=1e-3), [(1, 0, 0)])
+        self.assertEqual(cross(upper, touching, [(0, 0, 0)], tol=1e-3), [])
+        # Lids that do not overlap in elevation do not cross.
+        below = chain(((.5, -1.0),), ((.5, -.75), (1.5, -.75)))
+        self.assertEqual(cross(upper, below, [(1, 0, 0)]), [])
+        # Morphs add: blink and squint each carry the lower lid's point only part of the way; together they pass through.
+        both = chain(((.5, -.5),), ((.5, .25), (.875, .25), (.875, .25)))
+        self.assertEqual(cross(upper, both, [(1, 0, 0), (0, 1, 0), (.5, .5, 0), (1, 1, 0)]), [(1, 1, 0)])
+
+    def test_the_lids_thin_to_nothing_at_the_corners_and_nest_beside_them(self):
+        # Corner invariants of the construction: no thickness where the margins meet; the upper lid's inner surface never
+        # inside the lower lid's outer skin, whatever the column; and the full thickness in the middle.
+        for which in ('KID', 'FROG', 'LANTERN', 'LANTERN48'):
+            with self.subTest(which):
+                lids = self.hole(which)['lids']
+                self.assertIn('columns', lids, 'the build reports each column of the lids')
+                columns, t = lids['columns'], lids['thickness']
+                n = len(columns['thickness'])
+                self.assertEqual(n, len(lids['edges']['yaw']))
+                self.assertEqual(columns['thickness'][0], 0)
+                self.assertEqual(columns['thickness'][-1], 0)
+                self.assertAlmostEqual(columns['thickness'][n // 2], t, delta=1e-12)
+                half = columns['thickness'][:n // 2 + 1]
+                self.assertEqual(half, sorted(half), 'the lids thicken from the corner to the middle')
+                for j in range(n):
+                    floor = columns['lower_inner'][j] + columns['thickness'][j]
+                    self.assertGreaterEqual(columns['upper_inner'][j], floor - 1e-12, f'column {j}: the upper lid stands inside the lower lid')
+                self.assertGreater(columns['upper_inner'][n // 2], columns['lower_inner'][n // 2] + t)
+
+    def test_only_a_squeezed_shut_eye_may_fold_and_the_build_says_which_poses(self):
+        # The fold policy. A lid triangle never turns over against its rest orientation at a mix that leaves the eye open
+        # even a little (blink under 1). Blink 1 with a squint (an eye already shut, squeezed) may twist a thin strip of the
+        # rounded margin hidden inside the closed lids; the inversion check does not pose it, and the build reports
+        # those poses in lids['folds'] ({pose: triangles}) instead of hiding them.
+        poses = verifier_poses((0, .5, 1)) + [(.75, .75, 0), (.5, 1, 0), (1, .75, .25)]
+        for which in ('KID', 'FROG', 'LANTERN', 'LANTERN48'):
+            with self.subTest(which):
+                hole = self.hole(which)
+                found = lid_folds(hole, poses)
+                self.assertEqual({pose: n for pose, n in found.items() if pose[0] < 1}, {}, 'no fold while the eye is open')
+                self.assertEqual({pose: n for pose, n in found.items() if pose[0] >= 1 and pose[1] == 0}, {}, 'no fold in a blink alone, with wide or not')
+                self.assertIn('folds', hole['lids'], 'the build reports the folds it allows')
+                declared = hole['lids']['folds']
+                self.assertTrue(all(pose[0] >= 1 and pose[1] > 0 for pose in declared), 'only blink 1 with a squint is allowed to fold')
+                self.assertTrue(set(found) <= set(declared), 'every fold is declared')
+                for pose, n in found.items(): self.assertEqual(declared[pose], n, pose)
+        for which in ('KID', 'FROG'):
+            with self.subTest(which, strict=True):
+                self.assertEqual(lid_folds(self.hole(which), poses), {}, 'the kid and the frog fold nowhere, the squeezed-shut eye included')
 
     def test_the_margins_meet_in_one_point_at_each_corner_and_stay_there(self):
         hole = self.hole()
