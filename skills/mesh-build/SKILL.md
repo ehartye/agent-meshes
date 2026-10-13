@@ -382,7 +382,9 @@ squint), oblique eye views (rays from the front, 3/4 at 35-45 degrees of yaw and
 and below, in every lid and emotion state, must never reach the socket or the inside of the head:
 the lids must meet the skin all the way round, which `eye_hole` builds), no terraced socket
 (`eye-crease`: at most one fold above each lid eye, its crease, and one below along radial lines out to
-1.3 eyeball radii), lid follow (the upper
+1.3 eyeball radii), lids that never pass through each other or the skin round them at any blink, squint and wide
+mix (`lid-penetration`; `--lid-grid` poses the whole 324-pose grid; `eye_hole`'s continuous lids are nested to
+pass it, shell lids and blades must be built to the same rule), lid follow (the upper
 lid's edge moves at least 1.5 mm up at eyeLookUp = 1 and down at eyeLookDown = 1), opaque face
 materials (an alpha-blended or masked lid, skin or tooth fails, and hides nothing in any ray
 check), the `extras.arkitFace` schema and `exposedTeeth` (teeth that show at rest must be in
