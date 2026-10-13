@@ -2,6 +2,7 @@
 
 Coordinates follow Blender: Z up, the face looks down -Y, character left is +X.
 """
+import itertools
 import json
 import math
 from pathlib import Path
@@ -1603,17 +1604,91 @@ def front_folds(vertices, faces, center, radius, angles, reach=1.3, turn=20, spa
 ABOVE, BELOW = list(range(50, 131, 10)), list(range(230, 311, 10))
 
 
+def _edge_pierces(a, b, eps=1e-7):
+    """Does an edge of triangle a (three points) pass through the inside of triangle b?"""
+    b0, b1, b2 = b
+    e1, e2 = [b1[k] - b0[k] for k in range(3)], [b2[k] - b0[k] for k in range(3)]
+    for k in range(3):
+        o, q = a[k], a[(k + 1) % 3]
+        d = [q[i] - o[i] for i in range(3)]
+        h = (d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0])
+        det = sum(e1[i] * h[i] for i in range(3))
+        if abs(det) < 1e-30: continue
+        s = [o[i] - b0[i] for i in range(3)]
+        u = sum(s[i] * h[i] for i in range(3)) / det
+        if u <= eps or u >= 1 - eps: continue
+        qq = (s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0])
+        v = sum(d[i] * qq[i] for i in range(3)) / det
+        if v <= eps or u + v >= 1 - eps: continue
+        t = sum(e2[i] * qq[i] for i in range(3)) / det
+        if eps < t < 1 - eps: return True
+    return False
+
+
+def lid_crossings(hole, center, radius, poses, reach=3.0):
+    """Lid penetration measured the way the P1a round-9 builder's lid-penetration check did: for each (blink, squint,
+    wide) pose, the triangle pairs within `reach` eyeball radii of the eye that pass through each other there but not at
+    rest, at least one of them moving. Morphs add (a shape key's delta times its weight), so every mix is reachable."""
+    vertices, faces = hole['vertices'], hole['faces']
+    moved = {tuple(round(c, 12) for c in rest): targets for rest, targets in hole['motion']}
+    tris = [t for f in faces for t in ((f[0], f[k], f[k + 1]) for k in range(1, len(f) - 1))
+            if all(math.dist(vertices[i], center) <= reach * radius for i in t)]
+    used = sorted({i for t in tris for i in t})
+    delta = {}
+    for i in used:
+        targets = moved.get(tuple(round(c, 12) for c in vertices[i]))
+        if targets: delta[i] = {n: tuple(targets[n][k] - vertices[i][k] for k in range(3)) for n in ('blink', 'squint', 'wide')}
+    moving = [any(i in delta for i in t) for t in tris]
+    size = 2 * sum(math.dist(vertices[t[0]], vertices[t[1]]) for t in tris) / len(tris)
+
+    def crossing(pose):
+        P = {i: tuple(vertices[i][k] + sum(w * delta[i][n][k] for n, w in zip(('blink', 'squint', 'wide'), pose)) if i in delta else vertices[i][k]
+                      for k in range(3)) for i in used}
+        grid, boxes = {}, []
+        for n, t in enumerate(tris):
+            lo = [min(P[i][k] for i in t) for k in range(3)]; hi = [max(P[i][k] for i in t) for k in range(3)]
+            boxes.append((lo, hi))
+            for key in itertools.product(*(range(math.floor(lo[k] / size), math.floor(hi[k] / size) + 1) for k in range(3))):
+                grid.setdefault(key, []).append(n)
+        found = set()
+        for cell in grid.values():
+            for x in range(len(cell)):
+                for y in range(x + 1, len(cell)):
+                    a, b = cell[x], cell[y]
+                    if not (moving[a] or moving[b]) or (a, b) in found or set(tris[a]) & set(tris[b]): continue
+                    (la, ha), (lb, hb) = boxes[a], boxes[b]
+                    if any(la[k] > hb[k] or lb[k] > ha[k] for k in range(3)): continue
+                    pa, pb = [P[i] for i in tris[a]], [P[i] for i in tris[b]]
+                    if _edge_pierces(pa, pb) or _edge_pierces(pb, pa): found.add((min(a, b), max(a, b)))
+        return found
+    at_rest = crossing((0, 0, 0))
+    return {pose: len(crossing(pose) - at_rest) for pose in poses}
+
+
+# Poses that cross on agent-meshes main (measured 2026-10-13 on the kid, frog and lantern heads): blink .5-1 with squint
+# .75-1, with and without wide, the squeezed shut eye with everything, a lone blink 1 (the lids cross beside the corners;
+# a lone blink .75 on the lantern head), and the poses an idle blink reaches over lid follow's look-down (blink .75
+# soft-unioned with .35 is .8375) or look-up (blink 1 with wide .8), which the 5 x 5 x 5 weight grid alone does not name.
+CROSSING_POSES = ((.5, .75, 0), (.5, 1, 0), (.6, 1, 0), (.675, 1, 0), (.75, .75, 0), (.75, 1, 0), (.9, 1, 0), (1, .75, 0), (1, 1, 0),
+                  (1, 1, .25), (1, 1, 1), (1, .5, .5), (1, 0, 1), (1, 0, 0), (.75, 1, .5), (0, 1, 1), (.35, 1, .25),
+                  (.75, 0, 0), (.8375, 0, 0), (1, 0, .8))
+
+
 class ContinuousEyeHoleTests(unittest.TestCase):
     """eye_hole's default (style='continuous'): the skin itself flows over the eyeball as the lids, one surface."""
     KID = ((0, 0, .13), (.088, .085, .11)), (.034, -.066, .152), .017, (46, 40, 30)
     FROG = ((0, 0, .12), (.11, .085, .10)), (.045, -.052, .182), .02, (48, 36, 28)
+    # Big round lantern eyes, with the lid settings of the talking-heads Mossjaw head (opening (56, 32, 40), corner 1.6,
+    # overlap 8, wide (15, 5)) on a plain ellipsoid: a wider opening and bigger swings than the kid and the frog.
+    LANTERN = ((0, .006, .146), (.164, .118, .096)), (.064, -.064, .146), .034, (56, 32, 40)
+    OPTIONS = {'LANTERN': dict(corner=1.6, overlap=8, wide=(15, 5))}
     _cache = {}
 
     def hole(self, which='KID'):
         if which not in self._cache:
             head, eye, radius, opening = getattr(self, which)
             blank = ellipsoid_geometry(*head, rings=56, segments=72)
-            self._cache[which] = eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=opening)
+            self._cache[which] = eye_hole(blank['vertices'], blank['faces'], eye, radius, opening=opening, **self.OPTIONS.get(which, {}))
         return self._cache[which]
 
     def test_static_lining_facets_clear_the_ball_across_scales_and_openings(self):
@@ -1702,6 +1777,18 @@ class ContinuousEyeHoleTests(unittest.TestCase):
                 seen = eye_coverage(eye, radius, below, {'blink': 1, 'wide': 1}, samples=61)
                 band = [j for _, j in seen['visible'] if abs(j * seen['step'] - radius) <= .6 * radius]
                 self.assertEqual(band, [])
+
+    def test_the_lids_never_pass_through_each_other_when_blink_and_squint_add_up(self):
+        # The P1a round-8 critic: once eyeSquint reached ~0.75 with eyeBlink 0.5 or more, the lower lid's skin came up in
+        # front of the closing upper lid (the lash line tore into two stubs), on both heads, and nothing caught it. Morphs
+        # add, and consumers soft-union blink with squint (an idle blink while squinting), so every mix is reached. The
+        # P1a round-9 red test (origin/wip/face-lids-continuous-skin): on main it fails as it did there, and also on a
+        # lone blink (1 on the kid and frog, .75 on the lantern head), where the lids cross beside the corners.
+        for which in ('KID', 'FROG', 'LANTERN'):
+            with self.subTest(which):
+                hole, (_, eye, radius, _) = self.hole(which), getattr(self, which)
+                crossed = {pose: n for pose, n in lid_crossings(hole, eye, radius, CROSSING_POSES).items() if n}
+                self.assertEqual(crossed, {}, 'triangle pairs that pass through each other, per (blink, squint, wide)')
 
     def test_the_margins_meet_in_one_point_at_each_corner_and_stay_there(self):
         hole = self.hole()
