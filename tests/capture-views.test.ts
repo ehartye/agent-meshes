@@ -24,11 +24,13 @@ const project = {
   shells: [],
 } as unknown as Project;
 
-it('renders the requested views in order, and the default three when none are given', async () => {
+it.each([
+  { name: 'requested views in order', views: ['top', 'front'], expected: ['top.png', 'front.png'] },
+  { name: 'default three views', views: undefined, expected: ['front.png', 'side.png', 'perspective.png'] },
+])('renders $name', async ({ views, expected }) => {
   const dir = await mkdtemp(join(tmpdir(), 'views-'));
   try {
-    expect(await captureProject(project, dir, ['top', 'front'])).toEqual(['top.png', 'front.png']);
-    expect(await captureProject(project, dir)).toEqual(['front.png', 'side.png', 'perspective.png']);
+    expect(await captureProject(project, dir, views)).toEqual(expected);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

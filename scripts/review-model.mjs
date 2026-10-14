@@ -5,6 +5,7 @@ import {resolve,dirname,join,extname} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {chromium} from 'playwright';
+import {browserLaunchOptions} from '../src/browser.ts';
 import {viewerScript} from '../src/preview-html.ts';
 
 const configPath=resolve(process.argv[2]??'review.json');
@@ -34,7 +35,7 @@ for(const [i,ref] of (config.references??[]).entries()){
 }
 await writeFile(join(output,'viewer.js'),await viewerScript());
 await writeFile(join(output,'viewer.html'),`<!doctype html><meta charset="utf-8"><style>body{margin:0}#stage{width:720px;height:720px}</style><div id="stage"></div><script src="viewer.js"></script><script>window.ready=MeshViewer.mount(document.getElementById('stage'),{glb:${JSON.stringify(bytes.toString('base64'))},autoplay:false,orbit:false,floor:false,background:'#e1e6e8'}).then(v=>window.viewer=v)</script>`);
-const browser=await chromium.launch();
+const browser=await chromium.launch(browserLaunchOptions());
 try{
  const page=await browser.newPage({viewport:{width:720,height:720},offline:true});
  page.on('pageerror',e=>manifest.errors.push(e.message));

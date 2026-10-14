@@ -76,6 +76,7 @@ describe('managed CLI installation', () => {
   });
 
   test('the skill launcher selects the managed copy and fails closed after a source update', () => {
+    copyFileSync(join(process.cwd(), 'src', 'browser.ts'), join(source, 'src', 'browser.ts'));
     for (const file of ['managed-runtime.js', 'run-managed.js']) copyFileSync(join(process.cwd(), 'scripts', file), join(source, 'scripts', file));
     installRuntime(source, options());
     const launch = () => execFileSync(process.execPath, [join(source, 'scripts', 'run-managed.js'), 'batch', 'ops with spaces.json'], {
@@ -109,6 +110,14 @@ describe('managed CLI installation', () => {
     expect(() => installRuntime(source, { ...options(), npm: (args: string[]) => { calls.push(args[0]); throw new Error('install failed'); } })).toThrow(/install failed/);
     expect(calls).not.toContain('link');
     expect(() => resolveRuntime(source, { home })).toThrow(/setup/i);
+    expect(existsSync(join(home, 'setup.lock'))).toBe(false);
+  });
+
+  test('a failed browser dependency check never promotes or links the runtime', () => {
+    const calls: string[] = [];
+    expect(() => installRuntime(source, { ...options(), npm: (args: string[], opts: { cwd: string }) => { calls.push(args[0]); return npm(args, opts); }, checkDependencies: () => { throw new Error('Configured Chromium has no WebGL2 support'); } })).toThrow(/WebGL2/);
+    expect(calls).not.toContain('link');
+    expect(() => resolveRuntime(source, { home })).toThrow(/missing/);
     expect(existsSync(join(home, 'setup.lock'))).toBe(false);
   });
 

@@ -28,6 +28,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inspectGLB } from './lib/glb.mjs';
+import { browserLaunchOptions } from '../src/browser.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const usage = 'Usage: node set-sheet.mjs [--out sheet.png] [--views front,side,q34,top] [--camera name=px,py,pz>tx,ty,tz] [--target x,y,z --dist D] [--size WxH] [--crop-bottom F] [--supersample N] [--cell-scale S] [--background css] [--label tmpl|--no-labels] [--frames dir] [--json] <file.glb ...>';
@@ -93,7 +94,7 @@ try {
 
   const [W, H] = opt.size.map(v => v * opt.ss), keep = opt.crop ?? 1, cw = W, ch = Math.round(H * keep);
   const models = opt.files.map((file, i) => ({ name: basename(file, extname(file)), glb: readFileSync(file).toString('base64'), info: infos[i] }));
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(browserLaunchOptions());
   try {
     const page = await browser.newPage({ viewport: { width: W, height: H } });
     await page.setContent(`<body style="margin:0"><div id="s" style="width:${W}px;height:${H}px"></div></body>`);
