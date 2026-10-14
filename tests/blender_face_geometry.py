@@ -2046,6 +2046,26 @@ class MidlineSeamTests(unittest.TestCase):
         on = [p for p in cut['vertices'] if p[0] == 0.0]
         self.assertGreater(len(on), 150, 'the seam is a long row of vertices shared by both halves')
 
+    def test_the_midline_is_not_a_strip_of_slivers(self):
+        # Where the clip meets edges that cross the midline at nearly the same place (the eyes' patches end along it), it
+        # leaves midline vertices 30 to 120 microns apart in a row, with triangles 6 mm long beside them. The smoothing a
+        # head does afterwards takes them for neighbours to be averaged and piles them up (down to 1.6 microns apart), and
+        # the strip shades as a row of chevrons. Vertices that close are one vertex.
+        from agent_meshes_face import _quality
+        cut = self.cut()
+        vertices, faces = cut['vertices'], cut['faces']
+        slivers = []
+        for index, face in enumerate(faces):
+            if not any(vertices[i][0] == 0.0 for i in face): continue
+            for k in range(1, len(face) - 1):
+                triangle = (face[0], face[k], face[k + 1])
+                if _quality(vertices, triangle) < .02:
+                    slivers.append((index, [round(math.dist(vertices[triangle[a]], vertices[triangle[(a + 1) % 3]]) * 1000, 3) for a in range(3)]))
+        self.assertEqual(slivers, [], 'triangles touching the midline with an edge under 1/50 of their longest (face, edge lengths in mm)')
+        on = sorted((p[2], p[1]) for p in vertices if p[0] == 0.0)
+        close = [(a, b) for a, b in zip(on, on[1:]) if math.dist((0, a[1], a[0]), (0, b[1], b[0])) < 2e-4]
+        self.assertEqual(close, [], 'midline vertices less than 0.2 mm apart')
+
     def test_the_halves_are_mirror_images_and_the_surface_is_closed(self):
         cut = self.cut()
         keys = {tuple(round(c, 9) for c in v) for v in cut['vertices']}
