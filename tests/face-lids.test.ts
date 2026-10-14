@@ -199,4 +199,71 @@ describe('real lantern lids', () => {
     const grid = eyePenetration([surface], center, radius, FOLLOW, 'Left', { grid: true });
     expect(grid).toMatchObject({ mode: 'grid', poses: 324, crossingPoses: 0 });
   }, 120_000);
+
+  // The verifier judges two eyes of every head it is given, 33 poses each, so the cost of one pose is the cost of the check. Each
+  // pose used to build a bounding-volume tree of every triangle near the eye (and the objects under it) before it found the few
+  // pairs whose boxes touch, which made lid-penetration add 37 to 88 percent to the whole verifier. The default pass now meets
+  // the pairs by their swept boxes first and hands the crossing test only the triangles that can meet. `exhaustive` runs the
+  // crossing test on every triangle of every pose, as the check first did: it is the reference the default pass must agree with.
+  describe('the default pass and the exhaustive pass', () => {
+    // No pair limit that cuts a pose short: the pairs found, their order and the heights are then one set, whichever way they are met.
+    const UNCUT = 1_000_000;
+    const scaled = (s: LidSurface, by: { blink?: number; squint?: number; wide?: number }): LidSurface => ({
+      ...s, blink: s.blink!.map(v => v * (by.blink ?? 1)), squint: s.squint!.map(v => v * (by.squint ?? 1)), wide: s.wide!.map(v => v * (by.wide ?? 1)),
+    });
+
+    it('find the same crossings in the same poses: lids that pass through each other', () => {
+      const { surface, center, radius } = lantern('before-fix');
+      const coverage = [pose(0.25), pose(0.5), pose(1)];
+      const fast = eyePenetration([surface], center, radius, FOLLOW, 'Left', { coverage, pairLimit: UNCUT });
+      const slow = eyePenetration([surface], center, radius, FOLLOW, 'Left', { coverage, pairLimit: UNCUT, exhaustive: true });
+      expect(fast.crossingPoses).toBeGreaterThanOrEqual(12);
+      expect(fast).toEqual(slow);
+    }, 120_000);
+
+    it('find the same crossings in the same poses: nested lids pushed past each other by a stronger squint, a stronger blink, a stronger wide', () => {
+      const { surface, center, radius } = lantern('after-fix');
+      const poses = [pose(0.5, 0.75), pose(1, 1), pose(1, 0, 1), pose(0.25, 0.5, 0.5), pose(0, 1, 1), pose(0.8375)];
+      for (const by of [{ squint: 1.6 }, { blink: 1.4 }, { wide: 2 }, { blink: 1.2, squint: 1.2, wide: 1.2 }]) {
+        const pushed = scaled(surface, by);
+        const fast = eyePenetration([pushed], center, radius, FOLLOW, 'Left', { poses, pairLimit: UNCUT });
+        const slow = eyePenetration([pushed], center, radius, FOLLOW, 'Left', { poses, pairLimit: UNCUT, exhaustive: true });
+        expect(fast).toEqual(slow);
+      }
+    }, 120_000);
+
+    it('find the same, none, in the nested lids over the contract poses', () => {
+      const { surface, center, radius } = lantern('after-fix');
+      const fast = eyePenetration([surface], center, radius, FOLLOW, 'Left');
+      const slow = eyePenetration([surface], center, radius, FOLLOW, 'Left', { exhaustive: true });
+      expect(fast).toMatchObject({ mode: 'contract', crossingPoses: 0 });
+      expect(fast).toEqual(slow);
+    }, 120_000);
+
+    it('agree on how many poses cross and how many pairs the worst has, when the limit does cut a pose short', () => {
+      const { surface, center, radius } = lantern('before-fix');
+      const coverage = [pose(0.25), pose(0.5), pose(1)];
+      const fast = eyePenetration([surface], center, radius, FOLLOW, 'Left', { coverage });
+      const slow = eyePenetration([surface], center, radius, FOLLOW, 'Left', { coverage, exhaustive: true });
+      expect(fast.crossingPoses).toBe(slow.crossingPoses);
+      expect(fast.crossing).toEqual(slow.crossing);
+      expect(fast.worstCrossing!.pairs).toBe(slow.worstCrossing!.pairs);
+      expect(fast.worstCrossing!.pose).toBe(slow.worstCrossing!.pose);
+    }, 120_000);
+
+    it('differ in cost: the default pass judges the contract poses at least 4 times faster than the exhaustive pass', () => {
+      const { surface, center, radius } = lantern('after-fix');
+      const time = (exhaustive: boolean) => {
+        const start = performance.now();
+        eyePenetration([surface], center, radius, FOLLOW, 'Left', { exhaustive });
+        return performance.now() - start;
+      };
+      time(false); // warm both paths up before timing
+      time(true);
+      // The faster of three runs of each, alternating: the ratio holds when the machine is busy, which the seconds do not.
+      const fast: number[] = [], slow: number[] = [];
+      for (let run = 0; run < 3; run++) { fast.push(time(false)); slow.push(time(true)); }
+      expect(Math.min(...slow) / Math.min(...fast)).toBeGreaterThanOrEqual(4);
+    }, 120_000);
+  });
 });
