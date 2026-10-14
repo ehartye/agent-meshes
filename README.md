@@ -2,19 +2,20 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
-Release 0.15.0 adds `agent-meshes assemble`, which builds a verified GLB and a physical
-`robot.json` (bodies, masses, colliders, checked connections) from a manifest, with the
-LEGO Technic connector profile and LDraw geometry adapter as replaceable defaults. Static
-models gain two checks: a lathe profile wound inward raises `LATHE_PROFILE_INWARD` in
-`batch --dry-run`, `batch`, `inspect` and `build` results (profiles run bottom to top),
-and `verify`/`build` warn with `DETACHED_PART` when a part floats clear of the rest
-(default tolerance 0.01 m; `--max-gap` makes it a budget, `--allow-detached` exempts
-parts; rigged and animated models are skipped). Exported glTF meshes are now named after
-their part, and `new` starts a clean undo history (`--quiet` summarizes project output). The sprout gait recipe accepts optional reference body curves so pelvis,
-chest and head share one phase frame; existing callers keep the old timing. Release
-0.14.0 added lathe `corners`, metre profiles and sectors, shared named materials,
-`verify` budgets, `silhouette --lint` and `view --views`. Run `mesh-setup` after updating
-the plugin.
+Release 0.16.0 adds the `lid-penetration` check to `verify --contract arkit-face/1`:
+continuous eyelids are now nested by construction, so the upper and lower lids no longer
+pass through each other or the skin at any blink, squint and wide mix, and the verifier
+reports it when a head's lids do. Heads built with the earlier shell-lid construction
+fail the new check until they are rebuilt. The verifier also detects mouth surfaces
+crossing animated facial skin (`mouth-skin-intersection`). The browser-safe runtime
+entry builds scenes from model data, with parametric templates, seeded parameters, a
+socket-fit checker and a slim `agent-meshes-runtime` package, and an explicit system
+Chromium can be selected for capture and rendering without downloading a browser.
+Release 0.15.0 added `agent-meshes assemble` (a verified GLB and a physical `robot.json`
+from a manifest), the `LATHE_PROFILE_INWARD` and `DETACHED_PART` checks, glTF meshes
+named after their part, and a clean undo history for `new`. Release 0.14.0 added lathe
+`corners`, metre profiles and sectors, shared named materials, `verify` budgets,
+`silhouette --lint` and `view --views`. Run `mesh-setup` after updating the plugin.
 
 Behaviour changes in 0.15.0: a model that passed before may now print `WARN DETACHED_PART` lines
 and carry a `detached` report in `verify` output and `verification.json`; the exit code changes only
