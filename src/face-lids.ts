@@ -27,11 +27,12 @@
  * Cost. The crossing test builds a bounding-volume tree and the objects under it from whatever it is given, and a face has
  * thousands of triangles near each eye, most of which cannot meet any other in any pose. So the default pass first finds,
  * once, every pair of triangles whose swept boxes (the box each triangle can reach over the weights the poses use) touch,
- * and in each pose keeps the pairs whose posed boxes touch and whose planes do not already part them by more than the
- * tolerance (a pair that is parted cannot straddle each other: `intersection` would return nothing). The crossing test then
- * sees only the triangles of those pairs and the triangles across their edges, which is all the edge ownership it reads, and
- * finds what it would have found among every triangle. `exhaustive` runs it on every triangle of every pose instead: the
- * slow reference the default pass is tested against.
+ * and in each pose keeps the pairs whose posed boxes touch and which the first steps of `intersection` cannot rule out (one
+ * of the two cannot straddle the other's plane, or both do and their cuts along the line of the two planes do not overlap),
+ * redone in typed arrays and rounded so that a pair is dropped only when `intersection` would return nothing. The crossing
+ * test then sees only the triangles of the pairs left and the ones that share a corner with them, which is all the edge
+ * ownership it reads, and finds what it would have found among every triangle. `exhaustive` runs it on every triangle of
+ * every pose instead: the slow reference the default pass is tested against, on real heads and on random lattice meshes.
  */
 import { surfaceCrossings, type CrossingSurface, type SkipPair, type SurfaceCrossing } from './surface-crossings.ts';
 
@@ -54,6 +55,8 @@ const TOLERANCE = 1e-6;
 const PLANE_PARTED = TOLERANCE + 1e-9;
 /** A corner this close (m) to a plane is on it, as `surfaceCrossings` reads it. */
 const PLANE_ZERO = 1e-10;
+/** Corners surely on both sides of a plane lie farther than this (m) from it: the tolerance less a margin for rounding. */
+const PLANE_STRADDLE = TOLERANCE - 1e-9;
 /** The most triangle pairs the default pass keeps from the swept boxes: a morph that sweeps the whole face leaves the exhaustive pass cheaper. */
 const LID_CANDIDATE_CAP = 4_000_000;
 
@@ -157,21 +160,20 @@ interface Piece {
 /** The judged triangles, numbered across the pieces in order. */
 interface Judged {
   pieces: Piece[]; total: number;
-  /** Per triangle: its piece, its three corners (indices into that piece's vertices), its three weld ids and whether it moves with the eye. */
-  pieceIndex: Int32Array; corner: Int32Array; weld: number[][]; moves: Uint8Array;
+  /** Per triangle: its piece, its three corners (indices into that piece's vertices) and whether it moves with the eye. */
+  pieceIndex: Int32Array; corner: Int32Array; moves: Uint8Array;
 }
 
 /**
  * The default pass's index of which triangles can meet. Built once for an eye from the boxes each triangle can reach over the
  * weights `ranges` (per morph, its lowest and highest weight in the poses), it returns a function that crosses a pose: it
  * keeps the pairs (one of them moving, not welded) whose swept boxes touched, then in the pose the pairs whose boxes touch and
- * neither of which lies wholly beyond the tolerance of the other's plane, hands `surfaceCrossings` those triangles with the
- * ones across their edges (which its edge ownership reads), and returns what it finds. Null when more pairs than
- * `cap` could meet.
+ * that `cannotCross` cannot rule out, hands `surfaceCrossings` those triangles with the ones that share a corner position
+ * with them (which its edge ownership reads), and returns what it finds. Null when more pairs than `cap` could meet.
  */
 function meetingIndex(judged: Judged, ranges: [number, number][], welded: (a: number, b: number) => boolean, cap: number):
   ((points: Float64Array[], skip: SkipPair, limit: number) => SurfaceCrossing[]) | null {
-  const { pieces, total, pieceIndex, corner, moves, weld } = judged;
+  const { pieces, total, pieceIndex, corner, moves } = judged;
 
   // The box each triangle can reach: its corners' rest positions moved by each delta at the lowest and highest weight.
   const lo = new Float64Array(3 * total).fill(Infinity), hi = new Float64Array(3 * total).fill(-Infinity);
@@ -222,29 +224,37 @@ function meetingIndex(judged: Judged, ranges: [number, number][], welded: (a: nu
   const partner = new Int32Array(found.length / 2), cursor = start.slice(0, total);
   for (let p = 0; p < found.length; p += 2) partner[cursor[found[p]]++] = found[p + 1];
 
-  // The triangles across each triangle's edges, by the weld ids of its corners: built when a pose first needs them.
-  let width = 1;
-  for (const ids of weld) for (const id of ids) width = Math.max(width, id + 1);
-  const edgeKey = (g: number, e: number) => { const x = weld[g][e], y = weld[g][(e + 1) % 3]; return x < y ? x * width + y : y * width + x; };
-  let edges: Map<number, number[]> | null = null;
-  const across = (g: number, e: number): number[] => {
-    if (!edges) {
-      edges = new Map();
-      for (let t = 0; t < total; t++) for (let k = 0; k < 3; k++) {
-        const key = edgeKey(t, k), list = edges.get(key);
-        if (list) list.push(t); else edges.set(key, [t]);
-      }
-    }
-    return edges.get(edgeKey(g, e)) ?? [];
-  };
-
   // The pose's triangles: corner positions, boxes and unit normals (a triangle with no area is not crossed, as in `surfaceCrossings`).
   // Boxes hold lo x, y, z then hi x, y, z; a triangle with no area gets an empty box, so no pair with it meets.
   const vx = new Float64Array(9 * total), box = new Float64Array(6 * total), normal = new Float64Array(3 * total), mark = new Uint8Array(total);
+
+  // A table of every corner's position in the pose, built when a pose first needs it. The crossing test reads a triangle's edge
+  // neighbors from positions that are exactly equal in the pose, whether or not the corners are welded at rest (the lids of a
+  // closed eye can meet at the same points), so the triangles it must see are the ones that have a corner exactly there.
+  const slots = 1 << Math.max(4, Math.ceil(Math.log2(6 * total))), head = new Int32Array(slots), chain = new Int32Array(3 * total);
+  let tabled = false;
+  // Equal positions land in one slot (a position is rounded to 1/1,048,576 m first: equal numbers round alike, negative zero included).
+  const slotOf = (o: number): number =>
+    (Math.imul(Math.round(vx[o] * 1048576), 73856093) ^ Math.imul(Math.round(vx[o + 1] * 1048576), 19349663) ^ Math.imul(Math.round(vx[o + 2] * 1048576), 83492791)) & (slots - 1);
+  const tabulate = () => {
+    if (tabled) return;
+    tabled = true;
+    head.fill(-1);
+    for (let c = 0; c < 3 * total; c++) { const slot = slotOf(3 * c); chain[c] = head[slot]; head[slot] = c; }
+  };
+  const at = (a: number, b: number) => vx[a] === vx[b] && vx[a + 1] === vx[b + 1] && vx[a + 2] === vx[b + 2];
+  /** Marks (bit 2) every triangle with a corner exactly where a corner of triangle `g` is. */
+  const markSharing = (g: number) => {
+    for (let c = 0; c < 3; c++) {
+      const o = 9 * g + 3 * c;
+      for (let e = head[slotOf(o)]; e >= 0; e = chain[e]) if (at(3 * e, o)) mark[(e / 3) | 0] |= 2;
+    }
+  };
+
   // Whether two triangles whose boxes touch cannot cross, by the arithmetic of `intersection`'s first steps and sure of it with a
-  // margin for rounding: one lies wholly beyond the tolerance of the other's plane, or each straddles the other's plane and
+  // margin for rounding. Either one cannot straddle the other's plane (see `inert`), or each straddles the other's plane and
   // the stretches in which they cut the line of the two planes do not overlap by more than the tolerance. Anything less sure
-  // (a corner within the tolerance of the plane, the edge ownership then decides) is left to `surfaceCrossings`.
+  // is left to `surfaceCrossings`.
   const da = new Float64Array(3), db = new Float64Array(3), cutA = new Float64Array(9), cutB = new Float64Array(9);
   const distances = (i: number, j: number, out: Float64Array) => {
     const o = 9 * j, n = 3 * j;
@@ -258,6 +268,37 @@ function meetingIndex(judged: Judged, ranges: [number, number][], welded: (a: nu
     const low = Math.min(d[0], d[1], d[2]), high = Math.max(d[0], d[1], d[2]);
     if (low > PLANE_PARTED || high < -PLANE_PARTED) return -1;
     return low < -PLANE_PARTED && high > PLANE_PARTED ? 1 : 0;
+  };
+  /**
+   * Whether triangle `g`, at distances `d` from the plane of triangle `j`, surely does not straddle it as `straddles` reads it:
+   * its own corners are not on both sides beyond the tolerance, and neither are they together with the corners of every
+   * triangle that shares an edge lying in the plane (both ends within the tolerance) with it. Looser than `straddles` at
+   * each threshold, and over every triangle with those two corners, whichever group the crossing test would take them from,
+   * so a triangle that `straddles` would call straddling is never called inert.
+   */
+  const inert = (g: number, d: Float64Array, j: number): boolean => {
+    let low = Math.min(d[0], d[1], d[2]), high = Math.max(d[0], d[1], d[2]);
+    if (low > PLANE_PARTED || high < -PLANE_PARTED) return true;
+    if (low < -PLANE_STRADDLE && high > PLANE_STRADDLE) return false;
+    const o = 9 * j, n = 3 * j;
+    for (let e = 0; e < 3; e++) {
+      const next = (e + 1) % 3;
+      if (Math.abs(d[e]) > PLANE_PARTED || Math.abs(d[next]) > PLANE_PARTED) continue;
+      tabulate();
+      const from = 9 * g + 3 * e, to = 9 * g + 3 * next;
+      for (let s = head[slotOf(from)]; s >= 0; s = chain[s]) {
+        if (!at(3 * s, from)) continue;
+        const h = (s / 3) | 0, k = s % 3;
+        if (!at(9 * h + 3 * ((k + 1) % 3), to) && !at(9 * h + 3 * ((k + 2) % 3), to)) continue;
+        for (let c = 0; c < 3; c++) {
+          const q = 9 * h + 3 * c, dist = (vx[q] - vx[o]) * normal[n] + (vx[q + 1] - vx[o + 1]) * normal[n + 1] + (vx[q + 2] - vx[o + 2]) * normal[n + 2];
+          if (dist < low) low = dist;
+          if (dist > high) high = dist;
+        }
+      }
+      if (low < -PLANE_STRADDLE && high > PLANE_STRADDLE) return false;
+    }
+    return true;
   };
   /** Where the triangle's edges cut the plane its distances `d` are from, as in `cut`: the number of points, written to `out`. */
   const cutBy = (g: number, d: Float64Array, out: Float64Array): number => {
@@ -278,7 +319,7 @@ function meetingIndex(judged: Judged, ranges: [number, number][], welded: (a: nu
     distances(i, j, da); distances(j, i, db);
     const sa = side(da), sb = side(db);
     if (sa < 0 || sb < 0) return true;
-    if (sa === 0 || sb === 0) return false;
+    if (sa === 0 || sb === 0) return sa === 0 && inert(i, da, j) || sb === 0 && inert(j, db, i);
     if (cutBy(i, da, cutA) !== 2 || cutBy(j, db, cutB) !== 2) return false;
     const ax = normal[3 * i + 1] * normal[3 * j + 2] - normal[3 * i + 2] * normal[3 * j + 1];
     const ay = normal[3 * i + 2] * normal[3 * j] - normal[3 * i] * normal[3 * j + 2];
@@ -308,6 +349,7 @@ function meetingIndex(judged: Judged, ranges: [number, number][], welded: (a: nu
       if (!(length > 1e-20)) for (let k = 0; k < 3; k++) { box[6 * g + k] = Infinity; box[6 * g + 3 + k] = -Infinity; }
     }
     mark.fill(0);
+    tabled = false;
     let met = 0;
     for (let i = 0; i < total; i++) {
       const from = start[i], to = start[i + 1];
@@ -321,8 +363,9 @@ function meetingIndex(judged: Judged, ranges: [number, number][], welded: (a: nu
       }
     }
     if (!met) return [];
-    // The meeting triangles (bit 1) and, for the crossing test's edge ownership, the triangles across their edges (bit 2).
-    for (let g = 0; g < total; g++) if (mark[g] & 1) for (let e = 0; e < 3; e++) for (const h of across(g, e)) mark[h] |= 2;
+    // The meeting triangles (bit 1) and, for the crossing test's edge ownership, the triangles that share a corner with one (bit 2).
+    tabulate();
+    for (let g = 0; g < total; g++) if (mark[g] & 1) markSharing(g);
     const skinCorners = pieces.map(() => [] as number[]), skinIds = pieces.map(() => [] as number[]), partCorners = pieces.map(() => [] as number[]), partIds = pieces.map(() => [] as number[]);
     for (let g = 0; g < total; g++) {
       if (!mark[g]) continue;
@@ -332,7 +375,7 @@ function meetingIndex(judged: Judged, ranges: [number, number][], welded: (a: nu
     }
     const gather = (corners: number[][], ids: number[][]): CrossingSurface[] => pieces.flatMap((_, n) => ids[n].length
       ? [{ label: String(n), points: points[n], triangles: Uint32Array.from(corners[n]), sourceTriangles: Uint32Array.from(ids[n]), ids: Uint32Array.from(ids[n]) }] : []);
-    return surfaceCrossings(gather(skinCorners, skinIds), gather(partCorners, partIds), TOLERANCE, limit, skip);
+    return surfaceCrossings(gather(skinCorners, skinIds), gather(partCorners, partIds), TOLERANCE, limit, skip, true);
   };
 }
 
@@ -450,14 +493,14 @@ export function eyePenetration(surfaces: LidSurface[], center: [number, number, 
   const corner = new Int32Array(3 * total);
   for (const piece of pieces) piece.idsAll.forEach((g, k) => { for (let c = 0; c < 3; c++) corner[3 * g + c] = piece.all[3 * k + c]; });
   const meeting = options.exhaustive ? null : meetingIndex({
-    pieces, total, corner, pieceIndex: Int32Array.from(triangleSurface), moves: Uint8Array.from(triangleMoves, m => m ? 1 : 0), weld: triangleWelds,
+    pieces, total, corner, pieceIndex: Int32Array.from(triangleSurface), moves: Uint8Array.from(triangleMoves, m => m ? 1 : 0),
   }, [0, 1, 2].map(m => {
     const weights = [0, ...poses.map(p => [p.blink, p.squint, p.wide][m])];
     return [Math.min(...weights), Math.max(...weights)] as [number, number];
   }), welded, options.maxCandidates ?? LID_CANDIDATE_CAP);
   const crossingsAt = (pose: LidPose, skip: SkipPair, limit: number): SurfaceCrossing[] => {
     const points = posedPoints(pose);
-    return meeting ? meeting(points, skip, limit) : surfaceCrossings(surfacesOf(points, 'all'), surfacesOf(points, 'mov'), TOLERANCE, limit, skip);
+    return meeting ? meeting(points, skip, limit) : surfaceCrossings(surfacesOf(points, 'all'), surfacesOf(points, 'mov'), TOLERANCE, limit, skip, true);
   };
 
   // Pairs that cross at rest, and the pairs of welded pieces they join: a part seated in the skin by design, or a blade

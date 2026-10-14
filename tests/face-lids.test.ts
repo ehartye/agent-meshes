@@ -205,7 +205,8 @@ describe('real lantern lids', () => {
   // pose used to build a bounding-volume tree of every triangle near the eye (and the objects under it) before it found the few
   // pairs whose boxes touch, which made lid-penetration add 37 to 88 percent to the whole verifier. The default pass now meets
   // the pairs by their swept boxes first and hands the crossing test only the triangles that can meet. `exhaustive` runs the
-  // crossing test on every triangle of every pose, as the check first did: it is the reference the default pass must agree with.
+  // crossing test on every triangle of every pose, as the check first did (without the box that culled the skin to the moving
+  // triangles, which would have changed the edge ownership with the pass): it is the reference the default pass must agree with.
   describe('the default pass and the exhaustive pass', () => {
     // No pair limit that cuts a pose short: the pairs found, their order and the heights are then one set, whichever way they are met.
     const UNCUT = 1_000_000;
@@ -261,20 +262,89 @@ describe('real lantern lids', () => {
       expect(fallback).toEqual(slow);
     }, 120_000);
 
-    it('differ in cost: the default pass judges the contract poses at least 3 times faster than the exhaustive pass', () => {
+    it('differ in cost: the default pass judges the contract poses of a lid and the skin round it at least 4 times faster than the exhaustive pass', () => {
       const { surface, center, radius } = lantern('after-fix');
+      // A sheet of skin beside the lid, 3,200 triangles that move a little with each morph and never meet the lid or each other
+      // (a flat sheet at that: many of its pairs lie in one plane): the lid with the skin round it is what a head gives the check.
+      const side = 40, points: number[] = [], blink: number[] = [], squint: number[] = [], wide: number[] = [], triangles: number[] = [];
+      for (let i = 0; i <= side; i++) for (let j = 0; j <= side; j++) {
+        points.push(center[0] + (i / side * 2 - 1) * 1.6 * radius, center[1] + 2.2 * radius, center[2] + (j / side * 2 - 1) * 1.6 * radius);
+        blink.push(0, 0.0004 * Math.sin(3 * i / side), 0); squint.push(0, 0.0006 * j / side, 0.0002); wide.push(0.0002, 0, 0.0003 * i / side);
+      }
+      for (let i = 0; i < side; i++) for (let j = 0; j < side; j++) { const a = i * (side + 1) + j; triangles.push(a, a + side + 1, a + side + 2, a, a + side + 2, a + 1); }
+      const skin: LidSurface = { label: 'skin', rest: Float64Array.from(points), triangles: Uint32Array.from(triangles), blink: Float64Array.from(blink), squint: Float64Array.from(squint), wide: Float64Array.from(wide) };
       const time = (exhaustive: boolean) => {
         const start = performance.now();
-        eyePenetration([surface], center, radius, FOLLOW, 'Left', { exhaustive });
+        const result = eyePenetration([surface, skin], center, radius, FOLLOW, 'Left', { exhaustive });
+        expect(result).toMatchObject({ crossingPoses: 0, restPairs: 0 });
+        expect(result.triangles).toBeGreaterThan(5000);
         return performance.now() - start;
       };
       time(false); // warm both paths up before timing
       time(true);
-      // The faster of three runs of each, alternating: the ratio holds when the machine is busy, which the seconds do not. This
-      // patch is the lid alone (nearly every triangle of it can meet another): about 3.5 times here, and about 5 times on a whole head that passes.
+      // The faster of three runs of each, alternating: the ratio holds when the machine is busy, which the seconds do not. About
+      // 6 times when measured (the lid alone, whose every triangle can meet another, about 4).
       const fast: number[] = [], slow: number[] = [];
       for (let run = 0; run < 3; run++) { fast.push(time(false)); slow.push(time(true)); }
-      expect(Math.min(...slow) / Math.min(...fast)).toBeGreaterThanOrEqual(3);
+      expect(Math.min(...slow) / Math.min(...fast)).toBeGreaterThanOrEqual(4);
     }, 120_000);
   });
+});
+
+describe('the default pass and the exhaustive pass on random triangle soups', () => {
+  // Lattice meshes: every coordinate and every delta is a multiple of 1/1024 m, and the weights are 0, 1/2 and 1, so all sums are
+  // exact. Lots of vertices coincide in a pose without being welded at rest (the lids of a closed eye), triangles lie in one
+  // plane, an edge lies in another triangle's plane, and morphs carry triangles through each other: the cases in which the
+  // edge ownership of `surfaceCrossings` decides, and in which a pass that hands it too few triangles would differ.
+  const UNIT = 1 / 1024;
+  const generator = (seed: number) => () => { seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const POSES: LidPose[] = [pose(1), pose(0, 1), pose(0, 0, 1), pose(0.5), pose(1, 1), pose(1, 0.5, 0.5), pose(0.5, 1, 1), pose(1, 1, 1)];
+
+  function soup(random: () => number, lattice: number): LidSurface[] {
+    const integer = (n: number) => Math.floor(random() * n);
+    return [0, 1].map(piece => {
+      const count = 8 + integer(8), points: P[] = [], deltas = { blink: [] as P[], squint: [] as P[], wide: [] as P[] };
+      for (let v = 0; v < count; v++) {
+        points.push([integer(lattice) * UNIT, integer(lattice) * UNIT, integer(lattice) * UNIT]);
+        for (const name of ['blink', 'squint', 'wide'] as const) deltas[name].push(random() < 0.5 ? [0, 0, 0] : [(integer(5) - 2) * UNIT, (integer(5) - 2) * UNIT, (integer(5) - 2) * UNIT]);
+      }
+      const triangles: number[] = [];
+      for (let t = 0; t < 14 + integer(10); t++) { const a = integer(count), b = integer(count), c = integer(count); if (a !== b && b !== c && a !== c) triangles.push(a, b, c); }
+      const moved = (name: 'blink' | 'squint' | 'wide'): P[] => points.map((p, i) => [p[0] + deltas[name][i][0], p[1] + deltas[name][i][1], p[2] + deltas[name][i][2]]);
+      return surface(`piece${piece}`, points, triangles, { blink: moved('blink'), squint: moved('squint'), wide: moved('wide') });
+    });
+  }
+  /** The two passes' reports on one soup, as text; the soup crosses in a pose when `crossing`, already crosses at rest when `rest`. */
+  function both(seed: number, lattice: number) {
+    const surfaces = soup(generator(seed), lattice);
+    const options = { poses: POSES, pairLimit: 1_000_000 };
+    const fast = eyePenetration(surfaces, CENTER, 0.05, FOLLOW, 'Left', options);
+    const slow = eyePenetration(surfaces, CENTER, 0.05, FOLLOW, 'Left', { ...options, exhaustive: true });
+    return { same: JSON.stringify(fast) === JSON.stringify(slow), crossing: fast.crossingPoses > 0, rest: fast.restPairs > 0, fast: fast.crossing, slow: slow.crossing };
+  }
+
+  it('find the same crossings in the soups that once differed', () => {
+    // Seeds 1041 to 1782 were found by searching 20,000 soups: an early default pass missed a crossing that rests on the edge
+    // ownership of triangles it had not handed to the crossing test, because their corners coincide in the pose only (not welded
+    // at rest). Seed 225 is one that differs when the pass does not read the triangles across an edge that lies in a plane.
+    for (const [seed, lattice] of [[1041, 5], [2146, 5], [3359, 5], [3490, 5], [1782, 4], [225, 5]]) {
+      const result = both(seed, lattice);
+      expect({ seed, same: result.same }).toEqual({ seed, same: true });
+    }
+  });
+
+  it('find the same crossings, in the same poses, in 1,500 random soups (and most of them cross)', () => {
+    let crossing = 0, rest = 0;
+    const different: number[] = [];
+    for (let seed = 1; seed <= 1500; seed++) {
+      const result = both(seed, 3 + (seed % 4));
+      if (!result.same) different.push(seed);
+      if (result.crossing) crossing++;
+      if (result.rest) rest++;
+    }
+    expect(different).toEqual([]);
+    // The soups exercise the check: many cross in a pose, many already cross at rest.
+    expect(crossing).toBeGreaterThan(500);
+    expect(rest).toBeGreaterThan(500);
+  }, 120_000);
 });

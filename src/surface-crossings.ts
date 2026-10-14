@@ -123,8 +123,10 @@ function intersection(a: Tri, b: Tri, tolerance: number): V | null {
   return ac[0].map((v, k) => v + axis[k] * distance) as V;
 }
 
-/** Returns bounded examples with original primitive triangle indices; no all-clear for enclosure is implied. */
-export function surfaceCrossings(skin: CrossingSurface[], parts: CrossingSurface[], tolerance = 1e-6, limit = 20, skip?: SkipPair): SurfaceCrossing[] {
+/** Returns bounded examples with original primitive triangle indices; no all-clear for enclosure is implied.
+ * The skin is culled to the box of the parts, unless `whole`: then every skin triangle is kept, so the edge ownership a
+ * crossing reads is the same whatever box the parts make (the caller's skin is already only what can matter). */
+export function surfaceCrossings(skin: CrossingSurface[], parts: CrossingSurface[], tolerance = 1e-6, limit = 20, skip?: SkipPair, whole = false): SurfaceCrossing[] {
   const partTriangles = parts.flatMap(s => triangles(s));
   if (!partTriangles.length) return [];
   const lo: V = [Infinity, Infinity, Infinity], hi: V = [-Infinity, -Infinity, -Infinity];
@@ -133,7 +135,7 @@ export function surfaceCrossings(skin: CrossingSurface[], parts: CrossingSurface
   // Otherwise moving across a tessellation edge by a tiny amount drops its owner
   // before the adjacency check and hides an arbitrarily deep crossing.
   const window = { lo: lo.map(v => v - tolerance) as V, hi: hi.map(v => v + tolerance) as V };
-  const skinTriangles = skin.flatMap(s => triangles(s, window));
+  const skinTriangles = skin.flatMap(s => triangles(s, whole ? undefined : window));
   if (!skinTriangles.length) return [];
   connect(skinTriangles); connect(partTriangles);
   const root = tree(skinTriangles), found: SurfaceCrossing[] = [];
