@@ -2000,6 +2000,59 @@ class ContinuousEyeHoleTests(unittest.TestCase):
             eye_hole(blank['vertices'], blank['faces'], eye, radius, style='round')
 
 
+class MidlineSeamTests(unittest.TestCase):
+    """Where `eye_holes` joins the kept half of a head to its mirror image (the glabella between close-set eyes), the two
+    halves share one row of vertices on x = 0 and nothing sits beside it.
+
+    The talking-heads Mossjaw head (P3 wave 0, critic round 1): its blank is symmetric only to a millimetre (the sdf
+    unions the two eye domes one after the other), so the normals of the vertices on its midline lean sideways, and a
+    refinement that split the edge between two of them put the new vertex a few microns off the midline. `eye_holes` took
+    that for a point beside the seam, kept it, mirrored it, and left a sliver of triangles 10 microns wide down the
+    glabella with the skin folded back on itself (a 179 degree edge) and normals that disagreed wildly."""
+    HEAD, EYE, RADIUS, OPENING = ((0, .006, .146), (.164, .118, .096)), (.064, -.064, .146), .034, (48, 32, 40)
+    OPTIONS = dict(corner=1.6, overlap=8, wide=(15, 5), squint_upper_share=.35, column_step=3, max_edge=.24 * .034)
+    LEAN = .05      # the blank's height changes by this much per meter of x: its surface leans, and so do its normals
+    _cut = None
+
+    @classmethod
+    def cut(cls):
+        if cls._cut is None:
+            from agent_meshes_face import eye_holes
+            blank = ellipsoid_geometry(*cls.HEAD, rings=56, segments=72)
+            leaning = [(x, y, z + cls.LEAN * x) for x, y, z in blank['vertices']]
+            cls._cut = eye_holes(leaning, blank['faces'], cls.EYE, cls.RADIUS, opening=cls.OPENING, **cls.OPTIONS)
+        return cls._cut
+
+    def test_the_smooth_midpoint_of_an_edge_in_the_midline_stays_in_it_however_the_normals_lean(self):
+        # Two vertices of a symmetric blank's midline are x = 5e-18 on one ring and 2e-20 on the next, not the same float,
+        # and a vertex normal there leans a few hundredths: the middle of the cubic between them lies in x = 0 all the same.
+        from agent_meshes_face import _smooth_midpoint
+        for na, nb in (((.066, -.2, .975), (.052, -.4, .915)), ((-.04, .1, .99), (.06, -.1, .99))):
+            m = _smooth_midpoint((5e-18, -.0801, .2211), (2e-20, -.0844, .2166), na, nb)
+            self.assertLess(abs(m[0]), 1e-12, 'the midpoint of a midline edge leaves the midline')
+        # Planes other than the midline: an edge in z = const keeps its midpoint there (as before), and an edge in no plane
+        # still bends away from the flat midpoint, toward where its normals turn.
+        self.assertEqual(_smooth_midpoint((.01, 0, .5), (.03, .02, .5), (0, 0, 1), (0, 0, 1))[2], .5)
+        flat = (.01, .012, .007)
+        m = _smooth_midpoint((0, 0, 0), (.02, .024, .014), (0, 0, 1), (.6, 0, .8))
+        self.assertGreater(math.dist(m, flat), 1e-4, 'the middle of the cubic through a bent edge is off the chord')
+
+    def test_nothing_sits_beside_the_midline_it_is_one_row_of_shared_vertices(self):
+        # The kept half is mirrored across x = 0, so a vertex a few microns beside the midline becomes two vertices a few
+        # microns apart, one each side of the seam (and the clip adds a third on it). Every vertex near the midline is on it.
+        cut = self.cut()
+        beside = [(i, p[0]) for i, p in enumerate(cut['vertices']) if 0 < abs(p[0]) < 2e-5]
+        self.assertEqual(beside, [], 'vertices within 20 microns of the midline but not on it, with their x')
+        on = [p for p in cut['vertices'] if p[0] == 0.0]
+        self.assertGreater(len(on), 150, 'the seam is a long row of vertices shared by both halves')
+
+    def test_the_halves_are_mirror_images_and_the_surface_is_closed(self):
+        cut = self.cut()
+        keys = {tuple(round(c, 9) for c in v) for v in cut['vertices']}
+        self.assertTrue(all((round(-x, 9), round(y, 9), round(z, 9)) in keys for x, y, z in cut['vertices']))
+        closed_and_consistent(self, cut['vertices'], cut['faces'])
+
+
 class ShutterHoleTests(unittest.TestCase):
     """shutter_hole seals a robot's face-plate eye hole: a tube straight back and a cap behind the eye."""
 
