@@ -106,7 +106,7 @@ export const LID_SWEEPS = { upper: { blink: -56, squint: -10, wide: 10 }, lower:
  * Upper and lower lids: spherical patches around the eye, wide enough to cover the whole eyeball, each turned about
  * the eye's X axis for each morph. At rest the opening runs from 30 degrees below the gaze axis to 35 above.
  */
-function lids(side: 'L' | 'R', radius: number, sweeps = LID_SWEEPS, span = 84): SynthMesh {
+export function lids(side: 'L' | 'R', radius: number, sweeps = LID_SWEEPS, span = 84, lowerBack = -0.0012): SynthMesh {
   const center = EYES[side], suffix = side === 'L' ? 'Left' : 'Right';
   // Latitude bands about the eye's X axis (the blink axis): `turn` degrees up from the gaze axis, `side` toward +X.
   const at = (r: number, across: number, turn: number): Vec3 => {
@@ -115,8 +115,8 @@ function lids(side: 'L' | 'R', radius: number, sweeps = LID_SWEEPS, span = 84): 
   };
   // Closed 0.4 mm shells, as the helpers' lids are, reaching almost to the X axis on each side, so turning them for a
   // blink never uncovers the eye's flanks.
-  const upper = slab(32, 24, (u, v, layer) => at(radius - 0.0004 + 0.0004 * layer, -span + 2 * span * u, 150 - 115 * v));
-  const lower = slab(32, 24, (u, v, layer) => at(radius - 0.001 + 0.0004 * layer, -span + 2 * span * u, -30 - 120 * v));
+  const upper = slab(16, 12, (u, v, layer) => at(radius - 0.0004 + 0.0004 * layer, -span + 2 * span * u, 150 - 115 * v));
+  const lower = slab(16, 12, (u, v, layer) => at(radius - lowerBack + 0.0004 * layer, -span + 2 * span * u, -30 - 120 * v));
   const positions = [...upper.positions, ...lower.positions];
   const indices = [...upper.indices, ...lower.indices.map(i => i + upper.positions.length)];
   const turn = (state: 'blink' | 'squint' | 'wide') => [
@@ -163,8 +163,8 @@ function eyeCorners(side: 'L' | 'R'): SynthMesh {
     const y = yaw * Math.PI / 180, e = elevation * Math.PI / 180;
     return add(center, [r * Math.cos(e) * Math.sin(y), r * Math.sin(e), r * Math.cos(e) * Math.cos(y)]);
   };
-  const outer = slab(8, 8, (u, v, layer) => at(50 + 80 * u, 50 - 95 * v, 0.0156 + 0.0004 * layer));
-  const inner = slab(8, 8, (u, v, layer) => at(-50 - 80 * u, 50 - 95 * v, 0.0156 + 0.0004 * layer));
+  const outer = slab(8, 8, (u, v, layer) => at(50 + 80 * u, 50 - 95 * v, 0.0176 + 0.0004 * layer));
+  const inner = slab(8, 8, (u, v, layer) => at(-50 - 80 * u, 50 - 95 * v, 0.0176 + 0.0004 * layer));
   const positions = [...outer.positions, ...inner.positions], indices = [...outer.indices, ...inner.indices.map(i => i + outer.positions.length)];
   return { name: `eye_corners_${side}`, material: 'skin', positions, indices, targets: [], bones: positions.map(() => 'head') };
 }
@@ -219,6 +219,16 @@ export function socketGap(head: SynthHead, side: 'L' | 'R'): void {
 export function relid(head: SynthHead, side: 'L' | 'R', sweeps: typeof LID_SWEEPS): void {
   const index = head.meshes.findIndex(m => m.name === `lids_${side}`);
   head.meshes[index] = lids(side, 0.015, sweeps);
+}
+
+/**
+ * Lids that pass through each other (the P1a round-8 critic's lower lid standing in front of the closing upper lid): the
+ * lower shell stands in the upper one, where `lids` keeps it 0.6 mm behind, so the shells cut through each other once a
+ * blink brings the upper lid's edge past the lower lid's.
+ */
+export function crossLids(head: SynthHead, side: 'L' | 'R'): void {
+  const index = head.meshes.findIndex(m => m.name === `lids_${side}`);
+  head.meshes[index] = lids(side, 0.015, LID_SWEEPS, 84, 0.0002);
 }
 
 export const JAW_DROP = 0.03;

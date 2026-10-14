@@ -1,7 +1,13 @@
 /** Strict surface crossings, rather than contact or visibility through an opening.
  * Both surfaces must straddle the other's plane; a shared lip/lining boundary is allowed.
  * This does not prove that a disconnected part is enclosed, or sweep between poses. */
-export interface CrossingSurface { label: string; points: Float64Array; triangles: Uint32Array; sourceTriangles?: Uint32Array }
+export interface CrossingSurface {
+  label: string; points: Float64Array; triangles: Uint32Array; sourceTriangles?: Uint32Array;
+  /** The caller's own number for each triangle, handed to a `SkipPair`. */
+  ids?: Uint32Array;
+}
+/** A pair the caller has already judged (by their `ids`): skipped before any intersection work, so it costs neither time nor `limit`. */
+export type SkipPair = (partId: number, skinId: number) => boolean;
 export interface SurfaceCrossing { part: string; skin: string; triangle: number; skinTriangle: number; at: number[] }
 type V = [number, number, number];
 interface Tri { surface: CrossingSurface; index: number; ids: [number, number, number]; p: V[]; normal: V; lo: V; hi: V; neighbors?: Tri[][]; link?: { built: boolean; build(): void } }
@@ -117,8 +123,10 @@ function intersection(a: Tri, b: Tri, tolerance: number): V | null {
   return ac[0].map((v, k) => v + axis[k] * distance) as V;
 }
 
-/** Returns bounded examples with original primitive triangle indices; no all-clear for enclosure is implied. */
-export function surfaceCrossings(skin: CrossingSurface[], parts: CrossingSurface[], tolerance = 1e-6, limit = 20): SurfaceCrossing[] {
+/** Returns bounded examples with original primitive triangle indices; no all-clear for enclosure is implied.
+ * The skin is culled to the box of the parts, unless `whole`: then every skin triangle is kept, so the edge ownership a
+ * crossing reads is the same whatever box the parts make (the caller's skin is already only what can matter). */
+export function surfaceCrossings(skin: CrossingSurface[], parts: CrossingSurface[], tolerance = 1e-6, limit = 20, skip?: SkipPair, whole = false): SurfaceCrossing[] {
   const partTriangles = parts.flatMap(s => triangles(s));
   if (!partTriangles.length) return [];
   const lo: V = [Infinity, Infinity, Infinity], hi: V = [-Infinity, -Infinity, -Infinity];
@@ -127,7 +135,7 @@ export function surfaceCrossings(skin: CrossingSurface[], parts: CrossingSurface
   // Otherwise moving across a tessellation edge by a tiny amount drops its owner
   // before the adjacency check and hides an arbitrarily deep crossing.
   const window = { lo: lo.map(v => v - tolerance) as V, hi: hi.map(v => v + tolerance) as V };
-  const skinTriangles = skin.flatMap(s => triangles(s, window));
+  const skinTriangles = skin.flatMap(s => triangles(s, whole ? undefined : window));
   if (!skinTriangles.length) return [];
   connect(skinTriangles); connect(partTriangles);
   const root = tree(skinTriangles), found: SurfaceCrossing[] = [];
@@ -136,6 +144,7 @@ export function surfaceCrossings(skin: CrossingSurface[], parts: CrossingSurface
     if (node.children) { visit(node.children[0], part); visit(node.children[1], part); return; }
     for (const s of node.tris!) {
       if (!overlap(s, part)) continue;
+      if (skip && s.surface.ids && part.surface.ids && skip(part.surface.ids[part.index], s.surface.ids[s.index])) continue;
       const at = intersection(s, part, tolerance);
       if (at) found.push({ part: part.surface.label, skin: s.surface.label,
         triangle: part.surface.sourceTriangles?.[part.index] ?? part.index,

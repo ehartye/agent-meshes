@@ -619,8 +619,8 @@ separate surfaces meeting at the eye. `eye_hole(vertices, faces, center,
 eye_radius, margin=6, clearance=.0005, blend=None, max_edge=None, socket=25,
 style='continuous', opening=(45, 38, 30), meet=-8, overlap=6, squint=.45,
 squint_upper_share=.2, wide=(10, 4), corner=1.25, thickness=None, gap=None,
-crease=.035, lash_width=5, lower_lash_width=2.5, column_step=2.5)` rebuilds the skin
-round the eye as **one surface**:
+crease=.035, lash_width=5, lower_lash_width=2.5, column_step=2.5, closed_swell=.12,
+keep_aperture=True)` rebuilds the skin round the eye as **one surface**:
 
 - A grid over (yaw, elevation) from the eye center replaces the skin in a convex
   patch round the eye and is joined to the skin round it by a ring of triangles
@@ -643,17 +643,51 @@ round the eye as **one surface**:
   squint_upper_share, wide, corner)` and the rows behind them follow as a rolling
   curtain (linear to the upper crease, easing out below). The closed upper lid
   passes `overlap` degrees in front of the lower one, which rises behind it by the
-  wide travel less half the overlap, so blink 1 + wide 1 stays closed, seen
-  from 25 degrees below too.
+  wide travel less a quarter of the overlap, so blink 1 + wide 1 stays closed with
+  three quarters of the overlap, seen from 25 degrees below too. A lone blink closes
+  up to 5 degrees further (`MID_OVERLAP`, at most a tenth of the opening, fading
+  toward the corners) and squint takes that back as far as it lowers the margin, so
+  blink + squint does not close it twice and squint alone never raises the margin.
+  Wide and squint fade out faster than the profile in the outer fifth of the
+  opening, so the closed lower lid never rises past a corner's level.
 - The lid radius is solved exactly: every vertex a lid morph moves stays
   `clearance` outside the eyeball over every blink, squint and wide mix
-  (`lid_clearance`). The upper lid stands a lid thickness and a gap proud of the
-  lower one in the middle (the closed upper lid passes in front of it) and meets it
-  at the corners. Folded faces (any single morph at 0.5 and 1, and every sum of
-  them except blink 1 with squint 1, an already shut eye squeezed, where two large
-  summed chords twist a thin strip of the rounded margin inside the closed lids;
-  the contract's inversion check does not use that pair) and uncovered eyeball in
-  any contract state are rejected.
+  (`lid_clearance`).
+- **The lids are nested by construction** (the P1a round-8 critic's lower lid came up
+  in front of the closing upper lid once squint reached .75 with blink .5, with the
+  verifier passing, and a lone blink crossed beside the corners). Morphs add, and
+  consumers soft-union blink with squint, so every mix of `lid_poses()` is reached
+  (every weight 0, .25, .5, .75, 1 of blink, squint and wide, and the same grid with
+  lid follow's extremes soft-unioned in: 325 poses with rest). Both lids thin to
+  nothing at the corners (the lower lid's outer skin stays where it is and its inner
+  surface rises to meet it; the upper lid's inner surface stands a gap outside the
+  lower one's outer skin), and the upper lid's radius is solved column by column, on
+  a pure 2D model of both lids' profiles in the column's plane (`_lid_profile`,
+  `_lid_chain_cross`), for the smallest radius whose profile stays outside the lower
+  lid's in every pose. The built lids (whose rows follow the skin, which the model did
+  not know) are checked against each other again and a column found short is rebuilt
+  further out, up to four times. The closed upper lid swells (`closed_swell`, 12% of
+  its radius over the cornea, fading toward the corners), which carries it over the
+  rising lower lid with a smaller lid. The lids' columns are reported in
+  `lids['columns']` (each column's share `p` of the opening, `thickness` and the two
+  lids' `upper_inner` and `lower_inner` radii).
+- **The hood.** Nesting costs a taller upper lid: on a head with Mossjaw's lid
+  settings (opening (48, 32, 40), corner 1.6, overlap 8, wide (15, 5)) the upper lid's
+  inner radius grows from 1.31 to 1.43 eyeball radii with `squint_upper_share=.6`, and to 1.61 with .35. A margin at the same angle then
+  stands higher in a front view (radius x sin(elevation)), so with `keep_aperture`
+  (the default) the upper opening is lowered, and the head built again, until the
+  margin keeps the front-view height it had at its old radius (`lids['opening']`
+  is the opening built, `lids['asked_opening']` the one asked for). Raising
+  `squint_upper_share`, or lowering `wide` or `overlap`, shrinks the hood.
+- **The fold policy.** No face of the lids turns over against its rest orientation
+  in any pose with blink under 1, alone or mixed with squint and wide (checked at
+  the weights 0, .5, 1 and their lid-follow unions, and blink .75 + squint .75,
+  blink .5 + squint 1 and blink 1 + squint .75 + wide .25). Blink 1 with a squint
+  above 0 (an eye already shut and squeezed) may twist a thin strip of the rounded
+  margin inside the closed lids: the contract's inversion check does not pose it,
+  and `lids['folds']` reports each such pose with its folded triangles,
+  `{(blink, squint, wide): triangles}`, instead of hiding them. Uncovered eyeball in
+  any contract state is rejected.
 - The lash line is paint: the upper margin's outer rows (`lash_width` degrees,
   tapering to the corners), its half-round and the lid's inner surface carry the
   `lash` material (`build_eye(..., lash=True)`), so it follows the margin exactly
@@ -665,8 +699,8 @@ the patch meets a skin that already clears the lids. On a symmetric head use
 `eye_holes`: each eye's patch reaches toward the other's (two `eye_hole` calls on a
 wide face say "cut both at once with eye_holes"). The result has `vertices`,
 `faces`, `style`, `lids` (the margins' `edges` per state, `upper_radius` and
-`lower_radius` of the lids' inner surfaces, `thickness`, `crease`, `min_clearance`,
-`squint_ratio`; no vertices), `window` (the opening envelope, as for shells),
+`lower_radius` of the lids' inner surfaces, `columns`, `folds`, `opening` and
+`asked_opening`, `thickness`, `crease`, `min_clearance`, `squint_ratio`; no vertices), `window` (the opening envelope, as for shells),
 `motion` (each moving vertex's rest position and targets), `lash` and
 `lining_points` (paint by position), `still` (the region the lid morphs move,
 which `eye_hole_mask` keeps other skin shapes off), `mound`, `rim`, `wall` and
@@ -675,6 +709,18 @@ crease (`brow_ridge_geometry` lays it on the skin itself; the lid's skin below t
 crease moves with the lids): the frog fixtures put theirs 30 and 24 degrees above
 the opening. `dome_brow_geometry` still expects shell holes (its browInnerUp end
 cap floats on a continuous one).
+
+The `arkit-face/1` verifier's `lid-penetration` check judges the nesting: in the 33 or so
+contract poses of each eye (the 12 coverage states, the 20 named crossing poses and
+lid follow's extremes; `verify --lid-grid` poses all 324), no triangle that moves with
+the eye may pass through a triangle it is not joined to, unless they already cross at
+rest. The lantern fixtures of `tests/blender_face_geometry.py` pose all of them without Blender,
+and `tests/fixtures/lantern-lids/make.py` regenerates the trimmed before and after lids that
+`tests/face-lids.test.ts` judges. Only these continuous lids are built nested: the shell
+lids of `build_eye` without `hole` (`style='shells'`, `lid_geometry`) and the rolling skin
+lids of `agent_meshes_hm08.character_face` still pass through themselves at blink + squint
++ wide mixes (7 and 19 of 33 contract poses on the repository's fixtures) and fail the
+check until they are built to the same rule.
 
 The `arkit-face/1` verifier's `eye-crease` check measures the terraces: along 17
 radial lines above and 17 below each eye in a front view, out to 1.3 eyeball radii,
@@ -749,7 +795,14 @@ and pass the result to `build_eye(..., hole=...)`. On a left-right symmetric hea
 exact mirror images and returns `{'vertices', 'faces', 'L', 'R'}`: two `eye_hole`
 calls in a row differ, because the second is cut into skin the first refined and
 reshaped (about 1,000 of 7,700 vertices had no mirror image with the eyes 52 mm
-apart). It cuts the left hole, keeps the half at x >= 0 and mirrors it.
+apart). It cuts the left hole, keeps the half at x >= 0 and mirrors it. The two halves
+share one row of vertices on x = 0: a vertex within a micron of the midline is moved
+onto it, and refinement keeps an edge between two midline vertices in the plane however
+the blank's normals lean there (a blank whose field is symmetric only to a millimetre
+leans them, and a refined vertex a few microns beside the midline was mirrored into a
+sliver of triangles 10 microns wide, folded back down the glabella). Whatever a head
+does to the skin afterwards (smoothing along normals, projecting back onto its field)
+has to leave the midline vertices on x = 0 too.
 
 For shell eyes, a crisp **lash line**: `build_eye(..., lash=True)` adds a near-black `lash`
 material (or pass your own material) on a lash band, `lash_geometry(lids, width=5,
@@ -1124,7 +1177,11 @@ which seal the hole (above).
   `thickness` proud at the middle (tapering to the ends), every point settled on
   the skin along its normal, so the brow follows the forehead's curve, the socket
   dip over the eye and the turn of the temple, with its edges and underside sunk
-  `sink` into the skin (15% of the thickness). Each morph moves the brow over the
+  `sink` into the skin (15% of the thickness). The cross-sections' direction across
+  the skin is smoothed along the brow, its quads come back split into triangles
+  along the diagonal that holds in every pose, and a pose that still folds a face
+  (under the hood of a continuous upper lid the skin turns quickly) has the deltas
+  round it smoothed until it does not. Each morph moves the brow over the
   face and lays it back on the skin at its new place: `browDown<Side>` lowers the
   inner end by `down` (the outer a third as much) and knits it `pinch` toward the
   nose (angry), `browInnerUp` and `browOuterUp<Side>` lift the ends (meters). When
@@ -1231,7 +1288,10 @@ k)` for cheeks, jowls and a chin, and `smooth_max(d, -other, k)` to carve), star
 shaped from `center`. The rays follow `ellipsoid_geometry`'s grid bent toward the
 face (`front` crowds the columns toward -Y, `band` the rings toward the middle), so
 the eyes, nose and mouth get most of the samples; with `segments` a multiple of 4
-the blank is left-right symmetric with a meridian on x = 0, as `eye_holes` needs. `ellipsoid_sdf` checks a
+the blank is left-right symmetric with a meridian on x = 0, as `eye_holes` needs. (The field must be symmetric
+as well: `smooth_min(smooth_min(d, a), b)` is not `smooth_min(smooth_min(d, b), a)` where the blends of a mirrored
+pair overlap, which two close-set eye domes do by up to a millimetre. Union the pair first, `smooth_min(a, b, k)`
+being symmetric in a and b, or evaluate the field at `(abs(x), y, z)`.) `ellipsoid_sdf` checks a
 center and radii once per distinct pair and takes a tuple of three floats as it is,
 so a field of a few ellipsoids sampled hundreds of thousands of times stays fast.
 

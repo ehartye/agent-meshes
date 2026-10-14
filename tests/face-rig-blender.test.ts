@@ -184,10 +184,15 @@ maybe('the face-rig wrappers validate, join and export inside real Blender', asy
   // outside the skin and the check reported it from jawOpen = .25).
   expect(report.measurements.mouthCrossings).toMatchObject({ examples: [], capped: false });
   // The wrapper fixture has lower teeth only, so the teeth check names the missing upper row; its eyes sit behind an
-  // uncut skin, so no lid edge shows to follow the gaze.
+  // uncut skin, so no lid edge shows to follow the gaze. Its lids are build_eye's default shells (no eye_hole): two
+  // rotating shells that pass through each other when blink, squint and wide add up, which lid-penetration names for
+  // both eyes, shell against shell. eye_hole's continuous lids are nested to pass it (tests/fixtures/face-rig).
+  const shellsCross = (side: 'L' | 'R') => expect.stringMatching(new RegExp(`^lid-penetration: eye_${side}: in \\d+ of 33 blink, squint and wide poses .*face\\[lid\\] triangle \\d+ passes through face\\[lid\\] triangle \\d+`));
   expect(report.failures).toEqual([
     'lid-follow: eye_L: no eyeball shows down the middle of the eye at rest, so lid follow cannot be seen',
     'lid-follow: eye_R: no eyeball shows down the middle of the eye at rest, so lid follow cannot be seen',
+    shellsCross('L'),
+    shellsCross('R'),
     'teeth: no upper teeth found: name the mesh or material with "teeth" and "upper" (for example teeth_upper)',
     'upper-lip: skipped because no upper teeth mark the gum line',
     'mouth-open: skipped because the upper or lower teeth were not found',

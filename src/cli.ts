@@ -121,6 +121,7 @@ export async function main(args = process.argv): Promise<void> {
   });
   program.command('verify <file>').description('Validate an exported GLB without a server and warn about mesh parts of a static model that touch nothing (DETACHED_PART); --contract arkit-face/1 also checks the face-rig contract')
     .option('--contract <name>', 'Also check a rig contract (arkit-face/1)')
+    .option('--lid-grid', 'With --contract arkit-face/1: judge lid-penetration in all 324 poses of the blink x squint x wide grid (and the lid-follow unions) instead of the contract poses; slower')
     .option('--target <name>', 'Also report exported geometry for a target (uefn); budget excesses are warnings')
     .option('--render-vertex-budget <count>', 'Per-mesh warning budget for --target uefn (default 30000)')
     .option('--max-triangles <count>', 'Fail when the drawn scene (every node instance) has more triangles')
@@ -162,12 +163,13 @@ export async function main(args = process.argv): Promise<void> {
     const budget = options.renderVertexBudget === undefined ? undefined : Number(options.renderVertexBudget);
     if (budget !== undefined && (!Number.isSafeInteger(budget) || budget <= 0)) throw Object.assign(new Error('--render-vertex-budget must be a positive safe integer'), { code: 'CLI_ARGUMENT_ERROR' });
     const geometryOptions = options.target === 'uefn' ? { target: 'uefn' as const, renderVertexBudget: budget } : undefined;
+    if (options.lidGrid && options.contract === undefined) throw Object.assign(new Error('--lid-grid needs --contract arkit-face/1'), { code: 'CLI_ARGUMENT_ERROR' });
     if (options.contract !== undefined) {
       const { contractExpectations } = await import('./arkit-face.ts');
       contractExpectations(String(options.contract));
       const { verifyFaceContract } = await import('./face-contract.ts');
       const bytes = await readFile(file);
-      const report = await verifyFaceContract(bytes);
+      const report = await verifyFaceContract(bytes, { lidGrid: !!options.lidGrid });
       const { auditGeometryBudget } = await import('./geometry-budget.ts');
       const limits = reportLimits(bytes);
       process.stdout.write(`${JSON.stringify({ ...report, ...(geometryOptions ? { geometryBudget: auditGeometryBudget(bytes, geometryOptions) } : {}), ...(limits ? { limits } : {}) }, null, 2)}\n`);

@@ -9,7 +9,7 @@ import { encodeHead, mesh, passingHead } from './helpers/face-glb.ts';
 const run = promisify(execFile);
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
-const cli = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args], { timeout: 20000, windowsHide: true });
+const cli = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args], { timeout: 90000, windowsHide: true });
 
 it('verify --contract arkit-face/1 prints a JSON report and exits 0 or 1 with a list of failures', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-face-cli-')); directories.push(directory);
@@ -33,4 +33,18 @@ it('verify --contract arkit-face/1 prints a JSON report and exits 0 or 1 with a 
   // Without --contract, verify keeps its plain glTF validation behavior.
   expect(JSON.parse((await cli('verify', good)).stdout)).toMatchObject({ ok: true, errors: 0 });
   await expect(cli('verify', good, '--contract', 'arkit-face/9')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('Unknown contract') });
-}, 60000);
+}, 180000);
+
+it('verify --contract arkit-face/1 --lid-grid judges lid-penetration in the whole blink x squint x wide grid', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-face-cli-grid-')); directories.push(directory);
+  const good = join(directory, 'good.glb');
+  await writeFile(good, encodeHead(passingHead()));
+  const contract = JSON.parse((await cli('verify', good, '--contract', 'arkit-face/1')).stdout);
+  expect(contract.measurements.eyes.L.penetration).toMatchObject({ mode: 'contract', crossingPoses: 0 });
+  const grid = JSON.parse((await run(process.execPath, [resolve('scripts/agent-meshes.mjs'), 'verify', good, '--contract', 'arkit-face/1', '--lid-grid'], { timeout: 120000, windowsHide: true })).stdout);
+  expect(grid).toMatchObject({ ok: true });
+  expect(grid.measurements.eyes.L.penetration.mode).toBe('grid');
+  expect(grid.measurements.eyes.L.penetration.poses).toBeGreaterThan(200);
+  // The flag belongs to the contract check.
+  await expect(cli('verify', good, '--lid-grid')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('--lid-grid') });
+}, 180000);

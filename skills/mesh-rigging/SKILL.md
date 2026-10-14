@@ -105,7 +105,9 @@ exposed fangs). The rules that are easy to get wrong:
   surface with a rounded margin, a lining behind it, one soft crease above and a closed corner), and
   `build_eye` adds the eye's blink, squint and wide shape keys to the head and paints the lash line
   (`lash=True`). Separate lid shells in a skin hole (`style='shells'`) read as stacked bands round the eye
-  and fail the verifier's `eye-crease` check. A sphere cut (`cut_hole`) leaves a black hole beside the lids
+  and fail the verifier's `eye-crease` check, and lids that stand in each other's path fail `lid-penetration` (the
+  continuous lids are nested at every blink, squint and wide mix, at the price of a taller upper lid; a larger
+  `squint_upper_share`, or a smaller `wide` or `overlap`, shrinks that hood). A sphere cut (`cut_hole`) leaves a black hole beside the lids
   in 3/4 view. Robot shutter eyes take `shutter_hole` (a sealed tube back from the face plate, with the
   blades checked against it) and `build_eye(style='shutter', hole=...)`. Mask brow and cheek offsets near
   the eyes with `mask=eye_hole_mask(*holes)`, and lay brow ridges above the upper lid's crease.
@@ -135,7 +137,9 @@ exposed fangs). The rules that are easy to get wrong:
   `face_contract(rig, objects, yaw_max, pitch_max, exposed_teeth=[...])`.
 - Gaze is eye-bone rotation, not morphs: yaw about the eye bone's local Y, pitch about local X.
 
-Check every build with `mesh verify <head>.glb --contract arkit-face/1` (mesh-build). Its `mouth-skin-intersection`
+Check every build with `mesh verify <head>.glb --contract arkit-face/1` (mesh-build). Its `lid-penetration` check
+fails any blink, squint and wide pose in which a lid passes through the other lid or the skin (the message names the
+eye, the poses and the triangles; a head built before the lids were nested rebuilds green). Its `mouth-skin-intersection`
 check fails teeth, gums, tongue or cavity that cross the skin at rest, at quarter jaw openings or in any mouth, cheek
 or emotion morph (the message names the state, the part and both triangle indices); repair the geometry or make it
 follow the skin, never loosen the check. Then look at
