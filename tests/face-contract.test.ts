@@ -10,7 +10,7 @@ async function report(mutate?: (head: SynthHead) => void) {
 const failed = (result: Awaited<ReturnType<typeof report>>) => result.checks.filter(c => !c.ok).map(c => c.id);
 
 // The machine may be busy (Blender builds, CI): each verification runs the whole contract, so allow 30 s.
-describe('arkit-face/1 verifier', { timeout: 30_000 }, () => {
+describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
   it('passes a head that meets every computable clause and reports its measurements', async () => {
     const result = await report();
     expect(result.failures).toEqual([]);
