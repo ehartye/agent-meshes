@@ -1067,3 +1067,11 @@ connector declarations: they do not infer connectors from meshes or establish st
 strength, insertion depth, keyed axle orientation, interference clearance, or manufacturability.
 Physical joints remain explicitly authored in `bodies`. Run
 `npx vitest run tests/physical-connectivity.test.ts tests/physical-assembly.test.ts tests/physical-extensibility.test.ts` for the checks.
+
+### Use an existing Chromium executable
+
+Set `AGENT_MESHES_CHROMIUM_EXECUTABLE_PATH` to an absolute executable path (for example `/usr/bin/chromium`) before running `node scripts/setup.js`, `setup.js --check`, and rendering commands. Setup skips the browser download only for this explicit selection, then checks launch and WebGL2 before publishing the managed runtime. Invalid selections fail rather than falling back to a download. Keep the variable set when using the CLI, review-model, or set-sheet. Nothing is auto-selected from PATH.
+
+Without this variable, setup and rendering retain the default Playwright-managed Chromium behavior. System Chromium versions can differ from Playwright’s supported bundled version; verify actual renders after browser updates. This setting does not add sandbox-disabling flags or change browser security settings. Browser test scripts that launch Playwright directly still use their default browser unless explicitly adapted.
+
+For local development, use a separate `AGENT_MESHES_HOME` and npm prefix when testing setup; the resulting release is tied to this checkout’s fingerprint. It does not update an already installed marketplace plugin. Do not modify an installed managed release or its receipt.

@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { browserLaunchOptions } from './browser.ts';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from './server.ts';
@@ -16,7 +17,7 @@ export async function captureProject(project: Project, directory: string, views:
   try {
     const response = await fetch(`${server.url}/api/project`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(project) });
     if (!response.ok) throw new Error(`Capture project rejected: ${await response.text()}`);
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, ...browserLaunchOptions() });
     const page = await browser.newPage({ viewport: { width: 1100, height: 950 }, deviceScaleFactor: 1 });
     const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
     await page.goto(server.url, { waitUntil: 'domcontentloaded' });

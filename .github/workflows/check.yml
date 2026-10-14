@@ -26,7 +26,50 @@ jobs:
       - run: npm run build
       - run: node --test tests/botanical-kit.test.mjs
       - run: npx playwright install chromium
-      - run: npm test
+      # Run every test, keeping software-GPU capture separate from geometry workloads.
+      - run: npm test -- --maxWorkers=2 --exclude tests/capture-views.test.ts
+      - run: npm test -- tests/capture-views.test.ts --maxWorkers=1
+
+  system-browser:
+    name: System Chromium rendering (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Select the runner's installed Chrome
+        shell: bash
+        run: |
+          echo "AGENT_MESHES_HOME=$RUNNER_TEMP/mesh-system-runtime" >> "$GITHUB_ENV"
+          echo "npm_config_prefix=$RUNNER_TEMP/mesh-system-prefix" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/mesh-unused-browser-cache" >> "$GITHUB_ENV"
+          browser="$(command -v google-chrome)"
+          test -x "$browser"
+          "$browser" --version
+          echo "AGENT_MESHES_CHROMIUM_EXECUTABLE_PATH=$browser" >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Run the full JavaScript suite with the selected browser
+        run: npm test -- --maxWorkers=2 --exclude tests/capture-views.test.ts
+      - name: Run browser capture without concurrent geometry workloads
+        run: npm test -- tests/capture-views.test.ts --maxWorkers=1
+      - name: Install and verify a fresh managed runtime without downloading Chromium
+        run: |
+          node scripts/setup.js --json
+          node scripts/setup.js --check --json
+          test ! -d "$PLAYWRIGHT_BROWSERS_PATH"
+      - name: Render through the configured browser and managed runtime
+        run: node scripts/check-system-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: system-browser-render-evidence
+          path: artifacts/system-browser/
+          if-no-files-found: warn
 
   python:
     name: Python ${{ matrix.suite }} (windows-latest)
@@ -107,7 +150,7 @@ jobs:
   required:
     name: CI required
     if: ${{ always() }}
-    needs: [node, python]
+    needs: [node, python, system-browser]
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -116,8 +159,9 @@ jobs:
         env:
           NODE_RESULT: ${{ needs.node.result }}
           PYTHON_RESULT: ${{ needs.python.result }}
+          BROWSER_RESULT: ${{ needs.system-browser.result }}
         # A skipped, cancelled or failed dependency must never produce a green gate.
         run: |
-          if ($env:NODE_RESULT -cne 'success' -or $env:PYTHON_RESULT -cne 'success') {
+          if ($env:NODE_RESULT -cne 'success' -or $env:PYTHON_RESULT -cne 'success' -or $env:BROWSER_RESULT -cne 'success') {
             exit 1
           }

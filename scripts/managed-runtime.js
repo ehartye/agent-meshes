@@ -2,6 +2,7 @@
 // The Claude Code plugin cache is a bare git checkout: no node_modules, no built workbench, no browser.
 // Setup copies the runtime files to ~/.agent-meshes/releases/<key>, installs dependencies there,
 // builds the workbench, installs Chromium for renders, then links the CLI. Skills run the launcher only.
+import { browserLaunchOptions } from '../src/browser.ts';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -106,6 +107,7 @@ const node = (root, code) => execFileSync(process.execPath, ['--input-type=modul
 
 /** Chromium for renders and contact sheets. Playwright keeps browsers in its own cache, so this is idempotent. */
 export function installBrowser(root) {
+  if (browserLaunchOptions().executablePath) return;
   execFileSync(process.execPath, [join(root, 'node_modules', 'playwright', 'cli.js'), 'install', 'chromium'], { cwd: root, windowsHide: true, stdio: ['ignore', 2, 2] });
 }
 
@@ -115,6 +117,12 @@ export function checkDependencies(root) {
   if (major < 24) throw new Error(`agent-meshes runs TypeScript directly and needs Node 24 or newer; this is Node ${process.versions.node}`);
   node(root, "await import('three'); await import('zod'); await import('commander'); await import('express'); await import('vite'); await import('gltf-validator');");
   if (!existsSync(join(root, 'dist-web', 'index.html'))) throw new Error('dist-web/index.html is missing: the workbench has not been built. Rerun mesh-setup.');
+  const selected = browserLaunchOptions();
+  if (selected.executablePath) {
+    // Validate actual launch and WebGL support before promoting a managed runtime.
+    node(root, "const { chromium } = await import('playwright'); const { browserLaunchOptions } = await import('./src/browser.ts'); const browser = await chromium.launch({ headless: true, ...browserLaunchOptions() }); try { const page = await browser.newPage(); if (!await page.evaluate(() => !!document.createElement('canvas').getContext('webgl2'))) throw new Error('Configured Chromium has no WebGL2 support'); } finally { await browser.close(); }");
+    return;
+  }
   const browser = node(root, "const { chromium } = await import('playwright'); const { existsSync } = await import('node:fs'); console.log(existsSync(chromium.executablePath()) ? 'ok' : 'missing');");
   if (browser !== 'ok') throw new Error('Chromium for Playwright is missing, so renders and previews would fail. Rerun mesh-setup.');
 }
