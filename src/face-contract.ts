@@ -500,6 +500,38 @@ const nearMiss = (name: string) => {
   return ARKIT_CURVES.find(curve => curve !== name && key(curve) === key(name));
 };
 
+/**
+ * The lid-penetration findings of both eyes (check 10h), written to `measured[side].penetration`. A function of its own, not
+ * a block of `verifyFaceContract`. Measured: with these lines inline in that very long function, the checks round them ran
+ * about 0.35 s slower on a 4,800-triangle eye region (2.45 s against 2.07 s with the block taken out, whatever the block did,
+ * even only `continue`); as a function of its own the rest of the verifier is as fast as without them. Presumably V8's
+ * optimisation of the long function; the cause was not isolated.
+ */
+function lidPenetrationProblems(eyes: Record<'L' | 'R', { center: Vector3; radius: number }>, eyeSurfaces: Instance[], eyeParts: Uint8Array[], face: unknown,
+  grid: boolean, measured: FaceContractReport['measurements']['eyes']): string[] {
+  const problems: string[] = [];
+  // Lid follow as the file declares it; when it declares none, the library's default (the inversion check's own fallback differs).
+  const lidFollow = isRecord(face) && isRecord(face.lidFollow) && isNumber(face.lidFollow.down) && isNumber(face.lidFollow.up) ? { down: face.lidFollow.down, up: face.lidFollow.up } : LID_FOLLOW_DEFAULT;
+  const coverage = EYE_COVERAGE_STATES.map(({ blink, squint, wide }) => ({ blink, squint, wide }));
+  for (const side of ['L', 'R'] as const) {
+    const suffix = side === 'L' ? 'Left' : 'Right', { center, radius } = eyes[side];
+    const lidSurfaces: LidSurface[] = eyeSurfaces.map((instance, n) => ({
+      label: instance.label, rest: instance.rest, triangles: instance.triangles, skip: eyeParts[n], sourceTriangles: instance.sourceTriangles,
+      blink: instance.targets.get(`eyeBlink${suffix}`), squint: instance.targets.get(`eyeSquint${suffix}`), wide: instance.targets.get(`eyeWide${suffix}`),
+    }));
+    const result = eyePenetration(lidSurfaces, center.toArray() as [number, number, number], radius, lidFollow, suffix, { grid, coverage });
+    measured[side]!.penetration = result;
+    const worst = result.worstCrossing;
+    if (worst) {
+      const first = result.crossing.slice(0, 4).map(c => `${c.pose} (${c.pairs} pair${c.pairs === 1 ? '' : 's'})`).join(', ');
+      const more = result.crossingPoses > 4 ? ` and ${result.crossingPoses - 4} more` : '';
+      const pairs = worst.examples.map(e => `${e.part} triangle ${e.triangle} passes through ${e.other} triangle ${e.otherTriangle}`).join('; ');
+      problems.push(`eye_${side}: in ${result.crossingPoses} of ${result.poses} blink, squint and wide poses${grid ? ' (the whole grid)' : ''} triangles that move with the eye pass through others (first ${first}${more}); worst at ${worst.pose}: ${worst.pairs} triangle pair${worst.pairs === 1 ? '' : 's'}, ${pairs}, between ${worst.heights[0]} and ${worst.heights[1]} eyeball radii from the eye center's height. Morphs add, and consumers soft-union blink with squint (an idle blink while squinting), so every mix is reached: at every weight of blink, squint and wide the lower lid's rising margin must stay behind the upper lid's, and neither may pass through the skin round it. eye_hole(style='continuous') builds lids nested that way; shell lids, blades and other lids must be built to the same rule (a lid that stands in front of the other's path, or thickness left where the lids meet at the corners, cross)`);
+    }
+  }
+  return problems;
+}
+
 /** Verify a GLB against `arkit-face/1`. Never throws for contract failures; throws only for unreadable bytes. */
 export async function verifyFaceContract(bytes: Uint8Array, options: FaceContractOptions = {}): Promise<FaceContractReport> {
   const doc = readGLB(bytes);
@@ -1068,27 +1100,8 @@ export async function verifyFaceContract(bytes: Uint8Array, options: FaceContrac
   // 10h. lid penetration: in every blink, squint and wide pose of an eye, no triangle that moves with it passes through
   // another one (the other lid, its margin or the skin round it), unless the two already cross at rest
   if (eyes.L && eyes.R) {
-    const penetrationProblems: string[] = [];
-    // Lid follow as the file declares it; when it declares none, the library's default (the inversion check's own fallback differs).
-    const lidFollow = face && isRecord(face.lidFollow) && isNumber(face.lidFollow.down) && isNumber(face.lidFollow.up) ? { down: face.lidFollow.down, up: face.lidFollow.up } : LID_FOLLOW_DEFAULT;
-    const coverage = EYE_COVERAGE_STATES.map(({ blink, squint, wide }) => ({ blink, squint, wide }));
-    for (const side of ['L', 'R'] as const) {
-      const suffix = side === 'L' ? 'Left' : 'Right', { center, radius } = eyes[side]!;
-      const lidSurfaces: LidSurface[] = eyeSurfaces.map((instance, n) => ({
-        label: instance.label, rest: instance.rest, triangles: instance.triangles, skip: eyeParts[n], sourceTriangles: instance.sourceTriangles,
-        blink: instance.targets.get(`eyeBlink${suffix}`), squint: instance.targets.get(`eyeSquint${suffix}`), wide: instance.targets.get(`eyeWide${suffix}`),
-      }));
-      const result = eyePenetration(lidSurfaces, center.toArray() as [number, number, number], radius, lidFollow, suffix, { grid: options.lidGrid, coverage });
-      measurements.eyes[side]!.penetration = result;
-      const worst = result.worstCrossing;
-      if (worst) {
-        const first = result.crossing.slice(0, 4).map(c => `${c.pose} (${c.pairs} pair${c.pairs === 1 ? '' : 's'})`).join(', ');
-        const more = result.crossingPoses > 4 ? ` and ${result.crossingPoses - 4} more` : '';
-        const pairs = worst.examples.map(e => `${e.part} triangle ${e.triangle} passes through ${e.other} triangle ${e.otherTriangle}`).join('; ');
-        penetrationProblems.push(`eye_${side}: in ${result.crossingPoses} of ${result.poses} blink, squint and wide poses${options.lidGrid ? ' (the whole grid)' : ''} triangles that move with the eye pass through others (first ${first}${more}); worst at ${worst.pose}: ${worst.pairs} triangle pair${worst.pairs === 1 ? '' : 's'}, ${pairs}, between ${worst.heights[0]} and ${worst.heights[1]} eyeball radii from the eye center's height. Morphs add, and consumers soft-union blink with squint (an idle blink while squinting), so every mix is reached: at every weight of blink, squint and wide the lower lid's rising margin must stay behind the upper lid's, and neither may pass through the skin round it. eye_hole(style='continuous') builds lids nested that way; shell lids, blades and other lids must be built to the same rule (a lid that stands in front of the other's path, or thickness left where the lids meet at the corners, cross)`);
-      }
-    }
-    check('lid-penetration', penetrationProblems, `over ${options.lidGrid ? 'the 324 poses of the blink x squint x wide grid' : 'the eye-coverage states, the named crossing poses and lid follow'} of each eye, no triangle that moves with its blink, squint or wide passes through another (judged apart from attached parts, welded corners and surfaces that already cross at rest)`);
+    const problems = lidPenetrationProblems({ L: eyes.L, R: eyes.R }, eyeSurfaces, eyeParts, face, !!options.lidGrid, measurements.eyes);
+    check('lid-penetration', problems, `over ${options.lidGrid ? 'the 324 poses of the blink x squint x wide grid' : 'the eye-coverage states, the named crossing poses and lid follow'} of each eye, no triangle that moves with its blink, squint or wide passes through another (judged apart from attached parts, welded corners and surfaces that already cross at rest)`);
   } else check('lid-penetration', [], '', 'the eyes were not found');
 
   // 11-12. extras
