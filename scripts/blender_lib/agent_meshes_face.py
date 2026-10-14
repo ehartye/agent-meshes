@@ -98,6 +98,9 @@ CANONICAL_EMOTIONS = {
 _SIDES = {'L': 'Left', 'R': 'Right'}
 # A vertex this close to the mouth line counts as on it (float32 stores ~1e-8 m of rounding at head scale).
 SEAM_TOLERANCE = 1e-6
+# Two ends of an edge whose coordinate differs by no more than this lie in the same axis plane (a tenth of a micron: far
+# below any real offset of a head, far above the 1e-17 noise of a meridian computed with sines).
+PLANE_TOLERANCE = 1e-7
 
 
 # ---------------------------------------------------------------- validation and vectors
@@ -1036,8 +1039,12 @@ def _smooth_midpoint(a, b, na, nb):
     d = _sub(b, a)
     bend = _add(_mul(na, _dot(d, na)), _mul(nb, -_dot(d, nb)))
     middle = _sub(_mul(_add(a, b), .5), _mul(bend, .125))
-    # An edge in an axis plane (a symmetric blank's midline, a ring) keeps its midpoint in it exactly.
-    return tuple(a[k] if a[k] == b[k] else middle[k] for k in range(3))
+    # An edge in an axis plane (a symmetric blank's midline, a ring) keeps its midpoint in it exactly. Two ends are in the same
+    # plane when their coordinate agrees to `PLANE_TOLERANCE`, not only when the floats are equal: the vertices of a midline
+    # are x = 5e-18 on one ring and 2e-20 on the next, and where the blank is symmetric only to a millimetre their normals lean
+    # a few hundredths, so the cubic's bend would carry the new vertex microns off the midline, beside the vertices that
+    # are on it (`eye_holes` then kept both and left a sliver of triangles folded back down the seam).
+    return tuple(a[k] + (b[k] - a[k]) / 2 if abs(b[k] - a[k]) <= PLANE_TOLERANCE else middle[k] for k in range(3))
 
 
 def _refine(vertices, faces, near, max_edge, rounds=12, normals=None):
