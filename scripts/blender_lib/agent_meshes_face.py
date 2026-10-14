@@ -1460,6 +1460,55 @@ def _mirror_lids(lids):
     return mirrored
 
 
+def _weld_midline(points, faces, origin, mapping, ratio=.1):
+    """Merge vertices of the midline (x == 0) with a neighbour much closer than the triangles between them are wide.
+
+    The kept half of `eye_holes` ends on the midline, and the clip leaves a vertex on it for every edge that crossed: where
+    several cross nearly together (the eyes' patches end along the midline, vertices a few tens of microns beside it)
+    the row has vertices 30 to 120 microns from each other and from the midline, with faces 6 mm long beside them. An
+    edge with an end on the midline that is under `ratio` of the longest edge of every face it bounds is collapsed (to
+    the middle of two midline ends, else onto the midline end), when that keeps the surface a manifold (the two ends share no
+    neighbours but the apexes of the triangles it bounds; a quad becomes a triangle). Returns the new points, faces, the original face of each (`origin`) and the
+    vertex mapping.
+    """
+    points, faces, origin = [tuple(p) for p in points], [tuple(f) for f in faces], list(origin)
+    gone = {}
+    while True:
+        users, neighbours = {}, {}
+        for index, face in enumerate(faces):
+            for a, b in zip(face, face[1:] + face[:1]):
+                users.setdefault((min(a, b), max(a, b)), []).append(index)
+                neighbours.setdefault(a, set()).add(b); neighbours.setdefault(b, set()).add(a)
+        best = None
+        for (a, b), owners in users.items():
+            if (points[a][0] != 0.0 and points[b][0] != 0.0) or len(owners) > 2: continue
+            length = math.dist(points[a], points[b])
+            if any(length >= ratio * max(math.dist(points[p], points[q]) for p, q in zip(faces[o], faces[o][1:] + faces[o][:1])) for o in owners): continue
+            apexes = {v for o in owners if len(faces[o]) == 3 for v in faces[o] if v not in (a, b)}
+            if neighbours[a] & neighbours[b] != apexes: continue
+            if best is None or length < best[0]: best = (length, a, b)
+        if best is None: break
+        _, a, b = best
+        if points[a][0] != 0.0: a, b = b, a                         # `a` is on the midline and stays
+        if points[b][0] == 0.0: points[a] = (0.0, (points[a][1] + points[b][1]) / 2, (points[a][2] + points[b][2]) / 2)
+        gone[b] = a
+        merged, kept = [], []
+        for face, index in zip(faces, origin):
+            ring = [a if v == b else v for v in face]
+            ring = [v for k, v in enumerate(ring) if v != ring[k - 1]]
+            if len(set(ring)) >= 3: merged.append(tuple(ring)); kept.append(index)
+        faces, origin = merged, kept
+    if not gone: return points, faces, origin, mapping
+    survivors = [i for i in range(len(points)) if i not in gone]
+    number = {old: new for new, old in enumerate(survivors)}
+
+    def final(i):
+        while i in gone: i = gone[i]
+        return number[i]
+    return ([points[i] for i in survivors], [tuple(final(i) for i in f) for f in faces], origin,
+            [None if m is None else final(m) for m in mapping])
+
+
 def eye_holes(vertices, faces, eye_left, eye_radius, **options):
     """Both eye holes of a left-right symmetric head, exact mirror images of each other.
 
@@ -1503,6 +1552,7 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
         half = {'vertices': [source_vertices[i] for i in used], 'faces': [tuple(mapping[i] for i in source_faces[index]) for index in chosen],
                 'mapping': mapping, 'origin': chosen}
     points = [((0.0,) + tuple(p[1:])) if abs(p[0]) < 1e-12 else tuple(p) for p in half['vertices']]
+    points, half_faces, half_origin, half_mapping = _weld_midline(points, half['faces'], half['origin'], half['mapping'])
     count = len(points)
     mirror = []
     for i in range(count):
@@ -1510,14 +1560,14 @@ def eye_holes(vertices, faces, eye_left, eye_radius, **options):
         else:
             mirror.append(len(points))
             points.append(mirror_x(points[i]))
-    kept = list(half['faces'])
+    kept = list(half_faces)
     faces_out = kept + [tuple(reversed([mirror[i] for i in f])) for f in kept]
-    new_face = {old: new for new, old in enumerate(half['origin'])}
-    vertex = lambda old: half['mapping'][old]
+    new_face = {old: new for new, old in enumerate(half_origin)}
+    vertex = lambda old: half_mapping[old]
 
     def remap(hole, v, f):
         result = dict(hole)
-        result['rim'] = sorted(v(vertex(i)) for i in hole['rim'] if vertex(i) is not None)
+        result['rim'] = sorted({v(vertex(i)) for i in hole['rim'] if vertex(i) is not None})
         result['bevel'] = [v(vertex(i)) for i in hole['bevel'] if vertex(i) is not None]
         result['wall'] = [f(new_face[i]) for i in hole['wall'] if i in new_face]
         if 'patch' in hole: result['patch'] = [f(new_face[i]) for i in hole['patch'] if i in new_face]

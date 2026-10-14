@@ -795,7 +795,14 @@ and pass the result to `build_eye(..., hole=...)`. On a left-right symmetric hea
 exact mirror images and returns `{'vertices', 'faces', 'L', 'R'}`: two `eye_hole`
 calls in a row differ, because the second is cut into skin the first refined and
 reshaped (about 1,000 of 7,700 vertices had no mirror image with the eyes 52 mm
-apart). It cuts the left hole, keeps the half at x >= 0 and mirrors it.
+apart). It cuts the left hole, keeps the half at x >= 0 and mirrors it. The two halves
+share one row of vertices on x = 0: a vertex within a micron of the midline is moved
+onto it, and refinement keeps an edge between two midline vertices in the plane however
+the blank's normals lean there (a blank whose field is symmetric only to a millimetre
+leans them, and a refined vertex a few microns beside the midline was mirrored into a
+sliver of triangles 10 microns wide, folded back down the glabella). Whatever a head
+does to the skin afterwards (smoothing along normals, projecting back onto its field)
+has to leave the midline vertices on x = 0 too.
 
 For shell eyes, a crisp **lash line**: `build_eye(..., lash=True)` adds a near-black `lash`
 material (or pass your own material) on a lash band, `lash_geometry(lids, width=5,
@@ -1281,7 +1288,10 @@ k)` for cheeks, jowls and a chin, and `smooth_max(d, -other, k)` to carve), star
 shaped from `center`. The rays follow `ellipsoid_geometry`'s grid bent toward the
 face (`front` crowds the columns toward -Y, `band` the rings toward the middle), so
 the eyes, nose and mouth get most of the samples; with `segments` a multiple of 4
-the blank is left-right symmetric with a meridian on x = 0, as `eye_holes` needs. `ellipsoid_sdf` checks a
+the blank is left-right symmetric with a meridian on x = 0, as `eye_holes` needs. (The field must be symmetric
+as well: `smooth_min(smooth_min(d, a), b)` is not `smooth_min(smooth_min(d, b), a)` where the blends of a mirrored
+pair overlap, which two close-set eye domes do by up to a millimetre. Union the pair first, `smooth_min(a, b, k)`
+being symmetric in a and b, or evaluate the field at `(abs(x), y, z)`.) `ellipsoid_sdf` checks a
 center and radii once per distinct pair and takes a tuple of three floats as it is,
 so a field of a few ellipsoids sampled hundreds of thousands of times stays fast.
 

@@ -2050,7 +2050,10 @@ class MidlineSeamTests(unittest.TestCase):
         # Where the clip meets edges that cross the midline at nearly the same place (the eyes' patches end along it), it
         # leaves midline vertices 30 to 120 microns apart in a row, with triangles 6 mm long beside them. The smoothing a
         # head does afterwards takes them for neighbours to be averaged and piles them up (down to 1.6 microns apart), and
-        # the strip shades as a row of chevrons. Vertices that close are one vertex.
+        # the strip shades as a row of chevrons. Such vertices are one vertex: no triangle at the midline has an edge under
+        # 1/50 of its longest, and no two midline vertices are under 30 microns apart. (Not "under 0.2 mm": where the mesh
+        # is fine, faces 0.14 to 0.8 mm across down the midline have vertices 50 to 300 microns apart, and those are the
+        # mesh, not slivers; the weld leaves them, as it leaves an edge that is not much shorter than the faces it bounds.)
         from agent_meshes_face import _quality
         cut = self.cut()
         vertices, faces = cut['vertices'], cut['faces']
@@ -2063,8 +2066,29 @@ class MidlineSeamTests(unittest.TestCase):
                     slivers.append((index, [round(math.dist(vertices[triangle[a]], vertices[triangle[(a + 1) % 3]]) * 1000, 3) for a in range(3)]))
         self.assertEqual(slivers, [], 'triangles touching the midline with an edge under 1/50 of their longest (face, edge lengths in mm)')
         on = sorted((p[2], p[1]) for p in vertices if p[0] == 0.0)
-        close = [(a, b) for a, b in zip(on, on[1:]) if math.dist((0, a[1], a[0]), (0, b[1], b[0])) < 2e-4]
-        self.assertEqual(close, [], 'midline vertices less than 0.2 mm apart')
+        close = [(a, b) for a, b in zip(on, on[1:]) if math.dist((0, a[1], a[0]), (0, b[1], b[0])) < 3e-5]
+        self.assertEqual(close, [], 'midline vertices less than 30 microns apart')
+
+    def test_weld_midline_collapses_an_edge_far_shorter_than_its_faces_and_only_that(self):
+        from agent_meshes_face import _weld_midline
+        # Four vertices on the midline (0 to 3), two beside it (4, 5), the triangles between them. Edge 1-2 is 50 microns,
+        # its triangle (1, 5, 2) 5 mm.
+        points = [(0.0, 0.0, -.003), (0.0, 0.0, 0.0), (0.0, 0.0, 5e-5), (0.0, 0.0, .003), (.005, 0.0, -.003), (.005, 0.0, .003)]
+        faces = [(0, 4, 1), (1, 4, 5), (1, 5, 2), (2, 5, 3)]
+        mapping = list(range(len(points)))
+        welded, kept, origin, remap = _weld_midline(points, faces, [10, 11, 12, 13], mapping)
+        self.assertEqual(len(welded), 5, 'vertex 2 is gone')
+        self.assertEqual([p for p in welded if p[0] == 0.0], [(0.0, 0.0, -.003), (0.0, 0.0, 2.5e-5), (0.0, 0.0, .003)], 'two midline ends meet in the middle, on the midline')
+        self.assertEqual(origin, [10, 11, 13], 'the triangle that became an edge is dropped, the others keep their original face')
+        self.assertEqual(remap[1], remap[2], 'the two ends are one vertex in the mapping')
+        self.assertEqual(sorted(len(set(f)) for f in kept), [3, 3, 3])
+        # The same edge 2 mm long is a feature of the mesh: nothing changes.
+        longer = [(0.0, 0.0, -.003), (0.0, 0.0, 0.0), (0.0, 0.0, .002), (0.0, 0.0, .004), (.005, 0.0, -.003), (.005, 0.0, .004)]
+        again = _weld_midline(longer, faces, [10, 11, 12, 13], list(range(len(longer))))
+        self.assertEqual((len(again[0]), again[1], again[2]), (6, faces, [10, 11, 12, 13]))
+        # A vertex beside the midline is never moved by it, and an edge with neither end on the midline is not its business.
+        beside = [(0.0, 0.0, -.003), (1e-5, 0.0, 0.0), (2e-5, 0.0, 5e-5), (0.0, 0.0, .003), (.005, 0.0, -.003), (.005, 0.0, .004)]
+        self.assertEqual(len(_weld_midline(beside, faces, [10, 11, 12, 13], list(range(len(beside))))[0]), 6)
 
     def test_the_halves_are_mirror_images_and_the_surface_is_closed(self):
         cut = self.cut()
