@@ -2,7 +2,13 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
-Release 0.16.0 adds the `lid-penetration` check to `verify --contract arkit-face/1`:
+Release 0.17.0 packages two neutral human motion banks and the Pip/Nori alien
+mannequins with provenance, an offline comparison demo and reference-use limits.
+CLI discovery and the character skills link directly to the mannequin library,
+substantial character modeling craft, and reusable patterns from five consumer
+projects. Run `mesh-setup` after updating the plugin.
+
+Release 0.16.0 added the `lid-penetration` check to `verify --contract arkit-face/1`:
 continuous eyelids are now nested by construction, so the upper and lower lids no longer
 pass through each other or the skin at any blink, squint and wide mix, and the verifier
 reports it when a head's lids do. Heads built with the earlier shell-lid construction

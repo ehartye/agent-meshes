@@ -29,7 +29,7 @@ Source scouts and the saved verifier require no specialized authoring skills or 
 3. Extend the existing character skill graph with one substantial craft reference and direct mannequin routes. Add a reusable consumer-pattern reference with an evidence matrix; keep implementation contracts in their current owners.
 4. Root changes shared interfaces, README and tests. There is one integration writer, so no two agents own the same file. Required early checkpoint: failing entrypoint/discovery test before the CLI routing change; run the existing focused gates after implementation.
 5. Root inspects all handoffs and actual diffs, integrates accepted bytes, freezes the resulting source identity and starts a new `verify` run with that descriptor. The verifier reports source/coverage gaps; root separately owns tests, browser render inspection and acceptance.
-6. Complete the owned wiki operation, update the ledger with exact evidence and leave the branch reviewable. Publishing/merging a plugin release is outside this request.
+6. Complete the owned wiki operation, update the ledger with exact evidence and leave the branch reviewable. The owner's subsequent “please proceed” authorizes the release closeout: prepare version 0.17.0, obtain independent review and normal PR checks, squash-merge, update the marketplace through a separate PR, and verify the installed payload. Record publication outcomes in the wiki; source acceptance does not imply publication.
 
 Task dependencies control readiness, not file transfer. This plan has no workflow writers; all source changes are integrated by root. If writers are added, each needs literal disjoint paths, authoritative retained capture identity and independent coordinator review before new snapshots reach successors.
 
@@ -57,6 +57,8 @@ The local source/argument descriptor files were subsequently refreshed for final
 For fresh verification in another checkout, invoke an absolute verified `--script` path or save the definition there: a project definition belongs to its save checkout. Keep capture source stable; live control receipts and logs must never be written beneath it.
 
 ## Recovery
+
+The owner's explicit workflow-setup request subsequently confirmed the same installed 0.4.5 source digest and retained Node 24.21.0 runtime. Default doctor reproduced Session 0 buffered-command exit -1073741502 (`0xC0000142`), with zero inference and an empty owned job. The wiki records the owner's prior approval of shared Session 0 desktop compatibility on this exact host. Using that existing selection, doctor passed all six stages with `desktopCompatibility.applied:true`, zero inference, and positive unforced server/job cleanup. Routing mode remains off. Retained reports live outside the source tree in `mannequin-reference-craft-control/workflow-setup-20261015/`. This establishes current command admission; it neither repairs the historical database-less run nor proves a model workflow completed. Future invocations on this host must pass `--session0-desktop shared` explicitly.
 
 Missing/changed required skill packages or parent catalogs block dependent dispatch/replay. Preserve old status, attempts, effects and captures; never edit saved bindings or substitute skill versions. Inspect actual cleanup and reconcile effects through the authenticated runtime before any replacement. A positive process drain alone does not authorize repeating edits. Preserve accepted source reviews and completed implementation; keep the failed historical slot.
 

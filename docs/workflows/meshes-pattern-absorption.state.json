@@ -1,12 +1,12 @@
 {
   "mode": "track",
   "sourceSnapshot": {
-    "checkout": "C:\\Users\\ehart\\repos\\agent-meshes-worktrees\\mannequin-reference-craft",
+    "checkout": "C:/Users/ehart/repos/agent-meshes-worktrees/mannequin-reference-craft",
     "baseCommit": "7f92ca419332638d42ff5f7c0d4d132200a655f1",
-    "fingerprint": "9abd9537d8bd440b9726ae52152df788c7eb5165958cc5ffd35934cc94b2c1f7",
-    "manifest": "C:/Users/ehart/repos/agent-meshes-worktrees/mannequin-reference-craft-control/source-snapshot-final.json",
-    "manifestSha256": "57b75009f9ad884b10af35ebc4500749464bd95fbcb3dc0e290fb49927e8f694",
-    "fileCount": 190,
+    "fingerprint": "2fe937e54d3fe718422873f709f365d817d031e06cedb17a6655b54b07e1e789",
+    "manifest": "C:/Users/ehart/repos/agent-meshes-worktrees/mannequin-reference-craft-control/release-0.17.0/source-snapshot.json",
+    "manifestSha256": "c82171a56228b67a200810c80d2b628e2b4cd5f0d2c1cb631d00d9b33638fded",
+    "fileCount": 192,
     "exclusions": [
       "node_modules",
       "artifacts",
@@ -18,7 +18,7 @@
   },
   "planRevision": {
     "version": 1,
-    "revision": 1,
+    "revision": 2,
     "priorRun": null,
     "replacements": [],
     "objectives": [
@@ -45,6 +45,10 @@
       {
         "id": "workflow",
         "description": "Save and validate the durable work-tracking definition; preserve execution readiness separately"
+      },
+      {
+        "id": "publication",
+        "description": "Owner-authorized 0.17.0 PR, marketplace publication and installed payload verification"
       }
     ],
     "tasks": [
@@ -378,6 +382,42 @@
         "evidence": [
           "Primary source capture cd9e3b7 and authored/source/roadmap ingest 8bb1e84 committed and pushed; vault clean and synchronized"
         ]
+      },
+      {
+        "id": "release-closeout",
+        "objectiveIds": [
+          "publication"
+        ],
+        "phase": "Publish accepted delivery",
+        "role": "coordinator-writer",
+        "owner": "root",
+        "status": "in-progress",
+        "readScope": [
+          "Reviewed source snapshot",
+          "GitHub PR/check state",
+          "Exact installed plugin and managed runtime"
+        ],
+        "writeOwnership": [
+          "package.json",
+          "package-lock.json",
+          ".claude-plugin/plugin.json",
+          ".claude-plugin/marketplace.json",
+          "README.md",
+          "Separate marketplace feature branch",
+          "Guarded owned wiki closeout"
+        ],
+        "dependsOn": [
+          "wiki-closeout"
+        ],
+        "acceptance": [
+          "Independent source review and normal PR checks pass",
+          "Squash merge and exact marketplace entry verified",
+          "Actual installed payload/catalog/guide hashes and offline demo checked"
+        ],
+        "evidence": [
+          "Owner please proceed after source-complete handoff",
+          "Fresh 0.17.0: 25 focused tests, typecheck/build, isolated managed installation, 4 GLBs, 56 guide links and offline demo without page errors"
+        ]
       }
     ]
   },
@@ -392,7 +432,7 @@
     "fallback": "Independent read-only collaboration review, separate from Workflow"
   },
   "delivery": {
-    "status": "ready-on-feature-branch",
+    "status": "release-closeout-in-progress",
     "published": false,
     "workflowExecution": "failed admission; definition saved and validated; independent fallback review accepted",
     "unimplementedCandidates": [
@@ -401,5 +441,33 @@
       "general semantic asset preservation comparator",
       "fully pinned native fixture regeneration"
     ]
+  },
+  "previousSourceSnapshot": {
+    "checkout": "C:\\Users\\ehart\\repos\\agent-meshes-worktrees\\mannequin-reference-craft",
+    "baseCommit": "7f92ca419332638d42ff5f7c0d4d132200a655f1",
+    "fingerprint": "9abd9537d8bd440b9726ae52152df788c7eb5165958cc5ffd35934cc94b2c1f7",
+    "manifest": "C:/Users/ehart/repos/agent-meshes-worktrees/mannequin-reference-craft-control/source-snapshot-final.json",
+    "manifestSha256": "57b75009f9ad884b10af35ebc4500749464bd95fbcb3dc0e290fb49927e8f694",
+    "fileCount": 190,
+    "exclusions": [
+      "node_modules",
+      "artifacts",
+      "dist-web",
+      ".git",
+      ".superpowers",
+      "workflow status ledger"
+    ]
+  },
+  "workflowReadiness": {
+    "runtimeId": "0.4.5-b4ef61d3ae030180-node24.21.0",
+    "sourceDigest": "b4ef61d3ae030180e96acf27559365d5892be35bc189fd609d3c4fc6f2454bc6",
+    "dataDir": "C:/Users/ehart/AppData/Local/agent-workflow",
+    "node": "C:/Users/ehart/AppData/Roaming/fnm/node-versions/v24.21.0/installation/node.exe",
+    "defaultDoctor": "failed buffered-command 0xC0000142; zero inference; owned job empty",
+    "sharedDoctor": "six stages passed; compatibility applied; zero inference; unforced owned server/job cleanup",
+    "authorization": "Existing same-host owner approval recorded in wiki/authored/agent-workflow/notes/release-0-3-2-acceptance.md",
+    "modeEnabled": false,
+    "evidenceDirectory": "C:/Users/ehart/repos/agent-meshes-worktrees/mannequin-reference-craft-control/workflow-setup-20261015",
+    "historicalRunRepaired": false
   }
 }
