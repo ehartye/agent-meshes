@@ -6,6 +6,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { readGLB } from '../src/gltf-read.ts';
 import { createServer } from '../src/server.ts';
 
 const run = promisify(execFile);
@@ -49,6 +51,36 @@ it('reports the installed package version from another project directory', async
     cwd: directory, timeout: 10000, windowsHide: true,
   });
   expect(stdout.trim()).toBe(version);
+});
+
+it('discovers shipped mannequin assets and craft references from an unrelated project', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-reference-discovery-'));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const invoke = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args], {
+    cwd: directory, timeout: 10000, windowsHide: true,
+  });
+  const { guidance } = JSON.parse((await invoke('capabilities')).stdout);
+  const help = (await invoke('--help')).stdout;
+  for (const topic of ['character-craft', 'mannequin-library', 'consumer-patterns']) {
+    const reference = guidance.references.find((item: { topic: string }) => item.topic === topic);
+    expect(reference, topic).toBeDefined();
+    const path = fileURLToPath(new URL(reference.path, guidance.baseUrl));
+    expect(help).toContain(path);
+    expect((await readFile(path, 'utf8')).length).toBeGreaterThan(1000);
+  }
+  const catalogUrl = new URL('scripts/reference-assets/mannequins/catalog.json', guidance.baseUrl);
+  const catalog = JSON.parse(await readFile(catalogUrl, 'utf8'));
+  expect(catalog.models.map((model: { id: string }) => model.id)).toEqual(['human-base', 'human-addon', 'pip', 'nori']);
+  for (const model of catalog.models) {
+    const bytes = await readFile(new URL(model.path, catalogUrl));
+    expect(createHash('sha256').update(bytes).digest('hex'), model.id).toBe(model.sha256);
+    const { json } = readGLB(bytes);
+    const animations = (json as typeof json & { animations?: { name?: string }[] }).animations ?? [];
+    expect(json.skins?.[0].joints.length, model.id).toBe(model.bones);
+    expect(animations.length, model.id).toBe(model.clipCount);
+    for (const clip of Object.values(model.clips)) expect(animations.some(item => item.name === clip)).toBe(true);
+    expect(model.source.commit).toMatch(/^[a-f0-9]{40}$/);
+  }
 });
 
 it('edits and saves a project through the executable CLI', async () => {

@@ -9,6 +9,12 @@ when_to_use: Use when a model needs a skeleton, when parts should move with join
 Before placing character joints or binding skin/garments, read the
 [construction checklist](../../scripts/blender_lib/references/character-construction.md).
 Use anatomical bend locations and explicit donor regions; preserve approved proportions.
+Use the [mannequin library](../../scripts/blender_lib/references/mannequin-library.md)
+for shipped human/alien reference GLBs and donor-selection limits. Read
+[character craft](../../scripts/blender_lib/references/character-craft.md) when a
+pivot, body plan or deforming surface needs construction decisions. For clip/manual
+gaze ownership and exported/native motion evidence, use
+[consumer patterns](../../scripts/blender_lib/references/consumer-patterns.md).
 
 Load `mesh-setup` first. Commands run through the managed launcher (`mesh` below):
 `node "<plugin-root>/scripts/run-managed.js" --workspace <dir> batch <file>`. Field shapes for

@@ -6,6 +6,14 @@ when_to_use: Use when asked to export or verify a GLB, render or screenshot a mo
 
 # Mesh build and delivery
 
+Before delivering to another app or engine, read
+[consumer patterns](../../scripts/blender_lib/references/consumer-patterns.md).
+Record the exact nodes, material roles, sockets, clip/morph controls, frames and
+budgets the consumer addresses; check them on the final optimized output. For
+reference-rig and motion review, use the shipped
+[neutral mannequins](../../scripts/blender_lib/references/mannequin-library.md)
+and existing comparison viewer.
+
 Load `mesh-setup` first. Commands run through the managed launcher
 (`node "<plugin-root>/scripts/run-managed.js" ...`, written `mesh` below).
 
@@ -99,6 +107,8 @@ For a static prop or a set of them, use `build.json` only; no workspace is neede
 - `"merge":"byMaterial"` fuses every part into one mesh with one primitive per material. Part names are lost in
   the GLB, so use it only for deliverables nobody addresses part by part. Skinned or animated models are refused
   (`MERGE_NOT_STATIC`).
+- An asset with no clips can still expose wheel, glow or visibility groups controlled by its consuming app.
+  Preserve those named controls; the static check alone does not establish that merging is safe.
 - A `shell.set` colour that looks tan or glossy next to lathe parts is the baked tint and occlusion multiplying the
   base colour; set `"vertexColors":false` (one member colour, no pattern) so it matches.
 - State the numbers in the build: `"verify":{"maxTriangles":2500,"maxMaterials":2,"expectPivot":"bottom-center",

@@ -41,6 +41,10 @@ afterEach(() => rmSync(sandbox, { recursive: true, force: true }));
 
 describe('managed CLI installation', () => {
   test('copies the runtime outside the plugin, builds and validates before linking, and resolves the exact release', () => {
+    const referenceDirectory = join(source, 'scripts', 'reference-assets', 'mannequins');
+    mkdirSync(referenceDirectory, { recursive: true });
+    const referenceBytes = Buffer.from([0, 255, 13, 10, 128, 1]);
+    writeFileSync(join(referenceDirectory, 'reference.glb'), referenceBytes);
     const order: string[] = [];
     const runtime = installRuntime(source, { ...options(), npm: (args: string[], opts: { cwd: string }) => { order.push(args.slice(0, 2).join(' ')); return npm(args, opts); }, checkDependencies: () => order.push('deps'), installBrowser: () => order.push('browser') });
     expect(runtime.root.startsWith(join(home, 'releases'))).toBe(true);
@@ -52,6 +56,7 @@ describe('managed CLI installation', () => {
     expect(existsSync(join(source, 'node_modules'))).toBe(false);
     expect(existsSync(join(source, 'dist-web'))).toBe(false);
     expect(inspectInstallation(source, options()).linked).toBe(true);
+    expect(readFileSync(join(runtime.root, 'scripts', 'reference-assets', 'mannequins', 'reference.glb'))).toEqual(referenceBytes);
   });
 
   test('rerun reuses a complete runtime and repairs an outdated link', () => {

@@ -44,6 +44,27 @@ first to find retargeting errors, then the surfaces to find skin-weight errors. 
 phase aligns clips that represent the same cycle; it does not infer footfall correspondence
 between different animations. The overlay omits finger and leaf bones for clarity.
 
+## Reference mannequins and modeling craft
+
+Four neutral reference GLBs ship with the tool: two human animation banks plus
+adult Pip and child Nori plant-kin bodies. Find them through CLI `--help`,
+`capabilities` → `guidance`, or the [mannequin guide](scripts/blender_lib/references/mannequin-library.md).
+Build their standalone offline demo with playback, scrub and skeleton overlays:
+
+```text
+node scripts/compare-rigs.mjs scripts/reference-assets/mannequins/catalog.json artifacts/mannequins.html
+```
+
+Open the generated HTML directly. The [catalog](scripts/reference-assets/mannequins/catalog.json)
+records hashes, clip mappings, source/licensing and known limits. Donors are
+references for chosen anatomy or motion; preserve the target's species, age and
+approved stylization.
+
+Read [character modeling craft](scripts/blender_lib/references/character-craft.md)
+for form, anatomy, topology, deformation, hands, faces, cloth and diagnosis, and
+[consumer patterns](scripts/blender_lib/references/consumer-patterns.md) for reusable
+lessons from Space2Grow, Art Explorers/The Fort, Talking Heads and Internal Race.
+
 ## Agent workspace
 
 Use a durable workspace without starting a server. Commands share the same validated authoring engine as the browser:

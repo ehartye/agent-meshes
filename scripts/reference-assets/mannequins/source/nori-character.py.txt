@@ -1,0 +1,22 @@
+"""Nori's ratified digitigrade plant-kin anatomy, using the shared tool helper."""
+import json
+import os
+from pathlib import Path
+from agent_meshes_sprout_kin import build_anatomy
+from agent_meshes_sprout_rig import rig_anatomy
+from agent_meshes_sprout_gait import bake_gaits
+
+EXPORT_ANIMATION_MODE='NLA_TRACKS'
+
+
+def build(*,hand_dimensions=None):
+    objects,anatomy=build_anatomy(height=1.12,age='child',clay=True,**(hand_dimensions or {}))
+    objects,rig=rig_anatomy(objects,anatomy)
+    reference=Path(os.environ.get('MESH2MOTION',Path(__file__).resolve().parents[3]/'mesh2motion-app'))/'static/animations/kaiju-animations.glb'
+    gait=bake_gaits(objects,anatomy,reference)
+    out=Path(__file__).resolve().parents[2]/'.local/nori-debug'
+    out.mkdir(parents=True,exist_ok=True)
+    (out/'anatomy.json').write_text(json.dumps(anatomy,indent=2),encoding='utf-8')
+    (out/'rig.json').write_text(json.dumps(rig,indent=2),encoding='utf-8')
+    (out/'gait.json').write_text(json.dumps(gait,indent=2),encoding='utf-8')
+    return objects
