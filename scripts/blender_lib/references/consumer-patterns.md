@@ -110,6 +110,13 @@ caps need a different UV projection from a turned side. Keep diffuse, normal and
 roughness coordinates aligned. Restrained contact wear and finish variation
 support construction; arbitrary noise over the photograph cannot supply it.
 
+For members that become gameplay cover, retain their slope, radius and finite
+end treatment in the handoff. A sloped round rail's enclosing box can block empty
+space above its low end; clipping only to its centerline can omit the beam's
+upper half. Compare the consumer's cover proxy with actual exported/rendered
+member intersections, including endpoint rims and grazing rays. Camera padding
+is a separate consumer policy. Semantic collision export remains planned.
+
 Use stable parallel-transport frames for sweeps. Pin contact rings across morphs
 and use the same explicit initial normal for a family of shapes. Check outward
 winding, end caps and shading separately. An open path needs its intended caps;
