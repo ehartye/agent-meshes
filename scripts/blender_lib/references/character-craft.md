@@ -213,6 +213,17 @@ Separate hair volume from attachment: roots must meet the scalp, and a beard mus
 Check which hair or beard areas ride facial deformation versus the head, neck or independent motion.
 Accessories need support and attachment evidence, not merely a penetration-free position near the body.
 
+**Craft heuristic — hat and vest landmarks:** locate the sweatband's inner ring
+against the actual head crown, brow and temples in the head's frame, rather than
+placing the whole hat from an assembled bounding-box maximum. Inspect the band
+and brim from eye level and side to distinguish an intended tall crown from a
+floating hat. A vest needs real front-to-back shoulder panels over the clavicular
+region, continuous armholes and neckline, and deliberate seam/lining thickness.
+Test those surfaces in the exported jog, arm raise and attack; a shirt visible
+through a missing shoulder panel is a construction issue. Follow the
+[landmark and posed-export procedure](character-construction.md#4-construct-connected-clothing-and-attachments)
+before changing material response.
+
 ## 11. Identity, materials and geometry budget
 
 Preserve the recognizable silhouette, facial depth, gesture and costume hierarchy before tertiary texture.

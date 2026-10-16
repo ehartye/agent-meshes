@@ -375,6 +375,50 @@ in the repository README produces a synchronized, offline review page. Blender r
 run with `npx vitest run tests/retarget-blender.test.ts`; the NumPy helpers run with
 `python tests/retarget.py`.
 
+### Sampled motion diagnostics
+
+Python-only `agent_meshes_retarget.audit_clip_motion(arm, action, markers=('ball_l',
+'ball_r'), root='pelvis', *, sample_count=241, fps=None, action_slot=None, **options)`
+samples actual evaluated world bone heads, including both action endpoints. `fps=None`
+uses the scene's `fps / fps_base`; override only with the action's known time base.
+An action with multiple slots requires its explicit OBJECT `action_slot`. The helper
+temporarily isolates the action from NLA and restores the prior action/slot, blend,
+influence, NLA mute flags, frame/subframe and bone basis, including on failure.
+Untracked bone channels start from rest; constraints remain active. This sampler
+is checked with Blender 5.2.2; it is not a
+JSON operation or a guarantee about other Blender APIs.
+
+```python
+from agent_meshes_retarget import audit_clip_motion
+report = audit_clip_motion(arm, actions['Jog_Fwd_Loop'], forward=(0, 1, 0),
+                           scenario_speed=3.1, sample_count=481)
+```
+
+`analyze_motion_samples(times, markers, root_positions, *, forward=(0,1,0),
+up=(0,0,1), height_quantile=.25, height_margin=.02, scenario_speed=None)` also
+accepts independently sampled data: strictly increasing seconds, named Nx3 world
+positions in metres and Nx3 root positions. Forward/up are normalized, perpendicular
+axes in that same frame. Velocities subtract root translation. Low candidates use
+interval-start world heights, each marker's chosen quantile plus margin; these are
+explicit diagnostic parameters, not physical contact tolerances.
+
+The report separates low backward/forward/stationary interval counts and duration
+coverage, contiguous backward time ranges, p10/p50/p90 projected speeds, forward
+excursion, sampled maximum speed/acceleration and relative endpoint position/velocity
+gaps. Quantiles weight samples equally; compare duration coverage with uneven times.
+`backwardEquivalentCycleDistance` is median low backward speed × clip duration;
+its scenario-speed cycle time is a calibration consequence, **not measured stride**.
+No backward samples yields `None`, not a manufactured minimum. No automatic quality
+verdict or universal thresholds are imposed.
+
+Low bone height does not establish deformed sole contact, support, exported
+interpolation or the destination's blending/IK. Re-import the delivered GLB and
+compare adequate sampling densities, then inspect translated runtime motion at the
+actual speed and transitions. See [consumer motion lessons](references/consumer-patterns.md#reuse-humanoid-rigs-with-their-actual-rest-frames).
+Run `python tests/motion_audit.py` for NumPy checks, or execute the same file with
+Blender `--background --factory-startup --python ... -- --report <path>` for actual
+native sampling/state tests and a hash-bound JSON receipt.
+
 ## Creating geometry
 
 The build runner adds this directory to Python's import path. Import the module

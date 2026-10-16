@@ -184,6 +184,24 @@ check real speed, forward/backward/strafe transitions, turns, ramps, stairs and
 idle settling in the destination runtime. New skin contact needs evaluated
 deformed vertices; the earlier rigid POSITION scan cannot certify it.
 
+Audit calibration before naming an unsigned low-foot velocity a stride. Low feet
+can include forward recovery as well as backward stance; record signed projection,
+height selection, phase ranges/coverage and speed quantiles relative to the pelvis
+in explicit forward/up axes. The saloon Jog's reported 5.2156m equivalent cycle
+distance implies about 1.68s per cycle at 3.1m/s. That consequence can look too slow
+for the scenario without proving corrupt motion: denser exported-pose measurements
+still found substantial backward speed. Check source and re-imported interpolation,
+multiple sampling densities, endpoint position/velocity and temporal spikes before
+choosing a clip or cadence. Use the [sampled motion diagnostics](../README.md#sampled-motion-diagnostics);
+they report measurements without imposing a universal gait threshold.
+
+Keep authored motion, calibrated cadence and live sole/stance IK as separate
+evidence. Bone samples and a profile manifest cannot establish planted skinned
+feet, smooth transitions, turns or an attack reaching its target. Verify the
+destination's actual translated speed, start/stop and direction changes, attack
+windup/contact/recovery, pause and retry with the delivered clip/skin. A hit-state
+flag without an observed attack performance does not establish that behavior.
+
 Separate conservative influence bounds from the actual posed surface. In the
 saloon, a hunched head was visibly clear while the body's skin envelope covered
 it: all 48 sampled head rays were initially classified as body hits. Keep the

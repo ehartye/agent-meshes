@@ -57,6 +57,14 @@ stand to its actual edge, including capped front ends and the underside. Check t
 pouches meet their belt and pant legs meet boot openings in rest and raised-leg
 poses. Placement that avoids penetration can still leave a floating attachment.
 
+For a hat, measure the head's crown, brow/temples and the hat's inner sweatband
+in one actual head frame. Seat the band on its intended contact ring; a brim
+above the skull can be penetration-free yet visibly too high. For a vest, connect
+front and back across both shoulder saddles, with a continuous neckline and
+armhole rim. Inspect top, side, underside and raised-arm/jog/attack exports: two
+torso panels below the clavicles do not establish shoulder coverage. Repair those
+source contours and weights before shader, shadow or texture adjustments.
+
 Finalize topology-changing garment fitting before expressions on dependent
 meshes, or retain explicit correspondence. Re-check layer order and skin
 ownership after cutting, partitioning, thickness and fitting.
