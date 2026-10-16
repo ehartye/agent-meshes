@@ -102,6 +102,13 @@ Inspect the supporting toes through stance and the full recovery arc; solving a 
 Use the [gait analyzer](../../../src/gait-analysis.ts), with the appropriate reference and explicit interpretation of species limits.
 Movement-range passes do not establish reference-curve correlation, costume clearance, balance or visual approval.
 
+**Craft heuristic — footwear:** shape a boot upper through shaft, ankle, quarters, instep and vamp as a connected
+surface. Two capped tubes can intersect while leaving an artificial shelf or pinched ankle. Fit the welt and sole
+to the actual lower upper boundary, then seat the heel against the sole; a rounded box under an unrelated upper
+can leave floating corners. Add ankle flex and panel seams where construction supports them. Continue a seam to
+its real panel junction or welt rather than ending a decorative stripe on an arbitrary point. Inspect both sides,
+toe profile, rear heel, opening, underside and posed sole contact before material detail.
+
 ## 6. Hands, thumbs and digits
 
 Construct the palm as a shaped mass with a back, a padded side, an edge and a distinct thumb root.
@@ -187,6 +194,14 @@ Fit layers in order and inspect gaps at cuffs, collars, openings and overlaps fr
 Continuous joins need compatible boundary positions and deformation; proximity alone does not join front and back panels.
 Keep enough interior anatomy to cover views through open sleeves and necklines; do not hide a gap with a favorable camera.
 Place hems, capped collar ends and thickness so the inside has a designed finish.
+
+**Craft heuristic — controlled rigid clothing:** if body and sleeve deliberately have separate rigid controls,
+design matching insertion contours and hidden overlap through the actual pitch limits. Welding them in rest does
+not make independent rigid transforms deform like skin. For bent sleeve sweeps, preserve a coherent transported
+frame; a fixed-axis frame can flip near an elbow and create a pinched or twisted section. Fit plackets, buttons,
+belts and stitching to sampled garment surfaces instead of unrelated bounding boxes. Inspect the waist and crotch
+as a continuous clothed anatomical volume; a round closure between two legs can read as a hanging ball even when
+it removes a technical hole. These are construction checks, not a substitute for a deforming rig where required.
 
 Inspect bare garment cross-sections before skinning; exclude neighboring arms or neck from the geometry source itself.
 Restricted weight donors cannot fix a cloth envelope already built from the wrong body surface.
