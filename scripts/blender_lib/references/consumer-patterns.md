@@ -118,6 +118,18 @@ materials by semantic slot identity, then read the assignments back. Verify
 effective base color, metalness, roughness and transparency before visual review.
 Neither a material filename nor a successful setter proves the rendered finish.
 
+For photographic fabric, leather or skin maps in Blender sources, use
+[image materials with authored UVs](../README.md#image-materials-with-authored-uvs).
+The Python `image_material` helper keeps the three explicit image roles, color
+spaces, named repeating UVs and normal strength coherent and packs the images.
+It does not extend JSON operations, unwrap geometry or choose physical scale.
+Measure sweep circumference/arc length and garment panels in metres, divide
+by the provider's U/V tile dimensions, and correct face-corner wrap seams and
+cap islands before assigning maps. A global-axis projection on a bent sleeve
+can stretch weave while a correct material still exports successfully.
+Repair shoulder, elbow, pelvis and boot junctions before texture polish; check
+those same boundaries through the actual consumer's pose limits.
+
 Use [geometry helpers](../README.md#creating-geometry),
 [lathe contract](../../../src/agent-contract.ts),
 [skin paint](../README.md#skin-paint-skin_tints-paint_vertices-use_vertex_colors)
