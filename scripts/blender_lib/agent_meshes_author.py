@@ -531,7 +531,7 @@ def shape_key(obj, name, vertices):
     return key
 
 
-def export_glb(path, objects, animation_mode='ACTIONS'):
+def export_glb(path, objects, animation_mode='ACTIONS', *, vertex_color=None, all_vertex_colors=None):
     """Export selected objects with PBR materials, skins, morphs and animation.
 
     Geometry modifiers must be resolved by the author before adding morphs;
@@ -539,10 +539,30 @@ def export_glb(path, objects, animation_mode='ACTIONS'):
     restored after export. This function deliberately preserves authored weights.
     Morph deltas that are float noise (at most a micron, or 1e-4 of a normal) are
     dropped after export and the rest stored as sparse accessors (`prune_glb_morphs`).
+    vertex_color=None leaves Blender's default unchanged; MATERIAL follows the
+    material, ACTIVE selects the render color, and NONE omits vertex colors. Explicit modes require
+    native exporter support and are checked before selection is changed.
+    all_vertex_colors=None preserves the native default; explicit bool controls
+    native export_all_vertex_colors without modifying/reordering color layers.
     """
     import bpy
     if animation_mode not in ('ACTIONS', 'NLA_TRACKS'):
         raise ValueError('animation_mode must be ACTIONS or NLA_TRACKS')
+    export_options = {}
+    if vertex_color is not None:
+        if not isinstance(vertex_color, str) or vertex_color not in ('MATERIAL', 'ACTIVE', 'NONE'):
+            raise ValueError('vertex_color must be None, MATERIAL, ACTIVE or NONE')
+        prop = bpy.ops.export_scene.gltf.get_rna_type().properties.get('export_vertex_color')
+        if prop is None or vertex_color not in {item.identifier for item in prop.enum_items}:
+            raise ValueError(f'This Blender glTF exporter does not support vertex_color={vertex_color!r}')
+        export_options['export_vertex_color'] = vertex_color
+    if all_vertex_colors is not None:
+        if not isinstance(all_vertex_colors, bool):
+            raise ValueError('all_vertex_colors must be None or a bool')
+        prop = bpy.ops.export_scene.gltf.get_rna_type().properties.get('export_all_vertex_colors')
+        if prop is None or prop.type != 'BOOLEAN':
+            raise ValueError('This Blender glTF exporter does not support all_vertex_colors')
+        export_options['export_all_vertex_colors'] = all_vertex_colors
     objects = list(objects)
     if not objects: raise ValueError('At least one object must be exported')
     previous_selection = list(bpy.context.selected_objects)
@@ -556,7 +576,7 @@ def export_glb(path, objects, animation_mode='ACTIONS'):
             export_apply=False, export_morph=True, export_morph_normal=True,
             export_attributes=any(obj.type == 'MESH' and '_FACE_REGION' in obj.data.attributes for obj in objects),
             export_animations=True, export_animation_mode=animation_mode, export_skins=True, export_yup=True,
-            export_cameras=False, export_lights=False)
+            export_cameras=False, export_lights=False, **export_options)
         # Blender's exporter drops JSON-shaped custom properties; write root extras (for
         # example the arkit-face/1 contract from set_face_contract) into the GLB directly.
         import json

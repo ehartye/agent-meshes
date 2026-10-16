@@ -16,6 +16,45 @@ same clip name: the exporter combines them into one GLB animation. The default
 remains `ACTIONS`. Direct callers can use `export_glb(path, objects,
 animation_mode='NLA_TRACKS')`; other values are rejected.
 
+## Vertex colors in GLB exports
+
+The Python helper accepts keyword-only overrides:
+
+```python
+export_glb(path, objects, vertex_color='ACTIVE', all_vertex_colors=False)
+export_glb(path, objects, vertex_color='NONE')  # omit vertex colors
+```
+
+Omit either option, or pass `None`, to retain that native exporter default and
+existing callers' behavior. Blender 5.2.2 LTS defaults to `MATERIAL` (export color
+when used by the material). In a real texture × named `CraftColor` multiply graph,
+that default exported white `COLOR_0` despite nonwhite native POINT/FLOAT_COLOR
+values. With one color layer, explicit `ACTIVE` retained the authored values.
+With multiple layers, Blender's additional `export_all_vertex_colors=True`
+default can still produce white `COLOR_0` despite the intended active layer.
+Explicit `all_vertex_colors=False` maps to that native bool and retained the
+intended active render layer as nonwhite `COLOR_0` in the two-layer fixture.
+`NONE` omitted colors. Set `mesh.color_attributes.render_color_index` to the
+intended layer before export; the exporter uses the render layer, not merely the
+paint/UI active selection. Explicit `vertex_color='MATERIAL'` is also supported
+and agrees with the omitted option on Blender 5.2.2. `NAME` is not exposed; it
+would need a separate named-layer argument. `all_vertex_colors` accepts only
+`None` or a bool.
+
+Invalid values and unavailable native enum modes fail before object iteration,
+selection changes or export. There is no fallback to a different export mode.
+The overrides change no color layers, shader nodes, texture files or material
+slots. Existing selection/active-object restoration and morph pruning still apply. This is a
+Python authoring API addition, not a JSON operation/schema or installed-release
+promise; material interpretation and appearance still need consumer inspection.
+
+Run `blender --background --factory-startup --python
+tests/blender_vertex_color_export.py -- --output-dir <private-output-dir>`.
+The real Blender fixture checks GLB color accessors, native/default behavior,
+unchanged PBR texture slots and embedded image payloads, invalid-input effects,
+and selection restoration on success and native export failure. Read its
+`report.json` completion marker when a Store launcher returns early.
+
 ## Image materials with authored UVs
 
 The Blender Python API adds `image_material` alongside the scalar `material` API:
