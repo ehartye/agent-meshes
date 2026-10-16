@@ -21,7 +21,9 @@ export async function main(args = process.argv): Promise<void> {
     .option('--quiet', 'For commands that print the project (new, recipe, op, batch, open, undo, redo, save, state): print only name, revision, undo/redo depth, counts and any warnings');
   program.addHelpText('afterAll', () => {
     const guidance = techniqueGuidance();
-    return `\nCharacter construction checklist: ${fileURLToPath(new URL(guidance.references[0].path, guidance.baseUrl))}\nUse for skinned characters; static props use the operation schemas.\n`;
+    return '\nReference guidance:\n' + guidance.references.map(reference =>
+      `  ${reference.topic}: ${fileURLToPath(new URL(reference.path, guidance.baseUrl))}`
+    ).join('\n') + '\nUse character guides for skinned bodies; consumer contracts also apply to props.\n';
   });
   program.hook('preAction', () => {
     if (program.opts().workspace !== undefined && program.getOptionValueSource('url') === 'cli') {

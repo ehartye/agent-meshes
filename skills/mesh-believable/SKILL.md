@@ -1,6 +1,6 @@
 ---
 name: mesh-believable
-description: Make agent-meshes models read as believable objects and creatures rather than piles of primitives, using shells, lathe and prism profiles, anchored joints, ground contact checks, scale and silhouette rules, render polish and the Blender refine stage.
+description: Build believable 3D forms and diagnose character anatomy, proportions, topology and deformation. Use for character modeling craft, blob-like bodies, weak facial depth, tubular fingers, collapsing joints, or blocky, lumpy and disconnected objects.
 when_to_use: Use when a model looks blocky, boxy, lumpy, robotic or like floating pieces, when feet hover or sink, when asked to make a model look real, organic, smooth, or "like an actual bird/horse/animal", or before presenting any model to a person.
 ---
 
@@ -9,6 +9,12 @@ when_to_use: Use when a model looks blocky, boxy, lumpy, robotic or like floatin
 For characters and their clothing, hair or facial attachments, read the
 [construction checklist](../../scripts/blender_lib/references/character-construction.md)
 before adding detail. It covers anatomy, connected construction and scoped evidence.
+For character work, read [character craft](../../scripts/blender_lib/references/character-craft.md)
+before choosing forms or smoothing: it covers cross-sections, mass relationships,
+shoulders/hips, age/species, hands, facial depth, deformation topology, cloth and
+failure isolation. Find usable anatomy/motion donors in the
+[mannequin library](../../scripts/blender_lib/references/mannequin-library.md).
+Preserve the brief's body plan and accepted stylization when borrowing a donor.
 
 Separate primitives read as floating pieces. Believability comes from a few mechanisms, applied
 in this order, and from looking at renders between steps. Commands run through the managed
@@ -25,8 +31,9 @@ Render `front.png` and `side.png` and fix the silhouette before any detail.
 
 ## 2. Fuse with a shell
 
-`shell.set` blends a list of parts into one surface with rounded, continuous transitions, the
-single biggest step from "primitives" to "sculpture". Overlap members by roughly the `blend`
+`shell.set` blends a list of parts into one surface with rounded, continuous transitions,
+useful for a continuous blockout. Fusion does not design anatomy or deformation topology;
+preserve intended planes, joints and negative spaces. Overlap members by roughly the `blend`
 distance; a member that does not touch or nearly touch its neighbor stays a bump. Keep crisp
 features (eyes, beak, hooves, buttons) as separate parts on top of the shell rather than inside
 it. Use one shell per organism; a rigid-bound shell is skinned automatically from its members.
@@ -66,7 +73,7 @@ The lint is 0.15.0 and later; on an older release, look for floating pieces in t
 ## 5. Render polish, then Blender if it earns it
 
 Renders already carry environment lighting, soft shadows and shell ambient occlusion. An
-`outline` in the viewer options gives an illustrated look that hides small seams. When the
+`outline` in the viewer options gives an illustrated finish; inspect seams without it too. When the
 subject needs fur, feathers or a sculpted skin, add the `refine` block to `build.json`
 ([mesh-build](../mesh-build/SKILL.md)): one subdivision level plus a small noise displacement
 (around 0.003 m, scale 0.04) limited with `only` to the shell. Lower the shell resolution first;

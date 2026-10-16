@@ -4,6 +4,11 @@ Before constructing or repairing a character, read the
 [character construction checklist](references/character-construction.md) for
 landmarks, skin ownership, hands, connected clothing, hair and evidence checks.
 The sections below remain the API reference.
+For form and deformation choices read [character modeling craft](references/character-craft.md).
+The [neutral mannequin library](references/mannequin-library.md) contains shipped
+human and adult/child alien GLBs, provenance and an offline comparison demo.
+For named runtime controls, transforms, materials, mechanisms and destination
+acceptance, use [consumer patterns](references/consumer-patterns.md).
 
 An authoring source may declare `EXPORT_ANIMATION_MODE = 'NLA_TRACKS'` when
 armature and shape-key actions must play together. Give their NLA tracks the

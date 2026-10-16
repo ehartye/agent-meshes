@@ -96,6 +96,18 @@ export function techniqueGuidance() {
       topic: 'character-construction',
       path: 'scripts/blender_lib/references/character-construction.md',
       useWhen: 'Before constructing or repairing a skinned character, clothing, hair or facial attachments',
+    }, {
+      topic: 'character-craft',
+      path: 'scripts/blender_lib/references/character-craft.md',
+      useWhen: 'Planning or diagnosing character forms, anatomy, topology, deformation, faces, hands or clothing',
+    }, {
+      topic: 'mannequin-library',
+      path: 'scripts/blender_lib/references/mannequin-library.md',
+      useWhen: 'Finding neutral human or alien reference GLBs, comparing rigs or choosing anatomy and motion donors',
+    }, {
+      topic: 'consumer-patterns',
+      path: 'scripts/blender_lib/references/consumer-patterns.md',
+      useWhen: 'Handing off assets, preserving runtime controls or adapting models and mechanisms to another renderer or engine',
     }],
   };
 }

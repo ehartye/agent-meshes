@@ -7,6 +7,12 @@ description: Review a 3D model for reference fidelity, anatomy, construction and
 
 A valid GLB and a folder of renders are not an art review. Open and inspect the images.
 Record anything you did not see as unreviewed, including details hidden behind another part.
+Use [character craft](../../scripts/blender_lib/references/character-craft.md) to
+separate form, topology, pivot and weight causes. The
+[mannequin library](../../scripts/blender_lib/references/mannequin-library.md)
+supplies anatomy/motion comparators, not automatic fidelity criteria. At a renderer
+or engine boundary, use [consumer patterns](../../scripts/blender_lib/references/consumer-patterns.md)
+to keep source, export, imported state and actual runtime acceptance distinct.
 
 ## Establish what faithful means
 
