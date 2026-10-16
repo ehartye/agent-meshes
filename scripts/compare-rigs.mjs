@@ -23,7 +23,7 @@ const runtime = (await viewerScript()).replaceAll('</script', '<\\/script');
 const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Rig comparison</title><style>
 *{box-sizing:border-box}body{margin:0;background:#e7e9e6;color:#26332f;font:15px system-ui}header{padding:16px 24px}h1{font-size:22px;margin:0 0 5px}p{margin:4px 0;color:#53665e}#panels{display:flex;height:calc(100vh - 190px);min-height:360px}.panel{flex:1;min-width:0;border-right:1px solid #bdc8c2;position:relative}.label{position:absolute;top:12px;left:16px;z-index:2;background:#ffffffd9;padding:5px 9px}.viewport{position:absolute;inset:0}.bones{position:absolute;inset:0;pointer-events:none;width:100%;height:100%}footer{padding:12px 24px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}button,select{font:inherit;padding:7px 10px}#phase{flex:1;min-width:150px}#error{color:#a12222;white-space:pre-wrap}@media(max-width:700px){header{padding:10px}#panels{height:65vh}footer{padding:8px;gap:6px}.label{font-size:11px;left:3px;top:4px}}
-</style><header><h1>Rig and motion comparison</h1><p>Same clip phase in every viewport. Drag to orbit; scrub to inspect contact, swing and skin deformation.</p><div id="error"></div></header>
+</style><header><h1>Rig and motion comparison</h1><p>Normalized clip phase in every viewport; footfalls may differ. Drag to orbit; scrub to inspect contact, swing and skin deformation.</p><div id="error"></div></header>
 <main id="panels"></main><footer><button id="play">Play</button><select id="clip" aria-label="Clip"></select><select id="view" aria-label="View"><option>front</option><option>side</option><option>perspective</option><option>back</option></select><label><input id="bones" type="checkbox" checked>Skeleton</label><input id="phase" aria-label="Clip phase" type="range" min="0" max="1" step="0.001" value="0"><output id="time">0%</output></footer>
 <script>${runtime}</script><script>
 const config=${data};
@@ -37,7 +37,7 @@ window.ready=(async()=>{
   const overlay=document.createElement('canvas');overlay.className='bones';
   panel.append(viewport,label,overlay);control('panels').append(panel);
   const v=await MeshViewer.mount(viewport,{glb:model.glb,autoplay:false,background:'#e7e9e6',view:'front',quality:'fast'});
-  v.root.traverse(o=>{if(o.isMesh){for(const m of Array.isArray(o.material)?o.material:[o.material]){m.color.set('#b9ada0');m.metalness=0;m.roughness=.85;}}});
+  v.root.traverse(o=>{if(o.isMesh){for(const m of Array.isArray(o.material)?o.material:[o.material]){m.color.set('#b9ada0');m.map=null;m.vertexColors=false;m.metalness=0;m.roughness=.85;m.needsUpdate=true;}}});
   viewers.push(v);overlays.push(overlay);
   v.onFrame(()=>drawBones(v,overlay));
  }

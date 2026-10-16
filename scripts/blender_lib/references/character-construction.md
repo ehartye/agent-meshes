@@ -78,6 +78,14 @@ to give all clothing identical weights. Nearest-surface projection against an
 unrestricted assembled body also caught nearby forearms and produced false
 leather wings. Restrict the fitting source before projecting or adding ease.
 
+Compatible weights do not guarantee compatible bent surfaces. A long shirt edge
+can chord across several smaller vest faces and cross them during a torso curl.
+Compare actual triangulation and deformed surfaces before increasing offsets;
+subdivide only the deficient region and retain neutral fit, UVs and donor fields.
+Recheck anticipation, strike and deep recovery separately. The saloon candidate
+removed sampled central-chest crossings at two strike poses while early/recovery
+crossings remained: two passing poses did not establish complete layer clearance.
+
 See [weighted clothing cuts](../README.md#cutting-weighted-clothing),
 [posed fitting](../README.md#fitting-garment-offsets-through-animation) and
 [raised neckbands](../README.md#raised-garment-neckbands).
@@ -106,6 +114,13 @@ motion events when comparing different clips. Equal normalized phase alone does
 not establish equivalent footfalls. Finger/thumb coverage needs its own checks;
 the current comparison overlay omits those bones. Four stills or a penetration
 report cannot prove continuous clearance, attachment or construction quality.
+
+Inspect actual-speed playback with both soles visible, then isolate contact and
+return phases. A planted marker with zero planar drift can coexist with a dragging
+toe, implausible return or abrupt root stop. For an attack, compare the actual
+runtime hand path, target surface and damage event; a raw donor pose omits consumer
+layers. Record cropped feet, blocked views and unplayed recordings as missing
+coverage rather than inferring motion quality from counters or file existence.
 
 Record expected appearance, observed evidence, view/clip/time, cause hypothesis
 and remaining uncertainty. Run focused checks for the changed scope, then the

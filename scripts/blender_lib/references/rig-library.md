@@ -24,7 +24,11 @@ shows both humans, fox and spider. It produces HTML plus an editable comparison
 config; choose fresh output names to retain evidence. The viewer uses diagnostic
 clay materials and normalized clip phase. It does not preserve final material
 appearance or align different species' footfall events. Browser inspection of this
-new demo remains a separate review; generation alone does not establish playback.
+demo exercised human-base, fox and spider playback, scrubbing, views and skeleton
+toggle. A narrow-panel cropping defect was repaired with aspect-aware camera
+fitting; all 16 sampled phase/view combinations retained complete bounds. This
+does not inspect every bank/clip or establish animation quality. Generation alone
+does not establish playback.
 
 | Library ID | Body plan | Skin joints | Selectable motion/pose clips |
 | --- | --- | ---: | ---: |
@@ -141,6 +145,7 @@ Actual import checks: nine GLB hashes and Khronos validation, all 26 source hash
 real CPU extraction/retarget on human/fox/spider diagnostic targets, and an
 eight-leg template positive/box-negative case. These do not establish every clip,
 arbitrary target fitting, external inference, native FBX/USD execution, continuous
-skin clearance, browser playback or artistic acceptance. The existing human-base
+skin clearance or artistic acceptance. The three-bank browser check above does
+not establish all-bank playback. The existing human-base
 duplicate-channel repair remains intact. See [Blender CLI](blender-cli.md) and
 [native API](blender-api.md) for separate native tooling scope.
