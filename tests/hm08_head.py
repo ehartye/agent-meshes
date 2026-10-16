@@ -3,6 +3,8 @@
 Blender frame: Z up, meters, the face looks down -Y, the character's left is +X.
 """
 from pathlib import Path
+import hashlib
+import importlib.util
 import sys
 import tempfile
 import unittest
@@ -30,6 +32,43 @@ def eye_area(landmarks, side):
 
 
 class Data(unittest.TestCase):
+    def test_original_face_corner_uvs_keep_seams_and_source_face_identity(self):
+        head = hm.load_head()
+        self.assertTrue(all(hasattr(head, key) for key in ('uv', 'face_uv', 'source_faces')),
+                        'The head must retain original face-corner UVs, not a vertex-projected replacement')
+        self.assertEqual(head.uv.shape[1], 2)
+        self.assertTrue(np.isfinite(head.uv).all())
+        self.assertEqual(head.face_uv.shape, head.faces.shape)
+        self.assertTrue((head.face_uv[head.faces == -1] == -1).all())
+        self.assertTrue((head.kind_face_uv('body') >= 0).all(), 'Every skin quad needs its original four texture corners')
+        self.assertTrue((head.face_uv[head.face_uv >= 0] < len(head.uv)).all())
+        self.assertEqual(len(head.source_faces), len(head.faces))
+        self.assertEqual(len(np.unique(head.source_faces)), len(head.faces))
+        corners = {}
+        for vertices, uv in zip(head.kind_faces('body'), head.kind_face_uv('body')):
+            for vertex, texture_vertex in zip(vertices, uv):
+                if vertex >= 0: corners.setdefault(int(vertex), set()).add(int(texture_vertex))
+        self.assertGreater(sum(len(indices) > 1 for indices in corners.values()), 10,
+                           'A single UV per vertex would destroy the original skin atlas seams')
+
+    def test_uv_vendoring_does_not_change_any_existing_shape_rig_or_target_data(self):
+        data = np.load(hm.DATA / 'hm08_head.npz')
+        digest = hashlib.sha256()
+        for name in sorted(set(data.files) - {'uv', 'face_uv', 'source_faces'}):
+            array = data[name]
+            digest.update(name.encode() + b'\0' + array.dtype.str.encode() + b'\0' + str(array.shape).encode() + b'\0' + array.tobytes())
+        self.assertEqual(digest.hexdigest(), '22cbefea2bea96beeb62df165fed6b00a2fb14bd64f087ffa274567ab8c0d7c9')
+
+    def test_obj_uv_parser_preserves_corner_indices_instead_of_welding_a_seam(self):
+        spec = importlib.util.spec_from_file_location('hm08_vendor', Path(__file__).resolve().parents[1] / 'scripts/hm08-vendor.py')
+        vendor = importlib.util.module_from_spec(spec); spec.loader.exec_module(vendor)
+        parsed = vendor.parse_obj('v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvt 0.5 0.5\ng body\nf 1/1 2/2 3/3\nf 1/5 3/3 4/4\n')
+        self.assertEqual(len(parsed), 4, 'OBJ parsing must retain independent texture corners')
+        vertices, faces, uv, face_uv = parsed
+        self.assertEqual(faces, [('body', [0, 1, 2]), ('body', [0, 2, 3])])
+        self.assertEqual(face_uv, [[0, 1, 2], [4, 2, 3]])
+        np.testing.assert_array_equal(uv[4], [.5, .5])
+
     def test_the_head_is_hm08s_quad_head_with_its_helpers_joints_and_mirror(self):
         head = hm.load_head()
         self.assertEqual(len(head.kind_vertices('body')), 4328)

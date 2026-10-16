@@ -29,7 +29,9 @@ AGE_KEYS = ((0.0, 'baby'), (0.1875, 'child'), (0.5, 'young'))
 
 class Hm08Head:
     """The vendored head: `rest` (N, 3) in MakeHuman units, quad `faces` (-1 pads triangles), each face's `kind`
-    (an index into KINDS), the `mirror` partner of each vertex (-1 when none), `joints` by name, and `targets`:
+    (an index into KINDS), original atlas `uv` coordinates and independent `face_uv` corners (-1 pads triangles or
+    absent source UVs), zero-based `source_faces` in the pinned OBJ, the `mirror` partner of each vertex (-1 when none),
+    `joints` by name, and `targets`:
     name -> (vertex indices, (k, 3) float deltas in MakeHuman units)."""
 
     def __init__(self, path=None):
@@ -38,6 +40,9 @@ class Hm08Head:
         self.index = data['index']
         self.faces = data['faces']
         self.face_kind = data['face_kind']
+        self.uv = data['uv'].astype(np.float64)
+        self.face_uv = data['face_uv'].astype(np.int32)
+        self.source_faces = data['source_faces'].astype(np.int32)
         kinds = [str(k) for k in data['kind_names']]
         if tuple(kinds) != KINDS: raise ValueError(f'hm08_head.npz kinds {kinds} are not {KINDS}')
         self.mirror = data['mirror']
@@ -50,6 +55,10 @@ class Hm08Head:
 
     def kind_faces(self, kind):
         return self.faces[self.face_kind == KINDS.index(kind)]
+
+    def kind_face_uv(self, kind):
+        """Original UV corner indices in the same face/corner order as kind_faces(kind); do not weld UV seams."""
+        return self.face_uv[self.face_kind == KINDS.index(kind)]
 
     def kind_vertices(self, kind):
         f = self.kind_faces(kind)

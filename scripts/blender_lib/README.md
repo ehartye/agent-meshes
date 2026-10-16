@@ -471,6 +471,10 @@ no MPFB or GPL code.
 - **Loading and shaping.** `load_head()` returns an `Hm08Head`. `head_shape(years, gender, stylize, shape)` composes
   the macros (`macro_weights`), the features (`feature_weights`, over the `FEATURES` controls) and the stylize target.
   `to_blender`/`from_blender` convert between hm08's frame and Blender's.
+- **Skin atlas UVs.** `head.uv`, `head.face_uv` and `head.kind_face_uv('body')` retain the original per-corner
+  texture coordinates and seams; `head.source_faces` identifies the pinned OBJ faces. See the
+  [data guide and Blender loop assignment](data/hm08/README.md#original-skin-uvs) before using a licensed skin image.
+  Topology-changing construction and glTF material compatibility still require exported-asset inspection.
 - **Measuring.** `face_landmarks(vertices, faces, hm08_eyes(head, vertices))` measures the eyes, profile, mouth and
   outline. `depth_map`, `eyeball_shows`, `eye_crease_folds` and `flipped` are the checks the face build uses.
 - **Building a face.** `character_face(years, gender, center, radii, shape, neck_z='chin', neck=...)` fits the head
