@@ -168,6 +168,22 @@ check real speed, forward/backward/strafe transitions, turns, ramps, stairs and
 idle settling in the destination runtime. New skin contact needs evaluated
 deformed vertices; the earlier rigid POSITION scan cannot certify it.
 
+Separate conservative influence bounds from the actual posed surface. In the
+saloon, a hunched head was visibly clear while the body's skin envelope covered
+it: all 48 sampled head rays were initially classified as body hits. Keep the
+box as a broad phase and resolve the nearest non-head triangles before claiming
+visible-head targeting. The corrected actual-pose regression passes all 48.
+
+Measure surface-query cost in the destination. The saloon's collapse scanned
+every support vertex repeatedly during catch-up frames. Exact indexed world
+queries, bounded presentation batching and cached Float64 skin matrices reduced
+that work without replacing the skin with an approximate hull. The matrix
+comparison retained all vertices and found zero differences over 5.12 million
+comparisons, full collapse and reset on ground, stairs and gallery. That CPU
+equivalence preserves the earlier sparse native poses; it does not establish
+browser frame pacing or continuous artistic quality. Keep captured source
+identities and the new comparison separate when reusing unchanged images.
+
 These are source-inspected and native-checkpoint lessons, not a completed saloon
 motion acceptance. See [reference-rig helpers](../README.md#fitting-a-reference-rig)
 and the actual [retarget implementation](../agent_meshes_retarget.py).
