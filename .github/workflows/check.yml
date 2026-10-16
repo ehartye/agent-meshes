@@ -146,6 +146,10 @@ jobs:
         run: python tests/retarget.py
       - if: matrix.suite == 'geometry'
         run: python tests/motion_style.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/motion_audit.py
+      - if: matrix.suite == 'geometry'
+        run: python tests/rig-library-output-protection.py
 
   required:
     name: CI required

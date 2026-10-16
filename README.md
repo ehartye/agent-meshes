@@ -2,6 +2,15 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.18.0 adds nine organized rig banks with 214 selectable clips, explicit-path
+Toy Maker CPU adapters and a protected offline demo. Separate Blender CLI and Python
+API guides are linked from the character skills. Packed image PBR materials,
+opt-in vertex-color export controls, original skin-atlas UVs, sampled motion audits
+and aspect-aware comparison framing support character construction and diagnosis.
+Optional learned rigging backends remain explicitly configured and unverified;
+local FBX/NPZ experiments are inventoried, not redistributed. Run `mesh-setup`
+after updating the plugin.
+
 Release 0.17.0 packages two neutral human motion banks and the Pip/Nori alien
 mannequins with provenance, an offline comparison demo and reference-use limits.
 CLI discovery and the character skills link directly to the mannequin library,
@@ -70,6 +79,29 @@ Read [character modeling craft](scripts/blender_lib/references/character-craft.m
 for form, anatomy, topology, deformation, hands, faces, cloth and diagnosis, and
 [consumer patterns](scripts/blender_lib/references/consumer-patterns.md) for reusable
 lessons from Space2Grow, Art Explorers/The Fort, Talking Heads and Internal Race.
+
+## Organized rig library and Blender references
+
+The [rig library guide](scripts/blender_lib/references/rig-library.md) covers the
+nine human and animal donor banks, licenses, explicit Python inputs/outputs and
+retargeting limits. Generate a fresh offline review page with actual playback,
+scrub, fixed views and skeleton controls:
+
+```text
+node scripts/rig-library.mjs catalog
+node scripts/rig-library.mjs verify
+node scripts/rig-library.mjs demo --out artifacts/rigs.html human-base fox spider
+```
+
+The demo refuses existing output paths. Inspect the selected motion and deformed
+skin; a valid rig, shared normalized phase or zero marker drift does not establish
+natural movement or foot contact.
+
+Use the [Blender CLI reference](scripts/blender_lib/references/blender-cli.md) for
+process launch, flags and completion, and the [Blender Python API reference](scripts/blender_lib/references/blender-api.md)
+for `bpy`, native modifiers, weights, actions and Meshes helper selection. The
+CLI launches Blender; Python performs the work inside it. Native behavior was
+checked against Blender 5.2.2 and must be checked against other selected versions.
 
 ## Agent workspace
 
@@ -192,11 +224,12 @@ to the change, including actual Blender fixture/export checks for native mesh or
 rigging work; use the commands above for affected TypeScript and workbench code.
 Independent review and normal pull-request merges still apply.
 
-At the owner's request, GitHub's `Check` workflow is disabled and `main` has no
-required CI status check. The workflow file is retained for a future restoration;
-automatic cloud runs and a CI merge gate are not part of the current process.
-Pull-request protection, linear history and restrictions on force pushes and
-branch deletion remain in place.
+GitHub's `Check` workflow runs on pull requests and manual dispatch, with Windows
+JavaScript/Python checks and a Linux system-Chromium rendering lane. The owner
+re-enabled hosted verification after the earlier local-only policy. Focused local
+checks and independent review remain required; `main` currently has no required
+CI status rule. Pull-request protection, linear history and restrictions on force
+pushes and branch deletion remain in place.
 
 ## Claude Code plugin
 
