@@ -144,6 +144,13 @@ Convert the source forward axis once, preserve left/right identity, fit actual
 joint landmarks/lengths and retarget through source/target world rest frames.
 Select the needed clips rather than exporting a whole library into every actor.
 
+Verify the conversion in the actual world matrix and sampled forward/left vectors.
+An imported quaternion-mode armature ignored the saloon wrapper's Euler assignment:
+neutral fitted anchors still passed, while the zombie leaned backward and a hip
+looked malformed. Composing the matrix rotation flipped the measured toe/side axes
+and restored forward hunching without rebuilding the trousers. Check rotation mode
+and posed anatomy before prescribing geometry or weight changes for that symptom.
+
 Capture neutral attachment matrices only after explicitly restoring the fitted
 bind pose and updating the scene. The current reference retargeter clears the
 active action after baking, but leaves the sampled pose transforms/frame; clearing
