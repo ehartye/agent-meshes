@@ -90,6 +90,12 @@ own verification. There is no automatic learned-backend substitution.
 backend stamps. `preserve` explicitly disables its geodesic/unshred compensation;
 use it only when that matches the weight source. Neither policy proves deformation.
 Existing output paths reject so a stale file cannot masquerade as a fresh result.
+NPZ-producing commands require an exact lowercase `.npz` output suffix; retarget
+requires `.glb`. Asset presentation also rejects an existing same-stem `.usdz`.
+Retarget builds in a fresh staging directory and reserves produced destinations
+exclusively before copying, preserving files that appear after its initial check.
+`optionalUsdz` names only a USDZ produced by this job; an unavailable or failed
+optional export leaves it null, and diagnostic presentation never claims a sibling.
 
 ## Prepare weights and template candidates
 

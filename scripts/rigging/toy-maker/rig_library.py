@@ -4,11 +4,13 @@ No dependency installation, model downloads, backend selection or network access
 NPZ inputs must be trusted: the imported upstream schema contains object arrays.
 """
 from pathlib import Path
+from contextlib import ExitStack
 import argparse
 import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -61,8 +63,10 @@ def upstream(name):
     return module
 
 
-def output_path(value):
+def output_path(value, *, suffix=None):
     path = Path(value).resolve()
+    if suffix is not None and path.suffix != suffix:
+        raise ValueError(f'Output must end in {suffix}: {path}')
     if path.is_relative_to(HERE) or path.is_relative_to(CATALOG.parent):
         raise ValueError('Write generated artifacts to an owned project directory outside the library')
     if path.exists():
@@ -77,7 +81,7 @@ def extract(identifier, clip, output):
     match = next((c for c in record['clips'] if clip in (c['id'], c['name'])), None)
     if match is None:
         raise ValueError(f'Unknown clip {clip!r} in {identifier}')
-    destination = output_path(output)
+    destination = output_path(output, suffix='.npz')
     # Upstream bake is fixed60Hz. Keep extraction at60Hz to preserve its time base.
     upstream('glb_clip').extract(asset_path(record), match['name'], destination, fps=60.)
     with np.load(destination, allow_pickle=True) as data:
@@ -111,30 +115,61 @@ def retarget(identifier, rig, clip_npz, output, *, weight_policy='upstream', pre
         raise ValueError('weight_policy must be upstream or preserve')
     if presentation not in ('diagnostic', 'asset'):
         raise ValueError('presentation must be diagnostic or asset')
-    destination = output_path(output)
-    environment = {'RIGGED_INPUT': str(Path(rig).resolve()), 'CLIP_PATH': str(Path(clip_npz).resolve()),
-                   'OUT_GLB': str(destination), 'SOURCE_LIB': identifier,
-                   # Overlay mode avoids upstream's implicit optional USD export attempt.
-                   'SHOW_SKELETON': '1' if presentation == 'diagnostic' else '0'}
-    if weight_policy == 'preserve':
-        environment.update(RIG_GEODESIC='0', RIG_UNSHRED='0')
-    log = run_script(record['retarget'], destination, environment)
-    # Verify actual authored curves rather than trusting subprocess exit or a manifest.
-    reader = upstream('glb_clip')
-    from pygltflib import GLTF2
-    glb = GLTF2().load(str(destination))
-    rotations = [reader._accessor(glb, glb.binary_blob(), a.samplers[c.sampler].output)
-                 for a in glb.animations for c in a.channels if c.target.path == 'rotation']
-    if not rotations or any(not np.isfinite(r).all() for r in rotations):
-        raise ValueError('Retarget produced missing/nonfinite rotation curves')
-    # q/-q equivalence: minimum distance to either representation of the first pose.
-    movement = max(float(np.minimum(np.linalg.norm(r-r[:1], axis=1),
-                                    np.linalg.norm(r+r[:1], axis=1)).max()) for r in rotations)
+    destination = output_path(output, suffix='.glb')
+    optional = output_path(destination.with_suffix('.usdz')) if presentation == 'asset' else None
+    # Upstream may overwrite its implicit USDZ sibling. Confine both writes to a
+    # fresh owned directory, then publish only this job's products exclusively.
+    with tempfile.TemporaryDirectory(prefix='meshes-retarget-', dir=destination.parent) as directory:
+        staged = Path(directory) / destination.name
+        environment = {'RIGGED_INPUT': str(Path(rig).resolve()), 'CLIP_PATH': str(Path(clip_npz).resolve()),
+                       'OUT_GLB': str(staged), 'SOURCE_LIB': identifier,
+                       # Overlay mode avoids upstream's implicit optional USD export attempt.
+                       'SHOW_SKELETON': '1' if presentation == 'diagnostic' else '0'}
+        if weight_policy == 'preserve':
+            environment.update(RIG_GEODESIC='0', RIG_UNSHRED='0')
+        log = run_script(record['retarget'], staged, environment)
+        # Verify actual authored curves before publishing the staged GLB.
+        reader = upstream('glb_clip')
+        from pygltflib import GLTF2
+        glb = GLTF2().load(str(staged))
+        rotations = [reader._accessor(glb, glb.binary_blob(), a.samplers[c.sampler].output)
+                     for a in glb.animations for c in a.channels if c.target.path == 'rotation']
+        if not rotations or any(not np.isfinite(r).all() for r in rotations):
+            raise ValueError('Retarget produced missing/nonfinite rotation curves')
+        # q/-q equivalence: minimum distance to either representation of the first pose.
+        movement = max(float(np.minimum(np.linalg.norm(r-r[:1], axis=1),
+                                        np.linalg.norm(r+r[:1], axis=1)).max()) for r in rotations)
+        staged_optional = staged.with_suffix('.usdz')
+        produced_optional = optional is not None and staged_optional.is_file()
+        products = [(staged, destination)]
+        if produced_optional:
+            products.append((staged_optional, optional))
+        _publish_outputs(products)
     return {'output': str(destination), 'sha256': digest(destination), 'frames': len(rotations[0]),
             'maximumQuaternionChange': movement, 'weightPolicy': weight_policy,
             'presentation': presentation,
-            'optionalUsdz': str(destination.with_suffix('.usdz')) if destination.with_suffix('.usdz').is_file() else None,
+            'optionalUsdz': str(optional) if produced_optional else None,
             'scope': 'actual CPU solve/bake; not art approval', 'log': log}
+
+
+def _publish_outputs(products):
+    """Reserve every final path exclusively before copying any staged artifact."""
+    created = []
+    try:
+        with ExitStack() as stack:
+            writers = []
+            for source, destination in products:
+                writer = stack.enter_context(destination.open('xb'))
+                created.append(destination)
+                writers.append((source, writer))
+            for source, writer in writers:
+                with source.open('rb') as reader:
+                    shutil.copyfileobj(reader, writer)
+    except BaseException:
+        # Only remove paths successfully created by this call, after handles close.
+        for destination in created:
+            destination.unlink()
+        raise
 
 
 def reference_target(identifier, output):
@@ -190,7 +225,7 @@ def reference_target(identifier, output):
         mapped[mapped < 0] = parents.index(-1)
         np.add.at(weights, (np.arange(len(vertices)), mapped), original_weights[:, column])
     weights /= np.maximum(weights.sum(1, keepdims=True), 1e-12)
-    destination = output_path(output)
+    destination = output_path(output, suffix='.npz')
     np.savez(destination, vertices=vertices, faces=faces, weights=weights, joints=joints,
              parents=np.array(parents), names=np.array([all_names[i] for i in selected]), tails=joints)
     return destination
@@ -219,7 +254,7 @@ def infer_unirig(mesh, output, *, comfy_root, python):
     state = readiness(unirig_root=comfy_root, unirig_python=python)['unirig']
     if not state['readyToInspect']:
         raise ValueError(f'Explicit UniRig environment/checkpoints are incomplete: {state}')
-    destination = output_path(output)
+    destination = output_path(output, suffix='.npz')
     result = subprocess.run([str(Path(python).resolve()), str(HERE / 'unirig_worker.py')],
                             env={**os.environ, 'AGENT_MESHES_COMFY_ROOT': str(Path(comfy_root).resolve()),
                                  'MESH_NPZ': str(Path(mesh).resolve()), 'OUTPUT_NPZ': str(destination),
@@ -240,7 +275,7 @@ def skin_skintokens(mesh, candidate, output, work_dir, *, sidecar_root, python):
     state = readiness(skintokens_root=sidecar_root, skintokens_python=python)['skintokens']
     if not state['readyToInspect']:
         raise ValueError(f'Explicit SkinTokens environment/checkpoints are incomplete: {state}')
-    destination = output_path(output)
+    destination = output_path(output, suffix='.npz')
     work = Path(work_dir).resolve()
     if work.is_relative_to(HERE): raise ValueError('Use a project-owned work directory')
     work.mkdir(parents=True, exist_ok=False)
@@ -288,12 +323,12 @@ def main():
         result = skin_skintokens(args.mesh, args.candidate, args.output, args.work_dir,
                                  sidecar_root=args.sidecar_root, python=args.python)
     elif args.command == 'spider-template':
-        output = output_path(args.output)
+        output = output_path(args.output, suffix='.npz')
         built = upstream('spider_template').build(Path(args.mesh).resolve(), output)
         if built is None: raise ValueError('Template did not detect a clean eight-legged mesh; no fallback ran')
         result = {'output': str(built), 'scope': 'template candidate; inspect before skinning'}
     else:
-        output = output_path(args.output)
+        output = output_path(args.output, suffix='.npz')
         log = run_script('prep_skin', output, {'SRC_GLB': str(Path(args.mesh_glb).resolve()),
                                               'RIG_NPZ': str(Path(args.rig).resolve()), 'OUT_RIGGED': str(output)})
         result = {'output': str(output), 'log': log}
