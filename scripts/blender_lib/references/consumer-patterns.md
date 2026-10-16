@@ -101,6 +101,15 @@ of primitives still needs purposeful cross-sections. Avoid capped limbs leaving
 shelves at a junction, thin fins pasted onto skin and garments tracing every
 body hollow. Preserve those shape decisions during reduction and posed fitting.
 
+A fixed furniture footprint does not require a block silhouette. The saloon's
+second environment response retained its table/chair bounds while adding turned
+supports, eased tabletop edges, depressed seats and joined curved back members.
+Check actual member intersections, seat depth, ground contact and the complete
+posed/assembled bounds. Wood grain should follow each member's length; planar
+caps need a different UV projection from a turned side. Keep diffuse, normal and
+roughness coordinates aligned. Restrained contact wear and finish variation
+support construction; arbitrary noise over the photograph cannot supply it.
+
 Use stable parallel-transport frames for sweeps. Pin contact rings across morphs
 and use the same explicit initial normal for a family of shapes. Check outward
 winding, end caps and shading separately. An open path needs its intended caps;
