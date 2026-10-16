@@ -260,8 +260,11 @@ def audit_clip_motion(arm, action, markers=('ball_l', 'ball_r'), root='pelvis', 
     """Sample an actual Blender action's evaluated world bone heads, including both endpoints.
 
     Constraints remain active; NLA tracks are temporarily muted. Restore action/slot, pose,
-    frame/subframe and action/NLA settings even on failure. This does not sample skinned soles,
-    exported interpolation, blending, root translation in a game, or live runtime IK.
+    armature object transforms (including deltas), frame/subframe and action/NLA settings
+    even on failure. Other animated RNA, such as constraint parameters and custom properties,
+    is not snapshotted: use an isolated armature copy for actions that animate such properties.
+    This does not sample skinned soles, exported interpolation, blending, root translation in
+    a game, or live runtime IK.
     """
     import bpy
     if isinstance(sample_count, bool) or not isinstance(sample_count, int) or sample_count < 3:
@@ -294,6 +297,10 @@ def audit_clip_motion(arm, action, markers=('ball_l', 'ball_r'), root='pelvis', 
     pose_channels = ('location', 'rotation_euler', 'rotation_quaternion', 'rotation_axis_angle', 'scale')
     prior_pose = {bone.name: {channel: tuple(getattr(bone, channel)) for channel in pose_channels}
                   for bone in arm.pose.bones}
+    object_channels = (*pose_channels, 'delta_location', 'delta_rotation_euler',
+                       'delta_rotation_quaternion', 'delta_scale')
+    prior_object = {channel: tuple(getattr(arm, channel)) for channel in object_channels}
+    prior_object_rotation_mode = arm.rotation_mode
     rows = {name: [] for name in [root, *names]}
     try:
         data.action = action
@@ -325,6 +332,11 @@ def audit_clip_motion(arm, action, markers=('ball_l', 'ball_r'), root='pelvis', 
         for track, mute in prior_tracks:
             track.mute = mute
         scene.frame_set(prior_frame[0], subframe=prior_frame[1])
+        # Restore raw channels after the previous action/frame has evaluated: without
+        # a prior action Blender retains the last sampled object's transform values.
+        arm.rotation_mode = prior_object_rotation_mode
+        for channel, values in prior_object.items():
+            setattr(arm, channel, values)
         for name, channels in prior_pose.items():
             for channel, values in channels.items():
                 setattr(arm.pose.bones[name], channel, values)

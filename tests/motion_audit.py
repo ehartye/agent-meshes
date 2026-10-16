@@ -170,6 +170,71 @@ class NativeSampler(unittest.TestCase):
         self.assertAlmostEqual(report['markers']['ball']['forwardExcursion'], 2, places=6)
         np.testing.assert_allclose(pelvis.matrix_basis, before, atol=1e-7)
 
+    def object_action_fixture(self, rotation_mode):
+        # OBJECT slots may animate the armature itself, including delta transforms.
+        # Use a caller with no animation data, so restoring an old action cannot
+        # accidentally hide failure to preserve its manually placed transform.
+        self.arm.animation_data_clear()
+        self.arm.rotation_mode = rotation_mode
+        channels = {
+            'location': (5., -3., 2.),
+            'rotation_euler': (.2, -.3, .4),
+            'rotation_quaternion': (.9, .1, -.2, .3),
+            'rotation_axis_angle': (.6, 0., 1., 0.),
+            'scale': (1.2, .8, 1.1),
+            'delta_location': (.3, -.2, .1),
+            'delta_rotation_euler': (.1, .2, -.1),
+            'delta_rotation_quaternion': (.95, .05, .1, -.15),
+            'delta_scale': (.9, 1.1, 1.05),
+        }
+        for frame, offset in ((0, 1.), (4, 2.)):
+            for name, values in channels.items():
+                # Every keyed component differs from the caller's later value.
+                setattr(self.arm, name, tuple(value + offset for value in values))
+                self.arm.keyframe_insert(name, frame=frame)
+        action = self.arm.animation_data.action
+        self.arm.animation_data_clear()
+        bpy.context.scene.frame_set(8, subframe=.375)
+        for name, values in channels.items():
+            setattr(self.arm, name, values)
+        self.ball.location = (3, 4, 5)
+        bpy.context.view_layer.update()
+        return action, {
+            'rotationMode': self.arm.rotation_mode,
+            'channels': {name: tuple(getattr(self.arm, name)) for name in channels},
+            'matrix': np.array(self.arm.matrix_world),
+            'boneMatrix': np.array(self.ball.matrix_basis),
+        }
+
+    def check_object_restored(self, before):
+        self.assertIsNone(self.arm.animation_data)
+        self.assertEqual(self.arm.rotation_mode, before['rotationMode'])
+        self.assertEqual(bpy.context.scene.frame_current, 8)
+        self.assertAlmostEqual(bpy.context.scene.frame_subframe, .375)
+        for name, values in before['channels'].items():
+            np.testing.assert_allclose(tuple(getattr(self.arm, name)), values, atol=1e-7,
+                                       err_msg=f'caller armature object {name} was changed')
+        np.testing.assert_allclose(self.arm.matrix_world, before['matrix'], atol=1e-6)
+        np.testing.assert_allclose(self.ball.matrix_basis, before['boneMatrix'], atol=1e-7)
+
+    def test_object_action_restores_manually_placed_armature_on_success(self):
+        for mode in ('ZYX', 'QUATERNION', 'AXIS_ANGLE'):
+            with self.subTest(rotation_mode=mode):
+                action, before = self.object_action_fixture(mode)
+                report = rt.audit_clip_motion(self.arm, action, markers=['ball'], sample_count=5)
+                # Prove the object curves were sampled, rather than ignored.
+                self.assertGreater(np.linalg.norm(report['rootTravel']), 1.)
+                self.check_object_restored(before)
+
+    def test_object_action_restores_manually_placed_armature_on_analysis_error(self):
+        for mode in ('ZYX', 'QUATERNION', 'AXIS_ANGLE'):
+            with self.subTest(rotation_mode=mode):
+                action, before = self.object_action_fixture(mode)
+                with self.assertRaisesRegex(ValueError, 'forward'):
+                    rt.audit_clip_motion(self.arm, action, markers=['ball'], sample_count=5,
+                                         forward=(0, 0, 0))
+                self.check_object_restored(before)
+
 
 if __name__ == '__main__':
     result = unittest.main(argv=[sys.argv[0]], exit=False).result

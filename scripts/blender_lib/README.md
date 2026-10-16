@@ -388,7 +388,10 @@ samples actual evaluated world bone heads, including both action endpoints. `fps
 uses the scene's `fps / fps_base`; override only with the action's known time base.
 An action with multiple slots requires its explicit OBJECT `action_slot`. The helper
 temporarily isolates the action from NLA and restores the prior action/slot, blend,
-influence, NLA mute flags, frame/subframe and bone basis, including on failure.
+influence, NLA mute flags, frame/subframe, bone basis and armature object transform
+channels (including delta transforms and rotation mode), including on failure.
+Other animated RNA, such as constraint parameters and custom properties, is not
+snapshotted; audit an isolated armature copy for actions that animate those properties.
 Untracked bone channels start from rest; constraints remain active. This sampler
 is checked with Blender 5.2.2; it is not a
 JSON operation or a guarantee about other Blender APIs.
