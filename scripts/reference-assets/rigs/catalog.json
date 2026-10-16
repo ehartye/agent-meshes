@@ -1,0 +1,1087 @@
+{
+  "schema": "agent-meshes/rig-library/1",
+  "coordinateFrame": "glTF Y-up, right-handed; imported CPU retarget expects Y-up joint positions",
+  "libraries": [
+    {
+      "id": "bird",
+      "bodyPlan": "winged-biped",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "bird.glb",
+      "sha256": "9624b0bf70abe400ed0445c2423c69d5e046bd7d60074e399e2be161763c4f99",
+      "bytes": 329424,
+      "bones": 55,
+      "clips": [
+        {
+          "id": "bird/Flap",
+          "name": "Flap"
+        },
+        {
+          "id": "bird/Glide",
+          "name": "Glide"
+        },
+        {
+          "id": "bird/Idle",
+          "name": "Idle"
+        },
+        {
+          "id": "bird/Walk",
+          "name": "Walk"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/bird-animations.glb",
+        "sha256": "9624b0bf70abe400ed0445c2423c69d5e046bd7d60074e399e2be161763c4f99"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget_plan",
+      "readiness": "CPU extraction available; target-specific retarget verification required"
+    },
+    {
+      "id": "dragon",
+      "bodyPlan": "winged-quadruped",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "dragon.glb",
+      "sha256": "73262041b09aa0499778818162b34955e76e17548212825548799643d5c925b3",
+      "bytes": 752088,
+      "bones": 100,
+      "clips": [
+        {
+          "id": "dragon/Fly_Flap",
+          "name": "Fly Flap"
+        },
+        {
+          "id": "dragon/Fly_Glide",
+          "name": "Fly Glide"
+        },
+        {
+          "id": "dragon/Idle",
+          "name": "Idle"
+        },
+        {
+          "id": "dragon/Walk",
+          "name": "Walk"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/dragon-animations.glb",
+        "sha256": "73262041b09aa0499778818162b34955e76e17548212825548799643d5c925b3"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget_plan",
+      "readiness": "CPU extraction available; target-specific retarget verification required"
+    },
+    {
+      "id": "fox",
+      "bodyPlan": "quadruped",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "fox.glb",
+      "sha256": "1e01b7c224fa135ead67978a0840d115e99a959f9f745384e7b308f173dfebf2",
+      "bytes": 787092,
+      "bones": 48,
+      "clips": [
+        {
+          "id": "fox/Bark",
+          "name": "Bark"
+        },
+        {
+          "id": "fox/Bite",
+          "name": "Bite"
+        },
+        {
+          "id": "fox/Death",
+          "name": "Death"
+        },
+        {
+          "id": "fox/Fall",
+          "name": "Fall"
+        },
+        {
+          "id": "fox/Fetch",
+          "name": "Fetch"
+        },
+        {
+          "id": "fox/Howl",
+          "name": "Howl"
+        },
+        {
+          "id": "fox/Idle",
+          "name": "Idle"
+        },
+        {
+          "id": "fox/Idle_Alert",
+          "name": "Idle Alert"
+        },
+        {
+          "id": "fox/Jump",
+          "name": "Jump"
+        },
+        {
+          "id": "fox/Run",
+          "name": "Run"
+        },
+        {
+          "id": "fox/Sit",
+          "name": "Sit"
+        },
+        {
+          "id": "fox/Sneak",
+          "name": "Sneak"
+        },
+        {
+          "id": "fox/Walk",
+          "name": "Walk"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/fox-animations.glb",
+        "sha256": "1e01b7c224fa135ead67978a0840d115e99a959f9f745384e7b308f173dfebf2"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget_plan",
+      "readiness": "CPU extraction available; target-specific retarget verification required"
+    },
+    {
+      "id": "human-addon",
+      "bodyPlan": "biped",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "../mannequins/human-addon.glb",
+      "sha256": "357bcd1bd069860c4b04b8974d1a23645dd85348919d6adb59ee1c6537ad68bc",
+      "bytes": 5389524,
+      "bones": 66,
+      "clips": [
+        {
+          "id": "human-addon/Angry",
+          "name": "Angry"
+        },
+        {
+          "id": "human-addon/Attack_Ground_Pound",
+          "name": "Attack_Ground_Pound"
+        },
+        {
+          "id": "human-addon/Backflip",
+          "name": "Backflip"
+        },
+        {
+          "id": "human-addon/Bow",
+          "name": "Bow"
+        },
+        {
+          "id": "human-addon/Bow_Pull_Back",
+          "name": "Bow Pull Back"
+        },
+        {
+          "id": "human-addon/Bow_Pull_Hold",
+          "name": "Bow Pull Hold"
+        },
+        {
+          "id": "human-addon/Bow_Release",
+          "name": "Bow Release"
+        },
+        {
+          "id": "human-addon/Climb_Ladder",
+          "name": "Climb Ladder"
+        },
+        {
+          "id": "human-addon/Climb_Wall",
+          "name": "Climb Wall"
+        },
+        {
+          "id": "human-addon/Confused",
+          "name": "Confused"
+        },
+        {
+          "id": "human-addon/Consume_Item",
+          "name": "Consume Item"
+        },
+        {
+          "id": "human-addon/Crawl",
+          "name": "Crawl"
+        },
+        {
+          "id": "human-addon/Crawl_RM",
+          "name": "Crawl RM"
+        },
+        {
+          "id": "human-addon/Dance_Body_Roll",
+          "name": "Dance Body Roll"
+        },
+        {
+          "id": "human-addon/Dance_Charleston",
+          "name": "Dance Charleston"
+        },
+        {
+          "id": "human-addon/Dance_Reach_Hip",
+          "name": "Dance Reach Hip"
+        },
+        {
+          "id": "human-addon/Death_A",
+          "name": "Death_A"
+        },
+        {
+          "id": "human-addon/Death_B",
+          "name": "Death_B"
+        },
+        {
+          "id": "human-addon/Death_C",
+          "name": "Death_C"
+        },
+        {
+          "id": "human-addon/Defend",
+          "name": "Defend"
+        },
+        {
+          "id": "human-addon/Dizzy",
+          "name": "Dizzy"
+        },
+        {
+          "id": "human-addon/Dodge_back",
+          "name": "Dodge_back"
+        },
+        {
+          "id": "human-addon/Dodge_back_RM",
+          "name": "Dodge_back_RM"
+        },
+        {
+          "id": "human-addon/Dodge_left",
+          "name": "Dodge_left"
+        },
+        {
+          "id": "human-addon/Dodge_left_RM",
+          "name": "Dodge_left_RM"
+        },
+        {
+          "id": "human-addon/Dodge_right",
+          "name": "Dodge_right"
+        },
+        {
+          "id": "human-addon/Dodge_right_RM",
+          "name": "Dodge_right_RM"
+        },
+        {
+          "id": "human-addon/Fighting_Idle",
+          "name": "Fighting Idle"
+        },
+        {
+          "id": "human-addon/Fighting_Left_Jab",
+          "name": "Fighting Left Jab"
+        },
+        {
+          "id": "human-addon/Fighting_Right_Jab",
+          "name": "Fighting Right Jab"
+        },
+        {
+          "id": "human-addon/Flying_Forward",
+          "name": "Flying Forward"
+        },
+        {
+          "id": "human-addon/Flying_Forward_Super",
+          "name": "Flying Forward Super"
+        },
+        {
+          "id": "human-addon/Glide",
+          "name": "Glide"
+        },
+        {
+          "id": "human-addon/Greeting",
+          "name": "Greeting"
+        },
+        {
+          "id": "human-addon/Head_Nod",
+          "name": "Head Nod"
+        },
+        {
+          "id": "human-addon/Idle_Hurt",
+          "name": "Idle Hurt"
+        },
+        {
+          "id": "human-addon/Idle_Listening",
+          "name": "Idle Listening"
+        },
+        {
+          "id": "human-addon/Idle_Simple",
+          "name": "Idle_Simple"
+        },
+        {
+          "id": "human-addon/Jump_2",
+          "name": "Jump_2"
+        },
+        {
+          "id": "human-addon/Jump_2_RM",
+          "name": "Jump_2_RM"
+        },
+        {
+          "id": "human-addon/Jumping_Jacks",
+          "name": "Jumping Jacks"
+        },
+        {
+          "id": "human-addon/Kneeling_Tired",
+          "name": "Kneeling Tired"
+        },
+        {
+          "id": "human-addon/Ladder_Idle",
+          "name": "Ladder_Idle"
+        },
+        {
+          "id": "human-addon/Land_Three_Point",
+          "name": "Land_Three_Point"
+        },
+        {
+          "id": "human-addon/Ledge_Hang",
+          "name": "Ledge Hang"
+        },
+        {
+          "id": "human-addon/Levitate_Entrance",
+          "name": "Levitate Entrance"
+        },
+        {
+          "id": "human-addon/Levitate_Idle",
+          "name": "Levitate Idle"
+        },
+        {
+          "id": "human-addon/Meditate",
+          "name": "Meditate"
+        },
+        {
+          "id": "human-addon/Pipe_Climb",
+          "name": "Pipe Climb"
+        },
+        {
+          "id": "human-addon/Power_Up",
+          "name": "Power Up"
+        },
+        {
+          "id": "human-addon/Pushup",
+          "name": "Pushup"
+        },
+        {
+          "id": "human-addon/Reject",
+          "name": "Reject"
+        },
+        {
+          "id": "human-addon/Run_Jump",
+          "name": "Run Jump"
+        },
+        {
+          "id": "human-addon/Run_Anime",
+          "name": "Run_Anime"
+        },
+        {
+          "id": "human-addon/Run_Female",
+          "name": "Run_Female"
+        },
+        {
+          "id": "human-addon/Run_Stealth",
+          "name": "Run_Stealth"
+        },
+        {
+          "id": "human-addon/Shivering",
+          "name": "Shivering"
+        },
+        {
+          "id": "human-addon/Sleeping",
+          "name": "Sleeping"
+        },
+        {
+          "id": "human-addon/Strafe_left",
+          "name": "Strafe_left"
+        },
+        {
+          "id": "human-addon/Strafe_right",
+          "name": "Strafe_right"
+        },
+        {
+          "id": "human-addon/Sword_Attack_Air_Vertical",
+          "name": "Sword_Attack_Air_Vertical"
+        },
+        {
+          "id": "human-addon/Swordd_Attack_Air_Horizontal",
+          "name": "Swordd_Attack_Air_Horizontal"
+        },
+        {
+          "id": "human-addon/Throw_Object",
+          "name": "Throw Object"
+        },
+        {
+          "id": "human-addon/Tired_Hunched",
+          "name": "Tired Hunched"
+        },
+        {
+          "id": "human-addon/Two-hand_Blast",
+          "name": "Two-hand Blast"
+        },
+        {
+          "id": "human-addon/Victory",
+          "name": "Victory"
+        },
+        {
+          "id": "human-addon/Victory_Fist_Pump",
+          "name": "Victory Fist Pump"
+        },
+        {
+          "id": "human-addon/Walk_Backwards",
+          "name": "Walk_Backwards"
+        },
+        {
+          "id": "human-addon/Walk_Female",
+          "name": "Walk_Female"
+        },
+        {
+          "id": "human-addon/Walk_Large",
+          "name": "Walk_Large"
+        },
+        {
+          "id": "human-addon/Walk_Stealth",
+          "name": "Walk_Stealth"
+        },
+        {
+          "id": "human-addon/Zombie_Yell",
+          "name": "Zombie Yell"
+        },
+        {
+          "id": "human-addon/Zombie_Idle_Crouch",
+          "name": "Zombie_Idle_Crouch"
+        },
+        {
+          "id": "human-addon/Zombie_Rise",
+          "name": "Zombie_Rise"
+        },
+        {
+          "id": "human-addon/Zombie_Walk_2",
+          "name": "Zombie_Walk_2"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/human-addon-animations.glb",
+        "sha256": "357bcd1bd069860c4b04b8974d1a23645dd85348919d6adb59ee1c6537ad68bc"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget2",
+      "readiness": "CPU extraction available; target-specific retarget verification required",
+      "reuse": "existing catalog payload; human-base duplicate-channel repair retained"
+    },
+    {
+      "id": "human-base",
+      "bodyPlan": "biped",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "../mannequins/human-base.glb",
+      "sha256": "c8c9f48de9c8be9daad8d5cc41eb832727fb8a90d4c5bac49c08470c8e781132",
+      "bytes": 5817884,
+      "bones": 66,
+      "clips": [
+        {
+          "id": "human-base/Chest_Open",
+          "name": "Chest_Open"
+        },
+        {
+          "id": "human-base/ClimbUp_1m_RM",
+          "name": "ClimbUp_1m_RM"
+        },
+        {
+          "id": "human-base/Consume",
+          "name": "Consume"
+        },
+        {
+          "id": "human-base/Crouch_Fwd_Loop",
+          "name": "Crouch_Fwd_Loop"
+        },
+        {
+          "id": "human-base/Crouch_Idle_Loop",
+          "name": "Crouch_Idle_Loop"
+        },
+        {
+          "id": "human-base/Dance_Loop",
+          "name": "Dance_Loop"
+        },
+        {
+          "id": "human-base/Death01",
+          "name": "Death01"
+        },
+        {
+          "id": "human-base/Driving_Loop",
+          "name": "Driving_Loop"
+        },
+        {
+          "id": "human-base/Farm_Harvest",
+          "name": "Farm_Harvest"
+        },
+        {
+          "id": "human-base/Farm_PlantSeed",
+          "name": "Farm_PlantSeed"
+        },
+        {
+          "id": "human-base/Farm_Watering",
+          "name": "Farm_Watering"
+        },
+        {
+          "id": "human-base/Fixing_Kneeling",
+          "name": "Fixing_Kneeling"
+        },
+        {
+          "id": "human-base/Hit_Chest",
+          "name": "Hit_Chest"
+        },
+        {
+          "id": "human-base/Hit_Head",
+          "name": "Hit_Head"
+        },
+        {
+          "id": "human-base/Hit_Knockback",
+          "name": "Hit_Knockback"
+        },
+        {
+          "id": "human-base/Hit_Knockback_RM",
+          "name": "Hit_Knockback_RM"
+        },
+        {
+          "id": "human-base/Idle_FoldArms_Loop",
+          "name": "Idle_FoldArms_Loop"
+        },
+        {
+          "id": "human-base/Idle_Lantern_Loop",
+          "name": "Idle_Lantern_Loop"
+        },
+        {
+          "id": "human-base/Idle_Loop",
+          "name": "Idle_Loop"
+        },
+        {
+          "id": "human-base/Idle_No_Loop",
+          "name": "Idle_No_Loop"
+        },
+        {
+          "id": "human-base/Idle_Rail_Call",
+          "name": "Idle_Rail_Call"
+        },
+        {
+          "id": "human-base/Idle_Rail_Loop",
+          "name": "Idle_Rail_Loop"
+        },
+        {
+          "id": "human-base/Idle_Shield_Break",
+          "name": "Idle_Shield_Break"
+        },
+        {
+          "id": "human-base/Idle_Shield_Loop",
+          "name": "Idle_Shield_Loop"
+        },
+        {
+          "id": "human-base/Idle_Talking_Loop",
+          "name": "Idle_Talking_Loop"
+        },
+        {
+          "id": "human-base/Idle_TalkingPhone_Loop",
+          "name": "Idle_TalkingPhone_Loop"
+        },
+        {
+          "id": "human-base/Idle_Torch_Loop",
+          "name": "Idle_Torch_Loop"
+        },
+        {
+          "id": "human-base/Interact",
+          "name": "Interact"
+        },
+        {
+          "id": "human-base/Jog_Fwd_Loop",
+          "name": "Jog_Fwd_Loop"
+        },
+        {
+          "id": "human-base/Jump_Land",
+          "name": "Jump_Land"
+        },
+        {
+          "id": "human-base/Jump_Loop",
+          "name": "Jump_Loop"
+        },
+        {
+          "id": "human-base/Jump_Start",
+          "name": "Jump_Start"
+        },
+        {
+          "id": "human-base/LayToIdle",
+          "name": "LayToIdle"
+        },
+        {
+          "id": "human-base/Melee_Hook",
+          "name": "Melee_Hook"
+        },
+        {
+          "id": "human-base/Melee_Hook_Rec",
+          "name": "Melee_Hook_Rec"
+        },
+        {
+          "id": "human-base/NinjaJump_Idle_Loop",
+          "name": "NinjaJump_Idle_Loop"
+        },
+        {
+          "id": "human-base/NinjaJump_Land",
+          "name": "NinjaJump_Land"
+        },
+        {
+          "id": "human-base/NinjaJump_Start",
+          "name": "NinjaJump_Start"
+        },
+        {
+          "id": "human-base/OverhandThrow",
+          "name": "OverhandThrow"
+        },
+        {
+          "id": "human-base/PickUp_Table",
+          "name": "PickUp_Table"
+        },
+        {
+          "id": "human-base/Pistol_Aim_Down",
+          "name": "Pistol_Aim_Down"
+        },
+        {
+          "id": "human-base/Pistol_Aim_Neutral",
+          "name": "Pistol_Aim_Neutral"
+        },
+        {
+          "id": "human-base/Pistol_Aim_Up",
+          "name": "Pistol_Aim_Up"
+        },
+        {
+          "id": "human-base/Pistol_Idle_Loop",
+          "name": "Pistol_Idle_Loop"
+        },
+        {
+          "id": "human-base/Pistol_Reload",
+          "name": "Pistol_Reload"
+        },
+        {
+          "id": "human-base/Pistol_Shoot",
+          "name": "Pistol_Shoot"
+        },
+        {
+          "id": "human-base/Punch_Cross",
+          "name": "Punch_Cross"
+        },
+        {
+          "id": "human-base/Punch_Jab",
+          "name": "Punch_Jab"
+        },
+        {
+          "id": "human-base/Push_Loop",
+          "name": "Push_Loop"
+        },
+        {
+          "id": "human-base/Roll",
+          "name": "Roll"
+        },
+        {
+          "id": "human-base/Roll_RM",
+          "name": "Roll_RM"
+        },
+        {
+          "id": "human-base/Shield_Dash_RM",
+          "name": "Shield_Dash_RM"
+        },
+        {
+          "id": "human-base/Shield_OneShot",
+          "name": "Shield_OneShot"
+        },
+        {
+          "id": "human-base/Sitting_Enter",
+          "name": "Sitting_Enter"
+        },
+        {
+          "id": "human-base/Sitting_Exit",
+          "name": "Sitting_Exit"
+        },
+        {
+          "id": "human-base/Sitting_Idle_Loop",
+          "name": "Sitting_Idle_Loop"
+        },
+        {
+          "id": "human-base/Sitting_Talking_Loop",
+          "name": "Sitting_Talking_Loop"
+        },
+        {
+          "id": "human-base/Slide_Exit",
+          "name": "Slide_Exit"
+        },
+        {
+          "id": "human-base/Slide_Loop",
+          "name": "Slide_Loop"
+        },
+        {
+          "id": "human-base/Slide_Start",
+          "name": "Slide_Start"
+        },
+        {
+          "id": "human-base/Spell_Simple_Enter",
+          "name": "Spell_Simple_Enter"
+        },
+        {
+          "id": "human-base/Spell_Simple_Exit",
+          "name": "Spell_Simple_Exit"
+        },
+        {
+          "id": "human-base/Spell_Simple_Idle_Loop",
+          "name": "Spell_Simple_Idle_Loop"
+        },
+        {
+          "id": "human-base/Spell_Simple_Shoot",
+          "name": "Spell_Simple_Shoot"
+        },
+        {
+          "id": "human-base/Sprint_Loop",
+          "name": "Sprint_Loop"
+        },
+        {
+          "id": "human-base/Swim_Fwd_Loop",
+          "name": "Swim_Fwd_Loop"
+        },
+        {
+          "id": "human-base/Swim_Idle_Loop",
+          "name": "Swim_Idle_Loop"
+        },
+        {
+          "id": "human-base/Sword_Attack",
+          "name": "Sword_Attack"
+        },
+        {
+          "id": "human-base/Sword_Attack_RM",
+          "name": "Sword_Attack_RM"
+        },
+        {
+          "id": "human-base/Sword_Block",
+          "name": "Sword_Block"
+        },
+        {
+          "id": "human-base/Sword_Dash_RM",
+          "name": "Sword_Dash_RM"
+        },
+        {
+          "id": "human-base/Sword_Idle",
+          "name": "Sword_Idle"
+        },
+        {
+          "id": "human-base/Sword_Regular_A",
+          "name": "Sword_Regular_A"
+        },
+        {
+          "id": "human-base/Sword_Regular_A_Rec",
+          "name": "Sword_Regular_A_Rec"
+        },
+        {
+          "id": "human-base/Sword_Regular_B",
+          "name": "Sword_Regular_B"
+        },
+        {
+          "id": "human-base/Sword_Regular_B_Rec",
+          "name": "Sword_Regular_B_Rec"
+        },
+        {
+          "id": "human-base/Sword_Regular_C",
+          "name": "Sword_Regular_C"
+        },
+        {
+          "id": "human-base/Sword_Regular_C_RM",
+          "name": "Sword_Regular_C_RM"
+        },
+        {
+          "id": "human-base/Sword_Regular_Combo",
+          "name": "Sword_Regular_Combo"
+        },
+        {
+          "id": "human-base/TreeChopping_Loop",
+          "name": "TreeChopping_Loop"
+        },
+        {
+          "id": "human-base/Walk_Carry_Loop",
+          "name": "Walk_Carry_Loop"
+        },
+        {
+          "id": "human-base/Walk_Formal_Loop",
+          "name": "Walk_Formal_Loop"
+        },
+        {
+          "id": "human-base/Walk_Loop",
+          "name": "Walk_Loop"
+        },
+        {
+          "id": "human-base/Yes",
+          "name": "Yes"
+        },
+        {
+          "id": "human-base/Zombie_Idle_Loop",
+          "name": "Zombie_Idle_Loop"
+        },
+        {
+          "id": "human-base/Zombie_Scratch",
+          "name": "Zombie_Scratch"
+        },
+        {
+          "id": "human-base/Zombie_Walk_Fwd_Loop",
+          "name": "Zombie_Walk_Fwd_Loop"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/human-base-animations.glb",
+        "sha256": "7130ffa9b4292612954a5e0714f73812bfa194aa0b5d73f0e1f2e450a235ac66"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget2",
+      "readiness": "CPU extraction available; target-specific retarget verification required",
+      "reuse": "existing catalog payload; human-base duplicate-channel repair retained"
+    },
+    {
+      "id": "kaiju",
+      "bodyPlan": "biped-tail",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "kaiju.glb",
+      "sha256": "d1508d98e5f66a31b7e456c7732ea525787d813eb07a9b9cc349be6a7954b2a7",
+      "bytes": 999176,
+      "bones": 57,
+      "clips": [
+        {
+          "id": "kaiju/Attack",
+          "name": "Attack"
+        },
+        {
+          "id": "kaiju/Death",
+          "name": "Death"
+        },
+        {
+          "id": "kaiju/Hit",
+          "name": "Hit"
+        },
+        {
+          "id": "kaiju/Idle",
+          "name": "Idle"
+        },
+        {
+          "id": "kaiju/Roar",
+          "name": "Roar"
+        },
+        {
+          "id": "kaiju/Swim",
+          "name": "Swim"
+        },
+        {
+          "id": "kaiju/Tail_Attack",
+          "name": "Tail Attack"
+        },
+        {
+          "id": "kaiju/Walk",
+          "name": "Walk"
+        },
+        {
+          "id": "kaiju/Walk_RM",
+          "name": "Walk RM"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/kaiju-animations.glb",
+        "sha256": "d1508d98e5f66a31b7e456c7732ea525787d813eb07a9b9cc349be6a7954b2a7"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget_plan",
+      "readiness": "CPU extraction available; target-specific retarget verification required"
+    },
+    {
+      "id": "shark",
+      "bodyPlan": "limbless-finned",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "shark.glb",
+      "sha256": "918321bbcab9439456fcc5838d745c810ea6fd5adb658ccc3651b5d4244f9107",
+      "bytes": 470340,
+      "bones": 33,
+      "clips": [
+        {
+          "id": "shark/Bite",
+          "name": "Bite"
+        },
+        {
+          "id": "shark/Dead_Floating",
+          "name": "Dead Floating"
+        },
+        {
+          "id": "shark/Hit",
+          "name": "Hit"
+        },
+        {
+          "id": "shark/Idle",
+          "name": "Idle"
+        },
+        {
+          "id": "shark/Swim_Horizontal",
+          "name": "Swim Horizontal"
+        },
+        {
+          "id": "shark/Swim_Vertical",
+          "name": "Swim Vertical"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/shark-animations.glb",
+        "sha256": "918321bbcab9439456fcc5838d745c810ea6fd5adb658ccc3651b5d4244f9107"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget_plan",
+      "readiness": "CPU extraction available; target-specific retarget verification required"
+    },
+    {
+      "id": "snake",
+      "bodyPlan": "limbless",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "snake.glb",
+      "sha256": "795e4c62ba1e02f3f33e900832cdc6a1ca5a4aa4f6fe426fccd3aaa0f7f6ac25",
+      "bytes": 359604,
+      "bones": 28,
+      "clips": [
+        {
+          "id": "snake/Bite",
+          "name": "Bite"
+        },
+        {
+          "id": "snake/Coiled",
+          "name": "Coiled"
+        },
+        {
+          "id": "snake/Dance",
+          "name": "Dance"
+        },
+        {
+          "id": "snake/Death",
+          "name": "Death"
+        },
+        {
+          "id": "snake/Hit",
+          "name": "Hit"
+        },
+        {
+          "id": "snake/Idle",
+          "name": "Idle"
+        },
+        {
+          "id": "snake/Side_winding",
+          "name": "Side winding"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/snake-animations.glb",
+        "sha256": "795e4c62ba1e02f3f33e900832cdc6a1ca5a4aa4f6fe426fccd3aaa0f7f6ac25"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget_plan",
+      "readiness": "CPU extraction available; target-specific retarget verification required"
+    },
+    {
+      "id": "spider",
+      "bodyPlan": "many-legged",
+      "roles": [
+        "joint-reference",
+        "skin-weight-donor",
+        "motion-donor"
+      ],
+      "path": "spider.glb",
+      "sha256": "a321c1617c7f74cf86c050694bc254e74409c6c69db26fe542338f2f7c43d07a",
+      "bytes": 597156,
+      "bones": 56,
+      "clips": [
+        {
+          "id": "spider/Attack",
+          "name": "Attack"
+        },
+        {
+          "id": "spider/Bite",
+          "name": "Bite"
+        },
+        {
+          "id": "spider/Death",
+          "name": "Death"
+        },
+        {
+          "id": "spider/Death_2",
+          "name": "Death 2"
+        },
+        {
+          "id": "spider/Eating",
+          "name": "Eating"
+        },
+        {
+          "id": "spider/Hit",
+          "name": "Hit"
+        },
+        {
+          "id": "spider/Idle",
+          "name": "Idle"
+        },
+        {
+          "id": "spider/Jump",
+          "name": "Jump"
+        },
+        {
+          "id": "spider/Walk",
+          "name": "Walk"
+        }
+      ],
+      "source": {
+        "repository": "https://github.com/scottpetrovic/mesh2motion-app",
+        "commit": "a59685db6eb9dad90058581d08c6920f7b6f9268",
+        "path": "static/animations/spider-animations.glb",
+        "sha256": "a321c1617c7f74cf86c050694bc254e74409c6c69db26fe542338f2f7c43d07a"
+      },
+      "license": "CC0-1.0 asset statement in LICENSE-CC0.MD; code license separate",
+      "retarget": "retarget_plan",
+      "readiness": "CPU extraction available; target-specific retarget verification required"
+    }
+  ],
+  "moduleInventory": "../../rigging/toy-maker/inventory.json",
+  "legacyMannequins": "../mannequins/catalog.json",
+  "limits": [
+    "Catalog presence is not all-clip/runtime/art acceptance",
+    "Raw Adobe Mixamo and CMU/third-party FBX are inventoried, not bundled",
+    "Learned inference/skin require explicit external environments; no automatic fallback"
+  ]
+}

@@ -1,5 +1,10 @@
 # Neutral mannequin reference library
 
+For all nine human/animal animation banks and the organized Toy Maker rigging
+tools, use the [rig library](rig-library.md): catalog/verify/offline-demo commands,
+portable CPU extraction/retargeting and explicit optional-backend readiness.
+It reuses the two humans below and keeps this four-model catalog intact.
+
 Use these models to study a body plan, inspect deformation or compare motion. The
 brief and approved design determine your character; a donor mannequin supplies
 explicitly selected structure or motion, not a universal anatomy standard.
