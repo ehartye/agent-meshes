@@ -1,5 +1,10 @@
 # Blender authoring helpers
 
+Use the [Blender CLI reference](references/blender-cli.md) for process invocation
+and completion; use the [Blender Python API reference](references/blender-api.md)
+for native `bpy`, helpers and export boundaries. Find additional body plans,
+animation banks and Toy Maker tools in the [organized rig library](references/rig-library.md).
+
 Before constructing or repairing a character, read the
 [character construction checklist](references/character-construction.md) for
 landmarks, skin ownership, hands, connected clothing, hair and evidence checks.
@@ -15,6 +20,92 @@ armature and shape-key actions must play together. Give their NLA tracks the
 same clip name: the exporter combines them into one GLB animation. The default
 remains `ACTIONS`. Direct callers can use `export_glb(path, objects,
 animation_mode='NLA_TRACKS')`; other values are rejected.
+
+## Vertex colors in GLB exports
+
+The Python helper accepts keyword-only overrides:
+
+```python
+export_glb(path, objects, vertex_color='ACTIVE', all_vertex_colors=False)
+export_glb(path, objects, vertex_color='NONE')  # omit vertex colors
+```
+
+Omit either option, or pass `None`, to retain that native exporter default and
+existing callers' behavior. Blender 5.2.2 LTS defaults to `MATERIAL` (export color
+when used by the material). In a real texture × named `CraftColor` multiply graph,
+that default exported white `COLOR_0` despite nonwhite native POINT/FLOAT_COLOR
+values. With one color layer, explicit `ACTIVE` retained the authored values.
+With multiple layers, Blender's additional `export_all_vertex_colors=True`
+default can still produce white `COLOR_0` despite the intended active layer.
+Explicit `all_vertex_colors=False` maps to that native bool and retained the
+intended active render layer as nonwhite `COLOR_0` in the two-layer fixture.
+`NONE` omitted colors. Set `mesh.color_attributes.render_color_index` to the
+intended layer before export; the exporter uses the render layer, not merely the
+paint/UI active selection. Explicit `vertex_color='MATERIAL'` is also supported
+and agrees with the omitted option on Blender 5.2.2. `NAME` is not exposed; it
+would need a separate named-layer argument. `all_vertex_colors` accepts only
+`None` or a bool.
+
+Invalid values and unavailable native enum modes fail before object iteration,
+selection changes or export. There is no fallback to a different export mode.
+The overrides change no color layers, shader nodes, texture files or material
+slots. Existing selection/active-object restoration and morph pruning still apply. This is a
+Python authoring API addition, not a JSON operation/schema or installed-release
+promise; material interpretation and appearance still need consumer inspection.
+
+Run `blender --background --factory-startup --python
+tests/blender_vertex_color_export.py -- --output-dir <private-output-dir>`.
+The real Blender fixture checks GLB color accessors, native/default behavior,
+unchanged PBR texture slots and embedded image payloads, invalid-input effects,
+and selection restoration on success and native export failure. Read its
+`report.json` completion marker when a Store launcher returns early.
+
+## Image materials with authored UVs
+
+The Blender Python API adds `image_material` alongside the scalar `material` API:
+
+```python
+from agent_meshes_author import image_material
+
+denim = image_material('Denim',
+    base_color='textures/denim_diff.jpg',
+    normal='textures/denim_nor_gl.jpg',
+    roughness='textures/denim_rough.jpg',
+    uv_layer='FabricUV', normal_strength=.28, metalness=0)
+```
+
+All three still-image files, the UV layer name and normal strength are required.
+Base color uses sRGB; roughness and tangent-space OpenGL (+Y) normals use
+Non-Color. One named UV map feeds all three repeating samplers. Roughness reads
+the source directly; base color has a white factor. No tint, noise or texture
+resampling is added. `normal_strength` accepts finite 0..2 and `metalness`
+accepts finite 0..1; choose strength by material and inspect at gameplay distance.
+For example, shallow fabric weave usually needs less strength than deep leather
+creases. A valid range does not establish a believable finish.
+
+Assign the material to meshes containing the exact named UV layer. Author UVs
+before export: a one-unit UV span repeats one source tile. For a physical
+0.254-m tile, a 0.508-m garment span needs two UV units. Use the provider's
+measured tile dimensions, including different U/V sizes, and keep the same
+coordinates for color, normals and roughness. This helper does not unwrap,
+infer a garment's scale, fix seams, or check a mesh that is assigned later.
+
+Files and scalar inputs are checked before creating Blender data. Image decode
+or construction failure removes the helper's new images/material. Each role
+gets an independent packed image datablock, preserving the source bytes and
+the color-space settings of images already in the scene. `export_glb` embeds
+the textures; Blender may repack roughness into glTF's green channel. Source
+files are unchanged. Inspect the exported material and actual UVs; packing is
+not visual acceptance. This addition does not extend JSON operations/schema.
+
+Run the actual Blender verification with `blender --background --factory-startup
+--python tests/blender_image_material.py -- --output-dir <private-output-dir>`.
+Optional `--asset-root <directory>` verifies three Poly Haven input manifests
+and their nine original files; the self-contained export proof needs no download.
+Read `<private-output-dir>/report.json` for completion, especially when a Store
+launcher returns before Blender finishes. The fixture checks named secondary
+UVs, exported texture roles/normal strength, packed original bytes, unchanged
+source hashes and preexisting images, and invalid-input cleanup.
 
 ## Expressions on an existing sculpt
 
@@ -289,6 +380,53 @@ in the repository README produces a synchronized, offline review page. Blender r
 run with `npx vitest run tests/retarget-blender.test.ts`; the NumPy helpers run with
 `python tests/retarget.py`.
 
+### Sampled motion diagnostics
+
+Python-only `agent_meshes_retarget.audit_clip_motion(arm, action, markers=('ball_l',
+'ball_r'), root='pelvis', *, sample_count=241, fps=None, action_slot=None, **options)`
+samples actual evaluated world bone heads, including both action endpoints. `fps=None`
+uses the scene's `fps / fps_base`; override only with the action's known time base.
+An action with multiple slots requires its explicit OBJECT `action_slot`. The helper
+temporarily isolates the action from NLA and restores the prior action/slot, blend,
+influence, NLA mute flags, frame/subframe, bone basis and armature object transform
+channels (including delta transforms and rotation mode), including on failure.
+Other animated RNA, such as constraint parameters and custom properties, is not
+snapshotted; audit an isolated armature copy for actions that animate those properties.
+Untracked bone channels start from rest; constraints remain active. This sampler
+is checked with Blender 5.2.2; it is not a
+JSON operation or a guarantee about other Blender APIs.
+
+```python
+from agent_meshes_retarget import audit_clip_motion
+report = audit_clip_motion(arm, actions['Jog_Fwd_Loop'], forward=(0, 1, 0),
+                           scenario_speed=3.1, sample_count=481)
+```
+
+`analyze_motion_samples(times, markers, root_positions, *, forward=(0,1,0),
+up=(0,0,1), height_quantile=.25, height_margin=.02, scenario_speed=None)` also
+accepts independently sampled data: strictly increasing seconds, named Nx3 world
+positions in metres and Nx3 root positions. Forward/up are normalized, perpendicular
+axes in that same frame. Velocities subtract root translation. Low candidates use
+interval-start world heights, each marker's chosen quantile plus margin; these are
+explicit diagnostic parameters, not physical contact tolerances.
+
+The report separates low backward/forward/stationary interval counts and duration
+coverage, contiguous backward time ranges, p10/p50/p90 projected speeds, forward
+excursion, sampled maximum speed/acceleration and relative endpoint position/velocity
+gaps. Quantiles weight samples equally; compare duration coverage with uneven times.
+`backwardEquivalentCycleDistance` is median low backward speed × clip duration;
+its scenario-speed cycle time is a calibration consequence, **not measured stride**.
+No backward samples yields `None`, not a manufactured minimum. No automatic quality
+verdict or universal thresholds are imposed.
+
+Low bone height does not establish deformed sole contact, support, exported
+interpolation or the destination's blending/IK. Re-import the delivered GLB and
+compare adequate sampling densities, then inspect translated runtime motion at the
+actual speed and transitions. See [consumer motion lessons](references/consumer-patterns.md#reuse-humanoid-rigs-with-their-actual-rest-frames).
+Run `python tests/motion_audit.py` for NumPy checks, or execute the same file with
+Blender `--background --factory-startup --python ... -- --report <path>` for actual
+native sampling/state tests and a hash-bound JSON receipt.
+
 ## Creating geometry
 
 The build runner adds this directory to Python's import path. Import the module
@@ -471,6 +609,10 @@ no MPFB or GPL code.
 - **Loading and shaping.** `load_head()` returns an `Hm08Head`. `head_shape(years, gender, stylize, shape)` composes
   the macros (`macro_weights`), the features (`feature_weights`, over the `FEATURES` controls) and the stylize target.
   `to_blender`/`from_blender` convert between hm08's frame and Blender's.
+- **Skin atlas UVs.** `head.uv`, `head.face_uv` and `head.kind_face_uv('body')` retain the original per-corner
+  texture coordinates and seams; `head.source_faces` identifies the pinned OBJ faces. See the
+  [data guide and Blender loop assignment](data/hm08/README.md#original-skin-uvs) before using a licensed skin image.
+  Topology-changing construction and glTF material compatibility still require exported-asset inspection.
 - **Measuring.** `face_landmarks(vertices, faces, hm08_eyes(head, vertices))` measures the eyes, profile, mouth and
   outline. `depth_map`, `eyeball_shows`, `eye_crease_folds` and `flipped` are the checks the face build uses.
 - **Building a face.** `character_face(years, gender, center, radii, shape, neck_z='chin', neck=...)` fits the head

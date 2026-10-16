@@ -441,6 +441,80 @@ def material(name, color, metalness=0, roughness=0.4, emission=None, emission_st
     return mat
 
 
+def image_material(name, *, base_color, normal, roughness, uv_layer,
+                   normal_strength, metalness=0.0):
+    """Create a packed, repeating PBR material from three explicit image roles.
+
+    Supply an sRGB base-color image, tangent-space OpenGL (+Y) normal and linear
+    roughness image. All channels use the same named, caller-authored UV layer.
+    UV coordinates already define physical tile scale; this helper does not
+    unwrap, rescale, tint or infer materials. Normal strength is explicit 0..2.
+    Every mesh using this material must contain `uv_layer` before export.
+    """
+    from pathlib import Path
+    name = _name(name)
+    if not isinstance(uv_layer, str) or not uv_layer.strip():
+        raise ValueError('uv_layer must be a non-empty UV layer name')
+    normal_strength = _number(normal_strength, 'Normal strength')
+    metalness = _number(metalness, 'Metalness')
+    if not 0 <= normal_strength <= 2:
+        raise ValueError('Normal strength must be in 0..2')
+    if not 0 <= metalness <= 1:
+        raise ValueError('Metalness must be in 0..1')
+    paths = {}
+    for role, value in [('base_color', base_color), ('normal', normal), ('roughness', roughness)]:
+        try:
+            path = Path(value).resolve(strict=True)
+            if not path.is_file():
+                raise ValueError(f'{role} must reference a regular image file')
+            with path.open('rb') as source:
+                if not source.read(1):
+                    raise ValueError(f'{role} image file is empty')
+        except (OSError, TypeError, RuntimeError) as exc:
+            raise ValueError(f'{role} must reference a readable image file: {value!r}') from exc
+        paths[role] = path
+    import bpy
+    images, mat = [], None
+    try:
+        # Separate datablocks avoid changing color space on images already used
+        # elsewhere, including when one path is intentionally used in two roles.
+        by_role = {}
+        for role, path in paths.items():
+            image = bpy.data.images.load(str(path), check_existing=False)
+            images.append(image)
+            if image.source != 'FILE' or min(image.size) < 1:
+                raise ValueError(f'{role} must be a decodable still image')
+            image.colorspace_settings.name = 'sRGB' if role == 'base_color' else 'Non-Color'
+            image.pack()
+            by_role[role] = image
+        mat = material(name, (1, 1, 1), metalness=metalness, roughness=1)
+        nodes, links = mat.node_tree.nodes, mat.node_tree.links
+        shader = nodes.get('Principled BSDF')
+        uv = nodes.new('ShaderNodeUVMap')
+        uv.uv_map = uv_layer
+        textures = {}
+        for role, image in by_role.items():
+            node = nodes.new('ShaderNodeTexImage')
+            node.label = role
+            node.image, node.extension = image, 'REPEAT'
+            links.new(uv.outputs['UV'], node.inputs['Vector'])
+            textures[role] = node
+        normal_map = nodes.new('ShaderNodeNormalMap')
+        normal_map.space, normal_map.uv_map = 'TANGENT', uv_layer
+        normal_map.inputs['Strength'].default_value = normal_strength
+        links.new(textures['base_color'].outputs['Color'], shader.inputs['Base Color'])
+        links.new(textures['roughness'].outputs['Color'], shader.inputs['Roughness'])
+        links.new(textures['normal'].outputs['Color'], normal_map.inputs['Color'])
+        links.new(normal_map.outputs['Normal'], shader.inputs['Normal'])
+        return mat
+    except Exception as exc:
+        if mat is not None:
+            bpy.data.materials.remove(mat)
+        for image in images:
+            bpy.data.images.remove(image)
+        raise ValueError(f'Could not create image material {name!r}: {exc}') from exc
+
+
 def shape_key(obj, name, vertices):
     """Create a zero-rest morph. The caller must preserve vertex correspondence."""
     name = _name(name)
@@ -457,7 +531,7 @@ def shape_key(obj, name, vertices):
     return key
 
 
-def export_glb(path, objects, animation_mode='ACTIONS'):
+def export_glb(path, objects, animation_mode='ACTIONS', *, vertex_color=None, all_vertex_colors=None):
     """Export selected objects with PBR materials, skins, morphs and animation.
 
     Geometry modifiers must be resolved by the author before adding morphs;
@@ -465,10 +539,30 @@ def export_glb(path, objects, animation_mode='ACTIONS'):
     restored after export. This function deliberately preserves authored weights.
     Morph deltas that are float noise (at most a micron, or 1e-4 of a normal) are
     dropped after export and the rest stored as sparse accessors (`prune_glb_morphs`).
+    vertex_color=None leaves Blender's default unchanged; MATERIAL follows the
+    material, ACTIVE selects the render color, and NONE omits vertex colors. Explicit modes require
+    native exporter support and are checked before selection is changed.
+    all_vertex_colors=None preserves the native default; explicit bool controls
+    native export_all_vertex_colors without modifying/reordering color layers.
     """
     import bpy
     if animation_mode not in ('ACTIONS', 'NLA_TRACKS'):
         raise ValueError('animation_mode must be ACTIONS or NLA_TRACKS')
+    export_options = {}
+    if vertex_color is not None:
+        if not isinstance(vertex_color, str) or vertex_color not in ('MATERIAL', 'ACTIVE', 'NONE'):
+            raise ValueError('vertex_color must be None, MATERIAL, ACTIVE or NONE')
+        prop = bpy.ops.export_scene.gltf.get_rna_type().properties.get('export_vertex_color')
+        if prop is None or vertex_color not in {item.identifier for item in prop.enum_items}:
+            raise ValueError(f'This Blender glTF exporter does not support vertex_color={vertex_color!r}')
+        export_options['export_vertex_color'] = vertex_color
+    if all_vertex_colors is not None:
+        if not isinstance(all_vertex_colors, bool):
+            raise ValueError('all_vertex_colors must be None or a bool')
+        prop = bpy.ops.export_scene.gltf.get_rna_type().properties.get('export_all_vertex_colors')
+        if prop is None or prop.type != 'BOOLEAN':
+            raise ValueError('This Blender glTF exporter does not support all_vertex_colors')
+        export_options['export_all_vertex_colors'] = all_vertex_colors
     objects = list(objects)
     if not objects: raise ValueError('At least one object must be exported')
     previous_selection = list(bpy.context.selected_objects)
@@ -482,7 +576,7 @@ def export_glb(path, objects, animation_mode='ACTIONS'):
             export_apply=False, export_morph=True, export_morph_normal=True,
             export_attributes=any(obj.type == 'MESH' and '_FACE_REGION' in obj.data.attributes for obj in objects),
             export_animations=True, export_animation_mode=animation_mode, export_skins=True, export_yup=True,
-            export_cameras=False, export_lights=False)
+            export_cameras=False, export_lights=False, **export_options)
         # Blender's exporter drops JSON-shaped custom properties; write root extras (for
         # example the arkit-face/1 contract from set_face_contract) into the GLB directly.
         import json

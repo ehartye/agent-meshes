@@ -102,6 +102,13 @@ Inspect the supporting toes through stance and the full recovery arc; solving a 
 Use the [gait analyzer](../../../src/gait-analysis.ts), with the appropriate reference and explicit interpretation of species limits.
 Movement-range passes do not establish reference-curve correlation, costume clearance, balance or visual approval.
 
+**Craft heuristic — footwear:** shape a boot upper through shaft, ankle, quarters, instep and vamp as a connected
+surface. Two capped tubes can intersect while leaving an artificial shelf or pinched ankle. Fit the welt and sole
+to the actual lower upper boundary, then seat the heel against the sole; a rounded box under an unrelated upper
+can leave floating corners. Add ankle flex and panel seams where construction supports them. Continue a seam to
+its real panel junction or welt rather than ending a decorative stripe on an arbitrary point. Inspect both sides,
+toe profile, rear heel, opening, underside and posed sole contact before material detail.
+
 ## 6. Hands, thumbs and digits
 
 Construct the palm as a shaped mass with a back, a padded side, an edge and a distinct thumb root.
@@ -188,6 +195,14 @@ Continuous joins need compatible boundary positions and deformation; proximity a
 Keep enough interior anatomy to cover views through open sleeves and necklines; do not hide a gap with a favorable camera.
 Place hems, capped collar ends and thickness so the inside has a designed finish.
 
+**Craft heuristic — controlled rigid clothing:** if body and sleeve deliberately have separate rigid controls,
+design matching insertion contours and hidden overlap through the actual pitch limits. Welding them in rest does
+not make independent rigid transforms deform like skin. For bent sleeve sweeps, preserve a coherent transported
+frame; a fixed-axis frame can flip near an elbow and create a pinched or twisted section. Fit plackets, buttons,
+belts and stitching to sampled garment surfaces instead of unrelated bounding boxes. Inspect the waist and crotch
+as a continuous clothed anatomical volume; a round closure between two legs can read as a hanging ball even when
+it removes a technical hole. These are construction checks, not a substitute for a deforming rig where required.
+
 Inspect bare garment cross-sections before skinning; exclude neighboring arms or neck from the geometry source itself.
 Restricted weight donors cannot fix a cloth envelope already built from the wrong body surface.
 Use [anatomical skin sources](../README.md#selecting-anatomical-skin-sources) and [posed fitting](../README.md#fitting-garment-offsets-through-animation).
@@ -198,12 +213,32 @@ Separate hair volume from attachment: roots must meet the scalp, and a beard mus
 Check which hair or beard areas ride facial deformation versus the head, neck or independent motion.
 Accessories need support and attachment evidence, not merely a penetration-free position near the body.
 
+**Craft heuristic — hat and vest landmarks:** locate the sweatband's inner ring
+against the actual head crown, brow and temples in the head's frame, rather than
+placing the whole hat from an assembled bounding-box maximum. Inspect the band
+and brim from eye level and side to distinguish an intended tall crown from a
+floating hat. A vest needs real front-to-back shoulder panels over the clavicular
+region, continuous armholes and neckline, and deliberate seam/lining thickness.
+Test those surfaces in the exported jog, arm raise and attack; a shirt visible
+through a missing shoulder panel is a construction issue. Follow the
+[landmark and posed-export procedure](character-construction.md#4-construct-connected-clothing-and-attachments)
+before changing material response.
+
 ## 11. Identity, materials and geometry budget
 
 Preserve the recognizable silhouette, facial depth, gesture and costume hierarchy before tertiary texture.
 Use color/value grouping to guide attention; verify identity in neutral lighting and at the destination camera distance.
 Gloss and outlines can clarify a style but can also hide seams or exaggerate tiny surface defects.
 Check skin, cloth, hair, ceramic, metal and glass with finishes appropriate to the brief; material polish cannot repair anatomy.
+Compare suspect finishes with the same camera, lighting, exposure and exported pose before changing the maps.
+The saloon's material-only response retains exact image/BIN bytes while reducing leather/fabric normal strength,
+drying skin response and broadening metal highlights; decoded material fields and matching native close-ups
+establish that bounded change. They do not repair coarse grain already in albedo, synthetic facial construction,
+missing cloth folds or uniform wear. Texture provenance and a valid GLB are separate from believable finish.
+For a post-export adjustment, allow only intended material fields and verify the entire remaining JSON and BIN
+unchanged, including UVs, weights, clips and embedded images. Retain the old model/image hashes and capture new
+appearance evidence; identical geometry does not make old material renders current. Scalar values are asset
+calibration, not universal presets. See [photographic materials](../README.md#image-materials-with-authored-uvs).
 Agree the target platform, camera range, animation needs and geometry/material budget before high-detail construction.
 Spend geometry on visible contour changes and deforming regions; reserve texture/baking for suitable surface detail.
 Measure exported triangles, material splits and morph cost; a low native polygon count is not the complete delivery cost.

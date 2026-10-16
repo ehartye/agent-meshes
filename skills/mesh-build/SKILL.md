@@ -6,6 +6,11 @@ when_to_use: Use when asked to export or verify a GLB, render or screenshot a mo
 
 # Mesh build and delivery
 
+For Blender process flags, background Python jobs and Windows Store completion,
+read the [Blender CLI reference](../../scripts/blender_lib/references/blender-cli.md).
+For native `bpy`, modifiers, animation and helper selection, read the
+[Blender Python API reference](../../scripts/blender_lib/references/blender-api.md).
+
 Before delivering to another app or engine, read
 [consumer patterns](../../scripts/blender_lib/references/consumer-patterns.md).
 Record the exact nodes, material roles, sockets, clip/morph controls, frames and
@@ -13,6 +18,9 @@ budgets the consumer addresses; check them on the final optimized output. For
 reference-rig and motion review, use the shipped
 [neutral mannequins](../../scripts/blender_lib/references/mannequin-library.md)
 and existing comparison viewer.
+
+The [organized rig library](../../scripts/blender_lib/references/rig-library.md)
+adds nine donor banks, Toy Maker tools and a protected offline demo generator.
 
 Load `mesh-setup` first. Commands run through the managed launcher
 (`node "<plugin-root>/scripts/run-managed.js" ...`, written `mesh` below).

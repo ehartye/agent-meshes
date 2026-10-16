@@ -6,7 +6,8 @@ Every source file is fetched from its pinned commit (see SOURCES.json beside the
 SHA-256 before use. The files are read as plain data (the base mesh .obj, vertex-group and mirror tables and .target
 delta files); no MakeHuman or MPFB program code is used or vendored. The output keeps the head and upper neck of the
 body mesh, its helper geometry there (eyes, teeth, tongue, lashes), the joint helper cubes' centers, the mirror
-table and every listed target restricted to those vertices.
+table and every listed target restricted to those vertices. Original face-corner UVs and source-face indices are
+retained separately from geometry vertices so atlas seams survive shape changes.
 
 Units stay MakeHuman's: decimeters, Y up, the face looks down +Z, the character's left is +X. Target deltas have three
 decimals in the sources, so they are stored exactly as int16 thousandths.
@@ -47,13 +48,17 @@ def fetch(entry, cache):
 
 
 def parse_obj(text):
-    vertices, faces = [], []
+    vertices, faces, uv, face_uv = [], [], [], []
     group = None
     for line in text.splitlines():
         if line.startswith('v '): vertices.append([float(x) for x in line.split()[1:4]])
+        elif line.startswith('vt '): uv.append([float(x) for x in line.split()[1:3]])
         elif line.startswith('g '): group = line.split()[1]
-        elif line.startswith('f '): faces.append((group, [int(t.split('/')[0]) - 1 for t in line.split()[1:]]))
-    return np.array(vertices, dtype=np.float64), faces
+        elif line.startswith('f '):
+            corners = [token.split('/') for token in line.split()[1:]]
+            faces.append((group, [int(corner[0]) - 1 for corner in corners]))
+            face_uv.append([int(corner[1]) - 1 if len(corner) > 1 and corner[1] else -1 for corner in corners])
+    return np.array(vertices, dtype=np.float64), faces, np.array(uv, dtype=np.float64).reshape(-1, 2), face_uv
 
 
 def parse_target(text):
@@ -78,22 +83,28 @@ def main():
     sources = json.loads((OUT / 'SOURCES.json').read_text(encoding='utf-8'))
     files = {entry['name']: entry for entry in sources['files']}
 
-    vertices, faces = parse_obj(fetch(files['base.obj'], cache).decode('utf-8'))
+    vertices, faces, uv, face_uv = parse_obj(fetch(files['base.obj'], cache).decode('utf-8'))
     groups = json.loads(fetch(files['basemesh_vertex_groups.json'], cache))
     mirror_rows = [line.split() for line in fetch(files['hm08.mirror'], cache).decode('utf-8').splitlines() if line.strip()]
 
     # The head: body faces wholly above the cut, and the helper groups' faces there.
-    keep_faces, kinds = [], []
-    for group, face in faces:
+    keep_faces, kinds, keep_uv, source_faces = [], [], [], []
+    for source_face, (group, face) in enumerate(faces):
         if group != 'body' and group not in HELPERS: continue
         if min(vertices[i][1] for i in face) <= CUT_Y: continue
         keep_faces.append(face)
         kinds.append(group)
+        keep_uv.append(face_uv[source_face])
+        source_faces.append(source_face)
     used = sorted({i for face in keep_faces for i in face})
     local = {old: new for new, old in enumerate(used)}
     quads = np.array([[local[i] for i in face] + [-1] * (4 - len(face)) for face in keep_faces], dtype=np.int32)
     kind_names = ['body'] + list(HELPERS)
     face_kind = np.array([kind_names.index(k) for k in kinds], dtype=np.int8)
+    used_uv = sorted({i for corners in keep_uv for i in corners if i >= 0})
+    uv_local = {old: new for new, old in enumerate(used_uv)}
+    corner_uv = np.array([[uv_local.get(i, -1) for i in corners] + [-1] * (4 - len(corners))
+                          for corners in keep_uv], dtype=np.int32)
 
     mirror = np.full(len(used), -1, dtype=np.int32)
     for row in mirror_rows:
@@ -106,6 +117,7 @@ def main():
         'rest': vertices[used].astype(np.float64), 'index': np.array(used, dtype=np.int32), 'faces': quads,
         'face_kind': face_kind, 'kind_names': np.array(kind_names), 'mirror': mirror,
         'joint_names': np.array(JOINTS), 'joints': joints,
+        'uv': uv[used_uv], 'face_uv': corner_uv, 'source_faces': np.array(source_faces, dtype=np.int32),
     }
     names = []
     for entry in sources['files']:

@@ -156,6 +156,195 @@ def world_frames(arm, names):
     return {n: (arm.matrix_world @ arm.pose.bones[n].matrix).to_3x3().normalized() for n in names}
 
 
+def analyze_motion_samples(times, markers, root_positions, *, forward=(0, 1, 0), up=(0, 0, 1),
+                           height_quantile=.25, height_margin=.02, scenario_speed=None):
+    """Diagnose sampled world marker positions in metres and seconds, without a quality verdict.
+
+    Markers maps names to Nx3 positions; root_positions is Nx3. Velocities are root-relative;
+    low-height candidates use each interval's starting world height, not inferred sole contact.
+    Forward must be perpendicular to up. Include the closing sample to inspect a claimed loop.
+    Quantiles are unweighted sample quantiles; duration coverage is also reported for uneven times.
+    """
+    def points(value, label):
+        result = np.asarray(value, dtype=float)
+        if result.shape != (len(t), 3) or not np.isfinite(result).all():
+            raise ValueError(f'{label} must contain one finite 3-vector per time')
+        return result
+
+    def axis(value, label):
+        result = np.asarray(value, dtype=float)
+        if result.shape != (3,) or not np.isfinite(result).all() or np.linalg.norm(result) == 0:
+            raise ValueError(f'{label} must be a finite nonzero 3-vector')
+        return result / np.linalg.norm(result)
+
+    t = np.asarray(times, dtype=float)
+    if t.ndim != 1 or len(t) < 3 or not np.isfinite(t).all() or np.any(np.diff(t) <= 0):
+        raise ValueError('times must contain at least three finite strictly increasing seconds')
+    f, u = axis(forward, 'forward'), axis(up, 'up')
+    if abs(float(f @ u)) > 1e-7:
+        raise ValueError('forward must be perpendicular to up')
+    if not np.isfinite(height_quantile) or not 0 <= height_quantile <= 1:
+        raise ValueError('height_quantile must be between zero and one')
+    if not np.isfinite(height_margin) or height_margin < 0:
+        raise ValueError('height_margin must be finite and nonnegative')
+    if scenario_speed is not None and (not np.isfinite(scenario_speed) or scenario_speed <= 0):
+        raise ValueError('scenario_speed must be finite and positive')
+    root = points(root_positions, 'root_positions')
+    if not markers:
+        raise ValueError('markers must not be empty')
+    dt = np.diff(t)
+    duration = float(t[-1] - t[0])
+
+    def quantiles(values):
+        if len(values) == 0:
+            return None
+        return dict(zip(('p10', 'p50', 'p90'), map(float, np.quantile(values, [.1, .5, .9]))))
+
+    def runs(mask):
+        # A run touching both ends stays split: loop continuity has not been established.
+        indices = np.flatnonzero(mask)
+        chunks = np.split(indices, np.flatnonzero(np.diff(indices) != 1) + 1)
+        return [[float(t[c[0]]), float(t[c[-1] + 1])] for c in chunks if len(c)]
+
+    out = {'scope': 'sampled marker motion; low height is not skin contact or live IK',
+           'method': 'root-relative finite differences; interval-start world-height gate; signed forward projection',
+           'samples': len(t), 'duration': duration, 'forward': f.tolist(), 'up': u.tolist(),
+           'timeRange': [float(t[0]), float(t[-1])],
+           'intervalSeconds': {'minimum': float(dt.min()), 'maximum': float(dt.max())},
+           'heightQuantile': float(height_quantile), 'heightMargin': float(height_margin),
+           'scenarioSpeed': None if scenario_speed is None else float(scenario_speed),
+           'rootTravel': (root[-1] - root[0]).tolist(), 'markers': {}}
+    for name, values in markers.items():
+        p = points(values, f'marker {name}')
+        rel = p - root
+        velocity = np.diff(rel, axis=0) / dt[:, None]
+        projected = velocity @ f
+        heights = p[:-1] @ u
+        ceiling = float(np.quantile(heights, height_quantile) + height_margin)
+        low = heights <= ceiling
+        backward, recovery = low & (projected < 0), low & (projected > 0)
+        speeds = quantiles(-projected[backward])
+        equivalent = None if speeds is None else speeds['p50'] * duration
+        acceleration = np.diff(velocity, axis=0) / ((dt[:-1] + dt[1:]) / 2)[:, None]
+        speed_norm = np.linalg.norm(velocity, axis=1)
+        acceleration_norm = np.linalg.norm(acceleration, axis=1)
+        fastest = int(np.argmax(speed_norm))
+        sharpest = int(np.argmax(acceleration_norm))
+        out['markers'][name] = {
+            'forwardExcursion': float(np.ptp(rel @ f)),
+            'lowHeight': {'ceiling': ceiling, 'intervals': int(low.sum()),
+                          'durationFraction': float(dt[low].sum() / duration),
+                          'backwardIntervals': int(backward.sum()),
+                          'forwardIntervals': int(recovery.sum()),
+                          'stationaryIntervals': int((low & (projected == 0)).sum()),
+                          'backwardDurationFraction': float(dt[backward].sum() / duration),
+                          'backwardRuns': runs(backward),
+                          'absoluteForwardSpeed': quantiles(np.abs(projected[low])),
+                          'backwardSpeed': speeds,
+                          'backwardEquivalentCycleDistance': equivalent,
+                          'backwardCycleSecondsAtScenarioSpeed':
+                              None if equivalent is None or scenario_speed is None else equivalent / scenario_speed},
+            'loop': {'positionGap': float(np.linalg.norm(rel[-1] - rel[0])),
+                     'velocityGap': float(np.linalg.norm(velocity[-1] - velocity[0]))},
+            'temporal': {'maximumSpeed': float(speed_norm[fastest]),
+                         'maximumSpeedInterval': [float(t[fastest]), float(t[fastest + 1])],
+                         'maximumAcceleration': float(acceleration_norm[sharpest]),
+                         'maximumAccelerationBetweenIntervalMidpoints':
+                             [float((t[sharpest] + t[sharpest + 1]) / 2),
+                              float((t[sharpest + 1] + t[sharpest + 2]) / 2)]}}
+    return out
+
+
+def audit_clip_motion(arm, action, markers=('ball_l', 'ball_r'), root='pelvis', *,
+                      sample_count=241, fps=None, action_slot=None, **analysis_options):
+    """Sample an actual Blender action's evaluated world bone heads, including both endpoints.
+
+    Constraints remain active; NLA tracks are temporarily muted. Restore action/slot, pose,
+    armature object transforms (including deltas), frame/subframe and action/NLA settings
+    even on failure. Other animated RNA, such as constraint parameters and custom properties,
+    is not snapshotted: use an isolated armature copy for actions that animate such properties.
+    This does not sample skinned soles, exported interpolation, blending, root translation in
+    a game, or live runtime IK.
+    """
+    import bpy
+    if isinstance(sample_count, bool) or not isinstance(sample_count, int) or sample_count < 3:
+        raise ValueError('sample_count must be an integer of at least three')
+    names = list(markers)
+    if not names or len(set(names)) != len(names):
+        raise ValueError('markers must be nonempty and unique')
+    for name in [root, *names]:
+        if name not in arm.pose.bones:
+            raise ValueError(f'Unknown bone: {name}')
+    scene = bpy.context.scene
+    rate = scene.render.fps / scene.render.fps_base if fps is None else fps
+    if not np.isfinite(rate) or rate <= 0:
+        raise ValueError('fps must be finite and positive')
+    start, end = map(float, action.frame_range)
+    if not end > start:
+        raise ValueError('action must have a positive frame range')
+    if action_slot is None:
+        if len(action.slots) != 1:
+            raise ValueError('action_slot is required unless the action has exactly one slot')
+        action_slot = action.slots[0]
+    if action_slot not in list(action.slots) or action_slot.target_id_type != 'OBJECT':
+        raise ValueError('action_slot must be an OBJECT slot of the supplied action')
+    had_animation = arm.animation_data is not None
+    data = arm.animation_data_create()
+    prior_action, prior_slot = data.action, data.action_slot
+    prior_blend, prior_influence = data.action_blend_type, data.action_influence
+    prior_tracks = [(track, track.mute) for track in data.nla_tracks]
+    prior_frame = (scene.frame_current, scene.frame_subframe)
+    pose_channels = ('location', 'rotation_euler', 'rotation_quaternion', 'rotation_axis_angle', 'scale')
+    prior_pose = {bone.name: {channel: tuple(getattr(bone, channel)) for channel in pose_channels}
+                  for bone in arm.pose.bones}
+    object_channels = (*pose_channels, 'delta_location', 'delta_rotation_euler',
+                       'delta_rotation_quaternion', 'delta_scale')
+    prior_object = {channel: tuple(getattr(arm, channel)) for channel in object_channels}
+    prior_object_rotation_mode = arm.rotation_mode
+    rows = {name: [] for name in [root, *names]}
+    try:
+        data.action = action
+        data.action_slot = action_slot
+        data.action_blend_type, data.action_influence = 'REPLACE', 1.0
+        for track, _ in prior_tracks:
+            track.mute = True
+        # An action can leave some channels untracked. Sample those from rest,
+        # rather than inheriting the caller's last manually posed bone values.
+        for bone in arm.pose.bones:
+            bone.matrix_basis.identity()
+        for frame in np.linspace(start, end, sample_count):
+            integer = math.floor(frame)
+            scene.frame_set(integer, subframe=float(frame - integer))
+            evaluated = arm.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            for name in rows:
+                rows[name].append(tuple(evaluated.matrix_world @ evaluated.pose.bones[name].head))
+        result = analyze_motion_samples(np.linspace(0, (end - start) / rate, sample_count),
+                                        {name: rows[name] for name in names}, rows[root], **analysis_options)
+        result['native'] = {'blenderVersion': bpy.app.version_string, 'action': action.name,
+                            'actionSlot': action_slot.identifier, 'root': root,
+                            'frameRange': [start, end], 'fps': float(rate)}
+        return result
+    finally:
+        data.action = prior_action
+        if prior_action is not None:
+            data.action_slot = prior_slot
+        data.action_blend_type, data.action_influence = prior_blend, prior_influence
+        for track, mute in prior_tracks:
+            track.mute = mute
+        scene.frame_set(prior_frame[0], subframe=prior_frame[1])
+        # Restore raw channels after the previous action/frame has evaluated: without
+        # a prior action Blender retains the last sampled object's transform values.
+        arm.rotation_mode = prior_object_rotation_mode
+        for channel, values in prior_object.items():
+            setattr(arm, channel, values)
+        for name, channels in prior_pose.items():
+            for channel, values in channels.items():
+                setattr(arm.pose.bones[name], channel, values)
+        bpy.context.view_layer.update()
+        if not had_animation:
+            arm.animation_data_clear()
+
+
 def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, neutral=None):
     """Bake `action` (on ref_arm) onto `arm` by copying every shared bone's world orientation each frame; the root
     bone's travel from its rest is scaled by `travel_scale`. Returns the new action.

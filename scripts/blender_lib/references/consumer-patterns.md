@@ -101,6 +101,22 @@ of primitives still needs purposeful cross-sections. Avoid capped limbs leaving
 shelves at a junction, thin fins pasted onto skin and garments tracing every
 body hollow. Preserve those shape decisions during reduction and posed fitting.
 
+A fixed furniture footprint does not require a block silhouette. The saloon's
+second environment response retained its table/chair bounds while adding turned
+supports, eased tabletop edges, depressed seats and joined curved back members.
+Check actual member intersections, seat depth, ground contact and the complete
+posed/assembled bounds. Wood grain should follow each member's length; planar
+caps need a different UV projection from a turned side. Keep diffuse, normal and
+roughness coordinates aligned. Restrained contact wear and finish variation
+support construction; arbitrary noise over the photograph cannot supply it.
+
+For members that become gameplay cover, retain their slope, radius and finite
+end treatment in the handoff. A sloped round rail's enclosing box can block empty
+space above its low end; clipping only to its centerline can omit the beam's
+upper half. Compare the consumer's cover proxy with actual exported/rendered
+member intersections, including endpoint rims and grazing rays. Camera padding
+is a separate consumer policy. Semantic collision export remains planned.
+
 Use stable parallel-transport frames for sweeps. Pin contact rings across morphs
 and use the same explicit initial normal for a family of shapes. Check outward
 winding, end caps and shading separately. An open path needs its intended caps;
@@ -118,10 +134,93 @@ materials by semantic slot identity, then read the assignments back. Verify
 effective base color, metalness, roughness and transparency before visual review.
 Neither a material filename nor a successful setter proves the rendered finish.
 
+For photographic fabric, leather or skin maps in Blender sources, use
+[image materials with authored UVs](../README.md#image-materials-with-authored-uvs).
+The Python `image_material` helper keeps the three explicit image roles, color
+spaces, named repeating UVs and normal strength coherent and packs the images.
+It does not extend JSON operations, unwrap geometry or choose physical scale.
+Measure sweep circumference/arc length and garment panels in metres, divide
+by the provider's U/V tile dimensions, and correct face-corner wrap seams and
+cap islands before assigning maps. A global-axis projection on a bent sleeve
+can stretch weave while a correct material still exports successfully.
+Repair shoulder, elbow, pelvis and boot junctions before texture polish; check
+those same boundaries through the actual consumer's pose limits.
+
 Use [geometry helpers](../README.md#creating-geometry),
 [lathe contract](../../../src/agent-contract.ts),
 [skin paint](../README.md#skin-paint-skin_tints-paint_vertices-use_vertex_colors)
 and [static props](../README.md#static-props-agent_meshes_props).
+
+## Reuse humanoid rigs with their actual rest frames
+
+Pin donor geometry, skeleton, inverse binds, clips and their separate asset/code
+licenses. Matching bone names do not establish matching rest orientations:
+Mesh2Motion's inspected human-base, addon and standalone human rig differ there.
+Convert the source forward axis once, preserve left/right identity, fit actual
+joint landmarks/lengths and retarget through source/target world rest frames.
+Select the needed clips rather than exporting a whole library into every actor.
+
+Verify the conversion in the actual world matrix and sampled forward/left vectors.
+An imported quaternion-mode armature ignored the saloon wrapper's Euler assignment:
+neutral fitted anchors still passed, while the zombie leaned backward and a hip
+looked malformed. Composing the matrix rotation flipped the measured toe/side axes
+and restored forward hunching without rebuilding the trousers. Check rotation mode
+and posed anatomy before prescribing geometry or weight changes for that symptom.
+
+Capture neutral attachment matrices only after explicitly restoring the fitted
+bind pose and updating the scene. The current reference retargeter clears the
+active action after baking, but leaves the sampled pose transforms/frame; clearing
+an action alone does not reset bone matrices. The saloon's first native checkpoint
+caught grip offsets captured in that final pose. Preserve the caller's declared
+pose ownership instead of assuming any helper returned the model to rest.
+
+Nearby surfaces can belong to different anatomy. A bent hand beside the chest
+must not lend its weights to the shirt; constrain transfer to declared anatomical
+regions, normalize retained influences and inspect shoulder/hip overlap in posed
+surfaces. A zero-unweighted-vertex count does not establish plausible deformation.
+Keep neutral socket measurements distinct from actual animated world sockets.
+Source walk poses and a planted neutral sole do not establish translated contact:
+check real speed, forward/backward/strafe transitions, turns, ramps, stairs and
+idle settling in the destination runtime. New skin contact needs evaluated
+deformed vertices; the earlier rigid POSITION scan cannot certify it.
+
+Audit calibration before naming an unsigned low-foot velocity a stride. Low feet
+can include forward recovery as well as backward stance; record signed projection,
+height selection, phase ranges/coverage and speed quantiles relative to the pelvis
+in explicit forward/up axes. The saloon Jog's reported 5.2156m equivalent cycle
+distance implies about 1.68s per cycle at 3.1m/s. That consequence can look too slow
+for the scenario without proving corrupt motion: denser exported-pose measurements
+still found substantial backward speed. Check source and re-imported interpolation,
+multiple sampling densities, endpoint position/velocity and temporal spikes before
+choosing a clip or cadence. Use the [sampled motion diagnostics](../README.md#sampled-motion-diagnostics);
+they report measurements without imposing a universal gait threshold.
+
+Keep authored motion, calibrated cadence and live sole/stance IK as separate
+evidence. Bone samples and a profile manifest cannot establish planted skinned
+feet, smooth transitions, turns or an attack reaching its target. Verify the
+destination's actual translated speed, start/stop and direction changes, attack
+windup/contact/recovery, pause and retry with the delivered clip/skin. A hit-state
+flag without an observed attack performance does not establish that behavior.
+
+Separate conservative influence bounds from the actual posed surface. In the
+saloon, a hunched head was visibly clear while the body's skin envelope covered
+it: all 48 sampled head rays were initially classified as body hits. Keep the
+box as a broad phase and resolve the nearest non-head triangles before claiming
+visible-head targeting. The corrected actual-pose regression passes all 48.
+
+Measure surface-query cost in the destination. The saloon's collapse scanned
+every support vertex repeatedly during catch-up frames. Exact indexed world
+queries, bounded presentation batching and cached Float64 skin matrices reduced
+that work without replacing the skin with an approximate hull. The matrix
+comparison retained all vertices and found zero differences over 5.12 million
+comparisons, full collapse and reset on ground, stairs and gallery. That CPU
+equivalence preserves the earlier sparse native poses; it does not establish
+browser frame pacing or continuous artistic quality. Keep captured source
+identities and the new comparison separate when reusing unchanged images.
+
+These are source-inspected and native-checkpoint lessons, not a completed saloon
+motion acceptance. See [reference-rig helpers](../README.md#fitting-a-reference-rig)
+and the actual [retarget implementation](../agent_meshes_retarget.py).
 
 ## Make control composition and mutation ownership explicit
 

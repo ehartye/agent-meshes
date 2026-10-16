@@ -6,6 +6,7 @@ import type { Puppet } from '../render/puppet.ts';
 import { collectIdTargets } from '../render/id-render.ts';
 import { prepareGlass } from '../render/glass.ts';
 import { parseQuality } from '../render/quality.ts';
+import { fitBoxDistance } from '../render/stage.ts';
 import type { QualityInput } from '../render/quality.ts';
 import type { IdImage, IdRenderOptions } from '../render/id-render.ts';
 import type { GlbInput } from './room.ts';
@@ -83,14 +84,18 @@ export async function mount(container: HTMLElement, options: MountOptions) {
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize);
   observer?.observe(container); resize();
 
+  function fitView(direction: THREE.Vector3, padding: number): void {
+    const box = puppet.bounds(), center = box.getCenter(new THREE.Vector3());
+    const distance = Math.max(fitBoxDistance(box.min.toArray(), box.max.toArray(), direction.toArray(), camera.fov, camera.aspect, padding), 3);
+    camera.far = Math.max(200, distance * 10); camera.updateProjectionMatrix();
+    controls.target.copy(center); camera.position.copy(center).add(direction.normalize().multiplyScalar(distance)); controls.update();
+  }
+
   /** Point the camera at the model from a named direction or an explicit position. */
   function view(spec: ViewName | ViewSpec = 'perspective', padding = 1.8): void {
-    const box = puppet.bounds(), center = box.getCenter(new THREE.Vector3());
     if (typeof spec === 'string') {
-      const distance = Math.max(box.getSize(new THREE.Vector3()).length() * padding, 3);
-      camera.far = Math.max(200, distance * 10); camera.updateProjectionMatrix();
-      camera.position.copy(center).add(viewDirection(spec).normalize().multiplyScalar(distance)); controls.target.copy(center);
-    } else { camera.position.fromArray(spec.position); controls.target.copy(spec.target ? new THREE.Vector3().fromArray(spec.target) : center); }
+      fitView(viewDirection(spec), padding);
+    } else { camera.position.fromArray(spec.position); controls.target.copy(spec.target ? new THREE.Vector3().fromArray(spec.target) : puppet.bounds().getCenter(new THREE.Vector3())); }
     controls.update();
   }
   view(options.view);
@@ -118,10 +123,8 @@ export async function mount(container: HTMLElement, options: MountOptions) {
     view,
     /** Re-fit the camera to the model from the current direction. */
     frame(padding = 1.8): void {
-      const box = puppet.bounds(), center = box.getCenter(new THREE.Vector3());
       const direction = camera.position.clone().sub(controls.target).normalize();
-      const distance = Math.max(box.getSize(new THREE.Vector3()).length() * padding, 3);
-      controls.target.copy(center); camera.position.copy(center).add(direction.multiplyScalar(distance)); controls.update();
+      fitView(direction, padding);
     },
     setBackground(color: string | null): void { scene.background = color ? new THREE.Color(color) : null; if (floor && floor.material instanceof THREE.MeshStandardMaterial && color) floor.material.color.set(color); },
     /** Render one frame now and return it as a PNG data URL; `{id}` returns the ID render instead. */

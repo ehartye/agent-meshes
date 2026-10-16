@@ -6,6 +6,11 @@ when_to_use: Use when asked to make, model, or edit a 3D object, character, crea
 
 # Mesh authoring
 
+When authoring inside Blender, use the
+[Blender Python API reference](../../scripts/blender_lib/references/blender-api.md).
+Starting a background script uses the separate
+[Blender CLI reference](../../scripts/blender_lib/references/blender-cli.md).
+
 For skinned characters, clothing or hair, read the
 [construction checklist](../../scripts/blender_lib/references/character-construction.md)
 before authoring. Preserve approved proportions and define ownership before binding.
@@ -15,6 +20,9 @@ form, anatomy, topology and early deformation decisions. Use the
 when finding a human/alien reference or choosing a rig/motion donor. Before asset
 handoff, consult [consumer patterns](../../scripts/blender_lib/references/consumer-patterns.md)
 for names, frames, material roles and controls that the destination must retain.
+
+For additional animal body plans and Toy Maker's imported rigging tools, use the
+[organized rig library](../../scripts/blender_lib/references/rig-library.md).
 
 Load `mesh-setup` and pass its check before the first command in a session. Every command below
 runs through the managed launcher, written here as `mesh`:
