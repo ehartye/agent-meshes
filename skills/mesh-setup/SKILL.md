@@ -6,6 +6,11 @@ when_to_use: Use before the first agent-meshes command in a session, after a plu
 
 # Agent Meshes setup
 
+For Blender executable invocation, process/output evidence and Store launchers,
+read the [Blender CLI reference](../../scripts/blender_lib/references/blender-cli.md).
+For work inside Blender, use the separate
+[Python API reference](../../scripts/blender_lib/references/blender-api.md).
+
 The plugin cache is a bare git checkout: no dependencies, no built workbench, no browser. Setup
 copies the runtime into `~/.agent-meshes/releases/<version-hash-platform>`, installs lockfile
 dependencies, builds the workbench, installs Chromium for renders, links the CLI, and records a

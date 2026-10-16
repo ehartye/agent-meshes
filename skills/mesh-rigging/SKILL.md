@@ -6,6 +6,11 @@ when_to_use: Use when a model needs a skeleton, when parts should move with join
 
 # Mesh rigging and animation
 
+For native Blender skeletons, weights, modifiers and actions, read the
+[Blender Python API reference](../../scripts/blender_lib/references/blender-api.md).
+For background execution and completion checks, read the
+[Blender CLI reference](../../scripts/blender_lib/references/blender-cli.md).
+
 Before placing character joints or binding skin/garments, read the
 [construction checklist](../../scripts/blender_lib/references/character-construction.md).
 Use anatomical bend locations and explicit donor regions; preserve approved proportions.

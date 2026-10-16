@@ -6,6 +6,11 @@ when_to_use: Use when asked to make, model, or edit a 3D object, character, crea
 
 # Mesh authoring
 
+When authoring inside Blender, use the
+[Blender Python API reference](../../scripts/blender_lib/references/blender-api.md).
+Starting a background script uses the separate
+[Blender CLI reference](../../scripts/blender_lib/references/blender-cli.md).
+
 For skinned characters, clothing or hair, read the
 [construction checklist](../../scripts/blender_lib/references/character-construction.md)
 before authoring. Preserve approved proportions and define ownership before binding.
