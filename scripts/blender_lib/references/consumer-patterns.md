@@ -135,6 +135,36 @@ Use [geometry helpers](../README.md#creating-geometry),
 [skin paint](../README.md#skin-paint-skin_tints-paint_vertices-use_vertex_colors)
 and [static props](../README.md#static-props-agent_meshes_props).
 
+## Reuse humanoid rigs with their actual rest frames
+
+Pin donor geometry, skeleton, inverse binds, clips and their separate asset/code
+licenses. Matching bone names do not establish matching rest orientations:
+Mesh2Motion's inspected human-base, addon and standalone human rig differ there.
+Convert the source forward axis once, preserve left/right identity, fit actual
+joint landmarks/lengths and retarget through source/target world rest frames.
+Select the needed clips rather than exporting a whole library into every actor.
+
+Capture neutral attachment matrices only after explicitly restoring the fitted
+bind pose and updating the scene. The current reference retargeter clears the
+active action after baking, but leaves the sampled pose transforms/frame; clearing
+an action alone does not reset bone matrices. The saloon's first native checkpoint
+caught grip offsets captured in that final pose. Preserve the caller's declared
+pose ownership instead of assuming any helper returned the model to rest.
+
+Nearby surfaces can belong to different anatomy. A bent hand beside the chest
+must not lend its weights to the shirt; constrain transfer to declared anatomical
+regions, normalize retained influences and inspect shoulder/hip overlap in posed
+surfaces. A zero-unweighted-vertex count does not establish plausible deformation.
+Keep neutral socket measurements distinct from actual animated world sockets.
+Source walk poses and a planted neutral sole do not establish translated contact:
+check real speed, forward/backward/strafe transitions, turns, ramps, stairs and
+idle settling in the destination runtime. New skin contact needs evaluated
+deformed vertices; the earlier rigid POSITION scan cannot certify it.
+
+These are source-inspected and native-checkpoint lessons, not a completed saloon
+motion acceptance. See [reference-rig helpers](../README.md#fitting-a-reference-rig)
+and the actual [retarget implementation](../agent_meshes_retarget.py).
+
 ## Make control composition and mutation ownership explicit
 
 Share immutable geometry/textures where useful; isolate each instance's pose,
