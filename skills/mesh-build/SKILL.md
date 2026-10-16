@@ -19,6 +19,9 @@ reference-rig and motion review, use the shipped
 [neutral mannequins](../../scripts/blender_lib/references/mannequin-library.md)
 and existing comparison viewer.
 
+The [organized rig library](../../scripts/blender_lib/references/rig-library.md)
+adds nine donor banks, Toy Maker tools and a protected offline demo generator.
+
 Load `mesh-setup` first. Commands run through the managed launcher
 (`node "<plugin-root>/scripts/run-managed.js" ...`, written `mesh` below).
 

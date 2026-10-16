@@ -1,5 +1,10 @@
 # Blender authoring helpers
 
+Use the [Blender CLI reference](references/blender-cli.md) for process invocation
+and completion; use the [Blender Python API reference](references/blender-api.md)
+for native `bpy`, helpers and export boundaries. Find additional body plans,
+animation banks and Toy Maker tools in the [organized rig library](references/rig-library.md).
+
 Before constructing or repairing a character, read the
 [character construction checklist](references/character-construction.md) for
 landmarks, skin ownership, hands, connected clothing, hair and evidence checks.
