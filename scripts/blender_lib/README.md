@@ -16,6 +16,53 @@ same clip name: the exporter combines them into one GLB animation. The default
 remains `ACTIONS`. Direct callers can use `export_glb(path, objects,
 animation_mode='NLA_TRACKS')`; other values are rejected.
 
+## Image materials with authored UVs
+
+The Blender Python API adds `image_material` alongside the scalar `material` API:
+
+```python
+from agent_meshes_author import image_material
+
+denim = image_material('Denim',
+    base_color='textures/denim_diff.jpg',
+    normal='textures/denim_nor_gl.jpg',
+    roughness='textures/denim_rough.jpg',
+    uv_layer='FabricUV', normal_strength=.28, metalness=0)
+```
+
+All three still-image files, the UV layer name and normal strength are required.
+Base color uses sRGB; roughness and tangent-space OpenGL (+Y) normals use
+Non-Color. One named UV map feeds all three repeating samplers. Roughness reads
+the source directly; base color has a white factor. No tint, noise or texture
+resampling is added. `normal_strength` accepts finite 0..2 and `metalness`
+accepts finite 0..1; choose strength by material and inspect at gameplay distance.
+For example, shallow fabric weave usually needs less strength than deep leather
+creases. A valid range does not establish a believable finish.
+
+Assign the material to meshes containing the exact named UV layer. Author UVs
+before export: a one-unit UV span repeats one source tile. For a physical
+0.254-m tile, a 0.508-m garment span needs two UV units. Use the provider's
+measured tile dimensions, including different U/V sizes, and keep the same
+coordinates for color, normals and roughness. This helper does not unwrap,
+infer a garment's scale, fix seams, or check a mesh that is assigned later.
+
+Files and scalar inputs are checked before creating Blender data. Image decode
+or construction failure removes the helper's new images/material. Each role
+gets an independent packed image datablock, preserving the source bytes and
+the color-space settings of images already in the scene. `export_glb` embeds
+the textures; Blender may repack roughness into glTF's green channel. Source
+files are unchanged. Inspect the exported material and actual UVs; packing is
+not visual acceptance. This addition does not extend JSON operations/schema.
+
+Run the actual Blender verification with `blender --background --factory-startup
+--python tests/blender_image_material.py -- --output-dir <private-output-dir>`.
+Optional `--asset-root <directory>` verifies three Poly Haven input manifests
+and their nine original files; the self-contained export proof needs no download.
+Read `<private-output-dir>/report.json` for completion, especially when a Store
+launcher returns before Blender finishes. The fixture checks named secondary
+UVs, exported texture roles/normal strength, packed original bytes, unchanged
+source hashes and preexisting images, and invalid-input cleanup.
+
 ## Expressions on an existing sculpt
 
 `transfer_sculpt_morphs(vertices, source_vertices, source_faces, source_morphs,

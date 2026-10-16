@@ -441,6 +441,80 @@ def material(name, color, metalness=0, roughness=0.4, emission=None, emission_st
     return mat
 
 
+def image_material(name, *, base_color, normal, roughness, uv_layer,
+                   normal_strength, metalness=0.0):
+    """Create a packed, repeating PBR material from three explicit image roles.
+
+    Supply an sRGB base-color image, tangent-space OpenGL (+Y) normal and linear
+    roughness image. All channels use the same named, caller-authored UV layer.
+    UV coordinates already define physical tile scale; this helper does not
+    unwrap, rescale, tint or infer materials. Normal strength is explicit 0..2.
+    Every mesh using this material must contain `uv_layer` before export.
+    """
+    from pathlib import Path
+    name = _name(name)
+    if not isinstance(uv_layer, str) or not uv_layer.strip():
+        raise ValueError('uv_layer must be a non-empty UV layer name')
+    normal_strength = _number(normal_strength, 'Normal strength')
+    metalness = _number(metalness, 'Metalness')
+    if not 0 <= normal_strength <= 2:
+        raise ValueError('Normal strength must be in 0..2')
+    if not 0 <= metalness <= 1:
+        raise ValueError('Metalness must be in 0..1')
+    paths = {}
+    for role, value in [('base_color', base_color), ('normal', normal), ('roughness', roughness)]:
+        try:
+            path = Path(value).resolve(strict=True)
+            if not path.is_file():
+                raise ValueError(f'{role} must reference a regular image file')
+            with path.open('rb') as source:
+                if not source.read(1):
+                    raise ValueError(f'{role} image file is empty')
+        except (OSError, TypeError, RuntimeError) as exc:
+            raise ValueError(f'{role} must reference a readable image file: {value!r}') from exc
+        paths[role] = path
+    import bpy
+    images, mat = [], None
+    try:
+        # Separate datablocks avoid changing color space on images already used
+        # elsewhere, including when one path is intentionally used in two roles.
+        by_role = {}
+        for role, path in paths.items():
+            image = bpy.data.images.load(str(path), check_existing=False)
+            images.append(image)
+            if image.source != 'FILE' or min(image.size) < 1:
+                raise ValueError(f'{role} must be a decodable still image')
+            image.colorspace_settings.name = 'sRGB' if role == 'base_color' else 'Non-Color'
+            image.pack()
+            by_role[role] = image
+        mat = material(name, (1, 1, 1), metalness=metalness, roughness=1)
+        nodes, links = mat.node_tree.nodes, mat.node_tree.links
+        shader = nodes.get('Principled BSDF')
+        uv = nodes.new('ShaderNodeUVMap')
+        uv.uv_map = uv_layer
+        textures = {}
+        for role, image in by_role.items():
+            node = nodes.new('ShaderNodeTexImage')
+            node.label = role
+            node.image, node.extension = image, 'REPEAT'
+            links.new(uv.outputs['UV'], node.inputs['Vector'])
+            textures[role] = node
+        normal_map = nodes.new('ShaderNodeNormalMap')
+        normal_map.space, normal_map.uv_map = 'TANGENT', uv_layer
+        normal_map.inputs['Strength'].default_value = normal_strength
+        links.new(textures['base_color'].outputs['Color'], shader.inputs['Base Color'])
+        links.new(textures['roughness'].outputs['Color'], shader.inputs['Roughness'])
+        links.new(textures['normal'].outputs['Color'], normal_map.inputs['Color'])
+        links.new(normal_map.outputs['Normal'], shader.inputs['Normal'])
+        return mat
+    except Exception as exc:
+        if mat is not None:
+            bpy.data.materials.remove(mat)
+        for image in images:
+            bpy.data.images.remove(image)
+        raise ValueError(f'Could not create image material {name!r}: {exc}') from exc
+
+
 def shape_key(obj, name, vertices):
     """Create a zero-rest morph. The caller must preserve vertex correspondence."""
     name = _name(name)
