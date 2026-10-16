@@ -61,6 +61,15 @@ Finalize topology-changing garment fitting before expressions on dependent
 meshes, or retain explicit correspondence. Re-check layer order and skin
 ownership after cutting, partitioning, thickness and fitting.
 
+Thin overlapping layers also need compatible deformation fields. In the saloon
+costume pass, independently sampling a donor for a shirt and vest only 6 mm apart
+made the shirt pass through the vest during jogging. A shared, anatomically
+restricted torso/spine field kept those layers together; sleeves retained their
+own arm ownership. This is a demonstrated repair for that costume, not a rule
+to give all clothing identical weights. Nearest-surface projection against an
+unrestricted assembled body also caught nearby forearms and produced false
+leather wings. Restrict the fitting source before projecting or adding ease.
+
 See [weighted clothing cuts](../README.md#cutting-weighted-clothing),
 [posed fitting](../README.md#fitting-garment-offsets-through-animation) and
 [raised neckbands](../README.md#raised-garment-neckbands).
@@ -96,3 +105,11 @@ required delivery checks. Count builds, inspection, CI and bookkeeping against
 the agreed cap; recommend accept, extend by a stated amount, change approach or
 park at the checkpoint. This checklist is a procedure, not proof that a model
 passes its project's quality bar.
+
+For an ambiguous bright patch or exposed inner layer, retain the original world
+ray and repeat it against the same posed, exported triangles before and after
+the repair. Record the actual hit material and geometry: an unchanged jog ray
+in the saloon pass changed from linen to leather, while nearby pale shapes were
+real fingers. A pixel colour alone could not distinguish those causes. Keep the
+failed image/source and matching ray; one repaired sample does not prove full
+motion clearance.
