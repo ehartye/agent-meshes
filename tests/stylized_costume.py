@@ -455,3 +455,4 @@ def load_tests(loader, tests, pattern):
     return scoped_tests(__file__, tests)
 
 if __name__=='__main__':unittest.main()
+# CI scope probe: a Python-only comment must select merge checks.
