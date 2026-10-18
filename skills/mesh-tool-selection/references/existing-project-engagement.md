@@ -23,6 +23,7 @@ Write the answers into your notes (or the project's docs if it has a place). Mar
 |---|---|---|
 | Source of truth for this asset class (script, `.blend`, CAD, code) | | |
 | Engine and version; importer (Interchange, legacy FBX, glTFast, ...) | | |
+| Renderer/render pipeline, physics backend, loader/decoder and package versions | | |
 | Up axis, forward axis, units, pivot convention | | |
 | Naming rules, including collision prefixes and LOD suffixes | | |
 | Materials: slot count, names, vertex-color use, texture policy | | |
@@ -37,8 +38,10 @@ Write the answers into your notes (or the project's docs if it has a place). Mar
 ## 3. Choose the least surprising route
 
 - If the project already imports a format from a tool, extend that tool and format.
-- A new dependency (Blender, Unreal editor automation, a CAD kernel) or a Beta engine feature is a decision for the
-  owner. Put the options in front of them with time, risk, complexity, best-practice distance and maintainability.
+- Respect an already authorized dependency or hybrid trial. For changes outside that scope, explain concrete
+  time, risk, complexity, best-practice and maintainability costs before requesting the missing decision.
+- Distinguish construction-time or seeded generation that can be baked from topology/collision changes that
+  must happen during play. Authoring, import automation and gameplay may use different tools in the same route.
 - When two routes are close, prefer the one the agent can verify without a person.
 
 ## 4. Prove with one asset
@@ -51,13 +54,17 @@ Write the answers into your notes (or the project's docs if it has a place). Mar
 
 ## 5. Leave the project better documented
 
-- Commit the source script or file, its parameters and the one command that rebuilds and verifies the asset.
+- Commit the editable source script or file, its parameters and the command that exports and verifies the asset.
+  A hand-edited `.blend` is a valid source; record which parts require manual work rather than promising code regeneration.
 - Record the filled-in contract card where the project keeps pipeline notes.
 - State what you verified and what you did not ("imports into UE 5.8 via Interchange with names intact"; not
   "works in Unreal").
 
-## Stop and ask when
+## Resolve unknowns before the batch
 
-- The contract card has an unknown that changes the route (importer, collision convention, Nanite policy).
-- The project has no verification at all for this asset class.
-- The chosen route needs a tool the machine does not have; say it is missing rather than substituting.
+- Inspect files and run a small reversible probe for an unknown that changes the route (importer, collision,
+  Nanite policy). Ask only when the remaining decision requires the user's preference or authority.
+- If verification is absent, define a representative import, visual and collision/playback trial; distinguish
+  proposed checks from checks actually run. Missing tests alone do not require abandoning the task.
+- If a required tool is absent, report it and follow the relevant setup guidance within authorized scope.
+  Continue independent inspection; do not silently substitute another tool or claim unrun checks passed.

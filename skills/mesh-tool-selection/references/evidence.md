@@ -5,7 +5,7 @@ Sources captured on 2026-10-18 for the question "which mesh authoring tool, and 
 ## Blender Headless Scripting
 
 - **Blender Python API Gotchas - Internal Data and Python Objects** <https://raw.githubusercontent.com/blender/blender/main/doc/python_api/rst/info_gotchas_internal_data_and_python_objects.rst>
-  - Python wrappers of Blender data have limited lifetime and holding them persistently can cause invalid memory access, so keep your own references.
+  - Python wrappers of Blender data have limited lifetime; reacquire sub-data after mode switches, undo or container/topology edits rather than retaining stale references.
   - Requested names are not guaranteed (length limit, duplicates, empty string), so keep a name-to-datablock dict instead of looking up bpy.data by name.
   - Not established: Official main-branch docs; no headless-specific or performance guidance.
 - **Validating glTF with the Khronos glTF-Validator (Vulkan Docs)** <https://docs.vulkan.org/tutorial/latest/Advanced_glTF/Tooling_Production_Pipeline/03_validation.html>
@@ -81,7 +81,7 @@ Sources captured on 2026-10-18 for the question "which mesh authoring tool, and 
 - **Importing Assets Using Interchange in Unreal Engine 5.8** <https://dev.epicgames.com/documentation/en-us/unreal-engine/importing-assets-using-interchange-in-unreal-engine>
   - Interchange translates imports into a node structure, runs an ordered pipeline stack, then uses factories to create assets, falling back to the legacy framework for unsupported formats; pipelines are customisable in C++, Blueprint or Python.
   - File > Import Into Level works only with glTF and MaterialX, while FBX through Interchange is still Experimental behind Interchange.FeatureFlags.Import.FBX.
-  - Not established: Clipping is truncated mid Python pipeline example; UE 5.8 only; no glTF-specific option details.
+  - Not established: Clipping is truncated mid Python pipeline example; UE 5.8 only; no glTF-specific option details. Its two-format Import Into Level claim disagrees with the broader Import Reference list below; test installed importer/flags rather than silently resolving the discrepancy.
 - **gltfpack README (meshoptimizer)** <https://github.com/zeux/meshoptimizer/blob/master/gltf/README.md>
   - gltfpack quantizes, merges meshes, resamples animations and prunes nodes by default, simplifying only on request via -si R (ratio 0 to 1, default 1).
   - Compressed output (-c/-cc) needs EXT_meshopt_compression (three.js r122+, Babylon.js 5.0+) and default quantization needs KHR_mesh_quantization (three.js r111+, Babylon.js 4.1+).
@@ -93,7 +93,7 @@ Sources captured on 2026-10-18 for the question "which mesh authoring tool, and 
 - **Unreal Interchange Import Reference 5.8** <https://dev.epicgames.com/documentation/en-us/unreal-engine/interchange-import-reference-in-unreal-engine>
   - Import Into Level supports FBX, glTF, GLB and MaterialX with only a subset of the full Interchange options.
   - Custom collision imports by mesh-name prefix: UBX_ (box), UCP_ (capsule), USP_ (sphere), UCX_ (convex), with an option for one convex hull per UCX.
-  - Not established: Version 5.8 options list only; some table cells truncated; no recommendations.
+  - Not established: Version 5.8 options list only; some table cells truncated; no recommendations. The Importing Assets guide above lists only glTF and MaterialX for Import Into Level and documents experimental FBX flags; the captured sources do not settle the difference.
 - **SideFX Houdini 21 Engine APIs and Plug-ins News** <https://www.sidefx.com/docs/houdini/news/21/engine.html>
   - Houdini 21's Unreal plug-in adds PCG Graph integration for HDAs and a Houdini Asset Editor, supporting Unreal 5.5 and 5.6.
   - Houdini adds KineFX glTF import nodes (animation, character, skin) and an Adobe USD file-format plugin for FBX/glTF/SBSAR import and FBX/glTF export.
@@ -182,9 +182,13 @@ Sources captured on 2026-10-18 for the question "which mesh authoring tool, and 
 
 ## Unreal Mesh Import Pipeline (Interchange)
 
+- **Scripting the Unreal Editor Using Python** <https://dev.epicgames.com/documentation/unreal-engine/scripting-the-unreal-editor-using-python?lang=en-US>
+  - Python automates editor asset workflows, including import, LOD generation and level layout; Epic's Python execution nodes are restricted to editor-only Blueprint classes.
+  - Not established: Already captured in the wiki on 2026-09-05, outside this research batch; it does not provide a packaged gameplay Python runtime. Rechecked against the live documentation on 2026-10-18.
 - **Nanite Virtualized Geometry in Unreal Engine 5.8** <https://dev.epicgames.com/documentation/en-us/unreal-engine/nanite-virtualized-geometry-in-unreal-engine>
   - Epic recommends enabling Nanite wherever supported (many triangles, many instances, major occluders, VSM casters); supported materials are Opaque and Masked only, and morph targets are not supported while WPO is limited.
   - Nanite instance count is hard-capped at 16 million streamed-in instances, and it requires DirectX 12 Shader Model 6 hardware; unsupported rendering features include Forward Rendering, MSAA, stereo VR and Lighting Channels.
+  - The page also documents Nanite Skeletal Meshes and enabling Nanite on static, skeletal and geometry-collection assets. StaticMesh-only is not a valid universal rule; check the exact asset, deformation and renderer. Rechecked on 2026-10-18 against the existing clipping and live page.
   - Not established: UE 5.8 specific; no triangle thresholds or guidance on runtime-generated meshes.
 - **Simple versus Complex Collision in Unreal Engine 5.8** <https://dev.epicgames.com/documentation/unreal-engine/simple-versus-complex-collision-in-unreal-engine>
   - Unreal creates both simple (primitives/convex hulls) and complex (trimesh) collision by default and the solver chooses by query type.

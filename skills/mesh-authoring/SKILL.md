@@ -6,9 +6,9 @@ when_to_use: Use when asked to make, model, or edit a 3D object, character, crea
 
 # Mesh authoring
 
-Before the first modelling command on a new asset or an existing project, use
+When the authoring route is not yet settled, or the asset/import contract fails, use
 [mesh-tool-selection](../mesh-tool-selection/SKILL.md) to choose the route (this workspace, a Blender
-script, Unreal or code-CAD) and to read the project's asset pipeline.
+script, Unreal or code-CAD) and to read the project's asset pipeline. Reuse an approved route for routine edits.
 
 When authoring inside Blender, use the
 [Blender Python API reference](../../scripts/blender_lib/references/blender-api.md).

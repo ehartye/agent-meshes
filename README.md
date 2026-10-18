@@ -41,10 +41,12 @@ revision still counts up).
 
 ## Choosing a mesh authoring tool
 
-The `mesh-tool-selection` skill helps pick between the named-part workspace, a Blender headless script, `bpy`
+The [mesh-tool-selection skill](skills/mesh-tool-selection/SKILL.md) helps pick between the named-part workspace, a Blender headless script, `bpy`
 as a module, hand-authored Blender, Unreal editor Python / Geometry Script / C++ procedural meshes and
 code-driven CAD, and says how to engage an existing project's asset pipeline before authoring. Its references
 carry per-route capabilities, costs and failure modes, and the cited evidence behind them.
+Engine-specific guidance covers Unreal, React Three Fiber/three.js, Godot and Unity, including live mesh updates,
+instancing, materials, collision and the evidence needed before claiming native support.
 
 ## Compare rigged motion
 

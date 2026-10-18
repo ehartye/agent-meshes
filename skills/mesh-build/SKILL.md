@@ -134,7 +134,7 @@ For a static prop or a set of them, use `build.json` only; no workspace is neede
 ## Blender-authored static props
 
 Whether a prop belongs in Blender at all (against the workspace, Unreal tools or code-CAD) is decided by
-[mesh-tool-selection](../mesh-tool-selection/SKILL.md); read it first when a project already has an asset pipeline.
+[mesh-tool-selection](../mesh-tool-selection/SKILL.md); read it when establishing or changing the route.
 
 For a prop that needs real booleans, a carved slot, a fluted rim or a sculpted head, author it in Blender
 and export one mesh with one named material. A 12-piece chess set was built this way; every rule below cost

@@ -1,18 +1,23 @@
 ---
 name: mesh-tool-selection
-description: Choose how to author a mesh (agent-meshes named-part workspace, Blender headless script, bpy module, hand-authored Blender, Unreal editor Python or Geometry Script, Unreal C++ procedural meshes, code-driven CAD) and how to engage an existing project's asset pipeline before authoring anything.
-when_to_use: Use before the first modelling command on a new asset or project; when asked "which tool should I use" for a prop, vehicle, scenery piece or runtime-generated mesh; when a project already has meshes, an importer, naming or collision conventions; or when a chosen route fails (collider ignored, Nanite unsupported, exporter dropped data, geometry vanished on import).
+description: "Choose mesh authoring and engine integration tools before a new asset or pipeline: agent-meshes, Blender scripts or bpy, Unreal, R3F, Godot or Unity mesh APIs, or code CAD. Use when asked which tool to use, how to engage an existing asset pipeline, or why an importer drops geometry, ignores colliders or rejects Nanite. Skip routine rendering, rig edits and runtime setup when the route is already settled."
 ---
 
 # Choosing a mesh authoring tool
 
-Do not pick a route by habit. A wrong first choice costs a full round trip (author, export, import, collide,
-verify) before anyone notices. Work in this order:
+Choose separately **where geometry is authored**, **how the engine imports/configures it**, and **what changes
+during play**. A Blender generator plus Unreal import automation is one pipeline, not competing choices.
+For routine work on an approved route, go straight to `mesh-build`, `mesh-rigging` or `mesh-setup`.
+For a new or failing route, work in this order:
+
+For Unreal's editor-baking versus live-geometry branches, use the [Unreal decision tree](references/unreal-decision-tree.md).
+For R3F/three.js, Godot and Unity, read [engine implications](references/engine-implications.md) and
+[engine evidence](references/engine-evidence.md). The authoring tool does not choose the runtime representation.
 
 1. **Engage the project first.** Read what already exists and write down the contract the engine imposes.
    [Existing-project engagement](references/existing-project-engagement.md) has the checklist and a contract card.
 2. **Decide with the questions below**, using the [tool profiles](references/tool-profiles.md) for capabilities,
-   costs and failure modes.
+   costs and failure modes. The [evidence list](references/evidence.md) records sources and their limits.
 3. **Prove with one small asset** through the project's real import, look at the result in the engine, and say
    exactly what you verified. Only then build the batch.
 
@@ -27,32 +32,42 @@ verify) before anyone notices. Work in this order:
 | Unreal editor Python / Interchange pipelines | Importing and configuring many assets the same way, batch commandlets | `mesh verify-unreal` for the import check |
 | Unreal Geometry Script | Editor-time procedural assets that must become real StaticMeshes, or runtime variation | outside this plugin |
 | Unreal C++ procedural meshes | Geometry that depends on game state at run time | outside this plugin |
+| R3F/three.js, Godot or Unity mesh APIs | The project needs native generation or live vertex/topology updates | engine-specific responsibilities in the references above; outside this plugin's authoring runtime |
 | Code-driven CAD (build123d, CadQuery, OpenSCAD) | Exact dimensions, robust Booleans, mechanical parts, analytic measurements | export a GLB, then `mesh verify` here (importing a CAD GLB for rigging is not built yet) |
 
-## Decision questions (stop at the first that decides it)
+## Decision questions (check every applicable constraint)
 
-1. **Does the project already have an authoring pipeline or source of truth for this kind of asset?** Use it.
-   Adding a second importer, a new engine plugin or a new tool for one asset is the owner's decision, not yours.
-2. **Does the mesh depend on run-time state or on the route?** Then it is generated in the engine and the real
-   questions are collision, LOD and Shipping behaviour. Otherwise author it offline.
+1. **What pipeline already owns this asset class, and what change did the user authorize?** Extend the existing
+   route by default; an authorized hybrid trial is permission to test that change. Inspect conventions before
+   replacing anything, but do not ask again for authorization already given.
+2. **When must geometry change?** Seeded tracks and construction-time generators can be baked offline or in the
+   editor. Only geometry that must change during play needs a runtime generation/update path. Separate it from
+   repeated static props and from rigid motion or animation of an existing mesh.
 3. **Offline, what is it?** Rigged or character-like: workspace or Blender plus a rig library. A mechanical
    part with exact dimensions: code CAD. A hard-surface prop with bevels and UVs: Blender script. A hero piece
    judged by eye: hand-authored Blender with a script for what repeats.
-4. **Does it need Nanite, instancing or authored LODs?** The deliverable must be a real StaticMesh (an imported
-   file, or a Geometry Script asset created with Nanite and collision requested explicitly), not a runtime
-   component.
+4. **What representation and renderer does the target support?** For repeated static props, import or bake a
+   `UStaticMesh` for ISM/HISM and authored LODs. Instances may be placed during play. A `UDynamicMeshComponent`
+   does not gain those features merely by being procedural. Check the installed engine's Nanite asset types,
+   materials and renderer: UE 5.8 documents skeletal support too, but forward rendering and MSAA are unsupported.
 5. **Can an agent verify the result without a person?** Prefer the route with an exit code, a validator, budgets,
-   an engine import check and a render of the exported file. If you cannot verify, say so and ask.
+   an engine import check and a render of the exported file. Separate format validity, import facts, visual
+   acceptance, collision/playback in a packaged build, and measured performance. Report missing proof precisely.
+
+Return the chosen authoring route plus integration/runtime responsibilities, the contract's material unknowns,
+and the smallest representative trial with acceptance checks. For each option presented, explain **Time, Risk,
+Complexity, Best practice and Maintainability** using the profiles; do not substitute low/medium/high labels.
 
 ## Rules that save a round trip
 
-- Authoring scripts own their own supervision: pass `--python-exit-code 1` to `blender -b`, pin every exporter
-  parameter, apply modifiers before export, and keep your own references to Blender data.
-- Geometry Nodes and material node graphs do not travel in glTF; apply them to real mesh data and bake materials.
+- Use the managed Blender build wrapper when applicable. For direct CLI runs, pass `--python-exit-code 1`, pin
+  relevant exporter options, and reacquire Blender data after mode changes, undo or topology/container edits.
+- Geometry Nodes graphs and arbitrary shader graphs do not travel in glTF. Export evaluated mesh geometry and
+  supported material properties or bake what is needed; check modifier, skin and morph interactions first.
 - Never assume a collision convention from another importer. `UBX_/UCX_` name prefixes are documented for
   Unreal's FBX path; test glTF directly.
-- Nanite belongs to a StaticMesh asset, not to generated geometry, and has unsupported features (morph targets,
-  forward rendering, MSAA). Treat "faster" as unmeasured until you measure it.
+- Geometry Script has editor-only and runtime functions; Unreal's editor Python is not a shipped gameplay
+  runtime. Check the exact component/function, not just the plugin name. Treat "faster" as unmeasured until profiled.
 - Code-CAD output reaches an engine only through tessellation. Set tolerances on purpose, check watertightness
   and size, and run an execute-measure-retry loop rather than trusting a first script.
 - Validation proves format, not behaviour. Run `mesh verify`, a glTF validator and, for Unreal, `mesh verify-unreal`;
@@ -60,7 +75,8 @@ verify) before anyone notices. Work in this order:
 
 ## Never
 
-- Switch the project's tool or pipeline without surfacing the trade-offs (time, risk, complexity, best practice,
-  maintainability) and getting a decision.
-- Commit a binary mesh without the script, parameters and command that rebuild and verify it.
+- Switch the project's tool or pipeline beyond the user's authorized scope. Explain the five trade-offs before
+  seeking any genuinely missing decision; keep independent inspection and reversible trials moving.
+- Commit an authored binary mesh without its editable source (`.blend`, CAD or script), parameters and export /
+  verification commands. A hand-authored asset need not be regenerable from code.
 - Claim "works in Unreal" or "works in Unity" from a validator or an import check; say what was checked.
