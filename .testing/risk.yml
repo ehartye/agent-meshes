@@ -1,0 +1,102 @@
+# Owner-confirmed 2026-10-18. First matching area wins.
+phase: production
+consumers:
+  - Installed agent-meshes plugins and downstream project repositories, including Dead Redline.
+  - Existing saved projects and published authoring/build/export APIs must remain usable.
+weights:
+  wait: 1
+  agent: 1
+  ci: 1
+  churn: 1
+lanes:
+  edit:
+    runs: affected-files
+    trigger: agent-edit
+  merge:
+    runs: critical+standard in affected areas; unknown scope runs all
+    trigger: pull-request
+    os: [ubuntu, windows]
+  scheduled:
+    runs: all
+    trigger: weekly-cron
+    os: [ubuntu, windows]
+  release:
+    runs: all+clean-managed-install
+    trigger: version-tag-or-manual
+    os: [ubuntu, windows]
+areas:
+  - path: src/storage.ts
+    tier: critical
+    why: Saved-project persistence.
+  - path: src/workspace*.ts
+    tier: critical
+    why: Durable authoring state and operations.
+  - path: src/build*.ts
+    tier: critical
+    why: Build contracts and final artifact output safety.
+  - path: src/export*.ts
+    tier: critical
+    why: Published GLB export contracts and artifact integrity.
+  - path: src/core/model.ts
+    tier: critical
+    why: Saved-project schema and published model contract.
+  - path: src/node-file-reader.ts
+    tier: critical
+    why: File access and input safety.
+  - path: scripts/managed-runtime.js
+    tier: critical
+    why: Installed runtime and output safety.
+  - path: scripts/ci-plan.mjs
+    tier: critical
+    why: Selected checks and aggregate status must fail closed.
+  - path: scripts/check_docs.py
+    tier: critical
+    why: Replacement documentation gate and release metadata integrity.
+  - path: .github/**
+    tier: critical
+    why: Verification and release policy.
+  - path: .testing/**
+    tier: critical
+    why: Owner risk and verification policy.
+  - path: src/core/**
+    tier: standard
+    why: Model helpers, rigging and poses; the saved model contract is classified above.
+  - path: src/mechanisms/**
+    tier: standard
+    why: Mechanism generation and constraints.
+  - path: src/physical/**
+    tier: standard
+    why: Physical kit assembly and connectivity.
+  - path: src/physics/**
+    tier: standard
+    why: Simulation and motion calculations.
+  - path: src/recipes/**
+    tier: standard
+    why: Procedural model and gait recipes.
+  - path: src/render/**
+    tier: standard
+    why: Rendering, assembly and visual analysis.
+  - path: src/web/**
+    tier: standard
+    why: Interactive viewer and authoring UI.
+  - path: src/**
+    tier: standard
+    why: Modeling, rigging, rendering and current runtime behavior.
+  - path: scripts/**
+    tier: standard
+    why: Authoring, generators and supporting tooling.
+  - path: recipes/**
+    tier: standard
+    why: Blender and procedural model generation.
+  - path: tests/**
+    tier: standard
+    why: Test fixtures and test infrastructure, where no source subject resolves.
+  - path: skills/**
+    tier: low
+    why: Prose guidance; metadata and local links still gate every PR.
+  - path: docs/**
+    tier: low
+    why: Prose, examples and retained evidence; changed JSON and local links gate every PR.
+  - path: README.md
+    tier: low
+    why: Documentation.

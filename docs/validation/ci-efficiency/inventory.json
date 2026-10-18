@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-18",
+  "tool": "agent-tests 0.4.1",
+  "phase": "production",
+  "files": 122,
+  "unflagged_tiered_retained_unopened": 58,
+  "tier_gaps": [],
+  "flagged_files_retained_without_pruning": [
+    "tests/agent-contract.test.ts",
+    "tests/animation.test.ts",
+    "tests/assembly-frames.test.ts",
+    "tests/browser.test.ts",
+    "tests/build-author-cli.test.ts",
+    "tests/build-author.test.ts",
+    "tests/build-flags.test.ts",
+    "tests/build-geometry-budget.test.ts",
+    "tests/build-refine.test.ts",
+    "tests/build.test.ts",
+    "tests/capabilities-filter.test.ts",
+    "tests/capture-views.test.ts",
+    "tests/chain.test.ts",
+    "tests/cli.test.ts",
+    "tests/export-materials.test.ts",
+    "tests/export-mesh-names.test.ts",
+    "tests/face-attach.test.ts",
+    "tests/face-contract.test.ts",
+    "tests/gait-analysis.test.ts",
+    "tests/garment-check.test.ts",
+    "tests/garment-partition-blender.test.ts",
+    "tests/gltf-morphs.test.ts",
+    "tests/gltf-skins.test.ts",
+    "tests/insectoid-gaits.test.ts",
+    "tests/lathe-options.test.ts",
+    "tests/managed-runtime.test.ts",
+    "tests/mobile-script.test.ts",
+    "tests/mouth-crossings.test.ts",
+    "tests/nla-groups-blender.test.ts",
+    "tests/oriented-eyes-blender.test.ts",
+    "tests/physical-assembly.test.ts",
+    "tests/physical-connectivity.test.ts",
+    "tests/physical-extensibility.test.ts",
+    "tests/planar-figure.test.ts",
+    "tests/planar-linkage.test.ts",
+    "tests/pose-observation.test.ts",
+    "tests/pose-target.test.ts",
+    "tests/preview-gaze.test.ts",
+    "tests/prism-options.test.ts",
+    "tests/puppet-authored.test.ts",
+    "tests/puppet.test.ts",
+    "tests/quadruped-body.test.ts",
+    "tests/quadruped.test.ts",
+    "tests/recipes.test.ts",
+    "tests/rig-workflow.test.ts",
+    "tests/rig.test.ts",
+    "tests/rotation-euler.test.ts",
+    "tests/scene.test.ts",
+    "tests/server.test.ts",
+    "tests/set-recipes.test.ts",
+    "tests/shell-vertex-colors.test.ts",
+    "tests/skinning.test.ts",
+    "tests/sprout-body-timing-blender.test.ts",
+    "tests/sprout-digits-blender.test.ts",
+    "tests/sprout-swing-blender.test.ts",
+    "tests/sprout-thumb-blender.test.ts",
+    "tests/strandbeest.test.ts",
+    "tests/surface-triangles-blender.test.ts",
+    "tests/unreal-cli.test.ts",
+    "tests/unreal-integration.test.ts",
+    "tests/unreal.test.ts",
+    "tests/viewer-script.test.ts",
+    "tests/workspace-server.test.ts",
+    "tests/workspace.test.ts"
+  ],
+  "original_run_steps_preserved": {
+    "node": 7,
+    "system-browser": 8,
+    "python": 33
+  },
+  "project_findings": [
+    {
+      "rule": "wiring.uncovered-critical",
+      "file": ".github/**"
+    },
+    {
+      "rule": "frequency.ci-on-pull-request",
+      "file": ".github/workflows/check.yml"
+    },
+    {
+      "rule": "wiring.uncovered-critical",
+      "file": ".testing/**"
+    },
+    {
+      "rule": "wiring.uncovered-critical",
+      "file": "scripts/check_docs.py"
+    },
+    {
+      "rule": "redundancy.hub-subject",
+      "file": "src/author.ts"
+    },
+    {
+      "rule": "redundancy.hub-subject",
+      "file": "src/core/model.ts"
+    },
+    {
+      "rule": "redundancy.hub-subject",
+      "file": "src/export.ts"
+    },
+    {
+      "rule": "redundancy.hub-subject",
+      "file": "src/refine.ts"
+    }
+  ]
+}
