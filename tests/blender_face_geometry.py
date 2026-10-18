@@ -10,6 +10,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from geometry_test_scope import scoped_tests
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts' / 'blender_lib'))
@@ -1436,8 +1437,11 @@ class EyeHoleTests(unittest.TestCase):
         self.assertAlmostEqual(mask(point), mask(mirror_x(point)), places=12)
         self.assertEqual(len(left['wall']), len(right['wall']))
         for index in right['wall']: self.assertTrue(all(cut['vertices'][i][0] < 0 for i in cut['faces'][index]))
-        with self.assertRaises(ValueError): eye_holes(blank['vertices'], blank['faces'], (-.026, -.07, .15), .017)
-        with self.assertRaisesRegex(ValueError, 'midline'): eye_holes(blank['vertices'], blank['faces'], (.018, -.07, .15), .017)
+
+    def test_eye_holes_reject_invalid_side_and_midline(self):
+        blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=48, segments=64)
+        with self.assertRaises(ValueError): shell_holes(blank['vertices'], blank['faces'], (-.026, -.07, .15), .017)
+        with self.assertRaisesRegex(ValueError, 'midline'): shell_holes(blank['vertices'], blank['faces'], (.018, -.07, .15), .017)
 
     def test_the_socket_dips_meet_smoothly_on_the_midline(self):
         # P1 round 1: each half took only its own eye's socket dip, so where the dip still reached the midline (large
@@ -1493,7 +1497,9 @@ class EyeHoleTests(unittest.TestCase):
         normal = self.hole()
         default, twenty = eye_hole_mask(normal), eye_hole_mask(normal, band=20)
         self.assertTrue(all(default(v) == twenty(v) for v in normal['vertices'][::7]))
-        with self.assertRaises(ValueError): eye_hole_mask(hole, band=1)
+
+    def test_invalid_mask_band_rejects(self):
+        with self.assertRaises(ValueError): eye_hole_mask(band=1)
 
     def test_refinement_splits_long_edges_near_the_eye_without_cracks_or_slivers(self):
         blank = ellipsoid_geometry(*self.HEAD, rings=24, segments=32)
@@ -2266,7 +2272,9 @@ class SkinBrowTests(unittest.TestCase):
             for a, b in zip(again['morphs'][name], left['morphs'][name]): self.assertAlmostEqual(math.dist(a, b), 0, delta=1e-9)
 
     def test_a_brow_needs_the_skin_itself(self):
-        skin, holes = self.skin(morphs=False)
+        # Rejection does not require constructing two detailed eye holes.
+        blank = ellipsoid_geometry(*self.HEAD, rings=16, segments=24)
+        skin = {'vertices': blank['vertices'], 'faces': blank['faces']}
         front = front_surface(skin['vertices'], skin['faces'])
         with self.assertRaisesRegex(ValueError, 'skin'): skin_brow_geometry(front, 'L', (.013, .178), (.05, .181))
         with self.assertRaises(ValueError): skin_brow_geometry(skin, 'X', (.013, .178), (.05, .181))
@@ -2895,6 +2903,9 @@ class SmoothSurface(unittest.TestCase):
         for bad in ([1.0], [2.0] * len(vertices), [-.1] * len(vertices)):
             with self.assertRaises(ValueError): smooth_surface(vertices, faces, bad)
 
+
+def load_tests(loader, tests, pattern):
+    return scoped_tests(__file__, tests)
 
 if __name__ == '__main__':
     unittest.main()

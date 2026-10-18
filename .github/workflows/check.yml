@@ -21,6 +21,7 @@ jobs:
     outputs:
       javascript: ${{ steps.plan.outputs.javascript }}
       python: ${{ steps.plan.outputs.python }}
+      geometry_sweeps: ${{ steps.plan.outputs.geometry_sweeps }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,6 +37,7 @@ jobs:
       - run: python -m pip install -r .github/requirements-ci.txt
       - run: node --test tests/ci-plan.test.mjs tests/release-candidate.test.mjs
       - run: python tests/ci_docs.py
+      - run: python tests/geometry_scope.py
       - id: plan
         run: node scripts/ci-plan.mjs plan
       - name: Validate changed documentation and release metadata
@@ -117,6 +119,8 @@ jobs:
         suite: [costume, character, face, geometry]
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      AGENT_MESHES_TEST_LANE: ${{ needs.quick.outputs.geometry_sweeps == 'true' && 'full' || 'merge' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -204,6 +208,7 @@ jobs:
         env:
           CI_JAVASCRIPT: ${{ needs.quick.outputs.javascript }}
           CI_PYTHON: ${{ needs.quick.outputs.python }}
+          CI_GEOMETRY_SWEEPS: ${{ needs.quick.outputs.geometry_sweeps }}
           CI_QUICK_RESULT: ${{ needs.quick.result }}
           CI_NODE_RESULT: ${{ needs.node.result }}
           CI_PYTHON_RESULT: ${{ needs.python.result }}
@@ -212,10 +217,11 @@ jobs:
         run: node scripts/ci-plan.mjs gate
       - name: Record the fully validated release candidate
         id: candidate
-        if: needs.quick.outputs.javascript == 'true' && needs.quick.outputs.python == 'true'
+        if: needs.quick.outputs.javascript == 'true' && needs.quick.outputs.python == 'true' && needs.quick.outputs.geometry_sweeps == 'true'
         env:
           CI_JAVASCRIPT: ${{ needs.quick.outputs.javascript }}
           CI_PYTHON: ${{ needs.quick.outputs.python }}
+          CI_GEOMETRY_SWEEPS: ${{ needs.quick.outputs.geometry_sweeps }}
         run: node .github/scripts/release-candidate.mjs record
       - uses: actions/upload-artifact@v4
         if: steps.candidate.outputs.tree != ''

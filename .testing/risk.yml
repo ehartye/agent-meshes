@@ -25,6 +25,12 @@ lanes:
     trigger: version-tag-or-manual
     os: [ubuntu, windows]
 areas:
+  - path: tests/geometry_test_scope.py
+    tier: critical
+    why: Merge/full selection and prepared-fixture isolation.
+  - path: tests/geometry-sweeps.json
+    tier: critical
+    why: Explicit deferred-test policy.
   - path: src/storage.ts
     tier: critical
     why: Saved-project persistence.

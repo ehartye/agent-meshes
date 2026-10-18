@@ -25,7 +25,7 @@ export function verifyTag(tag, packageVersion) {
 }
 
 export function recordCandidate(root, env) {
-  if (env.CI_JAVASCRIPT !== 'true' || env.CI_PYTHON !== 'true') throw new Error('A release receipt requires full runtime scope');
+  if (env.CI_JAVASCRIPT !== 'true' || env.CI_PYTHON !== 'true' || env.CI_GEOMETRY_SWEEPS !== 'true') throw new Error('A release receipt requires full runtime scope');
   if (git(root, 'status', '--porcelain')) throw new Error('Cannot record a dirty candidate checkout');
   if (![env.GITHUB_RUN_ID, env.GITHUB_RUN_ATTEMPT].every(positiveId)) throw new Error('Missing GitHub run identity');
   const commit = git(root, 'rev-parse', 'HEAD');
