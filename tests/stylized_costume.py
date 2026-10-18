@@ -3,6 +3,7 @@ import math
 from pathlib import Path
 import sys
 import unittest
+from geometry_test_scope import character_fixtures, scoped_tests
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'recipes'))
 import stylized_character as character
@@ -22,7 +23,9 @@ CAST={'mara':MARA,'oren':OREN,'tess':TESS,'kit':KIT}
 BODY=['tailored-torso','left-sleeve','right-sleeve','trouser-yoke','left-leg','right-leg']
 
 def mix(a,b,t):return a+(b-a)*t
-def parts(config):return {p['name']:p for p in character.geometry(config)}
+def parts(config):return {p['name']:p for p in character_fixtures.get(config)[0]}
+def meshes(config):
+    m=character.Meshes();m.parts,m.lofts=character_fixtures.get(config);return m
 def fused_name(name):return 'layer-top' if name in BODY[:3] else 'layer-bottom'
 
 class CostumeParameters(unittest.TestCase):
@@ -56,7 +59,7 @@ class BodyBuild(unittest.TestCase):
         self.assertGreater(span(broad,'left-leg',0),span(base,'left-leg',0)*1.05)
         self.assertEqual(character.geometry(dict(base,build=1.0)),character.geometry(base))
         # The thigh deepens more than the calf, so a deep knee bend in the jog folds the calf clear of the hamstring.
-        m0,m1=character.Meshes(),character.Meshes();character.geometry(base,m0);character.geometry(broad,m1)
+        m0,m1=meshes(base),meshes(broad)
         depth=lambda m,i:m.lofts['left-leg'][i][4]
         self.assertGreater(depth(m1,4)/depth(m0,4),depth(m1,1)/depth(m0,1)+.04)
         for bad in [.5,2,True,'big']:
@@ -82,7 +85,7 @@ class GarmentLayers(unittest.TestCase):
                 for part in expected[name]:self.assertIn(part,{fused_name(n) if n in BODY else n for n in by_name})
                 for gone in ['left-knee-panel','chest-terminal','front-fastener','left-ankle','left-boot-seam']:
                     self.assertNotIn(gone,by_name)
-                self.assertEqual(len(by_name),len(character.geometry(config)))
+                self.assertEqual(len(by_name),len(character_fixtures.get(config)[0]))
         self.assertNotIn('layer-strap-left',parts({**OREN}))
         self.assertNotIn('left-hand-glove',parts(TESS))
 
@@ -146,7 +149,7 @@ class GarmentLayers(unittest.TestCase):
         """A tool belt hangs a hammer and a wrench on the front of the thighs, clear of the cloth."""
         config={**MARA,'costume':{**MARA['costume'],'belt':{'pouches':3,'tools':2}}}
         d=character.landmarks(config);s=d['s'];hip=d['hip_y']
-        m=character.Meshes();character.geometry(config,m);by_name={p['name']:p for p in m.parts}
+        m=meshes(config);by_name={p['name']:p for p in m.parts}
         body=character.BodySurface({n:m.lofts[n] for n in character.BODY_LOFTS})
         for k in range(2):
             tool=by_name['layer-tool-'+str(k)]['vertices']
@@ -182,7 +185,7 @@ class GarmentLayers(unittest.TestCase):
         """Each slab's inner face is embedded and its outer face stands proud: nothing floats."""
         for name,config in CAST.items():
             body=character.body_surface(config)
-            for part in character.geometry(config):
+            for part in character_fixtures.get(config)[0]:
                 if not part['name'].startswith('layer-') or part['name'].startswith('layer-backpack'):continue
                 values=[body.value(v) for v in part['vertices']]
                 with self.subTest(name=name,part=part['name']):
@@ -272,7 +275,7 @@ class WorkBoots(unittest.TestCase):
         rest: both wrap the leg loft with a few millimetres to spare wherever the leg reaches."""
         broad=dict(OREN,build=1.5)
         for name,config in [('mara',MARA),('oren',OREN),('broad',broad),('tess',TESS),('kit',KIT)]:
-            m=character.Meshes();character.geometry(config,m);s=character.landmarks(config)['s']
+            m=meshes(config);s=character.landmarks(config)['s']
             for side in ['left','right']:
                 leg=character.BodySurface({'leg':m.lofts[side+'-leg']})
                 by_name={p['name']:p for p in m.parts}
@@ -312,7 +315,7 @@ class GarmentRig(unittest.TestCase):
     def test_garments_bind_to_body_bones(self):
         for name,config in CAST.items():
             d=character.landmarks(config)
-            for part in character.geometry(config):
+            for part in character_fixtures.get(config)[0]:
                 n=fused_name(part['name']) if part['name'] in BODY else part['name']
                 if not (n.startswith('layer-') or n.endswith('-glove') or 'boot' in n or 'outsole' in n):continue
                 rows=walk.skin_weights(n,part['vertices'],d)
@@ -447,5 +450,8 @@ class GarmentRig(unittest.TestCase):
                     bag=walk.skinned_vertices('layer-pouch-0',pouch,d,k/16,gait)
                     gap=min(math.dist(a,b) for a in moved for b in bag)
                     with self.subTest(side=side,gait=gait,phase=k/16):self.assertGreater(gap,.01*s)
+
+def load_tests(loader, tests, pattern):
+    return scoped_tests(__file__, tests)
 
 if __name__=='__main__':unittest.main()

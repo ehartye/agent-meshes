@@ -1,8 +1,11 @@
 """Geometry contract for the reusable character recipe (no Blender required)."""
 import importlib.util
 import math
+import sys
+sys.dont_write_bytecode = True
 from pathlib import Path
 import unittest
+from geometry_test_scope import character_fixtures, scoped_tests
 
 SOURCE = Path(__file__).resolve().parents[1] / 'recipes' / 'stylized_character.py'
 
@@ -31,7 +34,7 @@ class CharacterContract(unittest.TestCase):
             self.assertTrue(all(math.isfinite(c) for v in part['vertices'] for c in v))
             self.assertTrue(all(0 <= i < len(part['vertices']) for f in part['faces'] for i in f))
 
-    def test_variants_and_bad_parameters(self):
+    def test_variants(self):
         recipe = self.recipe()
         for species in ['human', 'alien']:
             for age, height in [('adult', 1.8), ('child', 1.2)]:
@@ -40,6 +43,9 @@ class CharacterContract(unittest.TestCase):
                     self.assertEqual(len(parts), len({p['name'] for p in parts}))
                     self.assertGreater(len(parts), 20)
                     self.assertLess(max(v[1] for p in parts for v in p['vertices']), height * 1.15)
+
+    def test_bad_parameters(self):
+        recipe = self.recipe()
         for invalid in [{'height':float('nan')}, {'height':-1}, {'species':'typo'}, {'vacuum':'false'}, {'unexpected':1}]:
             with self.assertRaises(ValueError): recipe.geometry(invalid)
 
@@ -80,7 +86,7 @@ class VacuumHelmetContract(unittest.TestCase):
     recipe = CharacterContract.recipe
 
     def suited(self, name):
-        parts = self.recipe().geometry(dict(CAST[name], vacuum=True))
+        parts, _ = character_fixtures.get(dict(CAST[name], vacuum=True))
         return parts, {p['name']: p for p in parts}
 
     def head_parts(self, parts):
@@ -214,5 +220,8 @@ class VacuumHelmetContract(unittest.TestCase):
         self.assertEqual(by['helmet-rim']['color'], by['helmet-neck-ring']['color'])
         clothed = {p['name'] for p in self.recipe().geometry(dict(CAST['mara'], vacuum=False))}
         self.assertFalse(any(n.startswith('helmet') or 'pouch' in n or n == 'backpack' for n in clothed))
+
+def load_tests(loader, tests, pattern):
+    return scoped_tests(__file__, tests)
 
 if __name__ == '__main__': unittest.main()

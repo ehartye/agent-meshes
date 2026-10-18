@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function planChanges(paths, { full = false } = {}) {
-  if (full || !Array.isArray(paths)) return { javascript: true, python: true };
-  let javascript = false;
+  const all = { javascript: true, python: true, geometrySweeps: true };
+  if (full || !Array.isArray(paths)) return all;
+  let javascript = false, python = false;
   for (const file of paths) {
-    if (typeof file !== 'string' || file.includes('..') || file.includes('\\')) return { javascript: true, python: true };
+    if (typeof file !== 'string' || file.includes('..') || file.includes('\\')) return all;
     if (/^(README\.md|AGENTS\.md|CLAUDE\.md|LICENSE|\.github\/README\.md)$/.test(file)
       || /^skills\/.*\.md$/.test(file)
       || /^docs\/.*\.(md|json|txt|png|jpg|jpeg|svg|webp|gif|pdf)$/.test(file)) continue;
@@ -17,14 +18,20 @@ export function planChanges(paths, { full = false } = {}) {
       javascript = true;
       continue;
     }
-    // Python, fixtures, toolchain/release/CI policy and new owners default to full.
-    return { javascript: true, python: true };
+    // Changing selection/fixture policy itself must prove the complete replacement.
+    if (['tests/geometry_test_scope.py', 'tests/geometry_scope.py'].includes(file)) return all;
+    if (/^(recipes\/.*|scripts\/blender_lib\/.*|tests\/[^/]+)\.py$/.test(file)) {
+      javascript = true; python = true;
+      continue;
+    }
+    // Dependencies, version, fixtures, CI and unknown inputs still require every sweep.
+    return all;
   }
-  return { javascript, python: false };
+  return { javascript, python, geometrySweeps: false };
 }
 
 export function gateFailures(plan, results) {
-  if (typeof plan.javascript !== 'boolean' || typeof plan.python !== 'boolean') return ['invalid plan'];
+  if (typeof plan.javascript !== 'boolean' || typeof plan.python !== 'boolean' || typeof plan.geometrySweeps !== 'boolean' || (plan.geometrySweeps && !plan.python)) return ['invalid plan'];
   const expected = { quick: 'success', node: plan.javascript ? 'success' : 'skipped', browser: plan.javascript ? 'success' : 'skipped', python: plan.python ? 'success' : 'skipped' };
   return Object.entries(expected).filter(([job, result]) => results[job] !== result).map(([job, result]) => `${job}: expected ${result}, got ${results[job] ?? 'missing'}`);
 }
@@ -53,9 +60,9 @@ function main() {
     const directory = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'meshes-ci-'));
     const pathsFile = join(directory, 'changed-paths.json');
     writeFileSync(pathsFile, JSON.stringify(paths ?? []) + '\n');
-    const output = `javascript=${plan.javascript}\npython=${plan.python}\npaths_file=${pathsFile}\n`;
+    const output = `javascript=${plan.javascript}\npython=${plan.python}\ngeometry_sweeps=${plan.geometrySweeps}\npaths_file=${pathsFile}\n`;
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, output);
-    const summary = `CI plan: ${paths === null ? 'full (no PR diff)' : `${paths.length} changed paths`}; JavaScript/browser=${plan.javascript}; Python=${plan.python}.\n`;
+    const summary = `CI plan: ${paths === null ? 'full (no PR diff)' : `${paths.length} changed paths`}; JavaScript/browser=${plan.javascript}; Python=${plan.python}; geometry sweeps=${plan.geometrySweeps}.\n`;
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
     console.log(summary.trim());
     return;
@@ -66,7 +73,7 @@ function main() {
       if (!['true', 'false'].includes(value)) throw new Error(`Missing or invalid ${name}`);
       return value === 'true';
     };
-    const failures = gateFailures({ javascript: boolean('CI_JAVASCRIPT'), python: boolean('CI_PYTHON') }, {
+    const failures = gateFailures({ javascript: boolean('CI_JAVASCRIPT'), python: boolean('CI_PYTHON'), geometrySweeps: boolean('CI_GEOMETRY_SWEEPS') }, {
       quick: process.env.CI_QUICK_RESULT, node: process.env.CI_NODE_RESULT,
       python: process.env.CI_PYTHON_RESULT, browser: process.env.CI_BROWSER_RESULT,
     });

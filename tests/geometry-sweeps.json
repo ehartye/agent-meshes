@@ -1,0 +1,42 @@
+{
+  "blender_face_geometry.py": {
+    "LidTests.test_rounded_rims_still_close_without_a_slit_at_fine_sampling": "321-ray fine sampling; canonical coverage states and uncovered-sliver negative control stay in merge.",
+    "EyeHoleTests.test_a_wide_mound_blend_meets_the_socket_dip_without_a_step": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_the_skin_round_the_eye_shades_without_radial_streaks": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_the_rim_turns_into_the_wall_over_a_bevel_without_a_hard_crease": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_a_skin_that_runs_through_the_eye_is_mounded_over_it": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_the_morph_mask_keeps_rim_wall_and_lining_still": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_eye_holes_are_exact_mirror_images": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_the_socket_dips_meet_smoothly_on_the_midline": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_the_bevel_turns_evenly_round_the_rim": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_the_mask_band_does_not_depend_on_the_socket": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_refinement_splits_long_edges_near_the_eye_without_cracks_or_slivers": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_snapping_the_clip_leaves_no_rim_slivers": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_the_rim_runs_on_the_window_with_no_saw_teeth": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "EyeHoleTests.test_default_lid_follow_lifts_the_lid_edge_you_can_see": "Shell-eye shape/refinement variants; canonical closed-shell construction and extracted side/midline/band rejection checks stay in merge.",
+    "ContinuousEyeHoleTests.test_static_lining_facets_clear_the_ball_across_scales_and_openings": "Extreme scale/shape and dense pose matrices; canonical KID/FROG clearance, blink coverage and collision negative controls stay in merge.",
+    "ContinuousEyeHoleTests.test_the_lids_never_pass_through_each_other_when_blink_and_squint_add_up": "Extreme scale/shape and dense pose matrices; canonical KID/FROG clearance, blink coverage and collision negative controls stay in merge.",
+    "ContinuousEyeHoleTests.test_a_lone_blink_never_crosses_beside_the_corners": "Extreme scale/shape and dense pose matrices; canonical KID/FROG clearance, blink coverage and collision negative controls stay in merge.",
+    "ContinuousEyeHoleTests.test_every_pose_of_the_verifier_grid_is_clear": "Extreme scale/shape and dense pose matrices; canonical KID/FROG clearance, blink coverage and collision negative controls stay in merge.",
+    "ContinuousEyeHoleTests.test_the_lids_thin_to_nothing_at_the_corners_and_nest_beside_them": "Extreme scale/shape and dense pose matrices; canonical KID/FROG clearance, blink coverage and collision negative controls stay in merge.",
+    "ContinuousEyeHoleTests.test_only_a_squeezed_shut_eye_may_fold_and_the_build_says_which_poses": "Extreme scale/shape and dense pose matrices; canonical KID/FROG clearance, blink coverage and collision negative controls stay in merge.",
+    "ContinuousEyeHoleTests.test_one_crease_above_and_none_below": "Extreme scale/shape and dense pose matrices; canonical KID/FROG clearance, blink coverage and collision negative controls stay in merge.",
+    "ContinuousEyeHoleTests.test_skin_shapes_leave_the_moving_lids_alone_and_mirror": "Extreme scale/shape and dense pose matrices; canonical KID/FROG clearance, blink coverage and collision negative controls stay in merge.",
+    "AngryBrowTests.test_a_strong_angry_v_rests_on_the_upper_lid_without_folding": "Art-specific brow construction; canonical skin-brow attachment/morph check stays in merge.",
+    "SkinBrowTests.test_the_cross_section_follows_the_skin_normal_and_stands_proud": "Additional brow cross-section and pose variants; canonical attachment, closed shell and morph check stay in merge.",
+    "SkinBrowTests.test_brow_morphs_slide_the_brow_and_carry_the_skin_shapes": "Additional brow cross-section and pose variants; canonical attachment, closed shell and morph check stay in merge.",
+    "LipTests.test_the_crease_shades_smoothly_with_no_streaks": "Multi-head lip shading/refinement/preset matrix; canonical sculpted lips, lining topology/motion and malformed input rejection stay in merge.",
+    "LipTests.test_the_lip_grid_has_no_slivers_or_fans": "Multi-head lip shading/refinement/preset matrix; canonical sculpted lips, lining topology/motion and malformed input rejection stay in merge.",
+    "LipTests.test_the_mouth_line_is_one_row_of_vertices_from_corner_to_corner": "Multi-head lip shading/refinement/preset matrix; canonical sculpted lips, lining topology/motion and malformed input rejection stay in merge.",
+    "LipTests.test_no_face_folds_at_any_preset_with_the_jaw_open": "Multi-head lip shading/refinement/preset matrix; canonical sculpted lips, lining topology/motion and malformed input rejection stay in merge."
+  },
+  "stylized_character.py": {
+    "CharacterContract.test_variants": "Eight-way species/age/vacuum matrix; direct parameter rejection, repeatability/ground contact and helmet contracts stay in merge.",
+    "VacuumHelmetContract.test_head_clears_the_whole_bubble_glass_and_shell": "Full cast shell-triangle clearance matrix; actual glass-triangle clearance and head containment stay in merge."
+  },
+  "stylized_costume.py": {
+    "GarmentLayers.test_every_layer_is_seated_on_the_body": "Every layer/vertex across the cast; direct closed-slab seating and garment construction stay in merge.",
+    "GarmentRig.test_layers_ride_the_body_through_walk_and_jog": "Full cast/layer/16-phase deformation matrix; direct bone weights, garment seams and posed-vertex checks stay in merge.",
+    "GarmentRig.test_swinging_hands_clear_the_tool_pouches": "Dense hand/pouch 32-phase proximity matrix; attachment/strap, pouch and gait contracts stay in merge."
+  }
+}
