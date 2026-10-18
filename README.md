@@ -2,6 +2,11 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.19.0 adds the mesh-tool-selection guide: choose an authoring approach,
+inspect an existing project's asset contract, and separate modeling, engine import
+and runtime generation. References cover Blender Python, Unreal procedural meshes,
+R3F, Godot, Unity and code-driven CAD, with evidence and verification limits.
+
 Release 0.18.0 adds nine organized rig banks with 214 selectable clips, explicit-path
 Toy Maker CPU adapters and a protected offline demo. Separate Blender CLI and Python
 API guides are linked from the character skills. Packed image PBR materials,

@@ -1,7 +1,10 @@
 name: Check
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1'
 
 permissions:
   contents: read
@@ -11,8 +14,39 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  quick:
+    name: Scope and documentation (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      javascript: ${{ steps.plan.outputs.javascript }}
+      python: ${{ steps.plan.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: .github/requirements-ci.txt
+      - run: python -m pip install -r .github/requirements-ci.txt
+      - run: node --test tests/ci-plan.test.mjs tests/release-candidate.test.mjs
+      - run: python tests/ci_docs.py
+      - id: plan
+        run: node scripts/ci-plan.mjs plan
+      - name: Validate changed documentation and release metadata
+        env:
+          CHANGED_PATHS_FILE: ${{ steps.plan.outputs.paths_file }}
+        run: python scripts/check_docs.py --paths-file "$CHANGED_PATHS_FILE"
+
   node:
     name: JavaScript (windows-latest)
+    needs: quick
+    if: needs.quick.outputs.javascript == 'true'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -32,6 +66,8 @@ jobs:
 
   system-browser:
     name: System Chromium rendering (ubuntu-latest)
+    needs: quick
+    if: needs.quick.outputs.javascript == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -73,6 +109,8 @@ jobs:
 
   python:
     name: Python ${{ matrix.suite }} (windows-latest)
+    needs: quick
+    if: needs.quick.outputs.python == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -154,18 +192,36 @@ jobs:
   required:
     name: CI required
     if: ${{ always() }}
-    needs: [node, python, system-browser]
-    runs-on: windows-latest
+    needs: [quick, node, python, system-browser]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every matrix job to succeed
-        shell: pwsh
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Require every selected job to succeed
         env:
-          NODE_RESULT: ${{ needs.node.result }}
-          PYTHON_RESULT: ${{ needs.python.result }}
-          BROWSER_RESULT: ${{ needs.system-browser.result }}
-        # A skipped, cancelled or failed dependency must never produce a green gate.
-        run: |
-          if ($env:NODE_RESULT -cne 'success' -or $env:PYTHON_RESULT -cne 'success' -or $env:BROWSER_RESULT -cne 'success') {
-            exit 1
-          }
+          CI_JAVASCRIPT: ${{ needs.quick.outputs.javascript }}
+          CI_PYTHON: ${{ needs.quick.outputs.python }}
+          CI_QUICK_RESULT: ${{ needs.quick.result }}
+          CI_NODE_RESULT: ${{ needs.node.result }}
+          CI_PYTHON_RESULT: ${{ needs.python.result }}
+          CI_BROWSER_RESULT: ${{ needs.system-browser.result }}
+        # Only deliberately unselected jobs may be skipped. Missing scope fails.
+        run: node scripts/ci-plan.mjs gate
+      - name: Record the fully validated release candidate
+        id: candidate
+        if: needs.quick.outputs.javascript == 'true' && needs.quick.outputs.python == 'true'
+        env:
+          CI_JAVASCRIPT: ${{ needs.quick.outputs.javascript }}
+          CI_PYTHON: ${{ needs.quick.outputs.python }}
+        run: node .github/scripts/release-candidate.mjs record
+      - uses: actions/upload-artifact@v4
+        if: steps.candidate.outputs.tree != ''
+        with:
+          name: validated-tree-${{ steps.candidate.outputs.tree }}
+          path: ${{ steps.candidate.outputs.receipt }}
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
