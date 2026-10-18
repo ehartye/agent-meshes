@@ -34,6 +34,15 @@ areas:
   - path: src/build*.ts
     tier: critical
     why: Build contracts and final artifact output safety.
+  - path: src/author.ts
+    tier: critical
+    why: Blender source protection and authored output contract.
+  - path: src/refine.ts
+    tier: critical
+    why: Refined artifact output and Blender process contract.
+  - path: src/agent-contract.ts
+    tier: critical
+    why: Published agent-facing authoring and build contract.
   - path: src/export*.ts
     tier: critical
     why: Published GLB export contracts and artifact integrity.

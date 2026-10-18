@@ -1,0 +1,45 @@
+{
+  "run": "https://github.com/ehartye/agent-meshes/actions/runs/39138986552",
+  "pull_request": "https://github.com/ehartye/agent-meshes/pull/151",
+  "base_commit": "5e1370f",
+  "head_commit": "79549cf42d93369c673beb4da828fab25925ec2a",
+  "result": "success",
+  "created_at": "2026-10-18T15:06:36Z",
+  "completed_at": "2026-10-18T15:07:09Z",
+  "wall_seconds": 33,
+  "jobs": [
+    {
+      "name": "Scope and documentation (ubuntu-latest)",
+      "result": "success",
+      "seconds": 12
+    },
+    {
+      "name": "CI required",
+      "result": "success",
+      "seconds": 13
+    },
+    {
+      "name": "JavaScript (windows-latest)",
+      "result": "skipped",
+      "seconds": 0
+    },
+    {
+      "name": "System Chromium rendering (ubuntu-latest)",
+      "result": "skipped",
+      "seconds": 0
+    },
+    {
+      "name": "Python ${{ matrix.suite }} (windows-latest)",
+      "result": "skipped",
+      "seconds": 0
+    }
+  ],
+  "policy_git_blobs": {
+    ".github/workflows/check.yml": "f97f133590c95e4ccea13c6d201b382c5e3b14c1",
+    ".github/requirements-ci.txt": "b5f0f302b734af36cc62c9bc2bf5a61a6cb65551",
+    "scripts/ci-plan.mjs": "d83056f9bf0c57ddfdb36dfab1a028abb328de82",
+    "scripts/check_docs.py": "5783282545e5f3124edd3b332d8ea4c7aeaec02d",
+    "tests/ci-plan.test.mjs": "834545c0a428637333b81136f9c74ba1f3825faa",
+    "tests/ci_docs.py": "07f272fe7a14130416c382591b381e0463b6752b"
+  }
+}
