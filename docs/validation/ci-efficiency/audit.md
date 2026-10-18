@@ -86,6 +86,12 @@ tags trigger `push`. Branch-protection settings are separate and unchanged.
 
 ## Verification and limits
 
+- The real documentation-only [smoke PR151](https://github.com/ehartye/agent-meshes/pull/151)
+  passed [hosted run39138986552](https://github.com/ehartye/agent-meshes/actions/runs/39138986552)
+  in33seconds from run creation to completion: quick job12seconds, gate13seconds,
+  with both JavaScript jobs and the Python matrix deliberately skipped. It was
+  closed without merging. The [receipt](hosted-docs.json) identifies the tested
+  policy source blobs; this is one run, not a guaranteed latency target.
 - Eight Node tests exercise routing, a real Git rename/deletion diff with spaces,
   and CLI gate positive/negative controls. Six Python tests exercise valid and
   broken links, CommonMark/reference/image links, skill metadata, invalid JSON,
