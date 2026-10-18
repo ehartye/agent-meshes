@@ -38,6 +38,9 @@ install", not as a failure, and read the JSON on stdout rather than the exit cod
 
 ## Blender (optional)
 
+Which tool a given asset needs (and whether Blender, Unreal or a CAD kernel is the right one) is covered by
+[mesh-tool-selection](../mesh-tool-selection/SKILL.md).
+
 Only the refine stage, Blender-authored sources, `mesh preview` and the `recipes/` that drive Blender need it. Discovery
 order, first hit wins, and `--check` reports it as `blenderSource`:
 
