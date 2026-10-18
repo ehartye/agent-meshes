@@ -10,7 +10,8 @@ install npm packages, download Chromium, or generate meshes.
 | Root README/AGENTS/CLAUDE/LICENSE, `.github/README.md`, Markdown under `skills/`, or documentation/evidence under `docs/` | None; quick checks still gate |
 | TypeScript/CSS/HTML under `src/`, or `tests/**/*.test.ts` | Full Windows JavaScript and Linux system-Chromium jobs |
 | Python, recipes, fixtures, dependencies, scripts, CI/risk policy, or any unknown path | All existing JavaScript/browser and four Windows Python lanes |
-| Manual dispatch, Monday 06:17 UTC schedule, version tag `v*`, or PR labeled `ci:full` | All runtime jobs |
+| Manual dispatch, Monday 06:17 UTC schedule, or PR labeled `ci:full` | All runtime jobs |
+| Version tag `v*` | Separate release-identity workflow; requires matching successful full-CI evidence |
 
 The executable whitelist is in [ci-plan.mjs](../scripts/ci-plan.mjs). A Markdown
 file inside `scripts/` is a runtime input and selects all suites. A deleted or
@@ -52,3 +53,26 @@ python scripts/check_docs.py --paths-file <JSON-array-of-repo-relative-paths>
 The [owner-confirmed risk map](../.testing/risk.yml) records preservation obligations.
 The [audit](../docs/validation/ci-efficiency/audit.md) separates scanner findings,
 manual review and measured costs. No tests were deleted or demoted in this change.
+
+## Release candidates
+
+Put the version bump into the candidate before final CI. Package, lockfile and
+plugin manifest changes still select full coverage. After the aggregate gate
+passes with both runtime groups selected, it uploads `candidate.json` under an
+artifact named for the checked Git tree. A docs-only or JS-only run cannot produce
+release authorization.
+
+Tagging the validated candidate runs `Verify release candidate`, without repeating
+the mesh suites. It requires the tag to equal `v<package version>`, the entire Git
+tree to match the receipt, and the source Check run to be completed/successful in
+this repository with the same run attempt. Tree identity permits a normal squash
+merge without treating a different source tree as tested. Changed contents,
+another version, failed/forked/unrelated runs, and missing/expired receipts fail.
+The full receipt expires after90days; it is evidence, not a dependency cache.
+
+If proof is unavailable, run full Check for the candidate/tag, then rerun the
+release-identity workflow. Do not skip this gate or rename a different commit to
+reuse old results. Source/plugin installation still checks version and managed
+fingerprint; this workflow verifies evidence and does not publish the marketplace
+entry automatically. Later version-only edits have no special exemption in this
+slice: they create a new candidate requiring full validation.

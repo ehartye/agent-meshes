@@ -17,8 +17,9 @@ individual hosted runs, not averages or a new-runtime speedup claim.
 The implemented change routes affected *areas*, preserving every existing runtime
 command. Documentation gets quick syntax/link/metadata checks; TypeScript/viewer
 changes keep both JavaScript/browser platforms. Python, scripts, fixtures,
-dependencies, CI policy and unknown paths retain the full suite. Manual, weekly,
-version-tag and `ci:full` runs select everything. The final gate validates expected
+dependencies, CI policy and unknown paths retain the full suite. Manual, weekly
+and `ci:full` runs select everything. Version tags use the separate release identity
+gate described in [release-candidate validation](release-candidate.md). The final gate validates expected
 success/skipped results and fails on missing scope or unexpected job results.
 
 ## Audit evidence and judgments

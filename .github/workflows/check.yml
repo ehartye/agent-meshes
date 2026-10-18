@@ -5,8 +5,6 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '17 6 * * 1'
-  push:
-    tags: ['v*']
 
 permissions:
   contents: read
@@ -36,7 +34,7 @@ jobs:
           cache: pip
           cache-dependency-path: .github/requirements-ci.txt
       - run: python -m pip install -r .github/requirements-ci.txt
-      - run: node --test tests/ci-plan.test.mjs
+      - run: node --test tests/ci-plan.test.mjs tests/release-candidate.test.mjs
       - run: python tests/ci_docs.py
       - id: plan
         run: node scripts/ci-plan.mjs plan
@@ -212,3 +210,18 @@ jobs:
           CI_BROWSER_RESULT: ${{ needs.system-browser.result }}
         # Only deliberately unselected jobs may be skipped. Missing scope fails.
         run: node scripts/ci-plan.mjs gate
+      - name: Record the fully validated release candidate
+        id: candidate
+        if: needs.quick.outputs.javascript == 'true' && needs.quick.outputs.python == 'true'
+        env:
+          CI_JAVASCRIPT: ${{ needs.quick.outputs.javascript }}
+          CI_PYTHON: ${{ needs.quick.outputs.python }}
+        run: node .github/scripts/release-candidate.mjs record
+      - uses: actions/upload-artifact@v4
+        if: steps.candidate.outputs.tree != ''
+        with:
+          name: validated-tree-${{ steps.candidate.outputs.tree }}
+          path: ${{ steps.candidate.outputs.receipt }}
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
