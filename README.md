@@ -39,6 +39,13 @@ Results of a project with an inside-out lathe gain a `warnings` array. GLBs carr
 grow by a few bytes. `undo` straight after `new` no longer returns to the previous project (the
 revision still counts up).
 
+## Choosing a mesh authoring tool
+
+The `mesh-tool-selection` skill helps pick between the named-part workspace, a Blender headless script, `bpy`
+as a module, hand-authored Blender, Unreal editor Python / Geometry Script / C++ procedural meshes and
+code-driven CAD, and says how to engage an existing project's asset pipeline before authoring. Its references
+carry per-route capabilities, costs and failure modes, and the cited evidence behind them.
+
 ## Compare rigged motion
 
 Use `node scripts/compare-rigs.mjs comparison.json review.html` to compare a reference
