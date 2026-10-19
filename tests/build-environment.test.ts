@@ -3,6 +3,9 @@
  */
 import { expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { prepareBuildEnvironment } from '../src/build-environment.ts';
 
 const windowsNames = ['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR'];
@@ -83,5 +86,50 @@ it('passes the filtered environment to a real child and retains the Windows nati
   expect(child.status, child.stderr || child.error?.message).toBe(0);
   const observed = JSON.parse(child.stdout);
   expect(observed.included).toBe('visible'); expect(observed.excluded).toBeNull(); expect(observed.missing).toBeNull();
-  expect(observed.keys).toEqual(Object.keys(result.env).sort());
+  expect(observed.keys).toEqual(Object.entries(result.env).filter(([, value]) => value !== undefined).map(([name]) => name).sort());
+});
+
+it('blocks Node coverage auto-propagation to a real non-Node child unless declared', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'mesh-env-coverage-')));
+  const prior = process.env.NODE_V8_COVERAGE;
+  try {
+    // A non-Node child cannot enable V8 coverage. Even the RED run confines its
+    // inherited sentinel to this disposable folder, then restores the parent.
+    process.env.NODE_V8_COVERAGE = root;
+    const inspect = (env: NodeJS.ProcessEnv) => process.platform === 'win32'
+      ? spawnSync(join(process.env.SYSTEMROOT!, 'System32', 'cmd.exe'), ['/d', '/c', 'set NODE_V8_COVERAGE'], { env, encoding: 'utf8', windowsHide: true })
+      : spawnSync('/bin/sh', ['-c', 'printf "%s" "${NODE_V8_COVERAGE-unset}"'], { env, encoding: 'utf8' });
+    const omitted = prepareBuildEnvironment([]);
+    const before = Object.entries(omitted.env);
+    const child = inspect(omitted.env);
+    expect(child.error).toBeUndefined();
+    expect(child.stdout).not.toContain(root);
+    expect(Object.entries(omitted.env)).toEqual(before);
+    expect(Object.hasOwn(omitted.env, 'NODE_V8_COVERAGE')).toBe(true);
+    expect(omitted.env.NODE_V8_COVERAGE).toBeUndefined();
+    const included = prepareBuildEnvironment(['NODE_V8_COVERAGE']);
+    expect(inspect(included.env).stdout).toContain(root);
+    expect(included.env.NODE_V8_COVERAGE).toBe(root);
+    expect(included.contract.inputs).toEqual(['NODE_V8_COVERAGE']);
+  } finally {
+    if (prior === undefined) delete process.env.NODE_V8_COVERAGE; else process.env.NODE_V8_COVERAGE = prior;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it('blocks the documented z/OS automatic-copy names without claiming extra baseline inputs', () => {
+  const result = prepareBuildEnvironment([], {}, 'os390' as NodeJS.Platform);
+  for (const name of ['NODE_V8_COVERAGE', '_BPXK_AUTOCVT', '_CEE_RUNOPTS', '_TAG_REDIR_ERR', '_TAG_REDIR_IN', '_TAG_REDIR_OUT', 'STEPLIB', 'LIBPATH', '_EDC_SIG_DFLT', '_EDC_SUSV3']) {
+    expect(Object.hasOwn(result.env, name)).toBe(true); expect(result.env[name]).toBeUndefined();
+  }
+  expect(result.contract.platformInputs).toEqual(['HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'PATH', 'TMPDIR', 'TZ']);
+});
+
+it('rejects declared filtering under the Node permission model which rewrites NODE_OPTIONS', () => {
+  const program = `const { prepareBuildEnvironment } = await import(${JSON.stringify(new URL('../src/build-environment.ts', import.meta.url).href)}); let error = ''; try { prepareBuildEnvironment([]); } catch (caught) { error = caught.message; } process.stdout.write(JSON.stringify({ inherited: prepareBuildEnvironment(undefined).contract.mode, error }));`;
+  const child = spawnSync(process.execPath, ['--permission', '--allow-fs-read=*', '--input-type=module', '-e', program], { env: { ...process.env, NODE_V8_COVERAGE: undefined }, encoding: 'utf8', windowsHide: true });
+  expect(child.status, child.stderr || child.error?.message).toBe(0);
+  const observed = JSON.parse(child.stdout);
+  expect(observed.inherited).toBe('inherited');
+  expect(observed.error).toMatch(/declared.*permission|permission.*declared/i);
 });

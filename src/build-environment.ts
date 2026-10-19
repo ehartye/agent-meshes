@@ -7,6 +7,8 @@ export interface BuildEnvironmentContract {
 /** libuv may inherit these from the real Windows parent even with an explicit env. */
 const windowsInputs = ['HOMEDRIVE', 'HOMEPATH', 'LOGONSERVER', 'PATH', 'SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'USERDOMAIN', 'USERNAME', 'USERPROFILE', 'WINDIR'];
 const posixInputs = ['HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'PATH', 'TMPDIR', 'TZ'];
+/** Node 24 child_process copies these unless options.env has an own property. */
+const zosAutomaticInputs = ['_BPXK_AUTOCVT', '_CEE_RUNOPTS', '_TAG_REDIR_ERR', '_TAG_REDIR_IN', '_TAG_REDIR_OUT', 'STEPLIB', 'LIBPATH', '_EDC_SIG_DFLT', '_EDC_SUSV3'];
 const variableName = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
@@ -16,6 +18,9 @@ const variableName = /^[A-Za-z_][A-Za-z0-9_]*$/;
  */
 export function prepareBuildEnvironment(inputs?: string[], env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): { env: NodeJS.ProcessEnv; contract: BuildEnvironmentContract } {
   if (inputs === undefined) return { env: { ...env }, contract: { mode: 'inherited', inputs: [], platformInputs: [] } };
+  // Node's permission mode rewrites NODE_OPTIONS independently of own-property
+  // suppression. Do not promise an exact declared child environment in that mode.
+  if (process.permission) throw new Error('Declared environment filtering is unsupported under the Node permission model');
   if (!Array.isArray(inputs) || inputs.length > 256) throw new Error('Declared environment inputs must be an array of at most 256 variable names');
   const canonical = (name: string) => platform === 'win32' ? name.toUpperCase() : name;
   const declarations = new Set<string>();
@@ -27,6 +32,7 @@ export function prepareBuildEnvironment(inputs?: string[], env: NodeJS.ProcessEn
   }
   const platformInputs = [...(platform === 'win32' ? windowsInputs : posixInputs)];
   const wanted = new Set([...platformInputs, ...declarations]);
+  const automatic = new Set(['NODE_V8_COVERAGE', ...(String(platform) === 'os390' ? zosAutomaticInputs : [])]);
   const values = new Map<string, string | undefined>();
   for (const [name, value] of Object.entries(env)) {
     const key = canonical(name);
@@ -42,7 +48,10 @@ export function prepareBuildEnvironment(inputs?: string[], env: NodeJS.ProcessEn
     for (const name of platformInputs) if (!values.get(name)) throw new Error(`Missing or empty required Windows environment variable: ${name}`);
   }
   return {
-    env: Object.fromEntries([...wanted].sort().filter(name => values.get(name) !== undefined).map(name => [name, values.get(name)])),
+    // Own undefined is a negative sentinel: Node must not refill this variable,
+    // while its envPairs serializer emits no value to the actual child. Keep it
+    // on the live launch object even though JSON/private value hashes omit it.
+    env: Object.fromEntries([...new Set([...wanted, ...automatic])].sort().filter(name => values.get(name) !== undefined || automatic.has(name)).map(name => [name, values.get(name)])),
     contract: { mode: 'declared', inputs: [...declarations].sort(), platformInputs },
   };
 }
