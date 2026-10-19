@@ -2,6 +2,14 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.25.0 adds Unreal collision-setting checks and explicit import options,
+four-entry bounded rollback reuse, fixed Blender environment overrides, and a
+mesh-from-arrays helper preserving corner UVs and FLOAT_COLOR masks. Skills route
+directly to the relevant build and static-prop references. See
+[static-prop checks](skills/mesh-build/references/unreal-static-props.md),
+[native build identity](skills/mesh-build/references/native-build-identity.md) and
+[mesh arrays](scripts/blender_lib/README.md#meshes-from-arrays).
+
 Release 0.24.0 adds opt-in declared Blender environments and explicit project roots
 for shared input libraries. Portable authoring receipts omit machine-specific
 outside-read paths while the CLI retains full diagnostics. Existing configs keep

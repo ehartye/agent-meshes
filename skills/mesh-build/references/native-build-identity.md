@@ -240,14 +240,26 @@ the selected command/environment and factory startup, with fresh bytecode lookup
 before importing project/shared source. Suppressing bytecode writes alone would
 still permit stale timestamp caches to override changed Python source.
 
-A successful incremental build owns a pristine Blender GLB and a small versioned
-cache record alongside its generated output. Subsequent matching builds verify
-that pristine digest and skip Blender. Current verification, limits, previews and
+A successful incremental build owns pristine Blender GLBs and a versioned cache
+record alongside its generated output. Starting in 0.25.0, it retains the current
+entry plus up to three prior clean entries, keyed by complete native identity.
+An A → B → A revert can reuse A without launching Blender. Successful publication
+moves the selected entry to the front; reads do not mutate recency outside the
+output transaction. Total pristine bytes are capped at 256 MiB, evicting older
+entries as necessary. A single oversize asset still builds and publishes, without
+a reusable native cache. This is per owned output, not cross-project sharing.
+
+Subsequent matching builds verify that entry's pristine digest and skip Blender.
+Current verification, limits, previews and
 decorations still run; a decorator is never applied repeatedly to last run's
 already-decorated GLB. Missing/corrupt cache bytes cause regeneration. Missing or
 damaged final generated artifacts can be repaired from valid pristine bytes.
 Ownership, links, concurrent builds and input/tool changes retain their checks;
-failure preserves the previous published output.
+failure preserves the previous published output and its history. Malformed,
+missing or corrupt historical entries are discarded; they do not invalidate a
+valid current entry. Unsafe linked cache files are rejected. The private record
+schema is now `agent-meshes/native-blender-cache@3`; older records rebuild once.
+`--force` still regenerates even when a matching historical entry exists.
 
 The result's `incremental.blender` is `built` or `reused`, with a reason. Keep
 forced rebuilds in validation and compare the actual required output, rather than
@@ -325,6 +337,38 @@ alone would permit stale geometry; this option filters the actual launch too.
 The same environment is used for plain, forced and unsupported-cache fallback
 generation. Explicit mode uses factory startup. Omitted `environment` preserves
 full inheritance and its conservative full-environment reuse key.
+
+Starting in 0.25.0, declared mode also accepts `overrides`: fixed literal values
+for the actual child environment, including baseline variables:
+
+```json
+{
+  "blender": {
+    "script": "asset.py",
+    "environment": {
+      "inputs": ["MESH_STYLE"],
+      "overrides": { "PATH": "C:/Windows/System32", "TEMP": "C:/MeshTemp", "TMP": "C:/MeshTemp" }
+    }
+  }
+}
+```
+
+These Windows paths are examples: select existing directories and every external
+tool directory the recipe actually needs. Values are literal, with no variable
+or path expansion; POSIX uses its own baseline such as `TMPDIR`. `inputs` selects
+parent values; `overrides` supplies fixed ones. A name cannot appear in both,
+and Windows aliases within either declaration are rejected. Overrides apply
+before baseline validation, hashing and every plain/forced/fallback launch.
+Names are recorded in `provenance.environment.overrides`; values remain private
+and enter the effective-environment digest. Config files containing values are
+still project-owned text: do not put secrets in committed configs.
+
+Fixed PATH/TEMP values can stabilize alternating shells without a wrapper.
+Resolving Blender alone does not make PATH irrelevant: scripts may launch other
+tools, and temporary paths may affect behavior. Unoverridden baseline values
+remain keyed. Blender executable discovery still occurs before child filtering;
+use the existing selection mechanism for the executable itself. This is explicit
+launch normalization, not proof that arbitrary environments produce equal meshes.
 
 An empty `inputs` list selects only the baseline. Names use
 `[A-Za-z_][A-Za-z0-9_]*`, with at most 256 declarations. Windows names are

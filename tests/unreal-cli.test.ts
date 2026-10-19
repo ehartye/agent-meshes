@@ -58,6 +58,12 @@ it('forwards static-prop bounds and build-setting expectations with one mesh sel
   expect(verifyUnreal.mock.calls[0][1]).toMatchObject({ staticBounds: { size: [80,80,120], toleranceCm: 0.5 }, staticMesh: 'Barrel', staticNanite: false, staticFullPrecisionUVs: true });
 });
 
+it('forwards collision settings and an explicit import-options file', async () => {
+  verifyUnreal.mockResolvedValue({ok:true,failures:[]});
+  await run('rubble.glb','--expect-collision','complex-as-simple','--expect-double-sided','on','--static-mesh','Rubble','--import-options','import-options.json');
+  expect(verifyUnreal.mock.calls[0][1]).toMatchObject({staticCollision:'complex-as-simple',staticDoubleSided:true,importOptionsFile:expect.stringMatching(/import-options\.json$/)});
+});
+
 it('runs the built-in signed axis calibration without a file', async () => {
   verifyUnrealAxisCalibration.mockResolvedValue({ ok: true, failures: [] });
   await run('--axis-calibration', '--json');
@@ -72,6 +78,8 @@ it.each([
   ['barrel.glb', '--expect-nanite', 'maybe'], ['barrel.glb', '--expect-full-precision-uvs', 'true'],
   ['--axis-calibration', '--contract', 'arkit-face/1'],
   ['--axis-calibration', '--bounds-tolerance-cm', '5'],
+  ['barrel.glb','--expect-collision','automatic'], ['barrel.glb','--expect-double-sided','yes'],
+  ['--axis-calibration','--expect-collision','default'],
 ])('rejects malformed or ambiguous static arguments %j before an engine launch', async (...args: string[]) => {
   await run(...args);
   expect(verifyUnreal).not.toHaveBeenCalled(); expect(verifyUnrealAxisCalibration).not.toHaveBeenCalled();

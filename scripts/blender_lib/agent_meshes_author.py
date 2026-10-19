@@ -5,7 +5,7 @@ caps. Point/ring counts stay fixed so independently evaluated shapes can become
 named glTF morph targets. Blender-only helpers import bpy lazily.
 """
 import math
-from numbers import Real
+from numbers import Integral, Real
 from collections.abc import Mapping, Sequence
 
 
@@ -344,19 +344,136 @@ def sweep_mesh(centers, radii, radial_segments=48, twist=None, initial_normal=No
     return vertices, faces
 
 
+def _new_mesh_object(name, vertices, faces, material):
+    """Shared native allocation; callers validate their own geometry contract."""
+    import bpy
+    mesh = bpy.data.meshes.new(name)
+    obj = None
+    try:
+        mesh.from_pydata(vertices, [], faces)
+        mesh.update()
+        obj = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(obj)
+        if material: mesh.materials.append(material)
+        return obj
+    except Exception:
+        if obj is not None: bpy.data.objects.remove(obj, do_unlink=True)
+        bpy.data.meshes.remove(mesh)
+        raise
+
+
 def make_mesh(name, vertices, faces, material=None):
     """Create a smooth named mesh; caps retain flat shading."""
     name = _name(name)
     vertices = [_vector(v, 3, 'Vertex') for v in vertices]
-    import bpy
-    mesh = bpy.data.meshes.new(name)
-    mesh.from_pydata(vertices, [], faces)
-    mesh.update()
-    obj = bpy.data.objects.new(name, mesh)
-    bpy.context.collection.objects.link(obj)
-    if material: mesh.materials.append(material)
+    obj = _new_mesh_object(name, vertices, faces, material)
+    mesh = obj.data
     for face in mesh.polygons: face.use_smooth = len(face.vertices) == 4
     return obj
+
+
+def validate_mesh_arrays(vertices, faces, *, corner_uvs=None, colors=None,
+                         color_domain='CORNER', uv_origin='BOTTOM_LEFT',
+                         coordinate_space='BLENDER'):
+    """Copy and validate mesh arrays without Blender; never repair or clamp.
+
+    UV rows follow flattened face-corner order, including seams. Colors are
+    linear RGBA in 0..1, one row per CORNER or POINT. Vertices and UVs must fit
+    finite native float32 storage. This checks array structure, not manifoldness,
+    intersections, face planarity, zero area or winding consistency.
+    """
+    def rows(value, label):
+        if isinstance(value, (str, bytes)):
+            raise ValueError(f'{label} must be an iterable of rows')
+        try: return list(value)
+        except TypeError as exc:
+            raise ValueError(f'{label} must be an iterable of rows') from exc
+
+    def float_vector(value, size, label):
+        result = _vector(value, size, label)
+        if any(abs(v) > 3.4028234663852886e38 for v in result):
+            raise ValueError(f'{label} must fit finite float32 storage')
+        return result
+
+    if color_domain not in ('CORNER', 'POINT'):
+        raise ValueError('color_domain must be CORNER or POINT')
+    if uv_origin not in ('BOTTOM_LEFT', 'TOP_LEFT'):
+        raise ValueError('uv_origin must be BOTTOM_LEFT or TOP_LEFT')
+    if coordinate_space not in ('BLENDER', 'GLTF'):
+        raise ValueError('coordinate_space must be BLENDER or GLTF')
+    vertices = [float_vector(v, 3, 'Vertex') for v in rows(vertices, 'Vertices')]
+    if len(vertices) < 3: raise ValueError('Mesh arrays need at least three vertices')
+    polygons = []
+    for value in rows(faces, 'Faces'):
+        face = tuple(rows(value, 'Face'))
+        if len(face) < 3 or any(isinstance(i, bool) or not isinstance(i, Integral)
+                               or i < 0 or i >= len(vertices) for i in face):
+            raise ValueError('Faces must contain at least three valid integer vertex indices')
+        if len(set(face)) != len(face): raise ValueError('Faces must not repeat a vertex index')
+        polygons.append(tuple(int(i) for i in face))
+    if not polygons: raise ValueError('Mesh arrays need at least one face')
+    corners = sum(len(face) for face in polygons)
+    if corner_uvs is not None:
+        corner_uvs = [float_vector(uv, 2, 'Corner UV') for uv in rows(corner_uvs, 'Corner UVs')]
+        if len(corner_uvs) != corners: raise ValueError('UVs need one row per face corner')
+        if uv_origin == 'TOP_LEFT': corner_uvs = [(u, 1-v) for u, v in corner_uvs]
+    if colors is not None:
+        colors = [_vector(color, 4, 'Linear RGBA color') for color in rows(colors, 'Colors')]
+        if len(colors) != (corners if color_domain == 'CORNER' else len(vertices)):
+            raise ValueError(f'Colors need one RGBA row per {color_domain.lower()}')
+        if any(value < 0 or value > 1 for color in colors for value in color):
+            raise ValueError('Linear RGBA components must be in 0..1')
+    if coordinate_space == 'GLTF': vertices = [(x, -z, y) for x, y, z in vertices]
+    return dict(vertices=vertices, faces=polygons, corner_uvs=corner_uvs,
+                colors=colors, color_domain=color_domain)
+
+
+def mesh_from_arrays(name, vertices, faces, material=None, *, corner_uvs=None,
+                     colors=None, color_domain='CORNER', uv_origin='BOTTOM_LEFT',
+                     coordinate_space='BLENDER', uv_name='UVMap', color_name='Color',
+                     smooth=False):
+    """Create one mesh with optional corner UVs and selected FLOAT_COLOR RGBA.
+
+    BLENDER coordinates pass through unchanged (Z-up). GLTF explicitly rotates
+    right-handed Y-up input (x,y,z) to Blender (x,-z,y), preserving face winding.
+    BOTTOM_LEFT UVs pass through; TOP_LEFT maps native V to 1-V. The glTF exporter
+    also flips V, so TOP_LEFT source UVs round-trip unchanged in exported glTF.
+    No UV origin, units, axis convention or shading is inferred from the data.
+
+    Colors are linear 0..1 RGBA, CORNER by default or POINT, and alpha remains
+    data: this helper never changes the material graph or opacity. Export with
+    vertex_color='ACTIVE', all_vertex_colors=False to retain the selected layer.
+    A supplied material occupies slot zero; all faces use that slot. The helper
+    preserves selection, active object and mode. Validation precedes allocation;
+    a native failure removes only this call's new object and mesh datablock.
+    """
+    name, uv_name, color_name = _name(name), _name(uv_name), _name(color_name)
+    if not isinstance(smooth, bool): raise ValueError('smooth must be a bool')
+    if corner_uvs is not None and colors is not None and uv_name == color_name:
+        raise ValueError('UV and color layers need different names')
+    data = validate_mesh_arrays(vertices, faces, corner_uvs=corner_uvs, colors=colors,
+        color_domain=color_domain, uv_origin=uv_origin, coordinate_space=coordinate_space)
+    import bpy
+    if material is not None and not isinstance(material, bpy.types.Material):
+        raise ValueError('material must be a Blender material or None')
+    obj = _new_mesh_object(name, data['vertices'], data['faces'], material)
+    mesh = obj.data
+    try:
+        for polygon in mesh.polygons: polygon.use_smooth = smooth
+        if data['corner_uvs'] is not None:
+            layer = mesh.uv_layers.new(name=uv_name)
+            for item, uv in zip(layer.data, data['corner_uvs']): item.uv = uv
+            layer.active_render = True
+        if data['colors'] is not None:
+            layer = mesh.color_attributes.new(name=color_name, type='FLOAT_COLOR', domain=color_domain)
+            for item, color in zip(layer.data, data['colors']): item.color = color
+            mesh.color_attributes.active_color_index = 0
+            mesh.color_attributes.render_color_index = 0
+        return obj
+    except Exception:
+        bpy.data.objects.remove(obj, do_unlink=True)
+        bpy.data.meshes.remove(mesh)
+        raise
 
 
 def linear_color(value):

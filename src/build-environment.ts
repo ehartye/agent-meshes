@@ -2,6 +2,7 @@ export interface BuildEnvironmentContract {
   mode: 'inherited' | 'declared';
   inputs: string[];
   platformInputs: string[];
+  overrides?: string[];
 }
 
 /** libuv may inherit these from the real Windows parent even with an explicit env. */
@@ -16,8 +17,11 @@ const variableName = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * for every native author path, including plain/forced/fallback generation.
  * Hash its values privately; the public contract contains names only.
  */
-export function prepareBuildEnvironment(inputs?: string[], env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): { env: NodeJS.ProcessEnv; contract: BuildEnvironmentContract } {
-  if (inputs === undefined) return { env: { ...env }, contract: { mode: 'inherited', inputs: [], platformInputs: [] } };
+export function prepareBuildEnvironment(inputs?: string[], env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, overrides?: Record<string, string>): { env: NodeJS.ProcessEnv; contract: BuildEnvironmentContract } {
+  if (inputs === undefined) {
+    if (overrides !== undefined) throw new Error('Environment overrides require declared inputs (use inputs: [] to select only the platform baseline)');
+    return { env: { ...env }, contract: { mode: 'inherited', inputs: [], platformInputs: [] } };
+  }
   // Node's permission mode rewrites NODE_OPTIONS independently of own-property
   // suppression. Do not promise an exact declared child environment in that mode.
   if (process.permission) throw new Error('Declared environment filtering is unsupported under the Node permission model');
@@ -30,17 +34,29 @@ export function prepareBuildEnvironment(inputs?: string[], env: NodeJS.ProcessEn
     if (declarations.has(key)) throw new Error(`Duplicate declared environment variable or alias: ${key}`);
     declarations.add(key);
   }
+  const fixed = new Map<string, string>();
+  if (overrides !== undefined) {
+    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides) || Object.keys(overrides).length > 256) throw new Error('Environment overrides must be an object of at most 256 literal string values');
+    for (const [name, value] of Object.entries(overrides)) {
+      if (!variableName.test(name) || typeof value !== 'string' || value.includes('\0')) throw new Error('Invalid environment override name or value');
+      const key = canonical(name);
+      if (fixed.has(key)) throw new Error(`Duplicate environment override variable or alias: ${key}`);
+      if (declarations.has(key)) throw new Error(`Environment input and override overlap: ${key}`);
+      fixed.set(key, value);
+    }
+  }
   const platformInputs = [...(platform === 'win32' ? windowsInputs : posixInputs)];
-  const wanted = new Set([...platformInputs, ...declarations]);
+  const wanted = new Set([...platformInputs, ...declarations, ...fixed.keys()]);
   const automatic = new Set(['NODE_V8_COVERAGE', ...(String(platform) === 'os390' ? zosAutomaticInputs : [])]);
   const values = new Map<string, string | undefined>();
   for (const [name, value] of Object.entries(env)) {
     const key = canonical(name);
-    if (!wanted.has(key)) continue;
+    if (!wanted.has(key) || fixed.has(key)) continue;
     if (value !== undefined && typeof value !== 'string') throw new Error(`Invalid environment value for variable: ${key}`);
     if (values.has(key) && values.get(key) !== value) throw new Error(`Conflicting parent environment aliases for variable: ${key}`);
     values.set(key, value);
   }
+  for (const [name, value] of fixed) values.set(name, value);
   if (platform === 'win32') {
     // Missing values cannot be left for libuv to refill outside this snapshot.
     // Empty placeholders are also unsafe for native Windows launch (SystemRoot
@@ -52,6 +68,6 @@ export function prepareBuildEnvironment(inputs?: string[], env: NodeJS.ProcessEn
     // while its envPairs serializer emits no value to the actual child. Keep it
     // on the live launch object even though JSON/private value hashes omit it.
     env: Object.fromEntries([...new Set([...wanted, ...automatic])].sort().filter(name => values.get(name) !== undefined || automatic.has(name)).map(name => [name, values.get(name)])),
-    contract: { mode: 'declared', inputs: [...declarations].sort(), platformInputs },
+    contract: { mode: 'declared', inputs: [...declarations].sort(), platformInputs, ...(overrides !== undefined ? { overrides: [...fixed.keys()].sort() } : {}) },
   };
 }

@@ -244,6 +244,9 @@ export async function main(args = process.argv): Promise<void> {
     .option('--static-mesh <name>', 'Exact static mesh asset path or basename for expectations')
     .option('--expect-nanite <on|off>', 'Require the static mesh Nanite enabled setting')
     .option('--expect-full-precision-uvs <on|off>', 'Require the full-precision UV build setting at every static LOD')
+    .option('--expect-collision <mode>', 'Require stored BodySetup flag: default|simple-and-complex|simple-as-complex|complex-as-simple')
+    .option('--expect-double-sided <on|off>', 'Require BodySetup double-sided triangle scene-query setting (not material two-sidedness)')
+    .option('--import-options <file>', 'Strict JSON Interchange and post-import settings for this scratch import')
     .option('--axis-calibration', 'Import built-in asymmetric signed-axis markers instead of a supplied file')
     .option('--timeout <seconds>', 'Stop Unreal after this long (first runs compile shaders)', '1800')
     .option('--log <file>', 'Write the Unreal log here instead of the cache Logs directory')
@@ -252,7 +255,7 @@ export async function main(args = process.argv): Promise<void> {
     const { contractExpectations } = await import('./arkit-face.ts');
     const argumentError = (message: string): never => { throw Object.assign(new Error(message), { code: 'CLI_ARGUMENT_ERROR' }); };
     if (!file && !options.axisCalibration) argumentError('Supply a GLB file or --axis-calibration');
-    if (options.axisCalibration && (file || options.contract || options.expectMorphs || options.expectBones || options.expectBoundsCm || options.staticMesh || options.expectNanite || options.expectFullPrecisionUvs)) argumentError('--axis-calibration runs its own built-in contract; omit the file and other expectation flags');
+    if (options.axisCalibration && (file || options.contract || options.expectMorphs || options.expectBones || options.expectBoundsCm || options.staticMesh || options.expectNanite || options.expectFullPrecisionUvs || options.expectCollision || options.expectDoubleSided)) argumentError('--axis-calibration runs its own built-in contract; omit the file and other expectation flags');
     const toleranceCm = Number(options.boundsToleranceCm);
     if (!Number.isFinite(toleranceCm) || toleranceCm < 0) argumentError('--bounds-tolerance-cm must be a non-negative number');
     if (!options.expectBoundsCm && toleranceCm !== 0.1) argumentError('A custom --bounds-tolerance-cm requires --expect-bounds-cm; axis calibration uses a fixed 0.1 cm tolerance');
@@ -263,6 +266,8 @@ export async function main(args = process.argv): Promise<void> {
     };
     const staticNanite = onOff(options.expectNanite, '--expect-nanite');
     const staticFullPrecisionUVs = onOff(options.expectFullPrecisionUvs, '--expect-full-precision-uvs');
+    const staticDoubleSided = onOff(options.expectDoubleSided, '--expect-double-sided');
+    const staticCollision = options.expectCollision === undefined ? undefined : unreal.parseUnrealCollision(String(options.expectCollision));
     const base = options.contract ? contractExpectations(String(options.contract)) : { morphs: [], bones: [], parents: {} };
     const timeout = Number(options.timeout);
     if (!Number.isFinite(timeout) || timeout <= 0) throw Object.assign(new Error('--timeout must be a positive number of seconds'), { code: 'CLI_ARGUMENT_ERROR' });
@@ -276,6 +281,9 @@ export async function main(args = process.argv): Promise<void> {
       ...(options.staticMesh ? { staticMesh: String(options.staticMesh) } : {}),
       ...(staticNanite !== undefined ? { staticNanite } : {}),
       ...(staticFullPrecisionUVs !== undefined ? { staticFullPrecisionUVs } : {}),
+      ...(staticCollision !== undefined ? { staticCollision } : {}),
+      ...(staticDoubleSided !== undefined ? { staticDoubleSided } : {}),
+      ...(options.importOptions ? { importOptionsFile: resolve(options.importOptions) } : {}),
     };
     const report = options.axisCalibration ? await unreal.verifyUnrealAxisCalibration(expectations) : await unreal.verifyUnreal(resolve(file), expectations);
     process.stdout.write(`${options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2)}\n`);

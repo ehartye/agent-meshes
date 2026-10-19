@@ -153,6 +153,8 @@ jobs:
       - if: matrix.suite == 'geometry'
         run: python tests/blender_author_geometry.py
       - if: matrix.suite == 'geometry'
+        run: python -B tests/blender_mesh_arrays.py
+      - if: matrix.suite == 'geometry'
         run: python tests/blender_author_skin.py
       - if: matrix.suite == 'geometry'
         run: python tests/reproportion.py

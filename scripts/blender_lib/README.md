@@ -85,6 +85,57 @@ real selected Blender to verify normal builds, decoded CORNER RGBA values,
 default equality, `NONE` omission and prior-output preservation on invalid
 controls; it skips when Blender is unavailable.
 
+## Meshes from arrays
+
+Use `agent_meshes_author.mesh_from_arrays` for code-generated geometry that needs
+UVs or vertex masks. It does not run the uniform-prop colour-stripping helpers:
+
+```python
+from agent_meshes_author import mesh_from_arrays
+
+EXPORT_VERTEX_COLOR = 'ACTIVE'
+EXPORT_ALL_VERTEX_COLORS = False
+
+def build():
+    # vertices/faces, corner_uvs and corner_rgba come from the project generator.
+    obj = mesh_from_arrays('Rubble', vertices, faces, ink_material,
+        corner_uvs=corner_uvs, colors=corner_rgba, color_name='Wear',
+        uv_origin='TOP_LEFT', coordinate_space='BLENDER')
+    return [obj]
+```
+
+`vertices` are XYZ rows and `faces` are ordered index rows of at least three
+distinct vertices. `corner_uvs` is a flat face-order list: one UV row for every
+corner, including repeated vertex indices across faces. `uv_origin='TOP_LEFT'`
+maps V to `1 - V` in Blender; the default `BOTTOM_LEFT` keeps input values. The
+glTF exporter performs its normal UV conversion afterwards. Choose the origin
+of the input arrays explicitly; do not flip twice to compensate for a preview.
+
+`colors` are linear RGBA in 0..1. The default `color_domain='CORNER'` keeps face
+seams; `POINT` instead requires one colour row per vertex. Both create a
+`FLOAT_COLOR` layer and select it for render/export. Use the vertex-colour export
+controls above to retain the intended layer in the GLB. Alpha remains data: the
+helper does not alter material opacity or shader nodes. One optional Blender
+material occupies slot zero. `uv_name`, `color_name` and `smooth` are explicit
+options; smoothing defaults to false.
+
+Coordinates default to unchanged Blender coordinates. `coordinate_space='GLTF'`
+maps XYZ to Blender `(x, -z, y)` before the usual Y-up export. No unit, axis,
+image-origin or material convention is inferred. The helper preserves selection,
+active object and mode. Structural validation completes before allocation;
+invalid indices, lengths, nonfinite/unrepresentable float32 coordinates or
+out-of-range colours fail without truncation or clamping. Native allocation
+failure removes only this call's new object/mesh. `validate_mesh_arrays` provides
+the same preflight without Blender. It does not prove manifoldness, planarity,
+consistent winding or absence of intersections.
+
+Existing `make_mesh` remains available with its previous geometry/shading
+behavior. Do not apply `finish_static` or `export_static_glb` to a mesh whose
+colours are consumer data. Check decoded final UV/RGBA values and target shader
+behavior separately. Pure checks: `python -B tests/blender_mesh_arrays.py`.
+The real-Blender `tests/mesh-arrays-blender.test.ts` verifies exported seams,
+opaque alpha data and legacy compatibility; it skips when Blender is absent.
+
 ## Image materials with authored UVs
 
 The Blender Python API adds `image_material` alongside the scalar `material` API:
