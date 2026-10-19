@@ -1,6 +1,7 @@
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { Project } from './core/types.ts';
 import { createProject, validateProject } from './core/model.ts';
@@ -16,6 +17,7 @@ import { checkLimits, limitsSchema } from './glb-limits.ts';
 import { lintSilhouette, silhouette } from './silhouette.ts';
 import { captureBuildInputs, captureBuildToolchain, checkToolchainPin } from './build-provenance.ts';
 import { nativeCacheFiles, prepareNativeCache } from './build-native-cache.ts';
+import { classifyReadAudit, type ReadAudit } from './build-read-audit.ts';
 
 const markerName = '.agent-meshes-build.json';
 /** Optional Blender pass over the exported GLB: subdivision, smoothing and a clouds displacement on named meshes. */
@@ -34,6 +36,7 @@ const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, 'Expected a lowercase SH
 /** Explicit config-relative files or bounded trees; no Python import discovery. */
 const blenderSchema = z.object({
   script: z.string().min(1),
+  readAudit: z.enum(['warn', 'strict']).optional(),
   inputs: z.array(z.union([
     z.object({ path: z.string().min(1), sha256: sha256Schema.optional() }).strict(),
     z.object({ dir: z.string().min(1), include: z.array(z.string().min(1)).min(1).max(100).optional(), exclude: z.array(z.string().min(1)).max(100).optional(), maxFiles: z.number().int().min(1).max(10000).optional(), sha256: sha256Schema.optional() }).strict(),
@@ -141,7 +144,7 @@ export interface BuildOptions {
   decorate?: (project: Project, stage: string) => Promise<string[]>;
   decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]>;
 }
-export async function buildAsset(configPath: string, options: BuildOptions = {}): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding)[]; incremental?: { blender: 'built' | 'reused'; reason: string } }> {
+export async function buildAsset(configPath: string, options: BuildOptions = {}): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding | { code: 'BLENDER_READ_AUDIT'; message: string })[]; readAudit?: ReadAudit; incremental?: { blender: 'built' | 'reused'; reason: string } }> {
   const configFile = await realpath(resolve(configPath));
   const configBytes = await readFile(configFile);
   const config = configSchema.parse(JSON.parse(configBytes.toString('utf8')));
@@ -173,7 +176,8 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
     let files: string[];
     let finishAuthoring: (() => Promise<void>) | undefined;
     let incrementalResult: { blender: 'built' | 'reused'; reason: string } | undefined;
-    const warnings: (ProjectWarning | DetachedFinding)[] = [];
+    let readAudit: ReadAudit | undefined;
+    const warnings: (ProjectWarning | DetachedFinding | { code: 'BLENDER_READ_AUDIT'; message: string })[] = [];
     /** The detached-part lint on the final GLB: always recorded; a failing verify.maxGap budget has already stopped the build. */
     const lintDetached = (bytes: Uint8Array, limits: { detached?: DetachedReport } | null): DetachedReport => {
       const report = limits?.detached ?? checkDetached(bytes, { allow: config.verify?.allowDetached });
@@ -184,8 +188,12 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
       const prepared = incremental ? await prepareNativeCache(findBlender(), { config: inputs!.config, inputs: inputs!.files, helpers: tools!.identity, script: input, configFile }, output, stage) : undefined;
       const cached = prepared?.cache && !options.force ? await prepared.cache.read(output) : undefined;
       if (cached) await writeFile(join(stage, 'model.glb'), cached.bytes, { flag: 'wx' });
-      const result = cached ?? await (prepared?.cache ? authorGLB(input, join(stage, 'model.glb'), prepared.cache.launch) : authorGLB(input, join(stage, 'model.glb')));
+      const result = cached ?? await authorGLB(input, join(stage, 'model.glb'), prepared?.cache?.launch ?? { pythonCachePrefix: join(stage, '.agent-meshes-python-imports') });
+      readAudit = cached?.readAudit ?? classifyReadAudit(result.readAudit, { base: dirname(configFile), inputs: inputs!.files, helperRoot: fileURLToPath(new URL('../', import.meta.url)), helpers: tools!.files });
+      if (config.blender.readAudit === 'strict' && readAudit.status !== 'clean') throw Object.assign(new Error(`READ_AUDIT_FAILED: ${readAudit.status}; undeclared reads: ${readAudit.undeclaredReads.join(', ') || '(none resolved)'}`), { code: 'READ_AUDIT_FAILED', readAudit });
+      const cacheable = readAudit.status === 'clean';
       if (incremental) incrementalResult = { blender: cached ? 'reused' : 'built', reason: cached ? 'matching-native-cache' : options.force ? 'forced' : prepared!.reason };
+      if (incrementalResult && !cacheable) incrementalResult.reason = `read-audit-${readAudit.status}`;
       checkToolchainPin(config.blender.toolchain, { ...tools!.identity, blenderVersion: result.blender });
       const bytes = await readFile(join(stage, 'model.glb'));
       const recordVerification = async (current: Uint8Array) => {
@@ -199,13 +207,14 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
       };
       await recordVerification(bytes);
       files = ['model.glb', 'verification.json', 'authoring.json'];
-      if (prepared?.cache) files.push(...nativeCacheFiles);
+      if (prepared?.cache && cacheable) files.push(...nativeCacheFiles);
       const receipt = {
         version: 1,
         source: { script: inputs!.entry.path, sha256: inputs!.entry.sha256 },
         blender: result.blender, meshes: result.meshes,
         provenance: {
           dependencyDiscovery: 'entry-and-declared-only', inputs: inputs!.files,
+          readAudit,
           ...(inputs!.trees.length ? { inputTrees: inputs!.trees } : {}),
           toolchain: { ...tools!.identity, blenderVersion: result.blender }, helpers: tools!.files,
           pins: { inputs: inputs!.pins, ...(inputs!.trees.length ? { inputTrees: inputs!.treePins } : {}), toolchain: config.blender.toolchain ?? null },
@@ -222,9 +231,9 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
         if (finalHash !== receipt.provenance.output.sha256) await recordVerification(finalBytes);
         receipt.provenance.output.sha256 = finalHash;
         await writeBuildReceipt(stage!, 'authoring.json', receipt);
-        if (prepared?.cache) {
+        if (prepared?.cache && cacheable) {
           await prepared.cache.assertUnchanged();
-          await prepared.cache.write(stage!, bytes, result);
+          await prepared.cache.write(stage!, bytes, { ...result, readAudit: readAudit! });
         }
       };
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
@@ -279,7 +288,8 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
     try { await move(stage, output); stage = undefined; }
     catch (error) { if (backup) { await move(backup, output); backup = undefined; } throw error; }
     if (backup) { await rm(backup, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); backup = undefined; }
-    return { output, files, ...(warnings.length ? { warnings } : {}), ...(incrementalResult ? { incremental: incrementalResult } : {}) };
+    if (readAudit && readAudit.status !== 'clean') warnings.push({ code: 'BLENDER_READ_AUDIT', message: `Python read audit ${readAudit.status}; native reuse disabled. Declare observed inputs: ${readAudit.undeclaredReads.join(', ') || '(audit incomplete)'}. Native file reads and dependency closure are not covered.` });
+    return { output, files, ...(warnings.length ? { warnings } : {}), ...(readAudit ? { readAudit } : {}), ...(incrementalResult ? { incremental: incrementalResult } : {}) };
   } finally {
     if (stage) await rm(stage, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     await lock.close(); await unlink(lockPath);

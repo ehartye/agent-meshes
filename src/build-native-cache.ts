@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { AuthorOptions } from './author.ts';
 import type { BlenderLocation } from './refine.ts';
+import { readAuditSchema, type ReadAudit } from './build-read-audit.ts';
 
 export const nativeCacheFiles = ['.agent-meshes-blender-cache.json', '.agent-meshes-blender-cache.bin'] as const;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -17,6 +18,7 @@ const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const recordSchema = z.object({
   schema: z.literal('agent-meshes/native-blender-cache@1'), key: sha,
   outputSha256: sha, blender: z.string().min(1), meshes: z.number().int().positive(),
+  readAudit: readAuditSchema.refine(report => report.status === 'clean' && report.installed && !report.truncated && report.unresolvedEvents === 0 && report.undeclaredReads.length === 0),
 }).strict();
 type Record = z.infer<typeof recordSchema>;
 interface Snapshot { path: string; metadata: string; sha256?: string }
@@ -66,8 +68,8 @@ async function runtimeRoot(command: string): Promise<string | undefined> {
 
 export interface NativeCache {
   launch: AuthorOptions;
-  read: (output: string) => Promise<{ bytes: Buffer; blender: string; meshes: number } | undefined>;
-  write: (stage: string, bytes: Uint8Array, result: { blender: string; meshes: number }) => Promise<void>;
+  read: (output: string) => Promise<{ bytes: Buffer; blender: string; meshes: number; readAudit: ReadAudit } | undefined>;
+  write: (stage: string, bytes: Uint8Array, result: { blender: string; meshes: number; readAudit: ReadAudit }) => Promise<void>;
   assertUnchanged: () => Promise<void>;
 }
 interface NativeIdentity { script: string; configFile: string; inputs: { path: string; sha256: string }[]; config: unknown; helpers: unknown }
@@ -109,7 +111,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     if (/changed while hashing/.test(String(error))) throw error;
     return { reason: 'unsupported-blender-runtime-files' };
   }
-  const implementation = await Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-native-cache.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
+  const implementation = await Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-read-audit.ts', 'build-native-cache.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
   const cwd = process.cwd();
   const key = digest({
     policy: 'declared-inputs-complete/factory-startup/fresh-python-source@2', identity, cwd, helperRoot,
@@ -141,10 +143,10 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
       try { bytes = await plainBytes(join(directory, nativeCacheFiles[1])); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
       if (byteDigest(bytes) !== record.outputSha256) return;
-      return { bytes, blender: record.blender, meshes: record.meshes };
+      return { bytes, blender: record.blender, meshes: record.meshes, readAudit: record.readAudit };
     },
     write: async (stage, bytes, result) => {
-      const record: Record = { schema: 'agent-meshes/native-blender-cache@1', key, outputSha256: byteDigest(bytes), blender: result.blender, meshes: result.meshes };
+      const record: Record = { schema: 'agent-meshes/native-blender-cache@1', key, outputSha256: byteDigest(bytes), blender: result.blender, meshes: result.meshes, readAudit: result.readAudit };
       // Exclusive creation in the private stage cannot follow a decorator's link
       // or overwrite a file it created. The output transaction publishes both.
       await writeFile(join(stage, nativeCacheFiles[1]), bytes, { flag: 'wx' });
