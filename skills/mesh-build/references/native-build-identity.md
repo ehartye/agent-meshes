@@ -77,8 +77,14 @@ declarations and their optional byte pins remain supported.
 `provenance.inputs` lists the entry and every selected file's raw-byte SHA256.
 `provenance.inputTrees` records each directory, normalized patterns, budget,
 expanded config-relative paths and actual `sha256`. Its digest is SHA256 of the
-UTF-8 JSON serialization of the tree's sorted `[{"path", "sha256"}]` records,
-with config-relative POSIX paths and no whitespace or newline. File names and
+UTF-8 JSON serialization of the tree's sorted `[{"path", "sha256"}]` records.
+Sort paths by ECMAScript UTF-16 code-unit lexical order, without locale collation
+or Unicode normalization; for example U+10000 sorts before U+E000. Serialize each
+object with keys `path` then `sha256`, using JSON.stringify escaping, config-relative
+POSIX paths and no whitespace or newline. A Python implementation must sort by
+`path.encode('utf-16-be', errors='surrogatepass')`, then use
+`json.dumps(records, ensure_ascii=False, separators=(',', ':')).encode('utf-8')`
+for ordinary Unicode filesystem names. File names and
 raw line endings are significant. Copy that reviewed digest into the tree
 declaration's optional `sha256` to pin the complete selected membership/bytes;
 editable trees can remain unpinned. `provenance.pins.inputTrees` names pinned
@@ -105,7 +111,7 @@ when you want their changing bytes recorded rather than rejected. A toolchain
 lock requires the Meshes version and helper digest; the Blender version pin is
 optional. Review and update pins deliberately when the relevant inputs change.
 
-The helper digest covers the sorted paths and raw-byte SHA-256 digests of the
+The helper digest uses that same UTF-16 sorting and JSON construction for paths and raw-byte SHA-256 digests of the
 Blender runner and the complete helper/data tree. It excludes Python bytecode
 and `__pycache__`; machine-specific cache locations are not part of the identity.
 Raw-byte identity is intentionally exact: a checkout's line-ending conversion
@@ -133,6 +139,51 @@ plugin cache is not an update policy. Project-level design changes normally
 belong in the small editable recipe instead.
 
 ## Reuse native Blender output when unchanged
+
+### Observe project reads (0.22.0 and later)
+
+Every generated native build installs a bounded CPython audit hook before project
+imports. The result and `authoring.json.provenance.readAudit` report Python read
+open attempts and module filenames, including modules already loaded at startup.
+Pure writes, pseudo module filenames, the exact fresh generated GLB and the fresh
+private bytecode prefix are excluded. Both default and incremental native builds
+use fresh bytecode lookup before project imports; disabling writes alone does not
+prevent loading old timestamp bytecode.
+
+The enforced scope is the **config directory**, matching today's declared input
+boundary. `reads` lists observed project paths and `undeclaredReads` identifies
+those absent from entry/expanded input declarations. Exact hashed helper files
+and installed Blender runtime paths are classified separately. Other paths appear
+in `externalReads`, relative to the config; they are **outside the enforced scope**,
+remain owner-reviewed dependencies and are not made fresh by this diagnostic.
+Blender may inspect an external extension-registry cache during export, for example.
+
+The default is `"blender": {"script":"prop.py", "readAudit":"warn"}`; omitting
+`readAudit` also selects warn. Findings publish current output with a
+`BLENDER_READ_AUDIT` warning, but no reusable native cache. Repeated --if-changed
+calls therefore generate again until declarations or incomplete observation are
+resolved. `"readAudit":"strict"` rejects undeclared/incomplete observation before
+publishing, preserving previous owned output. Results distinguish `clean`,
+`undeclared` and `incomplete`; clean means clean **within this diagnostic's scope**.
+Strict mode does not fail merely for a reported out-of-scope external read.
+
+Observation has a 20,000-unique-path budget. A failed hook self-probe, unresolved
+descriptor/path event, malformed/missing report or truncation is incomplete and
+cannot seed reuse. Clean reports are saved with the pristine native cache and
+replayed on a hit without launching Blender; old cache records without reports
+miss conservatively. A strict-config change also changes the build key.
+
+CPython raises open events before attempting the operation, so even a caught
+missing-file open may need a declaration or recipe change. Hooks can miss native
+C/C++ file reads, child processes, directory/glob membership, network and code
+that bypasses the observer. They do not discover complete dependencies or enforce
+a sandbox. Keep explicit tree declarations and forced validation; inspect
+`externalReads` and do not treat a clean audit as permission to omit dependencies.
+See [CPython audit events](https://docs.python.org/3/library/audit_events.html),
+[audit hook limits](https://docs.python.org/3/library/sys.html#sys.addaudithook) and
+[PEP 578](https://peps.python.org/pep-0578/).
+
+### Enable incremental generation
 
 With an incremental-capable build, opt in per asset:
 

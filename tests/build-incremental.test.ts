@@ -33,8 +33,8 @@ async function fixture() {
   const settings = { version: 1, blender: { script: 'bird.py', inputs: [{ path: 'design.py' }] }, output: 'generated' };
   await writeFile(config, JSON.stringify(settings));
   const bytes = await exportGLB(applyOperation(createProject('fixture'), { op: 'add', part: { name: 'body' } }));
-  authorGLB.mockImplementation(async (_source: string, destination: string) => {
-    await writeFile(destination, bytes); return { output: destination, bytes: bytes.length, meshes: 1, blender: '5.2.2 LTS' };
+  authorGLB.mockImplementation(async (source: string, destination: string) => {
+    await writeFile(destination, bytes); return { output: destination, bytes: bytes.length, meshes: 1, blender: '5.2.2 LTS', readAudit: { schema: 1, installed: true, reads: [source, data], runtimeRoots: [installation], unresolvedEvents: 0, truncated: false } };
   });
   return { root, installation, command, script, data, config, output, settings, bytes };
 }
@@ -51,6 +51,51 @@ it('reuses unchanged native authoring while running current decoration and verif
   expect(first.incremental?.blender).toBe('built'); expect(second.incremental?.blender).toBe('reused');
   expect(await readFile(join(output, 'preview.html'), 'utf8')).toBe('preview 2');
   expect(JSON.parse(await readFile(join(output, 'verification.json'), 'utf8')).ok).toBe(true);
+});
+
+it('reports undeclared reads in warning mode and never reuses that generation', async () => {
+  const f = await fixture();
+  const original = authorGLB.getMockImplementation()!;
+  authorGLB.mockImplementation(async (...args: unknown[]) => {
+    const result = await original(...args);
+    return { ...result, readAudit: { ...result.readAudit, reads: [...result.readAudit.reads, join(f.root, 'undeclared.json')] } };
+  });
+  const first = await buildAsset(f.config, { ifChanged: true });
+  expect(first.readAudit?.status).toBe('undeclared');
+  expect(first.readAudit?.undeclaredReads).toEqual(['undeclared.json']);
+  expect(first.incremental?.reason).toBe('read-audit-undeclared');
+  expect(first.files).not.toContain(nativeCacheFiles[0]);
+  await buildAsset(f.config, { ifChanged: true });
+  expect(authorGLB).toHaveBeenCalledTimes(2);
+});
+
+it('strict audit rejects undeclared or unavailable observations and preserves previous output', async () => {
+  const f = await fixture();
+  await buildAsset(f.config, { ifChanged: true });
+  const previous = await readFile(join(f.output, 'authoring.json'));
+  await writeFile(f.config, JSON.stringify({ ...f.settings, blender: { ...f.settings.blender, readAudit: 'strict' } }));
+  const original = authorGLB.getMockImplementation()!;
+  for (const readAudit of [undefined, { schema: 1, installed: true, reads: [f.script, join(f.root, 'secret.bin')], runtimeRoots: [], unresolvedEvents: 0, truncated: false }]) {
+    authorGLB.mockImplementationOnce(async (...args: unknown[]) => ({ ...await original(...args), readAudit }));
+    await expect(buildAsset(f.config, { ifChanged: true })).rejects.toThrow(/READ_AUDIT_FAILED/);
+    expect(await readFile(join(f.output, 'authoring.json'))).toEqual(previous);
+  }
+});
+
+it('regenerates legacy caches without audit evidence and replays clean reports on a hit', async () => {
+  const f = await fixture();
+  const first = await buildAsset(f.config, { ifChanged: true });
+  const recordPath = join(f.output, nativeCacheFiles[0]);
+  const record = JSON.parse(await readFile(recordPath, 'utf8'));
+  delete record.readAudit;
+  await writeFile(recordPath, JSON.stringify(record));
+  const regenerated = await buildAsset(f.config, { ifChanged: true });
+  expect(authorGLB).toHaveBeenCalledTimes(2);
+  const reused = await buildAsset(f.config, { ifChanged: true });
+  expect(authorGLB).toHaveBeenCalledTimes(2);
+  expect(reused.incremental?.blender).toBe('reused');
+  expect(reused.readAudit).toEqual(first.readAudit);
+  expect(reused.readAudit).toEqual(regenerated.readAudit);
 });
 
 it('invalidates changed declared input bytes and force refreshes the reusable result', async () => {

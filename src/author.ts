@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { findBlender, type BlenderLocation } from './refine.ts';
 
 export interface AuthorOptions { timeoutMs?: number; blender?: BlenderLocation; env?: NodeJS.ProcessEnv; cwd?: string; factoryStartup?: boolean; pythonCachePrefix?: string }
-export interface AuthorResult { output: string; bytes: number; meshes: number; blender: string }
-interface Report { ok: boolean; meshes?: number; blender?: string; error?: string }
+export interface AuthorResult { output: string; bytes: number; meshes: number; blender: string; readAudit?: unknown }
+interface Report { ok: boolean; meshes?: number; blender?: string; error?: string; readAudit?: unknown }
 
 /** Run a trusted Blender Python source's build() through the morph-preserving export wrapper. */
 export async function authorGLB(input: string, output: string, options: AuthorOptions = {}): Promise<AuthorResult> {
@@ -57,7 +57,7 @@ export async function authorGLB(input: string, output: string, options: AuthorOp
         const info = await stat(out);
         if (!info.isFile() || !info.size) throw new Error('Blender produced no GLB');
         succeeded = true;
-        return { output: out, bytes: info.size, meshes: report.meshes!, blender: report.blender };
+        return { output: out, bytes: info.size, meshes: report.meshes!, blender: report.blender, ...(report.readAudit ? { readAudit: report.readAudit } : {}) };
       }
       if (!blender.detached && exitCode !== undefined) throw new Error(`Blender exited without a completion report\n${log}`);
       if (Date.now() >= deadline) throw new Error(`Blender authoring timed out after ${timeout} ms\n${log}`);

@@ -34,6 +34,17 @@ it('expands sorted matching raw-byte inputs and records a reproducible tree pin'
   await result.assertUnchanged();
 });
 
+it('pins Unicode names in ECMAScript UTF-16 code-unit order rather than code-point or locale order', async () => {
+  const { root, capture } = await fixture();
+  await mkdir(join(root, 'unicode'));
+  const names = ['unicode/\u{10000}.py', 'unicode/\uE000.py'];
+  for (const path of names) await writeFile(join(root, path), '# same bytes\n');
+  const result = await capture([{ dir: 'unicode' }]);
+  const records = names.map(path => ({ path, sha256: sha('# same bytes\n') }));
+  expect(result.trees[0].paths).toEqual(names);
+  expect(result.trees[0].sha256).toBe(sha(JSON.stringify(records)));
+});
+
 it('detects selected additions, deletions and edits while excluding bytecode and ignored data', async () => {
   const { root, capture } = await fixture();
   const inputs = [{ dir: 'lib', include: ['**/*.py'], exclude: ['skip.py'] }];

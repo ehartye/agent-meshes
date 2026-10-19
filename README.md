@@ -479,6 +479,8 @@ Blender-authored assets can use the same isolated build command with a Python so
 
 The source defines `build()` returning a nonempty list of Blender objects, including at least one mesh. The runner starts an empty scene, adds the source's directory and `scripts/blender_lib` to Python's import path, calls `build()`, and exports the returned objects with named shape keys, their authored rest weights, materials, skins and animations. Source scripts are trusted Python code. The helper API is documented in [scripts/blender_lib/README.md](scripts/blender_lib/README.md). A config accepts exactly one of `project`, `operations`, or `blender`; authored builds cannot also request `refine` because modifiers belong in their source.
 
+Native builds report a bounded Python read audit for the config directory; undeclared or incomplete observation warns and disables native reuse. Set `blender.readAudit` to `strict` to fail before publication instead. External reads are disclosed separately and remain outside enforcement; native file I/O and complete dependency closure are not covered. Clean observations survive cache reuse without a Blender launch. See [read diagnostics and exact tree-pin construction](skills/mesh-build/references/native-build-identity.md#observe-project-reads-0220-and-later).
+
 Authored rigs can use `bind_skin(mesh, armature, weights)` to validate and normalize
 at most four explicit bone influences per vertex before creating a binding. It
 preserves the mesh world transform and rejects conflicting bindings; the pure

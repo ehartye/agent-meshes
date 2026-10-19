@@ -24,6 +24,9 @@ def report(path, value):
 
 def main(source, output):
     sys.path[:0] = [str(source.parent), str(Path(__file__).resolve().parent / 'blender_lib')]
+    from agent_meshes_read_audit import ReadAudit
+    audit = ReadAudit(runtime_roots=[str(Path(bpy.app.binary_path).resolve().parent), sys.base_prefix],
+                      ignored_roots=[str(output)] + ([sys.pycache_prefix] if sys.pycache_prefix else []))
     from agent_meshes_author import export_glb
 
     bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -38,7 +41,7 @@ def main(source, output):
     if not meshes:
         raise ValueError('build() must return at least one mesh')
     export_glb(str(output), objects, animation_mode=namespace.get('EXPORT_ANIMATION_MODE', 'ACTIONS'))
-    return meshes
+    return meshes, audit.finish()
 
 
 if __name__ == '__main__':
@@ -48,8 +51,8 @@ if __name__ == '__main__':
     source, output = map(lambda value: Path(value).resolve(), argv)
     report(str(output) + '.pid', {'pid': os.getpid()})
     try:
-        meshes = main(source, output)
-        report(str(output) + '.done', {'ok': True, 'meshes': meshes, 'blender': bpy.app.version_string})
+        meshes, audit = main(source, output)
+        report(str(output) + '.done', {'ok': True, 'meshes': meshes, 'blender': bpy.app.version_string, 'readAudit': audit})
     except BaseException:
         report(str(output) + '.done', {'ok': False, 'error': traceback.format_exc()})
         raise
