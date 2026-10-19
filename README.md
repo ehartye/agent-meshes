@@ -2,6 +2,13 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.20.0 adds opt-in incremental native Blender builds (`--if-changed`) and
+forced refreshes (`--force`), explicit input declarations and toolchain pins,
+and composable face helpers with project-owned design recipes. Verification and
+previews still run when Blender output is reused. CI separates shared helper
+contracts from recipe examples while retaining full release validation. Run
+`mesh-setup` after updating the plugin.
+
 Release 0.19.0 adds the mesh-tool-selection guide: choose an authoring approach,
 inspect an existing project's asset contract, and separate modeling, engine import
 and runtime generation. References cover Blender Python, Unreal procedural meshes,
@@ -112,8 +119,8 @@ For a native Blender asset with all project imports/data declared, use
 `build build.json --if-changed` to reuse matching pristine author output while
 still running verification and previews. `--force` regenerates and refreshes it;
 the default remains a full build. See the same native build identity guide for
-supported tool layouts, input obligations and hashing cost. This source feature
-is newer than the published 0.19.0 release.
+supported tool layouts, input obligations and hashing cost. These flags are
+available starting with 0.20.0.
 
 ## Organized rig library and Blender references
 
@@ -473,7 +480,7 @@ alongside the mesh in `build()`'s returned list. The helper does not infer weigh
 or generate animation. `node scripts/check-authored-skin-browser.mjs` proves the
 actual Blender export deforms in the offline public viewer.
 
-`node scripts/agent-meshes.mjs build build.json` produces `model.glb`, `verification.json`, `authoring.json` (entry script path and SHA-256, Blender version, mesh count), and an offline `preview.html` of the actual exported GLB. Authored builds do not create a primitive `.mesh.json`, workbench PNGs, or contact sheets. `--no-preview` or `--no-preview-page` omits their preview page; neither path needs Chromium. The Python source and its sibling modules remain the editable source. Entry-script provenance does not hash imported dependencies. Failed authoring, validation, or preview generation preserves the last published output through the same locking and staging checks as project builds. The runner handles ordinary and Microsoft Store Blender launchers, reports Python errors, and stops a hung process after ten minutes.
+`node scripts/agent-meshes.mjs build build.json` produces `model.glb`, `verification.json`, `authoring.json` (entry script identity, Blender version, mesh count and declared input/toolchain provenance), and an offline `preview.html` of the actual exported GLB. Authored builds do not create a primitive `.mesh.json`, workbench PNGs, or contact sheets. `--no-preview` or `--no-preview-page` omits their preview page; neither path needs Chromium. The Python source and its sibling modules remain the editable source. Declare imported dependencies explicitly; Python imports are not automatically discovered. See [native build identity](skills/mesh-build/references/native-build-identity.md) for input declarations, toolchain pins and incremental build requirements. Failed authoring, validation, or preview generation preserves the last published output through the same locking and staging checks as project builds. The runner handles ordinary and Microsoft Store Blender launchers, reports Python errors, and stops a hung process after ten minutes.
 
 `node scripts/agent-meshes.mjs refine model.glb smooth.glb --subdivide 1 --noise 0.004 --noise-scale 0.05 --only robin` rounds primitives into organic forms with a subdivision surface and, if asked, adds a feather- or fur-like displacement from a procedural clouds texture, while keeping bones, skins, vertex colors and clips. It runs Blender headless through `scripts/blender-refine.py`; Blender is found on PATH, in the usual install folders, in the Microsoft Store app alias, or from `AGENT_MESHES_BLENDER`. Primitive builds without refinement do not need Blender, and the refine test skips when it is absent. A build config can ask for the pass with `"refine":{"subdivide":1,"noise":0.003,"noiseScale":0.04,"only":["robin"]}`; the refined GLB is verified again, and a build that asks for refinement fails when Blender is missing rather than shipping a coarser model. Renders and contact sheets still come from the unrefined project.
 
