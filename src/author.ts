@@ -2,15 +2,15 @@ import { spawn } from 'node:child_process';
 import { readFile, realpath, rm, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findBlender } from './refine.ts';
+import { findBlender, type BlenderLocation } from './refine.ts';
 
-export interface AuthorOptions { timeoutMs?: number }
+export interface AuthorOptions { timeoutMs?: number; blender?: BlenderLocation; env?: NodeJS.ProcessEnv; cwd?: string; factoryStartup?: boolean }
 export interface AuthorResult { output: string; bytes: number; meshes: number; blender: string }
 interface Report { ok: boolean; meshes?: number; blender?: string; error?: string }
 
 /** Run a trusted Blender Python source's build() through the morph-preserving export wrapper. */
 export async function authorGLB(input: string, output: string, options: AuthorOptions = {}): Promise<AuthorResult> {
-  const blender = findBlender();
+  const blender = options.blender ?? findBlender(options.env ? { env: options.env } : {});
   if (!blender) throw new Error('Blender is not installed. Set AGENT_MESHES_BLENDER to its executable for authored builds.');
   const timeout = options.timeoutMs ?? 600000;
   if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('Blender authoring timeout must be positive and finite');
@@ -23,7 +23,7 @@ export async function authorGLB(input: string, output: string, options: AuthorOp
   await Promise.all(transient.map(path => rm(path, { force: true })));
   await rm(out, { force: true });
   const wrapper = fileURLToPath(new URL('../scripts/blender-author.py', import.meta.url));
-  const child = spawn(blender.command, ['-b', '--python-exit-code', '1', '--python', wrapper, '--', source, out], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawn(blender.command, ['-b', ...(options.factoryStartup ? ['--factory-startup', '--disable-autoexec'] : []), '--python-exit-code', '1', '--python', wrapper, '--', source, out], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...(options.env ? { env: options.env } : {}), ...(options.cwd ? { cwd: options.cwd } : {}) });
   let log = '', exitCode: number | undefined, spawnError: Error | undefined, succeeded = false;
   child.stdout.on('data', chunk => { log = (log + chunk).slice(-4000); });
   child.stderr.on('data', chunk => { log = (log + chunk).slice(-4000); });

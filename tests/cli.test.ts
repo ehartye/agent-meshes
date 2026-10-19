@@ -15,6 +15,12 @@ const cleanup: (() => Promise<unknown>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 const cli = (...args: string[]) => run(process.execPath, [resolve('scripts/agent-meshes.mjs'), ...args], { timeout: 10000, windowsHide: true });
 
+it('advertises opt-in native incremental and forced regeneration flags', async () => {
+  const { stdout } = await cli('build', '--help');
+  expect(stdout).toContain('--if-changed'); expect(stdout).toContain('--force');
+  expect(stdout).toContain('declare every dependency');
+});
+
 it('makes construction guidance readable through help and capabilities outside the package directory', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-guidance-'));
   cleanup.push(() => rm(directory, { recursive: true, force: true }));

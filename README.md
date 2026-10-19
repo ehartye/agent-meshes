@@ -108,6 +108,13 @@ inputs and pin reviewed helper/tool identities; see
 availability and limitations. CI checks helper contracts independently from
 particular recipe studies; it does not prescribe one face or hood style.
 
+For a native Blender asset with all project imports/data declared, use
+`build build.json --if-changed` to reuse matching pristine author output while
+still running verification and previews. `--force` regenerates and refreshes it;
+the default remains a full build. See the same native build identity guide for
+supported tool layouts, input obligations and hashing cost. This source feature
+is newer than the published 0.19.0 release.
+
 ## Organized rig library and Blender references
 
 The [rig library guide](scripts/blender_lib/references/rig-library.md) covers the

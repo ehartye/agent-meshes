@@ -383,6 +383,8 @@ export async function main(args = process.argv): Promise<void> {
     print(await buildAssembly(manifest, directory));
   });
   program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')
+    .option('--if-changed', 'Reuse native Blender output when declared inputs and tracked tools match (declare every dependency)')
+    .option('--force', 'Regenerate native Blender output and refresh its incremental cache')
     .option('--no-preview', 'Skip browser renders and the standalone preview page')
     .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html').action(async (config, options) => {
     const { buildAsset } = await import('./build.ts');
@@ -392,7 +394,7 @@ export async function main(args = process.argv): Promise<void> {
       await writeFile(resolve(stage, 'preview.html'), await previewHTML(asset.name, await readFile(resolve(stage, 'model.glb'))));
       return ['preview.html'];
     } : undefined;
-    process.stdout.write(`${JSON.stringify(await buildAsset(config, { decorate, decorateAsset }))}\n`);
+    process.stdout.write(`${JSON.stringify(await buildAsset(config, { decorate, decorateAsset, ifChanged: options.ifChanged, force: options.force }))}\n`);
   });
   try {
     await program.parseAsync(args);

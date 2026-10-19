@@ -15,6 +15,7 @@ import { mergeModes, type MergeMode } from './export-merge.ts';
 import { checkLimits, limitsSchema } from './glb-limits.ts';
 import { lintSilhouette, silhouette } from './silhouette.ts';
 import { captureBuildInputs, captureBuildToolchain, checkToolchainPin } from './build-provenance.ts';
+import { nativeCacheFiles, prepareNativeCache } from './build-native-cache.ts';
 
 const markerName = '.agent-meshes-build.json';
 /** Optional Blender pass over the exported GLB: subdivision, smoothing and a clouds displacement on named meshes. */
@@ -71,7 +72,7 @@ function checkFiles(files: string[]): void {
   if (new Set(files).size !== files.length) throw new Error('Build file list contains duplicate files');
   for (const file of files) if (!file || isAbsolute(file) || file.includes('\\') || file.includes(':') || file.includes('\0') || file.split('/').some(piece => !piece || piece === '.' || piece === '..') || file === markerName) throw new Error(`Unsafe build artifact path: ${file}`);
 }
-async function checkTree(directory: string, files: string[]): Promise<void> {
+async function checkTree(directory: string, files: string[], allowMissing = false): Promise<void> {
   checkFiles(files);
   const expected = new Set([...files, markerName]);
   const found = new Set<string>();
@@ -87,9 +88,9 @@ async function checkTree(directory: string, files: string[]): Promise<void> {
     }
   }
   await visit(directory, '');
-  for (const file of expected) if (!found.has(file)) throw new Error(`Missing owned build file: ${file}`);
+  for (const file of expected) if (!found.has(file) && !allowMissing) throw new Error(`Missing owned build file: ${file}`);
 }
-async function checkOwnership(output: string, config: string): Promise<boolean> {
+async function checkOwnership(output: string, config: string, allowMissing = false): Promise<boolean> {
   if (!await exists(output)) return false;
   const stat = await lstat(output);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Build output must be an owned directory, not a symlink or file');
@@ -97,7 +98,7 @@ async function checkOwnership(output: string, config: string): Promise<boolean> 
   if (!await exists(markerPath) || !(await lstat(markerPath)).isFile() || (await lstat(markerPath)).isSymbolicLink()) throw new Error('Output directory is not owned by agent-meshes');
   const parsed = markerSchema.safeParse(JSON.parse(await readFile(markerPath, 'utf8')));
   if (!parsed.success || parsed.data.config !== portable(relative(output, config))) throw new Error('Output ownership does not match this build config');
-  await checkTree(output, parsed.data.files);
+  await checkTree(output, parsed.data.files, allowMissing);
   return true;
 }
 /**
@@ -131,10 +132,18 @@ async function writeBuildReceipt(stage: string, name: 'authoring.json' | 'verifi
 }
 
 export interface AuthoredAsset { name: string }
-export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]>; decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding)[] }> {
+export interface BuildOptions {
+  ifChanged?: boolean;
+  force?: boolean;
+  decorate?: (project: Project, stage: string) => Promise<string[]>;
+  decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]>;
+}
+export async function buildAsset(configPath: string, options: BuildOptions = {}): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding)[]; incremental?: { blender: 'built' | 'reused'; reason: string } }> {
   const configFile = await realpath(resolve(configPath));
   const configBytes = await readFile(configFile);
   const config = configSchema.parse(JSON.parse(configBytes.toString('utf8')));
+  const incremental = options.ifChanged === true || options.force === true;
+  if (incremental && !config.blender) throw new Error('Incremental Blender flags require a native blender.script build');
   const geometryTarget = config.target ? { target: config.target, renderVertexBudget: config.renderVertexBudget } : undefined;
   const input = await realpath(resolve(dirname(configFile), config.project ?? config.operations ?? config.blender!.script));
   const requestedOutput = resolve(dirname(configFile), config.output);
@@ -156,10 +165,11 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
   let backup: string | undefined;
   try {
     await lock.writeFile(JSON.stringify({ config: configFile, pid: process.pid }));
-    await checkOwnership(output, configFile);
+    await checkOwnership(output, configFile, incremental);
     stage = await mkdtemp(join(dirname(output), `.${basename(output)}.stage-`));
     let files: string[];
     let finishAuthoring: (() => Promise<void>) | undefined;
+    let incrementalResult: { blender: 'built' | 'reused'; reason: string } | undefined;
     const warnings: (ProjectWarning | DetachedFinding)[] = [];
     /** The detached-part lint on the final GLB: always recorded; a failing verify.maxGap budget has already stopped the build. */
     const lintDetached = (bytes: Uint8Array, limits: { detached?: DetachedReport } | null): DetachedReport => {
@@ -168,7 +178,11 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       return report;
     };
     if (config.blender) {
-      const result = await authorGLB(input, join(stage, 'model.glb'));
+      const prepared = incremental ? await prepareNativeCache(findBlender(), { config: inputs!.config, inputs: inputs!.files, helpers: tools!.identity, script: input, configFile }, output) : undefined;
+      const cached = prepared?.cache && !options.force ? await prepared.cache.read(output) : undefined;
+      if (cached) await writeFile(join(stage, 'model.glb'), cached.bytes, { flag: 'wx' });
+      const result = cached ?? await (prepared?.cache ? authorGLB(input, join(stage, 'model.glb'), prepared.cache.launch) : authorGLB(input, join(stage, 'model.glb')));
+      if (incremental) incrementalResult = { blender: cached ? 'reused' : 'built', reason: cached ? 'matching-native-cache' : options.force ? 'forced' : prepared!.reason };
       checkToolchainPin(config.blender.toolchain, { ...tools!.identity, blenderVersion: result.blender });
       const bytes = await readFile(join(stage, 'model.glb'));
       const recordVerification = async (current: Uint8Array) => {
@@ -182,6 +196,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       };
       await recordVerification(bytes);
       files = ['model.glb', 'verification.json', 'authoring.json'];
+      if (prepared?.cache) files.push(...nativeCacheFiles);
       const receipt = {
         version: 1,
         source: { script: inputs!.entry.path, sha256: inputs!.entry.sha256 },
@@ -203,6 +218,10 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
         if (finalHash !== receipt.provenance.output.sha256) await recordVerification(finalBytes);
         receipt.provenance.output.sha256 = finalHash;
         await writeBuildReceipt(stage!, 'authoring.json', receipt);
+        if (prepared?.cache) {
+          await prepared.cache.assertUnchanged();
+          await prepared.cache.write(stage!, bytes, result);
+        }
       };
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
     } else {
@@ -248,7 +267,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
     if (tools) await tools.assertUnchanged();
     if (inputs) await inputs.assertUnchanged();
     // Check again just before replacing, so files added during a long render are preserved.
-    const owned = await checkOwnership(output, configFile);
+    const owned = await checkOwnership(output, configFile, incremental);
     if (owned) {
       backup = join(dirname(output), `.${basename(output)}.backup-${randomUUID()}`);
       await move(output, backup);
@@ -256,7 +275,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
     try { await move(stage, output); stage = undefined; }
     catch (error) { if (backup) { await move(backup, output); backup = undefined; } throw error; }
     if (backup) { await rm(backup, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); backup = undefined; }
-    return { output, files, ...(warnings.length ? { warnings } : {}) };
+    return { output, files, ...(warnings.length ? { warnings } : {}), ...(incrementalResult ? { incremental: incrementalResult } : {}) };
   } finally {
     if (stage) await rm(stage, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     await lock.close(); await unlink(lockPath);

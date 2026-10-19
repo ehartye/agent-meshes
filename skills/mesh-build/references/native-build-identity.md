@@ -77,3 +77,49 @@ For a deliberate archive/vendor fork, retain the complete declared source,
 helper/data and license set plus the toolchain identity. Editing an installed
 plugin cache is not an update policy. Project-level design changes normally
 belong in the small editable recipe instead.
+
+## Reuse native Blender output when unchanged
+
+With an incremental-capable build, opt in per asset:
+
+```text
+mesh build build.json --if-changed
+mesh build build.json --force
+```
+
+The published 0.19.0 release predates these flags. Default builds continue to run
+Blender. `--force` regenerates and refreshes the incremental result; it does not
+silently keep the prior cached mesh. These flags currently support native
+`blender.script` configs, not workspace/refine or Unreal import/cook stages.
+
+Before opting in, declare every imported project module, donor and data file in
+`blender.inputs`, and make changing seeds/settings explicit inputs. This is an
+owner assertion that the recipe is reusable under its tracked dependencies.
+Arbitrary imports, external file reads, network responses and time-dependent
+generation are not discovered or sandboxed. Compiling Python alone cannot prove
+that those dependencies or the resulting mesh are valid. Use normal/forced
+generation when that input contract is not established.
+
+The change key includes config/entry/declared bytes, shared helpers, authoring
+implementation, Node/platform, working directory, environment digest and a
+recognized complete Blender installation. Environment values are not written
+to the cache. Tool files are byte-hashed on each check, including bundled scripts,
+Python and data; an unchanged filename/version alone is not enough. Hashing has
+a real cost even when Blender is skipped. Store launchers, unrecognized distro
+layouts, linked runtime files and external Blender/Python/helper overrides fall
+back to generation rather than claiming a cache hit. Supported reuse launches
+use the selected command/environment and factory startup.
+
+A successful incremental build owns a pristine Blender GLB and a small versioned
+cache record alongside its generated output. Subsequent matching builds verify
+that pristine digest and skip Blender. Current verification, limits, previews and
+decorations still run; a decorator is never applied repeatedly to last run's
+already-decorated GLB. Missing/corrupt cache bytes cause regeneration. Missing or
+damaged final generated artifacts can be repaired from valid pristine bytes.
+Ownership, links, concurrent builds and input/tool changes retain their checks;
+failure preserves the previous published output.
+
+The result's `incremental.blender` is `built` or `reused`, with a reason. Keep
+forced rebuilds in validation and compare the actual required output, rather than
+assuming one deterministic fixture proves all recipes reproducible. This is a
+local producer cache, not a remote cache or a promise that all build stages skip.

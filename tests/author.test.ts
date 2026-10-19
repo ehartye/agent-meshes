@@ -42,6 +42,18 @@ it('waits for Store launcher completion even after its launcher exits successful
   await expect(authorGLB(input, output, { timeoutMs: 1000 })).resolves.toMatchObject({ meshes: 1 });
 });
 
+it('uses the selected incremental command, environment, cwd and factory arguments', async () => {
+  const { directory, input, output, child } = await fixture();
+  spawn.mockImplementation(() => {
+    void (async () => { await writeFile(output, 'GLB'); await writeFile(`${output}.done`, JSON.stringify({ ok: true, meshes: 1, blender: '5.2.2 LTS' })); child.emit('close', 0); })();
+    return child;
+  });
+  const blender = { command: 'selected-blender', detached: false, source: 'AGENT_MESHES_BLENDER' as const };
+  await authorGLB(input, output, { blender, env: { TEST_SETTING: 'frozen' }, cwd: directory, factoryStartup: true });
+  expect(findBlender).not.toHaveBeenCalled();
+  expect(spawn).toHaveBeenCalledWith('selected-blender', expect.arrayContaining(['--factory-startup', '--disable-autoexec']), expect.objectContaining({ env: { TEST_SETTING: 'frozen' }, cwd: directory, windowsHide: true }));
+});
+
 it('rejects missing Blender and spawn errors promptly', async () => {
   const { input, output, child } = await fixture(); findBlender.mockReturnValueOnce(null);
   await expect(authorGLB(input, output)).rejects.toThrow(/not installed/i); expect(spawn).not.toHaveBeenCalled();
