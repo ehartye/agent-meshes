@@ -4,6 +4,7 @@ import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { readTestingPhase } from '../../scripts/ci-plan.mjs';
 
 const schema = 'agent-meshes/release-candidate@1';
 const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
@@ -66,6 +67,16 @@ export function findCandidate(expected, { api, download }) {
   throw new Error('No matching successful full Check receipt. Run Check for this exact candidate before retrying tag verification.');
 }
 
+export function verifyRelease(root, env, evidence) {
+  if (env.GITHUB_REF_TYPE !== 'tag') throw new Error('Release verification requires a tag event');
+  if (git(root, 'status', '--porcelain')) throw new Error('Cannot verify a dirty candidate checkout');
+  const phase = readTestingPhase(root);
+  const expected = identity(root, env.GITHUB_REPOSITORY);
+  verifyTag(env.GITHUB_REF_NAME, expected.version);
+  if (phase === 'dev') return { ...expected, phase, scope: 'identity-only' };
+  return { ...expected, phase, scope: 'full', receipt: findCandidate(expected, evidence) };
+}
+
 function main() {
   const root = process.cwd();
   const mode = process.argv[2];
@@ -79,19 +90,17 @@ function main() {
     return;
   }
   if (mode === 'verify') {
-    if (process.env.GITHUB_REF_TYPE !== 'tag') throw new Error('Release verification requires a tag event');
-    if (git(root, 'status', '--porcelain')) throw new Error('Cannot verify a dirty candidate checkout');
-    const expected = identity(root, process.env.GITHUB_REPOSITORY);
-    verifyTag(process.env.GITHUB_REF_NAME, expected.version);
-    const receipt = findCandidate(expected, {
+    const result = verifyRelease(root, process.env, {
       api: path => JSON.parse(execFileSync('gh', ['api', path], { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 })),
       download: (runId, name) => {
         const directory = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'meshes-proof-'));
-        execFileSync('gh', ['run', 'download', String(runId), '--repo', expected.repository, '--name', name, '--dir', directory], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
+        execFileSync('gh', ['run', 'download', String(runId), '--repo', process.env.GITHUB_REPOSITORY, '--name', name, '--dir', directory], { encoding: 'utf8', maxBuffer: 1024 * 1024 });
         return JSON.parse(readFileSync(join(directory, 'candidate.json'), 'utf8'));
       },
     });
-    const summary = `Release ${expected.version} matches tree ${expected.tree}, full Check run https://github.com/${expected.repository}/actions/runs/${receipt.runId}. No runtime suites repeated.\n`;
+    const summary = result.scope === 'identity-only'
+      ? `Dev/pre-release ${result.version} matches its tag and tree ${result.tree}. Owner-selected identity-only policy: no full-CI receipt required or claimed.\n`
+      : `Release ${result.version} matches tree ${result.tree}, full Check run https://github.com/${result.repository}/actions/runs/${result.receipt.runId}. No runtime suites repeated.\n`;
     console.log(summary.trim());
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
     return;

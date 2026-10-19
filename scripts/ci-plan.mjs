@@ -5,9 +5,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export function planChanges(paths, { full = false } = {}) {
+export function readTestingPhase(root = process.cwd()) {
+  // Deliberately require one plain top-level enum, rather than guessing at YAML.
+  // The risk-map validator checks the complete document separately.
+  const text = readFileSync(join(root, '.testing/risk.yml'), 'utf8').replace(/^\uFEFF/, '');
+  const fields = text.match(/^phase:[^\r\n]*$/gm) ?? [];
+  const match = fields.length === 1 && /^phase: *(dev|test|production) *(?:#.*)?$/.exec(fields[0]);
+  if (!match) throw new Error('Risk-map phase must be one plain top-level dev, test or production value');
+  return match[1];
+}
+
+export function planChanges(paths, { full = false, phase = 'production' } = {}) {
+  if (!['dev', 'test', 'production'].includes(phase)) throw new Error('Invalid testing phase');
   const all = { javascript: true, python: true, geometrySweeps: true, recipeExamples: true };
-  if (full || !Array.isArray(paths)) return all;
+  if (full) return all;
+  if (phase === 'dev') return { javascript: false, python: false, geometrySweeps: false, recipeExamples: false };
+  if (!Array.isArray(paths)) return all;
   let javascript = false, python = false, recipeExamples = false;
   for (const file of paths) {
     if (typeof file !== 'string' || file.includes('..') || file.includes('\\')) return all;
@@ -51,19 +64,20 @@ function main() {
   if (mode === 'plan') {
     const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
     const isPr = process.env.GITHUB_EVENT_NAME === 'pull_request';
+    const phase = readTestingPhase();
     let paths = null;
     if (isPr) {
       try { paths = pullRequestPaths(event); }
-      catch (error) { console.warn(`Change scope unavailable; selecting all suites: ${error.message}`); }
+      catch (error) { console.warn(`Change scope unavailable; using ${phase} phase policy: ${error.message}`); }
     }
     const full = !isPr || event.pull_request?.labels?.some(label => label.name === 'ci:full');
-    const plan = planChanges(paths, { full });
+    const plan = planChanges(paths, { full, phase });
     const directory = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'meshes-ci-'));
     const pathsFile = join(directory, 'changed-paths.json');
     writeFileSync(pathsFile, JSON.stringify(paths ?? []) + '\n');
-    const output = `javascript=${plan.javascript}\npython=${plan.python}\ngeometry_sweeps=${plan.geometrySweeps}\nrecipe_examples=${plan.recipeExamples}\npaths_file=${pathsFile}\n`;
+    const output = `phase=${phase}\njavascript=${plan.javascript}\npython=${plan.python}\ngeometry_sweeps=${plan.geometrySweeps}\nrecipe_examples=${plan.recipeExamples}\npaths_file=${pathsFile}\n`;
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, output);
-    const summary = `CI plan: ${paths === null ? 'full (no PR diff)' : `${paths.length} changed paths`}; JavaScript/browser=${plan.javascript}; Python=${plan.python}; geometry sweeps=${plan.geometrySweeps}; recipe examples=${plan.recipeExamples}.\n`;
+    const summary = `CI plan: phase=${phase}; ${paths === null ? 'no PR diff' : `${paths.length} changed paths`}; JavaScript/browser=${plan.javascript}; Python=${plan.python}; geometry sweeps=${plan.geometrySweeps}; recipe examples=${plan.recipeExamples}.\n`;
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
     console.log(summary.trim());
     return;

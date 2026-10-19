@@ -1,60 +1,75 @@
 # Continuous integration
 
-`Check` always creates `CI required`. Its quick Linux job computes the PR diff,
-tests the routing/gate, and checks changed Markdown links, skill frontmatter,
-changed JSON, and package/lock/plugin/marketplace version agreement. It does not
-install npm packages, download Chromium, or generate meshes.
+The owner selected `phase: dev` in [the risk map](../.testing/risk.yml) for fast
+solo pre-release iteration. There are no external users or production support
+promises. Saved-project and source/output safety remain critical.
 
-| Change | Selected runtime jobs |
-| --- | --- |
-| Root README/AGENTS/CLAUDE/LICENSE, `.github/README.md`, Markdown under `skills/`, or documentation/evidence under `docs/` | None; quick checks still gate |
-| TypeScript/CSS/HTML under `src/`, or `tests/**/*.test.ts` | Full Windows JavaScript and Linux system-Chromium jobs |
-| Python shared helpers or top-level helper tests | JavaScript/browser and face/geometry contract jobs; broad geometry sweeps deferred |
-| Python recipes or `tests/stylized_*.py` | The helper jobs plus character, costume and face recipe examples |
-| Versions, dependencies, fixtures, selection/fixture helpers, CI/risk policy, other scripts or unknown paths | All runtime jobs and every geometry sweep |
-| Manual dispatch, Monday 06:17 UTC schedule, or PR labeled `ci:full` | All runtime jobs |
-| Version tag `v*` | Separate release-identity workflow; requires matching successful full-CI evidence |
+## Current dev policy
 
-The executable whitelist is in [ci-plan.mjs](../scripts/ci-plan.mjs). A Markdown
-file inside `scripts/` is a runtime input and selects all suites. A deleted or
-renamed source still selects its original area. Missing diff information selects
-all suites. New file types default to all suites until deliberately classified.
-This is conservative area routing, not a complete per-test dependency graph.
+Ordinary PRs run one quick Linux observer: CI/release policy controls, changed
+Markdown links and skill frontmatter, changed JSON, and version agreement across
+package/lock/plugin/marketplace metadata. It does not install npm dependencies,
+download Chromium, generate meshes or run the full geometry suites. The runtime
+matrix and aggregate `CI required` job are deliberately skipped. Keep this
+observer non-blocking in repository branch protection; workflows do not configure
+protection themselves. A green quick check does not certify runtime behavior.
 
-`CI required` runs even when dependencies fail or are skipped. A selected job
-must succeed; an unselected job must be skipped. Failure, cancellation, missing
-planning output and unexpected skips fail the gate. Keep this stable check name
-for branch protection. Repository protection is configured separately; the
-workflow does not turn enforcement on.
-
-There is no branch-push trigger. New PR commits cancel obsolete runs. Adding or
-removing a PR label replans the run; `ci:full` overrides affected routing. Manual
-and scheduled runs become available through this workflow after it lands on the
-default branch:
+Run affected local checks for code edits. Full suites remain available through
+the Monday 06:17 UTC schedule, manual dispatch, or a PR's `ci:full` label:
 
 ```powershell
 gh workflow run check.yml --ref <branch>
 ```
 
-Every original runtime test/typecheck/build command remains present. Recipe-specific
-character, costume and stylized-face checks have separate jobs, selected for recipe
-edits and every full run. Shared helper edits retain helper contracts without
-rebuilding an unrelated example cast. This is an ownership boundary, not a claim
-that a passing helper test establishes the quality of every resulting character.
-Python commands use `AGENT_MESHES_TEST_LANE=merge` for ordinary known Python
-changes, and `full` for release/shared/policy inputs, manual/scheduled runs and
-`ci:full`. Local commands default to `full`. The explicit IDs and reasons in
-[geometry-sweeps.json](../tests/geometry-sweeps.json) defer broad standard-risk
-shape/pose sweeps; unlisted/new tests remain in merge, and stale IDs fail.
-Prepared costume/helmet meshes are reused only within a process, with isolated
-copies for each caller. Direct repeatability checks still build independently.
-Software-GPU capture runs separately from geometry workloads. The Linux browser
-lane checks the installed Chrome path, a fresh managed runtime, and real render
-artifacts; the Windows lane retains Playwright Chromium coverage. The Python
-geometry suites need NumPy but do not require Blender. Hosted CI does not replace
-native Blender exports, Unreal imports or visual review for changes that need them.
+These full runs still require every selected job to succeed, and only they can
+produce a full validated-tree receipt. Adding/removing `ci:full` replans a PR.
+There is no branch-push trigger; new PR revisions cancel obsolete runs.
 
-Local policy checks (Python 3.12 and Node 24):
+Dev tags check a clean Git tree, valid package/repository identity and exact
+`v<package version>` agreement. By the owner's explicit iteration preference,
+they do **not** require a full-CI receipt. Their summary says identity-only and
+does not claim runtime validation. This is a deliberate exception to
+test-strategy's default full release lane. Native builds/imports, visual review
+and installed smoke checks remain appropriate when the change needs them.
+
+## Test and production phases
+
+Changing the risk map to `test` or `production` restores conservative affected
+PR routing and the aggregate gate, plus mandatory full evidence for version tags.
+Keep `phase` as one plain top-level `dev`, `test` or `production` value; missing,
+duplicate or unsupported values fail rather than silently selecting dev.
+
+| Change | Selected runtime jobs in test/production |
+| --- | --- |
+| Named root docs, `.github/README.md`, Markdown under `skills/`, or docs/evidence under `docs/` | None; quick checks and aggregate gate remain |
+| TypeScript/CSS/HTML under `src/`, or `tests/**/*.test.ts` | Windows JavaScript and Linux system Chromium |
+| Python shared helpers or top-level helper tests | JavaScript/browser and face/geometry contracts; broad sweeps deferred |
+| Python recipes or `tests/stylized_*.py` | Helper jobs plus character, costume and face examples |
+| Versions, dependencies, fixtures, selection/fixture helpers, CI/risk policy, unknown paths or missing diff | Every runtime job and geometry sweep |
+
+The executable routes are in [ci-plan.mjs](../scripts/ci-plan.mjs). Both sides of
+a rename and deleted inputs participate. This is area routing, not a complete
+dependency graph. The aggregate gate rejects failures, cancellations, missing
+planning output and unexpected skips. Branch-protection enforcement is separate;
+returning to production should also restore required checks in repository settings.
+
+All original runtime test/typecheck/build commands remain available. Python
+commands default to `full` locally. In test/production, known Python PR edits use
+`AGENT_MESHES_TEST_LANE=merge`; explicit full runs retain every sweep. The exact
+deferred IDs/reasons are in [geometry-sweeps.json](../tests/geometry-sweeps.json).
+New tests stay in merge and stale IDs fail. Prepared costume/helmet fixtures
+return isolated copies; direct repeatability checks still generate independently.
+The Python suites need NumPy and do not launch Blender. Hosted checks do not
+replace native exports, engine imports or visual review.
+
+## Full receipts and local policy checks
+
+Only a successful full `Check` uploads `candidate.json` under an artifact named
+for the checked Git tree. The recorder rejects every partial scope in all phases.
+In test/production, tag verification requires the exact tree/version/repository
+and live successful run attempt. Changed contents, failed/forked/unrelated runs,
+missing or expired receipts fail. Receipts expire after 90 days. In dev, these
+receipts are optional evidence, separate from the identity-only tag check.
 
 ```powershell
 python -m pip install -r .github/requirements-ci.txt
@@ -64,31 +79,8 @@ python tests/geometry_scope.py
 python scripts/check_docs.py --paths-file <JSON-array-of-repo-relative-paths>
 ```
 
-The [owner-confirmed risk map](../.testing/risk.yml) records preservation obligations.
-The [audit](../docs/validation/ci-efficiency/audit.md) separates scanner findings,
-manual review and measured costs. The original area-routing change retained every test. The current geometry
-trim defers only the explicitly listed sweeps to full runs; its acceptance and
-coverage mapping are in the [trim plan](../docs/superpowers/plans/2026-10-18-trim-geometry-tests.md).
-
-## Release candidates
-
-Put the version bump into the candidate before final CI. Package, lockfile and
-plugin manifest changes still select full coverage. After the aggregate gate
-passes with both runtime groups, recipe examples and every geometry sweep selected, it uploads `candidate.json` under an
-artifact named for the checked Git tree. A docs-only, JS-only or merge-only geometry run cannot produce
-release authorization.
-
-Tagging the validated candidate runs `Verify release candidate`, without repeating
-the mesh suites. It requires the tag to equal `v<package version>`, the entire Git
-tree to match the receipt, and the source Check run to be completed/successful in
-this repository with the same run attempt. Tree identity permits a normal squash
-merge without treating a different source tree as tested. Changed contents,
-another version, failed/forked/unrelated runs, and missing/expired receipts fail.
-The full receipt expires after90days; it is evidence, not a dependency cache.
-
-If proof is unavailable, run full Check for the candidate/tag, then rerun the
-release-identity workflow. Do not skip this gate or rename a different commit to
-reuse old results. Source/plugin installation still checks version and managed
-fingerprint; this workflow verifies evidence and does not publish the marketplace
-entry automatically. Later version-only edits have no special exemption in this
-slice: they create a new candidate requiring full validation.
+The [audit](../docs/validation/ci-efficiency/audit.md) and
+[trim plan](../docs/superpowers/plans/2026-10-18-trim-geometry-tests.md) retain prior
+production-policy findings and measurements; their historical claims do not
+override the owner's current dev phase. Publishing a marketplace update remains
+a separate action. This CI policy change does not bump the plugin version.
