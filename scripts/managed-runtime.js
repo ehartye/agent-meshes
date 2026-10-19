@@ -29,8 +29,11 @@ function runtimeFiles(root) {
     const path = join(root, name);
     const stat = lstatSync(path);
     if (stat.isSymbolicLink()) throw new Error(`Runtime source must not contain symlinks: ${path}`);
-    if (stat.isDirectory()) for (const child of readdirSync(path).sort()) visit(`${name}/${child}`);
-    else if (stat.isFile()) paths.push(name);
+    // Use the same source inventory for hashing, copying and installed-runtime checks.
+    // Python's interpreter caches are generated state, not distributed inputs.
+    if (stat.isDirectory()) {
+      if (basename(name) !== '__pycache__') for (const child of readdirSync(path).sort()) visit(`${name}/${child}`);
+    } else if (stat.isFile() && !/\.(?:pyc|pyo)$/.test(name)) paths.push(name);
   }
   for (const name of RUNTIME_FILES) visit(name);
   return paths;

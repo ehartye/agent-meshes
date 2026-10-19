@@ -40,6 +40,43 @@ beforeEach(() => {
 afterEach(() => rmSync(sandbox, { recursive: true, force: true }));
 
 describe('managed CLI installation', () => {
+  test('interpreter bytecode leaves identity unchanged while Python sources and resources remain inputs', () => {
+    put(join(source, 'scripts', 'helper.py'), '# real source');
+    put(join(source, 'scripts', 'helper.pyi'), '# typing resource');
+    put(join(source, 'scripts', 'helper.pyc.json'), '{"resource":true}');
+    const original = describeSource(source);
+    for (const folder of ['scripts', 'src/web']) {
+      mkdirSync(join(source, folder, '__pycache__', 'nested'), { recursive: true });
+      put(join(source, folder, '__pycache__', 'helper.cpython-312.pyc'), 'bytecode');
+      put(join(source, folder, '__pycache__', 'nested', 'generated.json'), '{}');
+      put(join(source, folder, 'legacy.pyc'), 'bytecode');
+      put(join(source, folder, 'legacy.pyo'), 'optimized bytecode');
+    }
+    expect(describeSource(source)).toEqual(original);
+    for (const file of ['helper.py', 'helper.pyi', 'helper.pyc.json']) {
+      const path = join(source, 'scripts', file), before = readFileSync(path, 'utf8');
+      put(path, `${before}\nchanged`);
+      expect(describeSource(source).fingerprint, file).not.toBe(original.fingerprint);
+      put(path, before);
+    }
+  });
+
+  test('does not copy bytecode and tolerates generated runtime bytecode without accepting source edits', () => {
+    put(join(source, 'scripts', 'helper.py'), '# real source');
+    mkdirSync(join(source, 'scripts', '__pycache__'));
+    put(join(source, 'scripts', '__pycache__', 'helper.cpython-312.pyc'), 'bytecode');
+    put(join(source, 'scripts', 'helper.pyo'), 'optimized bytecode');
+    const runtime = installRuntime(source, options());
+    expect(existsSync(join(runtime.root, 'scripts', '__pycache__'))).toBe(false);
+    expect(existsSync(join(runtime.root, 'scripts', 'helper.pyo'))).toBe(false);
+    mkdirSync(join(runtime.root, 'scripts', '__pycache__'));
+    put(join(runtime.root, 'scripts', '__pycache__', 'helper.cpython-312.pyc'), 'new bytecode');
+    put(join(runtime.root, 'src', 'legacy.pyc'), 'new bytecode');
+    expect(resolveRuntime(source, { home }).root).toBe(runtime.root);
+    put(join(runtime.root, 'scripts', 'helper.py'), '# changed source');
+    expect(() => resolveRuntime(source, { home })).toThrow(/modified|mismatch/i);
+  });
+
   test('copies the runtime outside the plugin, builds and validates before linking, and resolves the exact release', () => {
     const referenceDirectory = join(source, 'scripts', 'reference-assets', 'mannequins');
     mkdirSync(referenceDirectory, { recursive: true });

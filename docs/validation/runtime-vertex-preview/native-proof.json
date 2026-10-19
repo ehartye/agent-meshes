@@ -1,0 +1,58 @@
+{
+  "ok": true,
+  "blender": "5.2.2 LTS",
+  "cases": {
+    "POINT": {
+      "sourceGreen": true,
+      "exportedGreen": true,
+      "vertexPixel": [
+        0.29019609093666077,
+        0.572549045085907,
+        0.29019609093666077,
+        1.0
+      ],
+      "materialPixel": [
+        0.43137258291244507,
+        0.43529415130615234,
+        0.4392157196998596,
+        1.0
+      ],
+      "exportedPixel": [
+        0.29019609093666077,
+        0.572549045085907,
+        0.29019609093666077,
+        1.0
+      ],
+      "files": [
+        "rest-body-front-vertex.png",
+        "rest-body-front-color.png"
+      ]
+    },
+    "CORNER": {
+      "sourceGreen": true,
+      "exportedGreen": true,
+      "vertexPixel": [
+        0.29019609093666077,
+        0.572549045085907,
+        0.29019609093666077,
+        1.0
+      ],
+      "materialPixel": [
+        0.43137258291244507,
+        0.43529415130615234,
+        0.4392157196998596,
+        1.0
+      ],
+      "exportedPixel": [
+        0.29019609093666077,
+        0.572549045085907,
+        0.29019609093666077,
+        1.0
+      ],
+      "files": [
+        "rest-body-front-vertex.png",
+        "rest-body-front-color.png"
+      ]
+    }
+  }
+}
