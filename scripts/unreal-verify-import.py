@@ -138,11 +138,25 @@ def static_mesh_facts(mesh):
     # PythonScriptCommandlet does not instantiate every editor subsystem. These getters
     # are asset queries with no initialized subsystem state (UE5.8 source); use a
     # class-default query object there. These calls never modify the default object.
-    subsystem = unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem)
+    def query_subsystem():
+        query = unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem)
+        if query is None:
+            query = unreal.get_default_object(unreal.StaticMeshEditorSubsystem)
+        if query is None:
+            raise RuntimeError('StaticMeshEditorSubsystem lookup returned no query object')
+        return query
+    subsystem = measure('staticMeshEditorSubsystem', query_subsystem)
     if subsystem is None:
-        subsystem = unreal.get_default_object(unreal.StaticMeshEditorSubsystem)
-    facts['naniteEnabled'] = measure('naniteEnabled', lambda: setting(subsystem.get_nanite_settings(mesh).get_editor_property('enabled')))
-    facts['fullPrecisionUVs'] = [measure('fullPrecisionUVs[' + str(lod) + ']', lambda lod=lod: setting(subsystem.get_lod_build_settings(mesh, lod).get_editor_property('use_full_precision_u_vs'))) for lod in range(lods)]
+        # Optional inspection APIs can be absent without losing geometry already read.
+        reason = errors['staticMeshEditorSubsystem']
+        facts['naniteEnabled'] = None
+        errors['naniteEnabled'] = reason
+        facts['fullPrecisionUVs'] = [None for _ in range(lods)]
+        for lod in range(lods):
+            errors['fullPrecisionUVs[' + str(lod) + ']'] = reason
+    else:
+        facts['naniteEnabled'] = measure('naniteEnabled', lambda: setting(subsystem.get_nanite_settings(mesh).get_editor_property('enabled')))
+        facts['fullPrecisionUVs'] = [measure('fullPrecisionUVs[' + str(lod) + ']', lambda lod=lod: setting(subsystem.get_lod_build_settings(mesh, lod).get_editor_property('use_full_precision_u_vs'))) for lod in range(lods)]
     if errors:
         facts['measurementErrors'] = errors
     try:

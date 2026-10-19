@@ -4,6 +4,7 @@ import pathlib
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 class Property:
     def __init__(self, **values): self.values=values
@@ -36,6 +37,26 @@ class Contracts(unittest.TestCase):
         try:facts=module.static_mesh_facts(Mesh())
         finally:module.unreal.get_editor_subsystem=previous
         self.assertIs(facts['naniteEnabled'],False);self.assertEqual(facts['fullPrecisionUVs'],[False,True])
+    def assert_lookup_unavailable(self, unreal_api, reason):
+        with patch.object(module, 'unreal', unreal_api):
+            facts = module.static_mesh_facts(Mesh())
+        self.assertEqual(facts['path'], '/Game/Prop')
+        self.assertEqual(facts['vertices'], [24, 12])
+        self.assertEqual(facts['triangles'], [12, 6])
+        self.assertEqual(facts['naniteTriangles'], 0)
+        self.assertEqual(facts['boundsCm']['size'], [20, 40, 80])
+        self.assertIsNone(facts['naniteEnabled'])
+        self.assertEqual(facts['fullPrecisionUVs'], [None, None])
+        for key in ['naniteEnabled', 'fullPrecisionUVs[0]', 'fullPrecisionUVs[1]']:
+            self.assertIn(reason, facts['measurementErrors'][key])
+    def test_missing_subsystem_class_keeps_geometry(self):
+        self.assert_lookup_unavailable(types.SimpleNamespace(get_editor_subsystem=lambda _:Subsystem()), 'StaticMeshEditorSubsystem')
+    def test_subsystem_lookup_failure_keeps_geometry(self):
+        def unavailable(_): raise RuntimeError('registered subsystem lookup failed')
+        self.assert_lookup_unavailable(types.SimpleNamespace(StaticMeshEditorSubsystem=object(), get_editor_subsystem=unavailable), 'registered subsystem lookup failed')
+    def test_default_object_lookup_failure_keeps_geometry(self):
+        def unavailable(_): raise RuntimeError('default query object lookup failed')
+        self.assert_lookup_unavailable(types.SimpleNamespace(StaticMeshEditorSubsystem=object(), get_editor_subsystem=lambda _:None, get_default_object=unavailable), 'default query object lookup failed')
     def test_unavailable_stays_null_with_reason(self):
         class Unsupported(Mesh):
             def get_num_triangles(self,lod):return -1
