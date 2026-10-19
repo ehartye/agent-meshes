@@ -13,8 +13,16 @@ bound to `head`, so the face rides the head in every clip.
 helpers). The character's `face_shape` sets the face: age in years, eye size, spacing and tilt, nose size, length,
 width and bridge, mouth width, lips, jaw and chin width, chin length, cheek fullness, brow weight, the resting smile
 and a sculpted beard.
+
+Project-owned compositions pass `recipe={'parameters': parameters, 'landmarks': landmarks}` to these entrypoints
+and `add_face`. Both callbacks are required: parameters(values) returns the validated character parameters, and
+landmarks(parameters) returns the body/head landmarks in this example's coordinate convention. The parameters
+include age, presentation and face_shape (plus face, skin, hair and eyes for add_face); landmarks include s,
+shoulder_y, head_y, rx, ry and rz. Omitting recipe retains the embedded/sibling legacy lookup. Explicit malformed
+recipes raise rather than consulting that lookup. This is an optional stylized example, not a universal face API.
 Blender coordinates: Z up, meters, the face looks down -Y, the character's left is +X.
 """
+from collections.abc import Mapping as _Mapping
 import math
 
 FACE_VERSION = 2
@@ -53,20 +61,27 @@ HEAD_FEATURES = ('eye_size', 'eye_spacing', 'eye_tilt', 'nose', 'nose_length', '
 NEUTRAL = {'eye_tilt': 0.0, 'smile': 0.0, 'cartoon': 0.0}
 
 
-def _character():
-    """The character recipe: this file's own globals when embedded after it, else the sibling module."""
+_LEGACY_RECIPE = object()
+
+
+def _character(recipe=_LEGACY_RECIPE):
+    """Resolve explicit callbacks, or the historical embedded/sibling recipe when omitted."""
+    if recipe is not _LEGACY_RECIPE:
+        if not isinstance(recipe, _Mapping) or any(not callable(recipe.get(name)) for name in ('parameters', 'landmarks')):
+            raise ValueError('recipe must be a mapping with callable parameters and landmarks')
+        return recipe
     if 'landmarks' in globals() and 'parameters' in globals(): return globals()
     import stylized_character
     return vars(stylized_character)
 
 
-def face_shape_values(values=None):
+def face_shape_values(values=None, *, recipe=_LEGACY_RECIPE):
     """The living face's shape values for a character: its `face_shape` over the defaults for its age and presentation.
 
     Every SHAPE_RANGES key is a number in its range, `beard` one of BEARDS ('stubble' shades the jaw, chin and upper
     lip; 'beard' adds a sculpted short beard and moustache) and `beard_color` a hex color (default: the hair's,
-    darkened)."""
-    p = _character()['parameters']({} if values is None else values)
+    darkened). `recipe` optionally supplies explicit parameters/landmarks callbacks."""
+    p = _character(recipe)['parameters']({} if values is None else values)
     given = p['face_shape']
     unknown = set(given) - set(SHAPE_RANGES) - {'beard', 'beard_color'}
     if unknown: raise ValueError(f'Unknown face_shape keys: {sorted(unknown)}')
@@ -97,14 +112,15 @@ def neck_head_share(z, d):
     return t * t * (3 - 2 * t)
 
 
-def head_spec(values=None, head=None):
+def head_spec(values=None, head=None, *, recipe=_LEGACY_RECIPE):
     """What `agent_meshes_hm08.character_face` needs for this character: age in years, gender (0 female, 1 male), the
     envelope (center, radii (x, y, z)), the head's shape controls, the stylize weight and the neck height where the
-    head is cropped (where the neck rides the head alone, so the crop never parts from the body's neck)."""
-    recipe = _character()
+    head is cropped (where the neck rides the head alone, so the crop never parts from the body's neck).
+    `recipe` optionally supplies explicit parameters/landmarks callbacks."""
+    recipe = _character(recipe)
     p = recipe['parameters']({} if values is None else values)
     d = recipe['landmarks'](p)
-    shape = face_shape_values(p)
+    shape = face_shape_values(p, recipe=recipe)
     bottom, top = d['shoulder_y'] + .02 * d['s'], d['head_y'] - .55 * d['ry']
     neck_z = bottom + .62 * (top - bottom)
     # The body's neck (stylized_character): a tube from .053 x .051 at the shoulders to .058 x .053 under the head.
@@ -127,13 +143,14 @@ def head_spec(values=None, head=None):
 _FACES = {}
 
 
-def face_layout(values=None, head=None):
+def face_layout(values=None, head=None, *, recipe=_LEGACY_RECIPE):
     """The character's face (`agent_meshes_hm08.character_face`, cached) and where its features are: `eye_left`,
     `eye_right`, `eye_radius`, `mouth_z`, `mouth_front`, `mouth_half_width`, `center`, `radii`, `scale` (the head's
-    size against a realistic one) and the landmarks."""
+    size against a realistic one) and the landmarks. `recipe` optionally supplies explicit parameters/landmarks
+    callbacks; the cache key is the resulting head specification, independent of callback identity."""
     import json
     from agent_meshes_hm08 import character_face
-    spec = head_spec(values, head)
+    spec = head_spec(values, head, recipe=recipe)
     key = json.dumps(spec, sort_keys=True)
     if key not in _FACES:
         _FACES[key] = character_face(spec['years'], spec['gender'], spec['center'], spec['radii'], shape=spec['shape'],
@@ -271,14 +288,18 @@ def _hex(linear):
     return '#' + ''.join(f'{channel(v):02x}' for v in linear)
 
 
-def add_face(objects, values=None, head=None):
+def add_face(objects, values=None, head=None, *, recipe=_LEGACY_RECIPE):
     """Give a rigged stylized character (`rig_character`'s objects) a living arkit-face/1 face on its `head` bone.
 
     Returns the objects (less the recipe's simple ears: the hm08 head has its own) plus the face mesh and the two
     eyeballs. The rig's extras declare the face contract with `skeleton='body'`. The character must have been built
     with `face='arkit'`; its `face_shape` sets the features. `head` (center, radii (x, y, z), neck (half width,
-    half depth)) fits the face to a sculpted body's own cranium instead of the recipe's head.
+    half depth)) fits the face to a sculpted body's own cranium instead of the recipe's head. `recipe` optionally
+    supplies explicit parameters/landmarks callbacks, validated before any Blender work.
     """
+    recipe = _character(recipe)
+    p = recipe['parameters']({} if values is None else values)
+    if p['face'] != 'arkit': raise ValueError("add_face needs a character built with face='arkit' (its static face would double up)")
     import bpy
     import numpy as np
     from agent_meshes_author import (
@@ -286,14 +307,12 @@ def add_face(objects, values=None, head=None):
         mesh_from_geometry, paint_vertices, shape_key, skin_brow_geometry, skin_tints, teeth_row_geometry, tongue_geometry,
         use_vertex_colors,
     )
-    p = _character()['parameters']({} if values is None else values)
-    if p['face'] != 'arkit': raise ValueError("add_face needs a character built with face='arkit' (its static face would double up)")
     rigs = [obj for obj in objects if getattr(obj, 'type', None) == 'ARMATURE']
     if len(rigs) != 1: raise ValueError(f'add_face needs exactly one armature among the objects (found {len(rigs)}): run rig_character first')
     rig = rigs[0]
-    L = face_layout(p, head)
+    L = face_layout(p, head, recipe=recipe)
     face, marks, k = L['face'], L['landmarks'], L['scale']
-    shape = face_shape_values(p)
+    shape = face_shape_values(p, recipe=recipe)
     eye_left, eye_right, radius = L['eye_left'], L['eye_right'], L['eye_radius']
     add_eye_bones(rig, eye_left, eye_right)
 
@@ -306,7 +325,7 @@ def add_face(objects, values=None, head=None):
         kept.append(obj)
     objects = kept
     # The neck rises inside the head: its upper part rides the head (neck_head_share), like the head's own neck.
-    d = _character()['landmarks'](p)
+    d = recipe['landmarks'](p)
     # Whatever the neck's own weights (the spine alone, or the gait rig's chest, neck and head joints), each vertex
     # blends toward the head by `share`: w' = (1 - share) w + share [head].
     for obj in objects:

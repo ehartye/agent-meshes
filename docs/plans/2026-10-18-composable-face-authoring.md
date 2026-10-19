@@ -181,3 +181,15 @@ as-built/remaining limitations through guarded exact-path operations. Rebase
 latest before integration, create reviewable PR and use squash merge only after
 required checks. No new plugin version/publication is implied by this slice;
 do not rerun release CI for a cosmetic version after validation.
+
+## Coordinator refinement after the first capture
+
+The verified face capture's real layout parity test took167seconds. Retain its
+assertions under `tests/face_recipe_parity.py` in the affected/full recipe job;
+keep the six small explicit-composition tests in the helper job. This avoids
+adding an art-example build to every helper merge. Root owns this test relocation
+and the matching CI route. The one-off AST preservation proof replaces a permanent
+snapshot of all private implementation names; published export compatibility
+remains covered. Two separate read-only planning respondents compared one robot/
+hood scenario with and without candidate guidance; this adds two calls outside
+the delivery workflow's eight-call budget and does not establish asset efficacy.

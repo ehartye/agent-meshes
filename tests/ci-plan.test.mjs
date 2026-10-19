@@ -87,7 +87,7 @@ test('ordinary Python edits keep merge checks while full sweeps require a full i
 
 test('shared helper contracts gate merges independently of recipe examples', () => {
   assert.deepEqual(planChanges(['scripts/blender_lib/agent_meshes_face_geometry.py']), { javascript: true, python: true, geometrySweeps: false, recipeExamples: false });
-  for (const file of ['recipes/stylized_character.py', 'recipes/stylized_face.py', 'tests/stylized_face.py']) {
+  for (const file of ['recipes/stylized_character.py', 'recipes/stylized_face.py', 'tests/stylized_face.py', 'tests/face_recipe_parity.py']) {
     assert.equal(planChanges([file]).recipeExamples, true, file);
   }
   const plan = { javascript: true, python: true, geometrySweeps: false, recipeExamples: true };

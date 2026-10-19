@@ -22,7 +22,7 @@ export function planChanges(paths, { full = false } = {}) {
     if (['tests/geometry_test_scope.py', 'tests/geometry_scope.py'].includes(file)) return all;
     if (/^(recipes\/.*|scripts\/blender_lib\/.*|tests\/[^/]+)\.py$/.test(file)) {
       javascript = true; python = true;
-      if (file.startsWith('recipes/') || /^tests\/stylized_.*\.py$/.test(file)) recipeExamples = true;
+      if (file.startsWith('recipes/') || /^tests\/(stylized_.*|face_recipe_parity)\.py$/.test(file)) recipeExamples = true;
       continue;
     }
     // Dependencies, version, fixtures, CI and unknown inputs still require every sweep.

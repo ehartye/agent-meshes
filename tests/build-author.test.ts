@@ -1,17 +1,22 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createProject, applyOperation } from '../src/core/model.ts';
 import { exportGLB } from '../src/export.ts';
 import { buildAsset } from '../src/build.ts';
+import { captureBuildToolchain } from '../src/build-provenance.ts';
 
 const { authorGLB } = vi.hoisted(() => ({ authorGLB: vi.fn() }));
 vi.mock('../src/author.ts', () => ({ authorGLB }));
 const directories: string[] = [];
 beforeEach(() => { authorGLB.mockReset(); });
-afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+afterEach(async ({ task }) => {
+  const paths = directories.splice(0);
+  if (task.result?.state === 'fail') { console.error('Retained authored build fixtures:', paths); return; }
+  await Promise.all(paths.map(path => rm(path, { recursive: true, force: true })));
+});
 
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-build-author-')); directories.push(directory);
@@ -32,6 +37,7 @@ it('builds verified authored assets without inventing an editable primitive proj
   const decorate = vi.fn();
   const decorateAsset = vi.fn(async (asset: { name: string }, stage: string) => {
     expect(asset.name).toBe('Bird'); expect((await readFile(join(stage, 'model.glb'))).length).toBeGreaterThan(0);
+    expect(JSON.parse(await readFile(join(stage, 'authoring.json'), 'utf8')).source.script).toBe('bird.py');
     await writeFile(join(stage, 'preview.html'), '<html>authored</html>'); return ['preview.html'];
   });
   const result = await buildAsset(config, { decorate, decorateAsset });
@@ -40,9 +46,131 @@ it('builds verified authored assets without inventing an editable primitive proj
   expect(decorateAsset).toHaveBeenCalledOnce();
   expect(JSON.parse(await readFile(join(output, 'verification.json'), 'utf8')).ok).toBe(true);
   expect(JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'))).toMatchObject({ version: 1, blender: '5.0.1', source: { script: 'bird.py', sha256: createHash('sha256').update(source).digest('hex') } });
+  const receipt = JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'));
+  expect(receipt.provenance.dependencyDiscovery).toBe('entry-and-declared-only');
+  expect(receipt.provenance.pins).toEqual({ inputs: [], toolchain: null });
+  expect(receipt.provenance.output).toEqual({ path: 'model.glb', sha256: createHash('sha256').update(await readFile(join(output, 'model.glb'))).digest('hex') });
   expect(await readdir(output)).not.toContain('project.mesh.json');
   await buildAsset(config);
   expect(await readdir(output)).not.toContain('preview.html');
+});
+
+it('rejects missing or stale declared imports and wrong toolchain before invoking the author', async () => {
+  const { directory, config } = await fixture();
+  const toolchain = { ...(await captureBuildToolchain()).identity, blenderVersion: '5.0.1' };
+  await writeFile(join(directory, 'design.py'), 'WIDTH = 1\n');
+  for (const blender of [
+    { script: 'bird.py', inputs: [{ path: 'missing.py' }] },
+    { script: 'bird.py', inputs: [{ path: 'design.py', sha256: '0'.repeat(64) }] },
+    { script: 'bird.py', toolchain: { ...toolchain, helpersSha256: '0'.repeat(64) } },
+    { script: 'bird.py', toolchain: { ...toolchain, agentMeshesVersion: '999.0.0' } },
+  ]) {
+    await writeFile(config, JSON.stringify({ version: 1, blender, output: 'generated' }));
+    await expect(buildAsset(config)).rejects.toThrow(/missing|pin/i);
+    expect(authorGLB).not.toHaveBeenCalled();
+    expect((await readdir(directory)).some(name => /generated|\.lock|\.stage-/.test(name))).toBe(false);
+  }
+});
+
+it('records valid pinned entry/import/data and actual tools without absolute runtime paths', async () => {
+  const { directory, config, output, source } = await fixture();
+  await mkdir(join(directory, 'data'));
+  await writeFile(join(directory, 'design.py'), 'WIDTH = 1\n');
+  await writeFile(join(directory, 'data', 'shape.bin'), new Uint8Array([0, 255, 1]));
+  const toolchain = { ...(await captureBuildToolchain()).identity, blenderVersion: '5.0.1' };
+  const inputs = [
+    { path: 'design.py', sha256: createHash('sha256').update('WIDTH = 1\n').digest('hex') },
+    { path: 'data/shape.bin' },
+    { path: 'bird.py', sha256: createHash('sha256').update(source).digest('hex') },
+  ];
+  await writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py', inputs, toolchain }, output: 'generated' }));
+  await buildAsset(config);
+  const receipt = JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'));
+  expect(receipt.provenance.toolchain).toEqual(toolchain);
+  expect(receipt.provenance.inputs.map((file: { path: string }) => file.path)).toEqual(['bird.py', 'data/shape.bin', 'design.py']);
+  expect(receipt.provenance.helpers.some((file: { path: string }) => file.path.endsWith('hm08_head.npz'))).toBe(true);
+  expect(JSON.stringify(receipt)).not.toContain(directory);
+  expect(JSON.stringify(receipt)).not.toMatch(/__pycache__|\.pyc/);
+});
+
+it('preserves output and cleans staging when inputs mutate or Blender reports a wrong pin', async () => {
+  const { directory, config, output } = await fixture();
+  await buildAsset(config);
+  const before = await readFile(join(output, 'model.glb'));
+  const toolchain = { ...(await captureBuildToolchain()).identity, blenderVersion: '5.0.1' };
+  await writeFile(join(directory, 'design.py'), 'WIDTH = 1\n');
+  await writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py', inputs: [{ path: 'design.py' }], toolchain }, output: 'generated' }));
+  const original = authorGLB.getMockImplementation()!;
+  authorGLB.mockImplementationOnce(async (...args: unknown[]) => ({ ...await original(...args), blender: '4.0.0' }));
+  await expect(buildAsset(config)).rejects.toThrow(/toolchain.*pin/i);
+  for (const mutate of [
+    () => writeFile(join(directory, 'design.py'), 'WIDTH = 2\n'),
+    () => rm(join(directory, 'design.py')),
+    () => writeFile(join(directory, 'bird.py'), '# changed entry\n'),
+    () => writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py' }, output: 'other' })),
+  ]) {
+    await writeFile(join(directory, 'design.py'), 'WIDTH = 1\n');
+    // Mutation happens after authoring, during the existing decoration seam.
+    await expect(buildAsset(config, { decorateAsset: async () => { await mutate(); return []; } })).rejects.toThrow(/changed|missing/i);
+    expect(await readFile(join(output, 'model.glb'))).toEqual(before);
+    expect((await readdir(directory)).filter(name => name.includes('.stage-') || name.includes('.lock') || name.includes('.backup-'))).toEqual([]);
+  }
+});
+
+it('protects declared inputs from output overlap and rejects missing/directories/links visibly', async () => {
+  const { directory, config } = await fixture();
+  const owned = join(directory, 'protected'); await mkdir(owned);
+  await writeFile(join(owned, 'design.py'), 'keep me');
+  await writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py', inputs: [{ path: 'protected/design.py' }] }, output: 'protected' }));
+  await expect(buildAsset(config)).rejects.toThrow(/contain|overlap/i);
+  expect(await readFile(join(owned, 'design.py'), 'utf8')).toBe('keep me');
+  await symlink(owned, join(directory, 'alias'), 'junction');
+  for (const path of ['protected', 'alias/design.py']) {
+    await writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py', inputs: [{ path }] }, output: 'generated' }));
+    await expect(buildAsset(config)).rejects.toThrow(/file|link/i);
+  }
+  expect(authorGLB).not.toHaveBeenCalled();
+});
+
+it('keeps the extension strict and optional without accepting partial tool locks or path patterns', async () => {
+  const { config } = await fixture();
+  for (const extra of [
+    { toolchain: {} }, { toolchain: { agentMeshesVersion: '0.19.0' } },
+    { inputs: ['design.py'] }, { inputs: [{ path: '*.py' }] }, { inputs: [{ path: '../design.py' }] },
+    { inputs: [{ path: 'bird.py', sha256: 'not-a-digest' }] },
+    { inputs: [{ path: 'bird.py', extra: true }] }, { unexpected: true },
+    { inputs: [{ path: 'bird.py' }, { path: 'bird.py' }] },
+  ]) {
+    await writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py', ...extra }, output: 'generated' }));
+    await expect(buildAsset(config)).rejects.toThrow();
+  }
+  expect(authorGLB).not.toHaveBeenCalled();
+});
+
+it('hashes the final staged model after decoration and preserves receipt availability in the callback', async () => {
+  const { config, output } = await fixture();
+  const finalBytes = await exportGLB(applyOperation(createProject('final fixture'), { op: 'add', part: { name: 'different_body' } }));
+  await buildAsset(config, { decorateAsset: async (_asset, stage) => {
+    expect(JSON.parse(await readFile(join(stage, 'authoring.json'), 'utf8')).blender).toBe('5.0.1');
+    await writeFile(join(stage, 'model.glb'), finalBytes); return [];
+  } });
+  const receipt = JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'));
+  expect(await readFile(join(output, 'model.glb'))).toEqual(Buffer.from(finalBytes));
+  expect(receipt.provenance.output.sha256).toBe(createHash('sha256').update(finalBytes).digest('hex'));
+});
+
+it('does not write through a linked receipt created during decoration and cleans the failed stage', async () => {
+  const { config, directory, output, source } = await fixture();
+  await buildAsset(config);
+  const before = await readFile(join(output, 'model.glb'));
+  await expect(buildAsset(config, { decorateAsset: async (_asset, stage) => {
+    await rm(join(stage, 'authoring.json'));
+    await link(join(directory, 'bird.py'), join(stage, 'authoring.json'));
+    return [];
+  } })).rejects.toThrow(/link/i);
+  expect(await readFile(join(directory, 'bird.py'), 'utf8')).toBe(source);
+  expect(await readFile(join(output, 'model.glb'))).toEqual(before);
+  expect((await readdir(directory)).filter(name => /\.stage-|\.lock|\.backup-/.test(name))).toEqual([]);
 });
 
 it('preserves the last authored output and releases staging/lock on runner or validation failure', async () => {
@@ -79,4 +207,22 @@ it('holds the output lock during authored execution and rejects unlisted authore
   try { await expect(buildAsset(config)).rejects.toThrow(/locked/i); } finally { release(); await first; }
   await expect(buildAsset(config, { decorateAsset: async (_asset, stage) => { await writeFile(join(stage, 'unlisted.txt'), 'bad'); return []; } })).rejects.toThrow(/unexpected/i);
   expect(await readdir(output)).not.toContain('unlisted.txt');
+});
+
+
+it('preserves canonical legacy config aliases and hard-linked entry files without declarations', async () => {
+  const { directory, config } = await fixture();
+  const real = join(directory, 'real'); await mkdir(real);
+  await writeFile(join(real, 'bird.py'), 'def build():\n    return []\n');
+  await writeFile(join(real, 'build.json'), JSON.stringify({ version: 1, blender: { script: 'bird.py' }, output: 'generated' }));
+  await symlink(real, join(directory, 'alias'), 'junction');
+  const result = await buildAsset(join(directory, 'alias', 'build.json'));
+  expect(result.output).toBe(join(await realpath(real), 'generated'));
+  expect(authorGLB.mock.calls.at(-1)![0]).toBe(await realpath(join(real, 'bird.py')));
+  await writeFile(join(real, 'build.json'), JSON.stringify({ version: 1, blender: { script: '../alias/bird.py' }, output: 'generated' }));
+  await expect(buildAsset(join(real, 'build.json'))).resolves.toHaveProperty('output');
+  expect(authorGLB.mock.calls.at(-1)![0]).toBe(await realpath(join(real, 'bird.py')));
+  await link(join(real, 'bird.py'), join(real, 'entry-linked.py'));
+  await writeFile(join(real, 'build.json'), JSON.stringify({ version: 1, blender: { script: 'entry-linked.py' }, output: 'generated' }));
+  await expect(buildAsset(join(real, 'build.json'))).resolves.toHaveProperty('output');
 });

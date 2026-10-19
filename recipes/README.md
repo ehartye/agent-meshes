@@ -174,6 +174,23 @@ and tests playback controls in `scripts/check-walk-ui.mjs`.
 
 ## Living faces
 
+For an editable, explicit-composition entrypoint, use
+[`face_project.py`](face_project.py) with
+[`face-project.build.json`](face-project.build.json). Copy the entrypoint, the
+three declared recipe modules and config into the project's authored-input area;
+set its own output path. Keep design changes in those owned inputs. `recipe=`
+passes callable `parameters` and `landmarks` explicitly to `face_shape_values`,
+`head_spec`, `face_layout` and `add_face`; a bad explicit mapping rejects rather
+than consulting caller globals. Omitting it keeps the historical sibling or
+embedded behavior for existing consumers. This adapter still expects the
+stylized character's vocabulary, hm08 data and body rig; it is not an adapter for
+arbitrary sculpts. The new config fields require the native build-identity
+extension described above; published 0.19.0 predates that extension.
+
+Use individual geometry/Blender helpers for another construction. In particular,
+a three-expression mechanical head need not copy this full character example.
+
+
 `stylized_face.py` gives these characters an `arkit-face/1` face. A definition with `face: 'arkit'` leaves the
 static study face out of `build_character`, and `add_face(objects, definition)` adds the living one to the rigged
 character, on the rig's `head` bone:
@@ -228,9 +245,11 @@ Wild plant families are scenery studies, not additional crop recipes.
 Keep parameters, recipe version, source hash, build configuration, exported GLB
 validation and fixed camera captures together. A consumer may generate a
 self-contained authored file by copying the recipe and appending its `build()`
-entry point; that lets the existing authored-source SHA256 cover the whole recipe
-and parameters. Space to Grow follows that approach. Generated copies are never
-hand-edited.
+entry point; that lets the entry SHA256 cover the combined recipe and parameters.
+Space to Grow follows that approach. Generated copies are never hand-edited.
+An entry hash alone does not cover external imports or donor data: prefer explicit
+project imports and declared inputs in new integrations, with reviewed toolchain
+pins. Generated combined files remain a supported compatibility route.
 
 The current CLI creates fixed PNG views for operations assets but only an HTML
 preview for Blender-authored assets. `--no-preview-page` therefore gives no PNGs
