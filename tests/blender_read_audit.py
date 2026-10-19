@@ -56,6 +56,10 @@ print(json.dumps(audit.finish()))
         self.assertTrue(result['truncated'])
         self.assertEqual(len(result['reads']), 1)
 
+    def test_relative_os_open_is_incomplete_because_audit_event_omits_dir_fd(self):
+        result, _ = self.run_probe("os.chdir(root)\nfd=os.open('data.bin',os.O_RDONLY);os.close(fd)")
+        self.assertGreater(result['unresolvedEvents'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()

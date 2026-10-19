@@ -48,7 +48,12 @@ class ReadAudit:
             # os.open has mode=None; O_RDONLY is zero. Read/write opens matter.
             reads = ('r' in mode or '+' in mode) if isinstance(mode, str) else not (flags & os.O_WRONLY)
             if reads:
-                self._path(path)
+                # CPython's event omits dir_fd. A relative os.open path cannot
+                # safely be resolved against cwd: it may use a different fd root.
+                if mode is None and isinstance(path, (str, bytes)) and not os.path.isabs(path):
+                    self.unresolved += 1
+                else:
+                    self._path(path)
 
     def finish(self):
         if self.result is not None:

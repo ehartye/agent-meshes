@@ -179,6 +179,9 @@ C/C++ file reads, child processes, directory/glob membership, network and code
 that bypasses the observer. They do not discover complete dependencies or enforce
 a sandbox. Keep explicit tree declarations and forced validation; inspect
 `externalReads` and do not treat a clean audit as permission to omit dependencies.
+Relative `os.open` read events are incomplete because the event omits `dir_fd`;
+the observer cannot distinguish cwd-relative from descriptor-relative lookup.
+Use an absolute path when the recipe can do so without changing its meaning.
 See [CPython audit events](https://docs.python.org/3/library/audit_events.html),
 [audit hook limits](https://docs.python.org/3/library/sys.html#sys.addaudithook) and
 [PEP 578](https://peps.python.org/pep-0578/).
