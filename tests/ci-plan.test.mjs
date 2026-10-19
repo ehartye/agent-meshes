@@ -27,7 +27,7 @@ test('planner reads the checked risk map and retains explicit full dev runs', t 
   const output = join(root, 'outputs');
   const script = resolve('scripts/ci-plan.mjs');
   assert.throws(() => readTestingPhase(root));
-  for (const body of ['consumers: []\n', 'phase: typo\n', 'phase: dev\nphase: production\n']) {
+  for (const body of ['consumers: []\n', 'phase: typo\n', 'phase: dev\nphase: production\n', 'phase: dev\nphase : production\n', 'phase: dev\n"phase": production\n']) {
     writeFileSync(policy, body);
     assert.throws(() => readTestingPhase(root), /phase/);
   }

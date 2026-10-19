@@ -9,7 +9,7 @@ export function readTestingPhase(root = process.cwd()) {
   // Deliberately require one plain top-level enum, rather than guessing at YAML.
   // The risk-map validator checks the complete document separately.
   const text = readFileSync(join(root, '.testing/risk.yml'), 'utf8').replace(/^\uFEFF/, '');
-  const fields = text.match(/^phase:[^\r\n]*$/gm) ?? [];
+  const fields = text.match(/^(?:phase|"phase"|'phase') *:[^\r\n]*$/gm) ?? [];
   const match = fields.length === 1 && /^phase: *(dev|test|production) *(?:#.*)?$/.exec(fields[0]);
   if (!match) throw new Error('Risk-map phase must be one plain top-level dev, test or production value');
   return match[1];
