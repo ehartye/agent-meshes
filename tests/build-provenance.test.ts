@@ -3,7 +3,7 @@
  */
 import { it as runTest, afterEach } from 'vitest';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 const sha256 = (value: string | Uint8Array) => createHash('sha256').update(value).digest('hex');
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), 'mesh-build-provenance-')); directories.push(root);
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'mesh-build-provenance-'))); directories.push(root);
   const config = join(root, 'build.json'), output = join(root, 'generated');
   await writeFile(config, '{}'); await writeFile(join(root, 'entry.py'), 'import design\n');
   await writeFile(join(root, 'design.py'), 'WIDTH = 1\n');
