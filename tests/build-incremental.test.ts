@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { link, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { cp, link, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createProject, applyOperation } from '../src/core/model.ts';
 import { exportGLB } from '../src/export.ts';
 import { buildAsset } from '../src/build.ts';
 import { nativeCacheFiles } from '../src/build-native-cache.ts';
+import { buildAssets } from '../src/build-batch.ts';
 
 const { authorGLB, findBlender, helperRevision } = vi.hoisted(() => ({ authorGLB: vi.fn(), findBlender: vi.fn(), helperRevision: { sha: undefined as string | undefined } }));
 vi.mock('../src/author.ts', () => ({ authorGLB }));
@@ -146,8 +147,81 @@ it('checks environment values without writing them into cache records', async ()
   vi.stubEnv('MESH_TEST_STYLE', 'private-style-a'); await buildAsset(f.config, { ifChanged: true });
   vi.stubEnv('MESH_TEST_STYLE', 'private-style-b'); await buildAsset(f.config, { ifChanged: true });
   expect(authorGLB).toHaveBeenCalledTimes(2);
+  const reason = (await buildAsset(f.config, { ifChanged: true })).incremental;
+  expect(reason?.blender).toBe('reused');
   expect(await readFile(join(f.output, nativeCacheFiles[0]), 'utf8')).not.toContain('private-style');
   expect(authorGLB.mock.calls[1][2]).toMatchObject({ factoryStartup: true, cwd: process.cwd(), env: { MESH_TEST_STYLE: 'private-style-b' } });
+});
+
+it.each(['inputs', 'environment', 'tools', 'runtime'] as const)('explains a changed %s digest without recording environment values', async component => {
+  const f = await fixture();
+  expect((await buildAsset(f.config, { ifChanged: true })).incremental?.reason).toBe('cache-record-missing');
+  if (component === 'inputs') await writeFile(f.data, 'WIDTH=9\n');
+  if (component === 'environment') vi.stubEnv('MESH_PRIVATE_SECRET', 'must-not-appear');
+  if (component === 'tools') helperRevision.sha = '1'.repeat(64);
+  if (component === 'runtime') await writeFile(f.command, 'different executable');
+  const result = await buildAsset(f.config, { ifChanged: true });
+  expect(result.incremental).toMatchObject({ blender: 'built', reason: 'cache-key-changed', changedComponents: [component] });
+  const record = JSON.parse(await readFile(join(f.output, nativeCacheFiles[0]), 'utf8'));
+  expect(record.schema).toBe('agent-meshes/native-blender-cache@2');
+  expect(Object.keys(record.components)).toEqual(['inputs', 'tools', 'runtime', 'environment', 'cwd', 'location', 'platform', 'policy']);
+  expect(JSON.stringify(record)).not.toContain('must-not-appear');
+  expect(JSON.stringify(record)).not.toContain('MESH_PRIVATE_SECRET');
+});
+
+it('distinguishes legacy/invalid records and missing/corrupt cache bytes', async () => {
+  const f = await fixture(); await buildAsset(f.config, { ifChanged: true });
+  const record = join(f.output, nativeCacheFiles[0]), data = join(f.output, nativeCacheFiles[1]);
+  for (const [reason, mutate] of [
+    ['legacy-cache-record', async () => { const old = JSON.parse(await readFile(record, 'utf8')); old.schema='agent-meshes/native-blender-cache@1'; await writeFile(record,JSON.stringify(old)); }],
+    ['cache-record-invalid', () => writeFile(record,'{bad json')],
+    ['cache-output-missing', () => rm(data)],
+    ['cache-output-corrupt', () => writeFile(data,'bad bytes')],
+  ] as const) { await mutate(); expect((await buildAsset(f.config,{ifChanged:true})).incremental?.reason).toBe(reason); }
+});
+
+it('explains moved source/tool locations independently of identical bytes',async()=>{
+  const first=await fixture();await buildAsset(first.config,{ifChanged:true});
+  const moved=await fixture();await cp(first.output,moved.output,{recursive:true});
+  const result=await buildAsset(moved.config,{ifChanged:true});
+  expect(result.incremental).toMatchObject({blender:'built',reason:'cache-key-changed',changedComponents:['location']});
+});
+
+it('explains cwd changes without persisting its value',async()=>{
+  const f=await fixture();await buildAsset(f.config,{ifChanged:true});
+  const cwd=vi.spyOn(process,'cwd').mockReturnValue(f.root);
+  try{expect((await buildAsset(f.config,{ifChanged:true})).incremental).toMatchObject({reason:'cache-key-changed',changedComponents:['cwd']});}
+  finally{cwd.mockRestore();}
+});
+
+it('shares full tool captures within an explicit sequential batch and retains independent keys', async () => {
+  const f = await fixture(), second = join(f.root,'second.json');
+  await writeFile(second,JSON.stringify({...f.settings,output:'second'}));
+  const cold = await buildAssets([f.config,second],{ifChanged:true});
+  expect(cold.ok).toBe(true); expect(cold.assets.map(x=>x.ok&&x.result.incremental?.blender)).toEqual(['built','built']);
+  expect(cold.toolchain.captures).toEqual({helperToolchain:1,blenderRuntime:1,nativeImplementation:1});
+  const warm = await buildAssets([f.config,second],{ifChanged:true});
+  expect(warm.assets.map(x=>x.ok&&x.result.incremental?.blender)).toEqual(['reused','reused']);
+  expect(authorGLB).toHaveBeenCalledTimes(2);
+  await writeFile(second,JSON.stringify({...f.settings,name:'Changed',output:'second'}));
+  const edit = await buildAssets([f.config,second],{ifChanged:true});
+  expect(edit.assets.map(x=>x.ok&&x.result.incremental?.blender)).toEqual(['reused','built']);
+  expect(authorGLB).toHaveBeenCalledTimes(3);
+});
+
+it('stops a batch after tool mutation, preserves failed output and lists unattempted configs', async () => {
+  const f=await fixture(), second=join(f.root,'second.json'),third=join(f.root,'third.json');
+  await writeFile(second,JSON.stringify({...f.settings,output:'second'}));await writeFile(third,JSON.stringify({...f.settings,output:'third'}));
+  let n=0;
+  const result=await buildAssets([f.config,second,third],{ifChanged:true,decorateAsset:async()=>{if(++n===2)await writeFile(f.command,'mutated during second asset');return [];}});
+  expect(result.ok).toBe(false);expect(result.assets).toHaveLength(2);expect(result.assets[0].ok).toBe(true);expect(result.assets[1].ok).toBe(false);expect(result.unattempted).toEqual([third]);
+  expect((await readdir(f.root))).not.toContain('second');expect((await readdir(f.root))).not.toContain('third');
+});
+
+it('rejects duplicate canonical configs before writing any output', async () => {
+  const f=await fixture();
+  await expect(buildAssets([f.config,f.config],{ifChanged:true})).rejects.toThrow(/duplicate/i);
+  expect(authorGLB).not.toHaveBeenCalled();
 });
 
 it('repairs missing/corrupt generated artifacts and rebuilds missing/corrupt native cache', async () => {

@@ -3,6 +3,7 @@ import type { BigIntStats } from 'node:fs';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { NativeBuildSession } from './build-session.ts';
 
 export interface DeclaredFileInput { path: string; sha256?: string }
 export interface DeclaredTreeInput { dir: string; include?: string[]; exclude?: string[]; maxFiles?: number; sha256?: string }
@@ -180,11 +181,7 @@ export async function captureBuildInputs(configFile: string, script: string, dec
 }
 
 const runtimeRoot = fileURLToPath(new URL('../', import.meta.url));
-async function toolchainSnapshot(root: string) {
-  root = resolve(root);
-  const pkg = await snapshotFile(join(root, 'package.json'), 'package.json');
-  const installed = JSON.parse(await readFile(pkg.absolute, 'utf8')) as { name?: unknown; version?: unknown };
-  if (installed.name !== 'agent-meshes' || typeof installed.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(installed.version)) throw new Error('Invalid installed agent-meshes package/version');
+async function toolchainPaths(root: string) {
   const paths = ['scripts/blender-author.py'];
   async function visit(name: string): Promise<void> {
     const stat = await plainPath(join(root, name));
@@ -199,6 +196,14 @@ async function toolchainSnapshot(root: string) {
     }
   }
   await visit('scripts/blender_lib');
+  return paths.sort();
+}
+async function toolchainSnapshot(root: string) {
+  root = resolve(root);
+  const pkg = await snapshotFile(join(root, 'package.json'), 'package.json');
+  const installed = JSON.parse(await readFile(pkg.absolute, 'utf8')) as { name?: unknown; version?: unknown };
+  if (installed.name !== 'agent-meshes' || typeof installed.version !== 'string' || !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(installed.version)) throw new Error('Invalid installed agent-meshes package/version');
+  const paths = await toolchainPaths(root);
   const snapshots = await Promise.all(paths.sort().map(path => snapshotFile(join(root, path), path)));
   const files = snapshots.map(publicIdentity);
   // v1 helpersSha256 = SHA-256(UTF-8 JSON of sorted [{path, sha256}]).
@@ -209,8 +214,13 @@ async function toolchainSnapshot(root: string) {
 }
 
 /** The managed-runtime identity includes bytecode and normalizes text. This narrower identity is byte-exact. */
-export async function captureBuildToolchain(root = runtimeRoot, output?: string) {
-  const captured = await toolchainSnapshot(root);
+export async function captureBuildToolchain(root = runtimeRoot, output?: string, session?: NativeBuildSession) {
+  const validateMetadata = async (expected: Awaited<ReturnType<typeof toolchainSnapshot>>) => {
+    const paths = ['package.json', ...await toolchainPaths(root)];
+    if (paths.length !== expected.snapshots.length || paths.some((path, index) => path !== expected.snapshots[index].path)) throw new Error('Build toolchain changed: file membership differs');
+    for (const file of expected.snapshots) if (metadata(await plainPath(file.absolute)) !== file.metadata) throw new Error('Build toolchain changed: file identity differs');
+  };
+  const captured = session ? await session.get('helperToolchain', resolve(root), () => toolchainSnapshot(root), validateMetadata) : await toolchainSnapshot(root);
   if (output) {
     for (const file of captured.snapshots) protectOutput(output, file.absolute);
     if (inside(join(resolve(root), 'scripts', 'blender_lib'), output)) throw new Error('Build output cannot overlap the installed helper tree');
@@ -219,6 +229,7 @@ export async function captureBuildToolchain(root = runtimeRoot, output?: string)
     identity: captured.identity, files: captured.files,
     assertUnchanged: async () => {
       try {
+        if (session) { await validateMetadata(captured); return; }
         const actual = await toolchainSnapshot(root);
         if (JSON.stringify(actual.identity) !== JSON.stringify(captured.identity) || actual.snapshots.length !== captured.snapshots.length || actual.snapshots.some((file, index) => file.path !== captured.snapshots[index].path || file.sha256 !== captured.snapshots[index].sha256 || file.metadata !== captured.snapshots[index].metadata)) {
           throw new Error('helper files or installed package changed');

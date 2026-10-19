@@ -382,20 +382,34 @@ export async function main(args = process.argv): Promise<void> {
     const { buildAssembly } = await import('./physical/assembly.ts');
     print(await buildAssembly(manifest, directory));
   });
+  const buildOptionsFor = async (options: { preview?: boolean; previewPage?: boolean; ifChanged?: boolean; force?: boolean }) => {
+    const preview = options.preview !== false, previewPage = options.previewPage !== false;
+    const decorate = (await import('./capture.ts')).decoratorFor({ preview, previewPage });
+    const decorateAsset = preview && previewPage ? async (asset: { name: string }, stage: string): Promise<string[]> => {
+      const { previewHTML } = await import('./preview-html.ts');
+      await writeFile(resolve(stage, 'preview.html'), await previewHTML(asset.name, await readFile(resolve(stage, 'model.glb'))));
+      return ['preview.html'];
+    } : undefined;
+    return { decorate, decorateAsset, ifChanged: options.ifChanged, force: options.force };
+  };
   program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')
     .option('--if-changed', 'Reuse native Blender output when declared inputs and tracked tools match (declare every dependency)')
     .option('--force', 'Regenerate native Blender output and refresh its incremental cache')
     .option('--no-preview', 'Skip browser renders and the standalone preview page')
     .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html').action(async (config, options) => {
     const { buildAsset } = await import('./build.ts');
-    const decorate = (await import('./capture.ts')).decoratorFor({ preview: options.preview, previewPage: options.previewPage });
-    const decorateAsset = options.preview && options.previewPage ? async (asset: { name: string }, stage: string): Promise<string[]> => {
-      const { previewHTML } = await import('./preview-html.ts');
-      await writeFile(resolve(stage, 'preview.html'), await previewHTML(asset.name, await readFile(resolve(stage, 'model.glb'))));
-      return ['preview.html'];
-    } : undefined;
-    process.stdout.write(`${JSON.stringify(await buildAsset(config, { decorate, decorateAsset, ifChanged: options.ifChanged, force: options.force }))}\n`);
+    print(await buildAsset(config, await buildOptionsFor(options)));
   });
+  program.command('build-batch <configs...>').description('Build an explicit list sequentially, sharing native tool hashes for this invocation')
+    .option('--if-changed', 'Reuse unchanged native Blender output with current verification')
+    .option('--force', 'Regenerate native Blender output for every attempted asset')
+    .option('--no-preview', 'Skip browser renders and standalone preview pages')
+    .option('--no-preview-page', 'Keep PNG renders but skip standalone previews')
+    .action(async (configs, options) => {
+      const { buildAssets } = await import('./build-batch.ts');
+      const result = await buildAssets(configs, await buildOptionsFor(options));
+      print(result); if (!result.ok) process.exitCode = 1;
+    });
   try {
     await program.parseAsync(args);
   } catch (error) {
