@@ -10,6 +10,7 @@ export interface LoadedBuildConfig {
   /** Leaf first, followed by its ancestors; canonical paths relative to the canonical leaf directory. */
   sources: BuildConfigSource[];
   leafSha256: string;
+  assertPlainSources: () => Promise<void>;
   assertUnchanged: () => Promise<void>;
 }
 const pathKey = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
@@ -72,6 +73,17 @@ export async function loadBuildConfig(configPath: string): Promise<LoadedBuildCo
     value,
     sources: snapshots.map(file => ({ path: relative(base, file.absolute).split(sep).join('/'), sha256: file.sha256 })),
     leafSha256: snapshots[0].sha256,
+    assertPlainSources: async () => {
+      for (const file of snapshots) {
+        const info = await lstat(file.requested);
+        if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || pathKey(file.requested) !== pathKey(file.absolute)) throw new Error(`Explicit project-root configs must use regular unaliased files without links: ${file.requested}`);
+        for (let parent = dirname(file.requested); ; parent = dirname(parent)) {
+          const directory = await lstat(parent);
+          if (!directory.isDirectory() || directory.isSymbolicLink()) throw new Error(`Link or non-directory in project-root config path: ${parent}`);
+          if (dirname(parent) === parent) break;
+        }
+      }
+    },
     assertUnchanged: async () => {
       for (const expected of snapshots) {
         try {

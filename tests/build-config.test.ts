@@ -108,6 +108,7 @@ it('permits initial canonical aliases but rejects a directory-link retarget', as
   const alias = join(root, 'shared'); await symlink(join(root, 'one'), alias, process.platform === 'win32' ? 'junction' : 'dir');
   const leaf = await put('build.json', { extends: 'shared/base.json' });
   const loaded = await loadBuildConfig(leaf); await loaded.assertUnchanged();
+  await expect(loaded.assertPlainSources()).rejects.toThrow(/link|alias/i);
   expect(loaded.sources.map(source => source.path)).toEqual(['build.json', 'one/base.json']);
   await unlink(alias); await symlink(join(root, 'two'), alias, process.platform === 'win32' ? 'junction' : 'dir');
   await expect(loaded.assertUnchanged()).rejects.toThrow(/config.*changed|changed.*config/i);
