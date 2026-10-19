@@ -81,6 +81,7 @@ interface NativeIdentity { script: string; configFile: string; inputRoot?: strin
 
 /** Opt-in owner-declared dependency contract; never inferred from an old receipt. */
 export async function prepareNativeCache(location: BlenderLocation | null, identity: NativeIdentity, output: string, stage: string, session?: NativeBuildSession, launchEnvironment = prepareBuildEnvironment()): Promise<{ cache?: NativeCache; reason: string }> {
+  if (process.permission) return { reason: 'unsupported-node-permission-mode' };
   const environment = launchEnvironment.env;
   if (Object.keys(environment).some(name => environment[name] && (/^BLENDER_/i.test(name) || /^(PYTHONPATH|PYTHONHOME|PYTHONUSERBASE|PYTHONPYCACHEPREFIX|AGENT_MESHES_DEV_LIB)$/i.test(name)))) return { reason: 'external-runtime-override' };
   const helperRoot = fileURLToPath(new URL('../scripts/blender_lib/', import.meta.url));
@@ -133,7 +134,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     inputs: digest({ config: identity.config, ...(identity.configurations ? { configurations: identity.configurations } : {}), inputs: identity.inputs }),
     tools: digest({ helpers: identity.helpers, implementation: implementation.map(item => item.sha256) }),
     runtime: digest(snapshots.map(item => ({ path: portable(relative(root, item.path)), sha256: item.sha256 ?? 'directory' }))),
-    environment: digest({ contract: launchEnvironment.contract, values: Object.entries(environment).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) }),
+    environment: digest({ contract: launchEnvironment.contract, values: Object.entries(environment).filter(([,value]) => value !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) }),
     cwd: digest(cwd), location: digest({ script: identity.script, configFile: identity.configFile, ...(identity.inputRoot ? { inputRoot: identity.inputRoot } : {}), helperRoot, command, root }),
     platform: digest({ node: process.version, platform: process.platform, arch: process.arch }),
     policy: digest('declared-inputs-complete/factory-startup/fresh-python-source/declared-env/root-scope/component-key@4'),

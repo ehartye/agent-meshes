@@ -25,7 +25,8 @@ the added identity records to attribute exactly what was declared and generated.
 
 Native builds support `blender.inputs` and `blender.toolchain` starting with
 0.20.0. The entry script is always
-included. Declare additional files individually, relative to `build.json`:
+included. Declare additional files individually, relative to `build.json` by
+default (or the explicit project root described below):
 
 ```json
 {
@@ -67,8 +68,9 @@ matches. Brace lists, brackets, negation, extglobs, absolute paths and traversal
 are rejected. `__pycache__`, `.pyc` and `.pyo` are always excluded. This is
 declared expansion, not Python import discovery or a file-read audit.
 
-Trees must be named config-relative subdirectories; `.` and paths outside the
-config directory are rejected. The default and maximum selected-file budget is
+Trees must be named subdirectories of the input base: the config directory by
+default, or an explicit project root. `.` and traversal in input declarations are
+rejected. The default and maximum selected-file budget is
 10,000 per tree; `maxFiles` can lower it. Traversal is bounded at 50,000 entries
 per tree. Empty matching sets remain tracked. Links, overlapping declarations,
 non-file entries and output/tree overlap fail before publishing. Existing file
@@ -76,11 +78,11 @@ declarations and their optional byte pins remain supported.
 
 `provenance.inputs` lists the entry and every selected file's raw-byte SHA256.
 `provenance.inputTrees` records each directory, normalized patterns, budget,
-expanded config-relative paths and actual `sha256`. Its digest is SHA256 of the
+expanded input-base-relative paths and actual `sha256`. Its digest is SHA256 of the
 UTF-8 JSON serialization of the tree's sorted `[{"path", "sha256"}]` records.
 Sort paths by ECMAScript UTF-16 code-unit lexical order, without locale collation
 or Unicode normalization; for example U+10000 sorts before U+E000. Serialize each
-object with keys `path` then `sha256`, using JSON.stringify escaping, config-relative
+object with keys `path` then `sha256`, using JSON.stringify escaping, input-base-relative
 POSIX paths and no whitespace or newline. A Python implementation must sort by
 `path.encode('utf-16-be', errors='surrogatepass')`, then use
 `json.dumps(records, ensure_ascii=False, separators=(',', ':')).encode('utf-8')`
@@ -143,15 +145,17 @@ belong in the small editable recipe instead.
 ### Observe project reads (0.22.0 and later)
 
 Every generated native build installs a bounded CPython audit hook before project
-imports. The result and `authoring.json.provenance.readAudit` report Python read
-open attempts and module filenames, including modules already loaded at startup.
+imports. The CLI result reports Python read open attempts and module filenames,
+including modules already loaded at startup. From 0.24.0, the authoring receipt
+uses a distinct portable summary described below.
 Pure writes, pseudo module filenames, the exact fresh generated GLB and the fresh
 private bytecode prefix are excluded. Both default and incremental native builds
 use fresh bytecode lookup before project imports; disabling writes alone does not
 prevent loading old timestamp bytecode.
 
-The enforced scope is the **config directory**, matching today's declared input
-boundary. `reads` lists observed project paths and `undeclaredReads` identifies
+The enforced scope is the **config directory** by default, or the explicitly
+declared **project root**, matching the selected input boundary. `reads` lists
+observed project paths and `undeclaredReads` identifies
 those absent from entry/expanded input declarations. Exact hashed helper files
 and installed Blender runtime paths are classified separately. Other paths appear
 in `externalReads`, relative to the config; they are **outside the enforced scope**,
@@ -209,7 +213,7 @@ that those dependencies or the resulting mesh are valid. Use normal/forced
 generation when that input contract is not established.
 
 The change key includes config/entry/declared bytes, shared helpers, authoring
-implementation and its absolute helper location, Node/platform, working directory, environment digest and a
+implementation and its absolute helper location, Node/platform, working directory, effective environment digest and a
 recognized complete Blender installation. Environment values are not written
 to the cache. Tool files are byte-hashed on each standalone check, including bundled scripts,
 Python and data; an unchanged filename/version alone is not enough. Hashing has
@@ -295,3 +299,75 @@ values or raw working-directory paths into those components. Diagnoses explain
 the same authoritative key used for reuse. They never authorize a hit themselves.
 Old records rebuild once. Forced builds, unsupported launch environments and
 unclean read audits retain their specific reasons.
+
+### Declare Blender's environment (0.24.0 and later)
+
+Use `"blender": { "script": "asset.py", "environment": { "inputs": ["MESH_STYLE"] } }`
+to pass only declared semantic variables plus the tracked platform baseline.
+Unlisted parent variables are absent from Blender, including run IDs, timestamps,
+`OLDPWD` and undeclared Python/Blender overrides. Ignoring a variable in the key
+alone would permit stale geometry; this option filters the actual launch too.
+The same environment is used for plain, forced and unsupported-cache fallback
+generation. Explicit mode uses factory startup. Omitted `environment` preserves
+full inheritance and its conservative full-environment reuse key.
+
+An empty `inputs` list selects only the baseline. Names use
+`[A-Za-z_][A-Za-z0-9_]*`, with at most 256 declarations. Windows names are
+case-insensitive, emitted uppercase; duplicate declaration aliases and conflicting
+selected parent aliases fail. On POSIX names are case-sensitive. A declared
+missing variable stays absent, and defining it later invalidates reuse.
+
+The Windows baseline is `HOMEDRIVE`, `HOMEPATH`, `LOGONSERVER`, `PATH`,
+`SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`, `USERDOMAIN`, `USERNAME`, `USERPROFILE`,
+`WINDIR`. Node/libuv may supplement omitted variables from the real parent, so
+explicit mode snapshots, passes and hashes these values. Missing or empty Windows
+baseline values fail before launch instead of allowing unkeyed supplementation.
+The POSIX baseline is `HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `PATH`, `TMPDIR`, `TZ`;
+only present values are passed. Recipes needing more variables must declare them.
+An internal negative guard prevents Node from reinserting unlisted coverage
+variables. Declared mode rejects active Node permission mode, which synthesizes
+child `NODE_OPTIONS`; inherited mode can generate there but cannot reuse a cache.
+
+This is a launch contract, not an OS, native-code, network or environment-read
+sandbox. External runtime overrides that remain in the effective environment
+still disable reuse. The chosen Blender executable is resolved before filtering.
+Declared receipts add `provenance.environment` with mode, declared/platform names
+and an aggregate SHA-256 of effective values. Values are never written there.
+The native key includes that contract and the effective map, excluding undefined
+negative guards. The platform rules were exercised with Node 24.18.0 on Windows;
+see [Node child processes](https://nodejs.org/docs/v24.18.0/api/child_process.html),
+[its spawn normalization](https://github.com/nodejs/node/blob/v24.18.0/lib/child_process.js)
+and [bundled libuv](https://github.com/nodejs/node/blob/v24.18.0/deps/uv/src/win/process.c).
+
+### Share inputs under an explicit project root (0.24.0 and later)
+
+A nested asset can set `"blender": { "script": "asset.py", "projectRoot": "../..", "inputs": [{ "dir": "lib" }] }`.
+Only input declarations move to that root; scripts and output remain leaf-config
+relative, and `extends` retains its declaring-file rule. Every leaf/ancestor
+config, script and output must remain inside the selected root. A root must be
+an explicit relative directory, not a filesystem root. Config aliases, links,
+hardlinked configs/scripts, linked declared inputs and output escape fail.
+
+`provenance.inputRoot` records a portable `relativeToConfig` and `scope` marker.
+Entry, config and declared file/tree identities use root-relative POSIX paths.
+The native location key includes the canonical root. Strict read-audit coverage
+widens to that boundary, so an undeclared sibling library is rejected rather than
+listed as outside a nested config's scope. Output transactions retain their
+ownership checks. Root identity is guarded without treating ordinary staging and
+output changes to directory timestamps as an input change.
+
+### Keep audit receipts portable (0.24.0 and later)
+
+CLI results and local producer caches retain the complete schema-1 read-audit
+diagnostic. `authoring.json.provenance.readAudit` now uses schema 2: all in-scope
+facts and status are preserved, but `externalReads` becomes
+`{ "count": 1, "paths": "omitted", "coverage": "outside-enforced-scope" }`.
+No outside machine path is stored in that receipt. Inspect the CLI diagnostic
+when investigating those paths. Counts may still differ between machines.
+
+An outside read is neither declared benign nor promoted into enforced coverage.
+Redaction does not change strict rejection, incomplete status or cache eligibility.
+The full local cache is machine-specific and should not be used as a portable
+committed receipt. Saved project inputs are unchanged; receipt consumers must
+branch on the nested audit schema instead of assuming `externalReads` is always
+an array. Neither schema proves complete native dependencies or external freshness.

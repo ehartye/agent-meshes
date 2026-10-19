@@ -87,6 +87,25 @@ it('keeps full external diagnostics locally while writing the portable schema2 r
   expect((await buildAsset(f.config,{ifChanged:true})).readAudit).toEqual(result.readAudit);
 });
 
+it('rejects a requested output alias inside the project root before authoring',async()=>{
+  const f=await fixture();await mkdir(join(f.root,'real'));await symlink(join(f.root,'real'),join(f.root,'alias'),process.platform==='win32'?'junction':'dir');
+  await writeFile(f.config,JSON.stringify({...f.settings,output:'alias/generated',blender:{...f.settings.blender,projectRoot:'.'}}));
+  await expect(buildAsset(f.config)).rejects.toThrow(/link|alias/i);expect(authorGLB).not.toHaveBeenCalled();
+});
+
+it('suppresses undeclared Node coverage forwarding before key calculation and launch',async()=>{
+  const f=await fixture();await writeFile(f.config,JSON.stringify({...f.settings,blender:{...f.settings.blender,environment:{inputs:[]}}}));
+  vi.stubEnv('NODE_V8_COVERAGE','first-unused-path');await buildAsset(f.config,{ifChanged:true});
+  const launch=authorGLB.mock.calls[0][2];expect(Object.hasOwn(launch.env,'NODE_V8_COVERAGE')).toBe(true);expect(launch.env.NODE_V8_COVERAGE).toBeUndefined();
+  vi.stubEnv('NODE_V8_COVERAGE','second-unused-path');expect((await buildAsset(f.config,{ifChanged:true})).incremental?.blender).toBe('reused');
+});
+
+it('keeps inherited permission-mode builds available while declining incremental reuse',async()=>{
+  const f=await fixture(),previous=Object.getOwnPropertyDescriptor(process,'permission');
+  try{Object.defineProperty(process,'permission',{configurable:true,value:{}});const result=await buildAsset(f.config,{ifChanged:true});expect(result.incremental).toEqual({blender:'built',reason:'unsupported-node-permission-mode'});expect(result.files).not.toContain(nativeCacheFiles[0]);}
+  finally{if(previous)Object.defineProperty(process,'permission',previous);else Reflect.deleteProperty(process,'permission');}
+});
+
 it('inherits shared defaults, records every config and invalidates changed ancestor bytes', async () => {
   const f = await fixture();
   const defaults = join(f.root, 'defaults.json');

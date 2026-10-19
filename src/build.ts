@@ -162,7 +162,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
   const output = join(await canonical(dirname(requestedOutput)), basename(requestedOutput));
   if (dirname(output) === output || loadedConfig.sources.some(file => inside(output, resolve(dirname(configFile), file.path))) || inside(output, input)) throw new Error('Build output cannot contain its config or input source');
   if (config.blender?.projectRoot !== undefined) await loadedConfig.assertPlainSources();
-  const inputRoot = config.blender?.projectRoot !== undefined ? await captureBuildRoot({ configFile, projectRoot: config.blender.projectRoot, configurations: loadedConfig.sources, script: resolve(dirname(configFile), config.blender.script), output }) : undefined;
+  const inputRoot = config.blender?.projectRoot !== undefined ? await captureBuildRoot({ configFile, projectRoot: config.blender.projectRoot, configurations: loadedConfig.sources, script: resolve(dirname(configFile), config.blender.script), output: requestedOutput }) : undefined;
   const inputs = config.blender ? await captureBuildInputs(configFile, input, config.blender.inputs ?? [], output, inputRoot?.base) : undefined;
   if (inputs && inputs.config.sha256 !== loadedConfig.leafSha256) throw new Error('Build config changed while reading');
   const tools = config.blender ? await captureBuildToolchain(undefined, output, session) : undefined;
@@ -228,7 +228,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
           dependencyDiscovery: 'entry-and-declared-only', inputs: inputs!.files,
           ...(loadedConfig.sources.length > 1 ? { configurations: loadedConfig.sources } : {}),
           ...(inputRoot ? { inputRoot: inputRoot.receipt } : {}),
-          ...(environment.contract.mode === 'declared' ? { environment: { ...environment.contract, sha256: createHash('sha256').update(JSON.stringify(Object.entries(environment.env).sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0))).digest('hex') } } : {}),
+          ...(environment.contract.mode === 'declared' ? { environment: { ...environment.contract, sha256: createHash('sha256').update(JSON.stringify(Object.entries(environment.env).filter(([,value]) => value !== undefined).sort(([a],[b]) => a < b ? -1 : a > b ? 1 : 0))).digest('hex') } } : {}),
           readAudit: portableReadAudit(readAudit),
           ...(inputs!.trees.length ? { inputTrees: inputs!.trees } : {}),
           toolchain: { ...tools!.identity, blenderVersion: result.blender }, helpers: tools!.files,
