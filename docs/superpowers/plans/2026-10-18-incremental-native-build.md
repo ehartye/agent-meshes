@@ -137,3 +137,17 @@ build identity reference. If editing a SKILL.md, read yoda first.
 - [ ] Verify exact merged tree, update/push wiki architecture/roadmap/evidence and
   retain both worktrees and failed/control receipts. Report measured gains and
   limitations without treating one deterministic fixture as universal proof.
+
+## Reviewed revision: fresh Python source
+
+The independent review of 625b3cb found timestamp-valid bytecode can run different
+code from the tracked source: dont_write_bytecode suppresses writes, not reads.
+Root reproduced it with actual Blender: params.py said WIDTH1.3 but exported
+width1.2. Preserve this RED receipt. Cacheable launches now set a fresh private
+sys.pycache_prefix before wrapper/helper/project imports, reject pre-existing
+prefixes, and suppress writes. This changes only opt-in author launch arguments;
+the Python wrapper/default builds stay unchanged. Bytecode-only shared helpers,
+external prefix overrides and undeclared local shared-helper shadows fall back.
+Recheck shared runtime state before publication, run native GREEN and get a fresh
+scoped review before accepting this revision. PR155 separately passed/merged at
+099decd3ac96a4d911fb96cd23fdec897e224994; this branch is rebased onto that main.

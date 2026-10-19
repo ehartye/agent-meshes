@@ -107,8 +107,11 @@ to the cache. Tool files are byte-hashed on each check, including bundled script
 Python and data; an unchanged filename/version alone is not enough. Hashing has
 a real cost even when Blender is skipped. Store launchers, unrecognized distro
 layouts, linked runtime files and external Blender/Python/helper overrides fall
-back to generation rather than claiming a cache hit. Supported reuse launches
-use the selected command/environment and factory startup.
+back to generation rather than claiming a cache hit. Undeclared local shared-helper
+shadows and bytecode-only shared helpers also fall back. Supported launches use
+the selected command/environment and factory startup, with fresh bytecode lookup
+before importing project/shared source. Suppressing bytecode writes alone would
+still permit stale timestamp caches to override changed Python source.
 
 A successful incremental build owns a pristine Blender GLB and a small versioned
 cache record alongside its generated output. Subsequent matching builds verify

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
 import { lstat, readFile, readdir, realpath, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import type { AuthorOptions } from './author.ts';
@@ -70,11 +70,24 @@ export interface NativeCache {
   write: (stage: string, bytes: Uint8Array, result: { blender: string; meshes: number }) => Promise<void>;
   assertUnchanged: () => Promise<void>;
 }
+interface NativeIdentity { script: string; configFile: string; inputs: { path: string; sha256: string }[]; config: unknown; helpers: unknown }
 
 /** Opt-in owner-declared dependency contract; never inferred from an old receipt. */
-export async function prepareNativeCache(location: BlenderLocation | null, identity: unknown, output: string): Promise<{ cache?: NativeCache; reason: string }> {
+export async function prepareNativeCache(location: BlenderLocation | null, identity: NativeIdentity, output: string, stage: string): Promise<{ cache?: NativeCache; reason: string }> {
   const environment = { ...process.env };
-  if (Object.keys(environment).some(name => environment[name] && (/^BLENDER_/i.test(name) || /^(PYTHONPATH|PYTHONHOME|PYTHONUSERBASE|AGENT_MESHES_DEV_LIB)$/i.test(name)))) return { reason: 'external-runtime-override' };
+  if (Object.keys(environment).some(name => environment[name] && (/^BLENDER_/i.test(name) || /^(PYTHONPATH|PYTHONHOME|PYTHONUSERBASE|PYTHONPYCACHEPREFIX|AGENT_MESHES_DEV_LIB)$/i.test(name)))) return { reason: 'external-runtime-override' };
+  const helperRoot = fileURLToPath(new URL('../scripts/blender_lib/', import.meta.url));
+  let helperFiles: Snapshot[];
+  try { helperFiles = await tree(helperRoot); }
+  catch { return { reason: 'unsupported-shared-python-runtime' }; }
+  if (helperFiles.some(file => file.path.endsWith('.pyc') && !relative(helperRoot, file.path).split(sep).includes('__pycache__'))) return { reason: 'bytecode-only-helper' };
+  const pathKey = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
+  const declared = new Set(identity.inputs.map(file => pathKey(resolve(dirname(identity.configFile), file.path))));
+  for (const entry of await readdir(dirname(identity.script), { withFileTypes: true })) {
+    if (!/^agent_meshes_/.test(entry.name) || (!entry.isDirectory() && !/\.(py|pyc)$/.test(entry.name))) continue;
+    const path = join(dirname(identity.script), entry.name, ...(entry.isDirectory() ? ['__init__.py'] : []));
+    if (!declared.has(pathKey(path))) return { reason: 'undeclared-local-helper-override' };
+  }
   if (!location || location.detached) return { reason: 'unsupported-blender-launcher' };
   const command = await realpath(location.command).catch(() => undefined);
   if (!command) return { reason: 'unreadable-blender-runtime' };
@@ -99,7 +112,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
   const implementation = await Promise.all(['build.ts', 'author.ts', 'build-native-cache.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
   const cwd = process.cwd();
   const key = digest({
-    policy: 'declared-inputs-complete/factory-startup@1', identity, cwd,
+    policy: 'declared-inputs-complete/factory-startup/fresh-python-source@2', identity, cwd,
     environment: Object.entries(environment).sort(([a], [b]) => a.localeCompare(b)),
     node: process.version, platform: process.platform, arch: process.arch,
     command, runtime: snapshots.map(item => ({ path: portable(relative(root, item.path)), sha256: item.sha256 ?? 'directory' })),
@@ -113,7 +126,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     return bytes;
   }
   const cache: NativeCache = {
-    launch: { blender: { ...location, command }, env: environment, cwd, factoryStartup: true },
+    launch: { blender: { ...location, command }, env: environment, cwd, factoryStartup: true, pythonCachePrefix: join(stage, '.agent-meshes-python-imports') },
     read: async directory => {
       let record: Record;
       try {
@@ -140,6 +153,8 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     assertUnchanged: async () => {
       const current = await tree(root);
       if (current.length !== snapshots.length || current.some((item, index) => item.path !== snapshots[index].path || item.metadata !== snapshots[index].metadata)) throw new Error('Blender runtime changed during build');
+      const shared = await tree(helperRoot);
+      if (shared.length !== helperFiles.length || shared.some((item, index) => item.path !== helperFiles[index].path || item.metadata !== helperFiles[index].metadata)) throw new Error('Shared Python runtime changed during build');
       for (const expected of implementation) if (metadata(await lstat(expected.path, { bigint: true })) !== expected.metadata) throw new Error('Native build implementation changed during build');
     },
   };

@@ -178,7 +178,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
       return report;
     };
     if (config.blender) {
-      const prepared = incremental ? await prepareNativeCache(findBlender(), { config: inputs!.config, inputs: inputs!.files, helpers: tools!.identity, script: input, configFile }, output) : undefined;
+      const prepared = incremental ? await prepareNativeCache(findBlender(), { config: inputs!.config, inputs: inputs!.files, helpers: tools!.identity, script: input, configFile }, output, stage) : undefined;
       const cached = prepared?.cache && !options.force ? await prepared.cache.read(output) : undefined;
       if (cached) await writeFile(join(stage, 'model.glb'), cached.bytes, { flag: 'wx' });
       const result = cached ?? await (prepared?.cache ? authorGLB(input, join(stage, 'model.glb'), prepared.cache.launch) : authorGLB(input, join(stage, 'model.glb')));

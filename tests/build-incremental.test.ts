@@ -161,9 +161,11 @@ it('preserves owned output on runtime mutation and refuses cache links or poison
   expect((await readdir(f.root)).filter(name => /\.stage-|\.lock$|\.backup-/.test(name))).toEqual([]);
 });
 
-it.each(['override', 'detached', 'layout', 'linked-runtime'] as const)('falls back to generation for unsupported %s instead of claiming reuse', async unsupported => {
+it.each(['override', 'bytecode-prefix', 'local-helper', 'detached', 'layout', 'linked-runtime'] as const)('falls back to generation for unsupported %s instead of claiming reuse', async unsupported => {
   const f = await fixture();
   if (unsupported === 'override') vi.stubEnv('BLENDER_USER_SCRIPTS', join(f.root, 'external'));
+  if (unsupported === 'bytecode-prefix') vi.stubEnv('PYTHONPYCACHEPREFIX', join(f.root, 'external'));
+  if (unsupported === 'local-helper') await writeFile(join(f.root, 'agent_meshes_author.py'), '# untracked local helper override');
   if (unsupported === 'detached') findBlender.mockReturnValue({ command: f.command, detached: true, source: 'windows-store' });
   if (unsupported === 'layout') await rm(join(f.installation, '5.2', 'python'), { recursive: true });
   if (unsupported === 'linked-runtime') await symlink(f.root, join(f.installation, 'external'), 'junction');

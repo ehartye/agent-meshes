@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { authorGLB } from '../src/author.ts';
@@ -52,6 +52,29 @@ it('uses the selected incremental command, environment, cwd and factory argument
   await authorGLB(input, output, { blender, env: { TEST_SETTING: 'frozen' }, cwd: directory, factoryStartup: true });
   expect(findBlender).not.toHaveBeenCalled();
   expect(spawn).toHaveBeenCalledWith('selected-blender', expect.arrayContaining(['--factory-startup', '--disable-autoexec']), expect.objectContaining({ env: { TEST_SETTING: 'frozen' }, cwd: directory, windowsHide: true }));
+});
+
+it('isolates imported source from old bytecode before executing the author wrapper', async () => {
+  const { directory, input, output, child } = await fixture();
+  spawn.mockImplementation(() => {
+    void (async () => { await writeFile(output, 'GLB'); await writeFile(`${output}.done`, JSON.stringify({ ok: true, meshes: 1, blender: '5.2.2 LTS' })); child.emit('close', 0); })();
+    return child;
+  });
+  const prefix = join(directory, 'fresh-imports');
+  await authorGLB(input, output, { pythonCachePrefix: prefix });
+  const args = spawn.mock.calls[0][1] as string[];
+  const index = args.indexOf('--python-expr');
+  expect(index).toBeGreaterThan(0); expect(index).toBeLessThan(args.indexOf('--python'));
+  expect(args[index + 1]).toContain('sys.pycache_prefix');
+  expect(args[index + 1]).toContain(Buffer.from(prefix).toString('base64'));
+});
+
+it('rejects an existing bytecode lookup prefix before touching previous output', async () => {
+  const { directory, input, output } = await fixture();
+  const prefix = join(directory, 'already-cached'); await mkdir(prefix);
+  await writeFile(output, 'previous output');
+  await expect(authorGLB(input, output, { pythonCachePrefix: prefix })).rejects.toThrow(/must be fresh/i);
+  expect(await readFile(output, 'utf8')).toBe('previous output'); expect(spawn).not.toHaveBeenCalled();
 });
 
 it('rejects missing Blender and spawn errors promptly', async () => {
