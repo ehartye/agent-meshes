@@ -1,5 +1,18 @@
 # Native build identity and project ownership
 
+## Contents
+
+- [Declare and pin a native build](#declare-and-pin-a-native-build)
+  - [Declare a library tree](#declare-a-library-tree-0210-and-later)
+- [Reuse native Blender output](#reuse-native-blender-output-when-unchanged)
+  - [Observe project reads](#observe-project-reads-0220-and-later)
+  - [Enable incremental generation](#enable-incremental-generation)
+  - [Share defaults and build a batch](#share-defaults-and-build-a-batch-0230-and-later)
+  - [Diagnose a native miss](#diagnose-a-native-miss-0230-and-later)
+  - [Declare Blender's environment](#declare-blenders-environment-0240-and-later)
+  - [Share inputs under an explicit project root](#share-inputs-under-an-explicit-project-root-0240-and-later)
+  - [Keep audit receipts portable](#keep-audit-receipts-portable-0240-and-later)
+
 Keep authored Python, imported project modules, donor data and design parameters
 under project ownership. Run builds through the version-matched managed launcher
 from [mesh-setup](../../mesh-setup/SKILL.md). Python helper modules are build-time

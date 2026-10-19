@@ -51,6 +51,10 @@ flowchart TD
 Before batching, record the project's material/vertex-color and coordinate contracts, target-load counts, and
 collision/query policy. Prove one representative asset through the real project:
 
+For the StaticMesh branch, [static-prop import checks](../../mesh-build/references/unreal-static-props.md)
+provide bounds, triangle counts, Nanite/UV settings and an asymmetric signed-axis calibration in a scratch
+project. Use those to diagnose import facts, then repeat the required checks in the consuming project.
+
 1. Check saved/imported asset type, names, scale, pivot, material slots and effective vertex colors.
 2. Inspect game-camera appearance and any addressed motion, LODs or repeated instances.
 3. Test required collision traces and simulation in a packaged build. For live edits, measure collision-update

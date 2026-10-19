@@ -69,9 +69,9 @@ would need a separate named-layer argument. `all_vertex_colors` accepts only
 Invalid values and unavailable native enum modes fail before object iteration,
 selection changes or export. There is no fallback to a different export mode.
 The overrides change no color layers, shader nodes, texture files or material
-slots. Existing selection/active-object restoration and morph pruning still apply. This is a
-Python authoring API addition, not a JSON operation/schema or installed-release
-promise; material interpretation and appearance still need consumer inspection.
+slots. Existing selection/active-object restoration and morph pruning still apply.
+These are Python authoring controls, not JSON operations or build.json fields;
+material interpretation and appearance still need consumer inspection.
 
 Run `blender --background --factory-startup --python
 tests/blender_vertex_color_export.py -- --output-dir <private-output-dir>`.

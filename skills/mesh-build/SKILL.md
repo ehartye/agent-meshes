@@ -1,7 +1,7 @@
 ---
 name: mesh-build
-description: Export, verify, render and deliver agent-meshes models as GLB with isolated build configs, fixed-view renders and clip contact sheets, offline preview pages, the embeddable MeshViewer runtime with its puppet API, multi-model stages and exact ID renders for pixel checks, fast Workbench previews of Blender-authored sources (matcap, wire, cavity, posed shape keys) with an optional persistent worker, the optional Blender refine stage, the headless Unreal import check, Blender-authored static props, and shared-camera contact sheets and budget stats for a set of GLBs.
-when_to_use: Use when asked to export or verify a GLB, render or screenshot a model, produce a preview page, embed a 3D model in a web page, put several models on one page, count rendered pixels per part or material, set up a repeatable build.json, smooth and feather a model in Blender, preview a Blender-authored model quickly (matcap, wireframe, blink or jaw poses) without a full build, or check that a GLB imports into Unreal with its morphs and bones intact, author a static prop in Blender with booleans, compare or budget a set of GLBs (a chess set, a furniture kit), or bring a GLB into Unity.
+description: Export, verify, render and deliver GLBs with agent-meshes. Use for repeatable Blender builds, slow unchanged builds or cache misses, shared build configs and batches, vertex-colour export, Unreal static-prop or character import checks, model previews and web viewers.
+when_to_use: Use when asked to set up build.json, avoid repeated Blender launches or hashing, share toolchain pins or defaults, keep scripts beside assets with a shared library, diagnose environment-driven rebuilds, consume audit receipts, preserve RGB/alpha wear masks, check Unreal size, axes, Nanite, UV precision, morphs or bones, render or screenshot a model, preview bpy sources quickly, produce an offline preview or multi-model stage, count pixels per part, embed MeshViewer, refine a model, compare GLB budgets or import into Unity. Choose mesh-tool-selection first only when the authoring or engine route is unsettled.
 ---
 
 # Mesh build and delivery
@@ -25,10 +25,26 @@ adds nine donor banks, Toy Maker tools and a protected offline demo generator.
 Load `mesh-setup` first. Commands run through the managed launcher
 (`node "<plugin-root>/scripts/run-managed.js" ...`, written `mesh` below).
 
-For native Blender builds with project imports or donor data, read
-[native build identity](references/native-build-identity.md) before declaring a
-reproducible asset or updating helper versions. Keep editable recipes in the
-project and consume the exported GLB in the app.
+## Find the relevant build guidance
+
+Keep editable recipes in the project; apps consume the exported GLB. For a native
+Blender task, read the matching reference before changing its build contract:
+
+| Task or symptom | Direct reference |
+| --- | --- |
+| Establish inputs, donor pins or a reproducible toolchain | [Declare and pin a native build](references/native-build-identity.md#declare-and-pin-a-native-build) |
+| Skip unchanged Blender generation | [Incremental generation and its limits](references/native-build-identity.md#enable-incremental-generation) |
+| Repeated config settings or tool hashing across assets | [Shared defaults (`extends`) and `build-batch`](references/native-build-identity.md#share-defaults-and-build-a-batch-0230-and-later) |
+| Unexpected rebuild or no cache hit | [Miss reasons and changed components](references/native-build-identity.md#diagnose-a-native-miss-0230-and-later); for environment changes, [declare the actual child environment](references/native-build-identity.md#declare-blenders-environment-0240-and-later) |
+| Nested asset configs need a shared library | [Explicit project root and path rules](references/native-build-identity.md#share-inputs-under-an-explicit-project-root-0240-and-later) |
+| Undeclared-read warning or strict-audit failure | [Read-audit coverage and limits](references/native-build-identity.md#observe-project-reads-0220-and-later) |
+| Commit or parse an authoring receipt | [Portable schema-2 receipts versus full local diagnostics](references/native-build-identity.md#keep-audit-receipts-portable-0240-and-later) |
+| Preserve RGB/alpha masks or omit unused vertex colours | [Vertex-colour export controls](../../scripts/blender_lib/README.md#vertex-colors-in-glb-exports) |
+| Unreal static prop has wrong size/axes or unexpected Nanite/UV settings | [Static-prop measurements and axis calibration](references/unreal-static-props.md) |
+
+Reuse skips only native Blender generation; current validation, limits and requested
+previews still run. Unreal import and cook are separate consumer stages. Compiling
+Python cannot prove complete dependencies or replace an exported-asset check.
 
 ## One-off export
 
@@ -141,19 +157,29 @@ For a static prop or a set of them, use `build.json` only; no workspace is neede
 Whether a prop belongs in Blender at all (against the workspace, Unreal tools or code-CAD) is decided by
 [mesh-tool-selection](../mesh-tool-selection/SKILL.md); read it when establishing or changing the route.
 
-For a prop that needs real booleans, a carved slot, a fluted rim or a sculpted head, author it in Blender
-and export one mesh with one named material. A 12-piece chess set was built this way; every rule below cost
-a render round to learn. Reusable helpers are in `scripts/blender_lib/agent_meshes_props.py` (see its
-section in [blender_lib](../../scripts/blender_lib/README.md)); `from agent_meshes_props import *` after adding
-`scripts/blender_lib` to `sys.path`.
+For a prop that needs booleans, bevels or authored UVs, use a Blender source and retain the consumer's
+named nodes, material slots and vertex channels. The uniform-material construction recipe below came
+from a 12-piece chess set; it is not a requirement to merge every prop into one mesh or material.
+Reusable helpers are in `scripts/blender_lib/agent_meshes_props.py` (see
+[static-prop helpers](../../scripts/blender_lib/README.md#static-props-agent_meshes_props));
+`from agent_meshes_props import *` after adding `scripts/blender_lib` to `sys.path`.
 
-**Axes and export.** glTF is Y-up with the model facing +Z; Blender is Z-up with forward = -Y. Author in
-Blender as (x, -z, y), that is glTF z = -Blender y (`P(x, y, z)` in the helper module), and export with
-`export_yup=True`, so nothing is rotated afterwards. Export with `export_vertex_color='NONE'` (Blender before
-4.2 spells it `export_colors=False`), `export_cameras=False`, `export_lights=False`, and `export_texcoords=False`
-when nothing samples a texture. Give the mesh ONE named material (`static_material('PieceWhite', '#e9ddc2', .55)`)
-and strip colour attributes (`finish_static`); a leftover `COLOR_0` multiplies the base colour in viewers.
-`export_static_glb(path, objects)` has all of this.
+**Vertex colours are part of the consumer contract.** For nonuniform RGB/alpha masks, normal `build()`
+sources can set `EXPORT_VERTEX_COLOR = 'ACTIVE'` and `EXPORT_ALL_VERTEX_COLORS = False` and select
+`mesh.color_attributes.render_color_index`. Read [vertex-colour export controls](../../scripts/blender_lib/README.md#vertex-colors-in-glb-exports)
+for defaults and validation. Keep an opaque material when alpha is data; a transparency graph is not
+needed to preserve that channel. Check decoded exported RGBA values and the destination shader separately;
+an import report's colour-presence flag does not prove channel values or shading survived.
+
+**Axes and uniform-material export.** glTF is Y-up; the helper's convention faces +Z. Blender is Z-up;
+for that convention author as (x, -z, y), that is glTF z = -Blender y (`P(x, y, z)`), and export with
+`export_yup=True`. Preserve an existing project's forward-axis contract and verify the imported mapping.
+For a uniform-material prop with no semantic vertex channels, one named material such as
+`static_material('PieceWhite', '#e9ddc2', .55)` is sufficient. `finish_static` strips colour attributes and
+`export_static_glb(path, objects)` omits them; use these only when those channels are intentionally absent.
+For direct exports, that is `export_vertex_color='NONE'` (before Blender 4.2, `export_colors=False`).
+Disable cameras/lights, and omit texture coordinates only when the consumer does not need them.
+Unwanted `COLOR_0` can multiply base colour in viewers; intentional masks must be preserved instead.
 
 **Boolean order that avoids ragged edges.**
 1. Build the clean body (screw lathe, or metaball converted to a mesh).
@@ -198,8 +224,9 @@ visible part is a needle.
   `execFileSync` throws on a nonzero Blender exit; print `err.stdout` and `err.stderr` on failure. Blender exits 0 after
   a Python error unless you pass `--python-exit-code 1`, as above.
 - Through `build.json`: `{"version":1,"name":"knight","blender":{"script":"knight.py"},"output":"dist"}`, where the
-  source defines `build()` returning the list of bpy objects. It takes no arguments (generate one source per variant,
-  or read an environment variable) and exports through the managed `export_glb`, then verifies and renders as for any build.
+  source defines `build()` returning the list of bpy objects. It takes no arguments; use declared parameter files
+  or [declared environment inputs](references/native-build-identity.md#declare-blenders-environment-0240-and-later)
+  for variants. It exports through the managed `export_glb`, then verifies and writes the native build output.
 
 ## Static sets: contact sheet and stats
 
@@ -300,6 +327,12 @@ intrusion by clip, phase, part pair, vertex count, depth and the deepest vertex'
 position, plus the worst per pair; it exits 1 with one `FAIL` line per pair otherwise.
 
 ## Unreal import check
+
+For rigid props, read [static-prop checks](references/unreal-static-props.md) for full-size bounds in
+centimetres, render-resource versus Nanite triangles, Nanite/UV build settings and signed-axis calibration.
+Declare expectations from the project contract; the verifier reports settings rather than changing them.
+Its scratch import does not prove production-project configuration, vertex-channel values, rendering,
+collision, cooked behavior or performance. Character-specific checks follow below.
 
 ```text
 mesh verify-unreal head.glb --contract arkit-face/1

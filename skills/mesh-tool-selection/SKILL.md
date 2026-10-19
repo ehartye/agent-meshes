@@ -14,6 +14,13 @@ For Unreal's editor-baking versus live-geometry branches, use the [Unreal decisi
 For R3F/three.js, Godot and Unity, read [engine implications](references/engine-implications.md) and
 [engine evidence](references/engine-evidence.md). The authoring tool does not choose the runtime representation.
 
+Once a Blender route is approved, use [mesh-build's task routes](../mesh-build/SKILL.md#find-the-relevant-build-guidance)
+for shared defaults, batch/incremental generation, environment-driven misses, shared libraries and receipts.
+For semantic RGB/alpha channels, read [vertex-colour controls](../../scripts/blender_lib/README.md#vertex-colors-in-glb-exports)
+before adopting a uniform-material prop recipe. For Unreal static props, read
+[import measurements and axis calibration](../mesh-build/references/unreal-static-props.md) before the trial.
+These checks complement the real-project acceptance below; they do not establish rendering or gameplay.
+
 1. **Engage the project first.** Read what already exists and write down the contract the engine imposes.
    [Existing-project engagement](references/existing-project-engagement.md) has the checklist and a contract card.
 2. **Decide with the questions below**, using the [tool profiles](references/tool-profiles.md) for capabilities,
