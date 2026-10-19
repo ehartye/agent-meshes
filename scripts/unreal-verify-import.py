@@ -14,6 +14,121 @@ import traceback
 
 import unreal
 
+COLLISION_FLAGS = {
+    'default': 'CTF_USE_DEFAULT',
+    'simple-and-complex': 'CTF_USE_SIMPLE_AND_COMPLEX',
+    'simple-as-complex': 'CTF_USE_SIMPLE_AS_COMPLEX',
+    'complex-as-simple': 'CTF_USE_COMPLEX_AS_SIMPLE',
+}
+INTERCHANGE_PROPERTIES = {
+    'buildNanite': ('mesh_pipeline', 'build_nanite'),
+    'useFullPrecisionUVs': ('common_meshes_properties', 'use_full_precision_u_vs'),
+    'collision': ('mesh_pipeline', 'collision'),
+    'importCollisionAccordingToMeshName': ('mesh_pipeline', 'import_collision_according_to_mesh_name'),
+    'generateLightmapUVs': ('mesh_pipeline', 'generate_lightmap_u_vs'),
+}
+
+
+def collision_flag_name(value):
+    """The stored UBodySetup enum; CTF_USE_DEFAULT is deliberately not project-resolved."""
+    match = re.search(r'\bCTF_[A-Z_]+\b', str(value))
+    if match is None or match.group(0) not in COLLISION_FLAGS.values():
+        raise ValueError('Unreal returned an unsupported collision trace flag: ' + str(value))
+    return match.group(0)
+
+
+def validate_import_options(options):
+    """Defend the Python request boundary as well as the public Node JSON parser."""
+    def fail(message):
+        raise ValueError('Invalid Unreal import options: ' + message)
+    if not isinstance(options, dict) or set(options) - {'schema', 'interchange', 'postImport'}:
+        fail('unsupported root fields or non-object')
+    if type(options.get('schema')) is not int or options['schema'] != 1:
+        fail('schema must be 1')
+    count = 0
+    for section, allowed in [('interchange', set(INTERCHANGE_PROPERTIES)), ('postImport', {'collisionTraceFlag', 'doubleSidedGeometry'})]:
+        if section not in options:
+            continue
+        values = options[section]
+        if not isinstance(values, dict) or set(values) - allowed:
+            fail('unsupported ' + section + ' fields or non-object')
+        for key, value in values.items():
+            count += 1
+            if key == 'collisionTraceFlag':
+                if not isinstance(value, str) or value not in COLLISION_FLAGS:
+                    fail('unsupported collisionTraceFlag')
+            elif type(value) is not bool:
+                fail(section + '.' + key + ' must be a boolean')
+    if count == 0:
+        fail('declare at least one supported setting')
+
+
+def configure_import(parameters, options, destination):
+    """Duplicate the engine's glTF defaults into scratch; preserve the glTF-specific second stage.
+
+    UE5.8 BaseEngine.ini chooses DefaultGLTFAssetsPipeline + DefaultGLTFPipeline.
+    OverridePipelines replaces that whole stack, so supplying only a bare generic
+    pipeline would silently lose the glTF extension/material stage. Never modify the
+    loaded engine pipeline asset itself. Its scratch duplicate is deleted with Verify.
+    """
+    validate_import_options(options)
+    values = options.get('interchange', {})
+    if not values:
+        return {}, []
+    base = '/Interchange/Pipelines/DefaultGLTFAssetsPipeline.DefaultGLTFAssetsPipeline'
+    gltf = '/Interchange/Pipelines/DefaultGLTFPipeline.DefaultGLTFPipeline'
+    source_pipeline = unreal.load_asset(base)
+    if source_pipeline is None:
+        raise RuntimeError('Cannot load the engine DefaultGLTFAssetsPipeline')
+    # A commandlet's registry may not have scanned plugin content yet; use the
+    # loaded-object variant rather than its AssetData/path-based counterpart.
+    pipeline = unreal.EditorAssetLibrary.duplicate_loaded_asset(source_pipeline, destination + '/__VerifyOptions/Interchange')
+    if pipeline is None:
+        raise RuntimeError('Cannot duplicate the engine DefaultGLTFAssetsPipeline into the scratch project')
+    gltf_pipeline = unreal.load_asset(gltf)
+    if gltf_pipeline is None:
+        raise RuntimeError('Cannot load the engine DefaultGLTFPipeline; import options will not fall back to a different pipeline')
+    applied = {}
+    for key, value in values.items():
+        owner_key, property_key = INTERCHANGE_PROPERTIES[key]
+        owner = pipeline.get_editor_property(owner_key)
+        if owner is None:
+            raise RuntimeError('Unsupported Interchange property owner: ' + owner_key)
+        owner.set_editor_property(property_key, value)
+        actual = owner.get_editor_property(property_key)
+        if type(actual) is not bool or actual != value:
+            raise RuntimeError('Interchange property readback differs for ' + key + ' (' + property_key + ')')
+        applied[key] = actual
+    paths = [pipeline.get_path_name(), gltf]
+    parameters.set_editor_property('override_pipelines', [unreal.SoftObjectPath(path) for path in paths])
+    if len(parameters.get_editor_property('override_pipelines')) != 2:
+        raise RuntimeError('Interchange did not retain the two configured glTF pipeline overrides')
+    return {'interchange': applied, 'pipelines': [base, gltf]}, [pipeline, gltf_pipeline]
+
+
+def apply_static_import_options(mesh, settings):
+    """Apply explicit BodySetup settings after import, before facts. No runtime physics claim."""
+    body = mesh.get_editor_property('body_setup')
+    if body is None:
+        raise RuntimeError('Requested post-import settings, but StaticMesh has no BodySetup: ' + mesh.get_path_name())
+    applied = {}
+    for key, value in settings.items():
+        if key == 'collisionTraceFlag':
+            body.set_editor_property('collision_trace_flag', getattr(unreal.CollisionTraceFlag, COLLISION_FLAGS[value]))
+            actual = collision_flag_name(body.get_editor_property('collision_trace_flag'))
+            if actual != COLLISION_FLAGS[value]:
+                raise RuntimeError('BodySetup collision_trace_flag readback differs for ' + mesh.get_path_name())
+            applied[key] = value
+        elif key == 'doubleSidedGeometry':
+            body.set_editor_property('double_sided_geometry', value)
+            actual = body.get_editor_property('double_sided_geometry')
+            if type(actual) is not bool or actual != value:
+                raise RuntimeError('BodySetup double_sided_geometry readback differs for ' + mesh.get_path_name())
+            applied[key] = actual
+        else:
+            raise ValueError('Unsupported post-import setting: ' + key)
+    return applied
+
 
 def asset_class(obj):
     return obj.get_class().get_name()
@@ -120,6 +235,11 @@ def static_mesh_facts(mesh):
         if not isinstance(value, bool):
             raise ValueError('Unreal did not return a boolean build setting')
         return value
+    def body_property(key):
+        body = mesh.get_editor_property('body_setup')
+        if body is None:
+            raise RuntimeError('StaticMesh BodySetup unavailable')
+        return body.get_editor_property(key)
     def vector(value):
         result = [float(value.x), float(value.y), float(value.z)]
         if not all(math.isfinite(component) for component in result):
@@ -135,6 +255,8 @@ def static_mesh_facts(mesh):
     facts['triangles'] = [measure('triangles[' + str(lod) + ']', lambda lod=lod: nonnegative(mesh.get_num_triangles(lod))) for lod in range(lods)]
     facts['naniteTriangles'] = measure('naniteTriangles', lambda: nonnegative(mesh.get_num_nanite_triangles()))
     facts['boundsCm'] = measure('boundsCm', bounds)
+    facts['collisionTraceFlag'] = measure('collisionTraceFlag', lambda: collision_flag_name(body_property('collision_trace_flag')))
+    facts['doubleSidedGeometry'] = measure('doubleSidedGeometry', lambda: setting(body_property('double_sided_geometry')))
     # PythonScriptCommandlet does not instantiate every editor subsystem. These getters
     # are asset queries with no initialized subsystem state (UE5.8 source); use a
     # class-default query object there. These calls never modify the default object.
@@ -180,8 +302,18 @@ def main():
         source = unreal.InterchangeManager.create_source_data(request['glb'])
         parameters = unreal.ImportAssetParameters()
         parameters.is_automated = True
+        options = request.get('importOptions')
+        # Retain strong references until synchronous import_asset returns; its soft
+        # paths must still resolve when Interchange duplicates the override stack.
+        pipeline_references = []
+        if options is not None:
+            report['importConfiguration'] = {'requested': options, 'applied': {}}
+            applied, pipeline_references = configure_import(parameters, options, destination)
+            report['importConfiguration']['applied'] = applied
         report['importReturned'] = bool(manager.import_asset(destination, source, parameters))
         for path in unreal.EditorAssetLibrary.list_assets(destination, recursive=True, include_folder=False):
+            if path.startswith(destination + '/__VerifyOptions/'):
+                continue
             obj = unreal.EditorAssetLibrary.load_asset(path)
             if obj is None:
                 continue
@@ -189,7 +321,12 @@ def main():
             if isinstance(obj, unreal.SkeletalMesh):
                 report['skeletalMeshes'].append(skeletal_mesh_facts(obj))
             elif isinstance(obj, unreal.StaticMesh):
+                if options is not None and options.get('postImport'):
+                    applied = apply_static_import_options(obj, options['postImport'])
+                    report['importConfiguration']['applied'].setdefault('postImport', []).append({'mesh': obj.get_path_name().split('.')[0], 'settings': applied})
                 report['staticMeshes'].append(static_mesh_facts(obj))
+        if options is not None and options.get('postImport') and not report['staticMeshes']:
+            raise RuntimeError('Requested post-import StaticMesh settings, but Interchange created no StaticMesh')
         report['ok'] = True
     except Exception:
         report['error'] = traceback.format_exc()

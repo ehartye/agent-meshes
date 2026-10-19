@@ -1,7 +1,7 @@
 ---
 name: mesh-build
-description: Export, verify, render and deliver GLBs with agent-meshes. Use for repeatable Blender builds, slow unchanged builds or cache misses, shared build configs and batches, vertex-colour export, Unreal static-prop or character import checks, model previews and web viewers.
-when_to_use: Use when asked to set up build.json, avoid repeated Blender launches or hashing, share toolchain pins or defaults, keep scripts beside assets with a shared library, diagnose environment-driven rebuilds, consume audit receipts, preserve RGB/alpha wear masks, check Unreal size, axes, Nanite, UV precision, morphs or bones, render or screenshot a model, preview bpy sources quickly, produce an offline preview or multi-model stage, count pixels per part, embed MeshViewer, refine a model, compare GLB budgets or import into Unity. Choose mesh-tool-selection first only when the authoring or engine route is unsettled.
+description: Export, verify, render and deliver GLBs with agent-meshes. Use for repeatable Blender builds, slow unchanged builds or cache misses, shared configs and batches, generated mesh arrays and vertex colours, configured Unreal static-prop, collision or character import checks, model previews and web viewers.
+when_to_use: Use when asked to set up build.json, avoid repeated Blender launches or hashing, reuse a rollback, share pins or defaults, keep scripts beside assets with a shared library, diagnose environment-driven rebuilds, consume audit receipts, preserve UV/RGBA arrays or wear masks, match project import settings, check Unreal size, axes, collision, Nanite, UV precision, morphs or bones, render or screenshot a model, preview bpy sources quickly, produce an offline preview or multi-model stage, count pixels per part, embed MeshViewer, refine a model, compare GLB budgets or import into Unity. Choose mesh-tool-selection first only when the authoring or engine route is unsettled.
 ---
 
 # Mesh build and delivery
@@ -33,14 +33,15 @@ Blender task, read the matching reference before changing its build contract:
 | Task or symptom | Direct reference |
 | --- | --- |
 | Establish inputs, donor pins or a reproducible toolchain | [Declare and pin a native build](references/native-build-identity.md#declare-and-pin-a-native-build) |
-| Skip unchanged Blender generation | [Incremental generation and its limits](references/native-build-identity.md#enable-incremental-generation) |
+| Skip unchanged generation or reuse a rollback | [Incremental generation and bounded history](references/native-build-identity.md#enable-incremental-generation) |
 | Repeated config settings or tool hashing across assets | [Shared defaults (`extends`) and `build-batch`](references/native-build-identity.md#share-defaults-and-build-a-batch-0230-and-later) |
 | Unexpected rebuild or no cache hit | [Miss reasons and changed components](references/native-build-identity.md#diagnose-a-native-miss-0230-and-later); for environment changes, [declare the actual child environment](references/native-build-identity.md#declare-blenders-environment-0240-and-later) |
 | Nested asset configs need a shared library | [Explicit project root and path rules](references/native-build-identity.md#share-inputs-under-an-explicit-project-root-0240-and-later) |
 | Undeclared-read warning or strict-audit failure | [Read-audit coverage and limits](references/native-build-identity.md#observe-project-reads-0220-and-later) |
 | Commit or parse an authoring receipt | [Portable schema-2 receipts versus full local diagnostics](references/native-build-identity.md#keep-audit-receipts-portable-0240-and-later) |
 | Preserve RGB/alpha masks or omit unused vertex colours | [Vertex-colour export controls](../../scripts/blender_lib/README.md#vertex-colors-in-glb-exports) |
-| Unreal static prop has wrong size/axes or unexpected Nanite/UV settings | [Static-prop measurements and axis calibration](references/unreal-static-props.md) |
+| Build geometry from vertices/faces, corner UVs and colour masks | [Mesh-from-arrays helper and V-origin contract](../../scripts/blender_lib/README.md#meshes-from-arrays) |
+| Unreal static prop has wrong size/axes, collision or Nanite/UV settings; match project import options | [Static-prop measurements, import options and axis calibration](references/unreal-static-props.md) |
 
 Reuse skips only native Blender generation; current validation, limits and requested
 previews still run. Unreal import and cook are separate consumer stages. Compiling

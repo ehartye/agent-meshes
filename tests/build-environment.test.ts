@@ -133,3 +133,26 @@ it('rejects declared filtering under the Node permission model which rewrites NO
   expect(observed.inherited).toBe('inherited');
   expect(observed.error).toMatch(/declared.*permission|permission.*declared/i);
 });
+
+it('applies literal overrides before Windows baseline validation without consulting shadowed aliases', () => {
+  const source = { ...windowsEnv(), Path: 'different-parent-path', TEMP: '' };
+  const result = prepareBuildEnvironment([], source, 'win32', { Path: 'fixed-path', TEMP: 'fixed-temp', MESH_STYLE: 'opaque' });
+  expect(result.env.PATH).toBe('fixed-path'); expect(result.env.TEMP).toBe('fixed-temp'); expect(result.env.MESH_STYLE).toBe('opaque');
+  expect(result.contract.overrides).toEqual(['MESH_STYLE', 'PATH', 'TEMP']);
+  expect(JSON.stringify(result.contract)).not.toContain('fixed-');
+  expect(source.Path).toBe('different-parent-path');
+});
+
+it('rejects ambiguous override declarations, invalid values and input overlaps without leaking values', () => {
+  for (const overrides of [{ Path: 'one', PATH: 'two' }, { 'bad-name': 'secret' }, { PATH: 1 }, { PATH: 'bad\0secret' }, Array(1), null]) {
+    expect(() => prepareBuildEnvironment([], windowsEnv(), 'win32', overrides as unknown as Record<string, string>)).toThrow(/override|variable|environment/i);
+  }
+  expect(() => prepareBuildEnvironment(['Path'], windowsEnv(), 'win32', { PATH: 'secret' })).toThrow(/overlap|input.*override/i);
+  expect(() => prepareBuildEnvironment(undefined, {}, 'linux', { PATH: '/bin' })).toThrow(/declared|inputs/i);
+});
+
+it('passes fixed override values to a real child rather than only stabilizing the key', () => {
+  const result = prepareBuildEnvironment([], { ...process.env, MESH_FIXED: 'parent' }, process.platform, { MESH_FIXED: 'fixed-child' });
+  const child = spawnSync(process.execPath, ['-e', 'process.stdout.write(process.env.MESH_FIXED)'], { env: result.env, encoding: 'utf8', windowsHide: true });
+  expect(child.status, child.stderr || child.error?.message).toBe(0); expect(child.stdout).toBe('fixed-child');
+});

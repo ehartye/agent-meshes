@@ -12,6 +12,7 @@ import type { NativeBuildSession } from './build-session.ts';
 import { prepareBuildEnvironment } from './build-environment.ts';
 
 export const nativeCacheFiles = ['.agent-meshes-blender-cache.json', '.agent-meshes-blender-cache.bin'] as const;
+export const nativeCacheLimits = { entries: 4, bytes: 256 * 1024 * 1024 } as const;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const byteDigest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const metadata = (info: BigIntStats) => [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs, info.mode, info.nlink].join(':');
@@ -20,12 +21,15 @@ const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const componentsSchema = z.object({ inputs: sha, tools: sha, runtime: sha, environment: sha, cwd: sha, location: sha, platform: sha, policy: sha }).strict();
 type Components = z.infer<typeof componentsSchema>;
 export interface NativeCacheLookup { value?: { bytes: Buffer; blender: string; meshes: number; readAudit: ReadAudit }; reason: string; changedComponents?: (keyof Components)[] }
-const recordSchema = z.object({
-  schema: z.literal('agent-meshes/native-blender-cache@2'), key: sha, components: componentsSchema,
+const entrySchema = z.object({
+  key: sha, components: componentsSchema,
   outputSha256: sha, blender: z.string().min(1), meshes: z.number().int().positive(),
   readAudit: readAuditSchema.refine(report => report.status === 'clean' && report.installed && !report.truncated && report.unresolvedEvents === 0 && report.undeclaredReads.length === 0),
 }).strict();
-type Record = z.infer<typeof recordSchema>;
+const recordSchema = entrySchema.extend({ schema: z.literal('agent-meshes/native-blender-cache@3'), history: z.array(z.unknown()).max(nativeCacheLimits.entries - 1) }).strict();
+type Entry = z.infer<typeof entrySchema>;
+type Record = Entry & { schema: 'agent-meshes/native-blender-cache@3'; history: Entry[] };
+const historyFile = (key: string) => `.agent-meshes-blender-${key}.bin`;
 interface Snapshot { path: string; metadata: string; sha256?: string }
 
 async function batches<T, U>(items: T[], action: (item: T) => Promise<U>): Promise<U[]> {
@@ -74,7 +78,7 @@ async function runtimeRoot(command: string): Promise<string | undefined> {
 export interface NativeCache {
   launch: AuthorOptions;
   read: (output: string) => Promise<NativeCacheLookup>;
-  write: (stage: string, bytes: Uint8Array, result: { blender: string; meshes: number; readAudit: ReadAudit }) => Promise<void>;
+  write: (stage: string, bytes: Uint8Array, result: { blender: string; meshes: number; readAudit: ReadAudit }) => Promise<string[]>;
   assertUnchanged: () => Promise<void>;
 }
 interface NativeIdentity { script: string; configFile: string; inputRoot?: string; inputs: { path: string; sha256: string }[]; config: unknown; configurations?: { path: string; sha256: string }[]; helpers: unknown }
@@ -137,7 +141,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     environment: digest({ contract: launchEnvironment.contract, values: Object.entries(environment).filter(([,value]) => value !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) }),
     cwd: digest(cwd), location: digest({ script: identity.script, configFile: identity.configFile, ...(identity.inputRoot ? { inputRoot: identity.inputRoot } : {}), helperRoot, command, root }),
     platform: digest({ node: process.version, platform: process.platform, arch: process.arch }),
-    policy: digest('declared-inputs-complete/factory-startup/fresh-python-source/declared-env/root-scope/component-key@4'),
+    policy: digest('declared-inputs-complete/factory-startup/fresh-python-source/declared-env/root-scope/component-key/history@5'),
   };
   const key = digest(components);
   async function plainBytes(path: string): Promise<Buffer> {
@@ -147,34 +151,72 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     if (metadata(before) !== metadata(await lstat(path, { bigint: true }))) throw new Error('Native cache changed while reading');
     return bytes;
   }
+  const isValidEntry = (entry: Entry) => entry.key === digest(entry.components);
+  async function previousRecord(directory: string): Promise<{ record?: Record; reason?: string }> {
+    try {
+      const raw = JSON.parse((await plainBytes(join(directory, nativeCacheFiles[0]))).toString('utf8'));
+      if (raw && typeof raw === 'object' && /^agent-meshes\/native-blender-cache@[12]$/.test(raw.schema)) return { reason: 'legacy-cache-record' };
+      const parsed = recordSchema.safeParse(raw);
+      if (!parsed.success || !isValidEntry(parsed.data)) return { reason: 'cache-record-invalid' };
+      const history: Entry[] = [], seen = new Set([parsed.data.key]);
+      for (const candidate of parsed.data.history) {
+        const entry = entrySchema.safeParse(candidate);
+        // One broken old slot must not invalidate the current clean result.
+        if (entry.success && isValidEntry(entry.data) && !seen.has(entry.data.key)) { history.push(entry.data); seen.add(entry.data.key); }
+      }
+      return { record: { ...parsed.data, history } };
+    } catch (error) {
+      if (error instanceof SyntaxError) return { reason: 'cache-record-invalid' };
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { reason: 'cache-record-missing' };
+      throw error;
+    }
+  }
+  async function entryBytes(directory: string, entry: Entry, primary: boolean): Promise<{ bytes?: Buffer; reason?: string }> {
+    try {
+      const path = join(directory, primary ? nativeCacheFiles[1] : historyFile(entry.key));
+      // Bound a malicious/oversize file before allocating or hashing its bytes.
+      const info = await lstat(path, { bigint: true });
+      if (!info.isFile() || info.nlink !== 1n) throw new Error('Native cache must use regular files without links');
+      if (info.size > BigInt(nativeCacheLimits.bytes)) return { reason: 'cache-output-too-large' };
+      const bytes = await plainBytes(path);
+      return byteDigest(bytes) === entry.outputSha256 ? { bytes } : { reason: 'cache-output-corrupt' };
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { reason: 'cache-output-missing' }; throw error; }
+  }
   const cache: NativeCache = {
     launch: { blender: { ...location, command }, env: environment, cwd, factoryStartup: true, pythonCachePrefix: join(stage, '.agent-meshes-python-imports') },
     read: async directory => {
-      let record: Record;
-      try {
-        const raw = JSON.parse((await plainBytes(join(directory, nativeCacheFiles[0]))).toString('utf8'));
-        if (raw && typeof raw === 'object' && raw.schema === 'agent-meshes/native-blender-cache@1') return { reason: 'legacy-cache-record' };
-        const parsed = recordSchema.safeParse(raw);
-        if (!parsed.success || parsed.data.key !== digest(parsed.data.components)) return { reason: 'cache-record-invalid' };
-        if (parsed.data.key !== key) return { reason: 'cache-key-changed', changedComponents: (Object.keys(components) as (keyof Components)[]).filter(name => components[name] !== parsed.data.components[name]) };
-        record = parsed.data;
-      } catch (error) {
-        if (error instanceof SyntaxError) return { reason: 'cache-record-invalid' };
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { reason: 'cache-record-missing' };
-        throw error;
-      }
-      let bytes: Buffer;
-      try { bytes = await plainBytes(join(directory, nativeCacheFiles[1])); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { reason: 'cache-output-missing' }; throw error; }
-      if (byteDigest(bytes) !== record.outputSha256) return { reason: 'cache-output-corrupt' };
-      return { reason: 'matching-native-cache', value: { bytes, blender: record.blender, meshes: record.meshes, readAudit: record.readAudit } };
+      const prior = await previousRecord(directory);
+      if (!prior.record) return { reason: prior.reason! };
+      const record = prior.record;
+      const entry = record.key === key ? record : record.history.find(item => item.key === key);
+      if (!entry) return { reason: 'cache-key-changed', changedComponents: (Object.keys(components) as (keyof Components)[]).filter(name => components[name] !== record.components[name]) };
+      const value = await entryBytes(directory, entry, entry === record);
+      if (!value.bytes) return { reason: value.reason! };
+      return { reason: 'matching-native-cache', value: { bytes: value.bytes, blender: entry.blender, meshes: entry.meshes, readAudit: entry.readAudit } };
     },
     write: async (stage, bytes, result) => {
-      const record: Record = { schema: 'agent-meshes/native-blender-cache@2', key, components, outputSha256: byteDigest(bytes), blender: result.blender, meshes: result.meshes, readAudit: result.readAudit };
+      if (bytes.byteLength > nativeCacheLimits.bytes) return [];
+      const entry: Entry = { key, components, outputSha256: byteDigest(bytes), blender: result.blender, meshes: result.meshes, readAudit: result.readAudit };
+      const retained: Entry[] = [], files: string[] = [...nativeCacheFiles];
+      let totalBytes = bytes.byteLength;
+      const previous = (await previousRecord(output)).record;
+      if (previous) {
+        const { schema: _schema, history: _history, ...primary } = previous;
+        for (const candidate of [primary, ...previous.history]) {
+          if (candidate.key === key || retained.length >= nativeCacheLimits.entries - 1) continue;
+          const cached = await entryBytes(output, candidate, candidate === primary);
+          if (!cached.bytes || totalBytes + cached.bytes.length > nativeCacheLimits.bytes) continue;
+          const name = historyFile(candidate.key);
+          await writeFile(join(stage, name), cached.bytes, { flag: 'wx' });
+          retained.push(candidate); files.push(name); totalBytes += cached.bytes.length;
+        }
+      }
+      const record: Record = { schema: 'agent-meshes/native-blender-cache@3', ...entry, history: retained };
       // Exclusive creation in the private stage cannot follow a decorator's link
       // or overwrite a file it created. The output transaction publishes both.
       await writeFile(join(stage, nativeCacheFiles[1]), bytes, { flag: 'wx' });
       await writeFile(join(stage, nativeCacheFiles[0]), `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' });
+      return files;
     },
     assertUnchanged: async () => {
       await validateRuntime(snapshots);

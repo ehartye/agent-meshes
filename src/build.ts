@@ -16,7 +16,7 @@ import { mergeModes, type MergeMode } from './export-merge.ts';
 import { checkLimits, limitsSchema } from './glb-limits.ts';
 import { lintSilhouette, silhouette } from './silhouette.ts';
 import { captureBuildInputs, captureBuildRoot, captureBuildToolchain, checkToolchainPin } from './build-provenance.ts';
-import { nativeCacheFiles, prepareNativeCache } from './build-native-cache.ts';
+import { prepareNativeCache } from './build-native-cache.ts';
 import { classifyReadAudit, portableReadAudit, type ReadAudit } from './build-read-audit.ts';
 import type { NativeBuildSession } from './build-session.ts';
 import { loadBuildConfig } from './build-config.ts';
@@ -40,7 +40,7 @@ const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, 'Expected a lowercase SH
 const blenderSchema = z.object({
   script: z.string().min(1),
   projectRoot: z.string().min(1).optional(),
-  environment: z.object({ inputs: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).max(256) }).strict().optional(),
+  environment: z.object({ inputs: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).max(256), overrides: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().refine(value => !value.includes('\0'), 'Environment overrides must not contain NUL')).optional() }).strict().optional(),
   readAudit: z.enum(['warn', 'strict']).optional(),
   inputs: z.array(z.union([
     z.object({ path: z.string().min(1), sha256: sha256Schema.optional() }).strict(),
@@ -192,7 +192,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
       return report;
     };
     if (config.blender) {
-      const environment = prepareBuildEnvironment(config.blender.environment?.inputs);
+      const environment = prepareBuildEnvironment(config.blender.environment?.inputs, process.env, process.platform, config.blender.environment?.overrides);
       const blender = findBlender();
       const prepared = incremental ? await prepareNativeCache(blender, { config: inputs!.config, configurations: loadedConfig.sources, inputs: inputs!.files, helpers: tools!.identity, script: input, configFile, inputRoot: inputRoot?.base }, output, stage, session, environment) : undefined;
       // A changed previously shared tool must not escape into fallback generation.
@@ -219,7 +219,6 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
       };
       await recordVerification(bytes);
       files = ['model.glb', 'verification.json', 'authoring.json'];
-      if (prepared?.cache && cacheable) files.push(...nativeCacheFiles);
       const receipt = {
         version: 1,
         source: { script: inputs!.entry.path, sha256: inputs!.entry.sha256 },
@@ -248,7 +247,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
         await writeBuildReceipt(stage!, 'authoring.json', receipt);
         if (prepared?.cache) {
           await prepared.cache.assertUnchanged();
-          if (cacheable) await prepared.cache.write(stage!, bytes, { ...result, readAudit: readAudit! });
+          if (cacheable) files.push(...await prepared.cache.write(stage!, bytes, { ...result, readAudit: readAudit! }));
         } else if (session) await session.assertUnchanged();
       };
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));

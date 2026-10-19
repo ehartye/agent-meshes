@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createProject, applyOperation } from '../src/core/model.ts';
 import { exportGLB } from '../src/export.ts';
 import { buildAsset } from '../src/build.ts';
-import { nativeCacheFiles } from '../src/build-native-cache.ts';
+import { nativeCacheFiles, nativeCacheLimits } from '../src/build-native-cache.ts';
 import { buildAssets } from '../src/build-batch.ts';
 
 const { authorGLB, findBlender, helperRevision } = vi.hoisted(() => ({ authorGLB: vi.fn(), findBlender: vi.fn(), helperRevision: { sha: undefined as string | undefined } }));
@@ -40,6 +40,44 @@ async function fixture() {
   return { root, installation, command, script, data, config, output, settings, bytes };
 }
 
+it('reuses content-addressed A after B while keeping pristine bytes and current decoration', async () => {
+  const f = await fixture();
+  await buildAsset(f.config, { ifChanged: true });
+  const a = await readFile(f.data);
+  await writeFile(f.data, 'WIDTH = 2\n'); await buildAsset(f.config, { ifChanged: true });
+  await writeFile(f.data, a);
+  const result = await buildAsset(f.config, { ifChanged: true, decorateAsset: async (_asset, stage) => {
+    expect(await readFile(join(stage, 'model.glb'))).toEqual(Buffer.from(f.bytes));
+    await writeFile(join(stage, 'preview.txt'), 'fresh preview'); return ['preview.txt'];
+  } });
+  expect(result.incremental?.blender).toBe('reused'); expect(authorGLB).toHaveBeenCalledTimes(2);
+  expect(await readFile(join(f.output, 'preview.txt'), 'utf8')).toBe('fresh preview');
+  await buildAsset(f.config, { force: true }); expect(authorGLB).toHaveBeenCalledTimes(3);
+});
+
+it('bounds rollback history to four entries and evicts the least recently used', async () => {
+  const f = await fixture();
+  for (let width = 1; width <= 4; width++) { await writeFile(f.data, `WIDTH=${width}`); await buildAsset(f.config, { ifChanged: true }); }
+  await writeFile(f.data, 'WIDTH=1'); expect((await buildAsset(f.config, { ifChanged: true })).incremental?.blender).toBe('reused');
+  await writeFile(f.data, 'WIDTH=5'); await buildAsset(f.config, { ifChanged: true });
+  await writeFile(f.data, 'WIDTH=2'); expect((await buildAsset(f.config, { ifChanged: true })).incremental?.blender).toBe('built');
+  expect(authorGLB).toHaveBeenCalledTimes(6);
+  const record = JSON.parse(await readFile(join(f.output, nativeCacheFiles[0]), 'utf8'));
+  expect(record.history).toHaveLength(3);
+  expect((await readdir(f.output)).filter(name => /^\.agent-meshes-blender-[a-f0-9]{64}\.bin$/.test(name))).toHaveLength(3);
+});
+
+it('uses fixed baseline overrides for cross-shell reuse while keeping semantic environment changes keyed', async () => {
+  const f = await fixture(), fixedPath = process.env.PATH ?? process.env.Path ?? '';
+  await writeFile(f.config, JSON.stringify({ ...f.settings, blender: { ...f.settings.blender, environment: { inputs: ['MESH_STYLE'], overrides: { PATH: fixedPath, ...(process.platform === 'win32' ? { TEMP: f.root } : { TMPDIR: f.root }), MESH_FIXED: 'secret-literal' } } } }));
+  vi.stubEnv('MESH_STYLE', 'ink'); await buildAsset(f.config, { ifChanged: true });
+  vi.stubEnv('PATH', 'different-shell-path'); vi.stubEnv(process.platform === 'win32' ? 'TEMP' : 'TMPDIR', 'different-shell-temp');
+  expect((await buildAsset(f.config, { ifChanged: true })).incremental?.blender).toBe('reused');
+  const receipt = await readFile(join(f.output, 'authoring.json'), 'utf8'); expect(receipt).not.toContain('secret-literal');
+  expect(authorGLB.mock.calls[0][2].env.PATH).toBe(fixedPath); expect(authorGLB.mock.calls[0][2].env.MESH_FIXED).toBe('secret-literal');
+  vi.stubEnv('MESH_STYLE', 'paper'); expect((await buildAsset(f.config, { ifChanged: true })).incremental).toMatchObject({ blender: 'built', changedComponents: ['environment'] });
+});
+
 it('ignores undeclared environment variables in both reuse identity and the actual child environment', async () => {
   const f = await fixture();
   await writeFile(f.config,JSON.stringify({...f.settings,blender:{...f.settings.blender,environment:{inputs:['MESH_STYLE']}}}));
@@ -56,11 +94,12 @@ it('ignores undeclared environment variables in both reuse identity and the actu
 
 it.each(['plain','forced','fallback'] as const)('uses the same declared child environment for %s generation',async mode=>{
   const f=await fixture();
-  await writeFile(f.config,JSON.stringify({...f.settings,blender:{...f.settings.blender,environment:{inputs:[]}}}));
+  await writeFile(f.config,JSON.stringify({...f.settings,blender:{...f.settings.blender,environment:{inputs:[],overrides:{MESH_FIXED:'fixed-child'}}}}));
   vi.stubEnv('MESH_RUN_ID','not-an-input');vi.stubEnv('PYTHONPATH','excluded-parent-override');
   if(mode==='fallback')findBlender.mockReturnValue({...findBlender(),detached:true});
   const result=await buildAsset(f.config,mode==='plain'?{}:mode==='forced'?{force:true}:{ifChanged:true});
   expect(authorGLB.mock.calls[0][2].env.MESH_RUN_ID).toBeUndefined();expect(authorGLB.mock.calls[0][2].env.PYTHONPATH).toBeUndefined();
+  expect(authorGLB.mock.calls[0][2].env.MESH_FIXED).toBe('fixed-child');
   if(mode==='fallback')expect(result.incremental?.reason).toBe('unsupported-blender-launcher');
 });
 
@@ -263,7 +302,7 @@ it.each(['inputs', 'environment', 'tools', 'runtime'] as const)('explains a chan
   const result = await buildAsset(f.config, { ifChanged: true });
   expect(result.incremental).toMatchObject({ blender: 'built', reason: 'cache-key-changed', changedComponents: [component] });
   const record = JSON.parse(await readFile(join(f.output, nativeCacheFiles[0]), 'utf8'));
-  expect(record.schema).toBe('agent-meshes/native-blender-cache@2');
+  expect(record.schema).toBe('agent-meshes/native-blender-cache@3');
   expect(Object.keys(record.components)).toEqual(['inputs', 'tools', 'runtime', 'environment', 'cwd', 'location', 'platform', 'policy']);
   expect(JSON.stringify(record)).not.toContain('must-not-appear');
   expect(JSON.stringify(record)).not.toContain('MESH_PRIVATE_SECRET');
@@ -400,4 +439,48 @@ it('rejects incremental flags on non-native inputs before creating output', asyn
   await writeFile(f.config, JSON.stringify({ version: 1, project: 'project.json', output: 'generated' }));
   await expect(buildAsset(f.config, { ifChanged: true })).rejects.toThrow(/native blender.script/i);
   expect(authorGLB).not.toHaveBeenCalled(); expect(await readdir(f.root)).not.toContain('generated');
+});
+
+it.each(['missing', 'bytes', 'digest', 'identity', 'audit'] as const)('ignores a %s history slot without invalidating the current entry', async damage => {
+  const f = await fixture(), original = await readFile(f.data);
+  await buildAsset(f.config, { ifChanged: true });
+  await writeFile(f.data, 'WIDTH=2'); await buildAsset(f.config, { ifChanged: true });
+  const path = join(f.output, nativeCacheFiles[0]), record = JSON.parse(await readFile(path, 'utf8'));
+  const blob = join(f.output, `.agent-meshes-blender-${record.history[0].key}.bin`);
+  if (damage === 'missing') await rm(blob);
+  if (damage === 'bytes') await writeFile(blob, 'corrupt');
+  if (damage === 'digest') { record.history[0].outputSha256 = '0'.repeat(64); await writeFile(path, JSON.stringify(record)); }
+  if (damage === 'identity') { record.history[0].components.inputs = '0'.repeat(64); await writeFile(path, JSON.stringify(record)); }
+  if (damage === 'audit') { record.history[0].readAudit.status = 'undeclared'; await writeFile(path, JSON.stringify(record)); }
+  expect((await buildAsset(f.config, { ifChanged: true })).incremental?.blender).toBe('reused');
+  await writeFile(f.data, original);
+  expect((await buildAsset(f.config, { ifChanged: true })).incremental?.blender).toBe('built');
+  expect(authorGLB).toHaveBeenCalledTimes(3);
+});
+
+it('preserves all prior history when a rollback decoration fails and rejects linked history bytes', async () => {
+  const f = await fixture(), original = await readFile(f.data);
+  await buildAsset(f.config, { ifChanged: true }); await writeFile(f.data, 'WIDTH=2'); await buildAsset(f.config, { ifChanged: true });
+  const previous = await readFile(join(f.output, nativeCacheFiles[0]));
+  await writeFile(f.data, original);
+  await expect(buildAsset(f.config, { ifChanged: true, decorateAsset: async () => { throw new Error('decoration-failed'); } })).rejects.toThrow('decoration-failed');
+  expect(await readFile(join(f.output, nativeCacheFiles[0]))).toEqual(previous);
+  const record = JSON.parse(previous.toString()), blob = join(f.output, `.agent-meshes-blender-${record.history[0].key}.bin`), keep = join(f.root, 'keep.bin');
+  await writeFile(keep, 'do not modify'); await rm(blob); await link(keep, blob);
+  await expect(buildAsset(f.config, { ifChanged: true })).rejects.toThrow(/without links/i);
+  expect(await readFile(keep, 'utf8')).toBe('do not modify');
+  expect(await readFile(join(f.output, nativeCacheFiles[0]))).toEqual(previous);
+});
+
+it('enforces the byte budget without preventing oversize asset publication', async () => {
+  const f = await fixture(), priorBudget = nativeCacheLimits.bytes;
+  try {
+    Object.defineProperty(nativeCacheLimits, 'bytes', { value: f.bytes.length * 2, configurable: true });
+    for (let width = 1; width <= 3; width++) { await writeFile(f.data, `WIDTH=${width}`); await buildAsset(f.config, { ifChanged: true }); }
+    expect(JSON.parse(await readFile(join(f.output, nativeCacheFiles[0]), 'utf8')).history).toHaveLength(1);
+    Object.defineProperty(nativeCacheLimits, 'bytes', { value: f.bytes.length - 1, configurable: true });
+    const oversize = await buildAsset(f.config, { force: true });
+    expect(oversize.files).not.toContain(nativeCacheFiles[0]); expect(await readFile(join(f.output, 'model.glb'))).toEqual(Buffer.from(f.bytes));
+    expect((await readdir(f.output)).some(name => name.startsWith('.agent-meshes-blender-'))).toBe(false);
+  } finally { Object.defineProperty(nativeCacheLimits, 'bytes', { value: priorBudget, configurable: true }); }
 });

@@ -10,6 +10,8 @@ import { auditSkins, type SkinAudit } from './gltf-skins.ts';
 import { ARKIT_FACE_CONTRACT } from './arkit-face.ts';
 import { auditGlass, type GlassMaterial } from './gltf-materials.ts';
 import { createUnrealAxisCalibrationGLB, UNREAL_AXIS_CALIBRATION } from './unreal-calibration.ts';
+import { parseUnrealImportOptions, UNREAL_COLLISION_FLAGS, type UnrealCollision, type UnrealCollisionTraceFlag, type UnrealImportOptions, type UnrealImportConfiguration } from './unreal-import-options.ts';
+export { parseUnrealCollision } from './unreal-import-options.ts';
 
 /**
  * Unreal destination check: import a GLB into a scratch UE project headlessly through
@@ -217,12 +219,17 @@ export interface UnrealStaticMeshFacts {
   naniteEnabled?: boolean | null;
   /** Source-model build setting per LOD, not a measurement of GPU UV buffers. */
   fullPrecisionUVs?: (boolean | null)[];
+  /** Stored BodySetup enum, not the resolved project default or a runtime collision test. */
+  collisionTraceFlag?: UnrealCollisionTraceFlag | null;
+  /** BodySetup scene-query triangle double-sided setting, separate from material two-sidedness. */
+  doubleSidedGeometry?: boolean | null;
   /** Unavailable measurements stay null and carry a reason. */
   measurementErrors?: Record<string, string>;
 }
 export interface UnrealRawReport {
   ok: boolean; engineVersion?: string; destination: string; importReturned: boolean; error?: string;
   assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: UnrealStaticMeshFacts[];
+  importConfiguration?: UnrealImportConfiguration;
 }
 /** What the GLB itself says before Unreal sees it: its morph name, skin and glass audits, or why it could not be read. */
 export interface UnrealPreflight { morphNames?: MorphNameAudit; skins?: SkinAudit; glass?: GlassMaterial[]; error?: string }
@@ -235,6 +242,7 @@ export interface UnrealReport {
   preflight: UnrealPreflight;
   unreal: { editor: string; version: string; engineVersion?: string; exitCode: number; timedOutAfterMs?: number };
   importer: 'Interchange'; verified: string; destination: string; importReturned: boolean; scriptError?: string;
+  importConfiguration?: UnrealImportConfiguration;
   summary: { skeletalMeshes: number; skeletons: number; materials: number; textures: number; animations: number; staticMeshes: number };
   assetsByClass: Record<string, string[]>; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: UnrealRawReport['staticMeshes'];
   morphTargets: string[]; bones: string[];
@@ -339,7 +347,8 @@ export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, ru
     tool: 'agent-meshes verify-unreal', ok: true, failures: [], input: run.input, warnings, preflight,
     unreal: { editor: run.editor, version: run.version, ...(raw.engineVersion ? { engineVersion: raw.engineVersion } : {}), exitCode: run.exitCode, ...(run.timeoutMs ? { timedOutAfterMs: run.timeoutMs } : {}) },
     importer: 'Interchange',
-    verified: 'import only: Interchange created these assets headlessly (-nullrhi); nothing was rendered, animated or played at runtime',
+    verified: 'import only: Interchange created these assets headlessly (-nullrhi); reported asset settings are not runtime ray/physics proof; nothing was rendered, animated, ray-traced or played at runtime',
+    ...(raw.importConfiguration ? { importConfiguration: raw.importConfiguration } : {}),
     destination: raw.destination, importReturned: raw.importReturned, ...(raw.error ? { scriptError: raw.error } : {}),
     summary: {
       skeletalMeshes: count(c => c === 'SkeletalMesh'), skeletons: count(c => c === 'Skeleton'),
@@ -369,6 +378,8 @@ export interface UnrealExpectations {
   staticMesh?: string;
   staticNanite?: boolean;
   staticFullPrecisionUVs?: boolean;
+  staticCollision?: UnrealCollision;
+  staticDoubleSided?: boolean;
   /** Built-in asymmetric marker fixture only; checks signed center and unequal size per label. */
   axisCalibration?: boolean;
 }
@@ -620,11 +631,21 @@ function staticPropFailures(report: UnrealReport, expect: UnrealExpectations): s
       }
     }
   }
-  if (expect.staticBounds || expect.staticNanite !== undefined || expect.staticFullPrecisionUVs !== undefined) {
+  if (expect.staticBounds || expect.staticNanite !== undefined || expect.staticFullPrecisionUVs !== undefined || expect.staticCollision !== undefined || expect.staticDoubleSided !== undefined) {
     const selector = expect.staticMesh ?? expect.staticBounds?.mesh;
     const matches = selector ? report.staticMeshes.filter(m=>m.path===selector || m.path.split('/').pop()===selector) : report.staticMeshes;
     if (matches.length !== 1) return [...failures, `static-prop expectations need exactly one StaticMesh, found ${matches.length}${selector ? ` matching "${selector}"` : '; select one with --static-mesh'}`];
     const mesh = matches[0], label = `StaticMesh ${assetName(mesh.path)}`;
+    if (expect.staticCollision !== undefined) {
+      const flag = UNREAL_COLLISION_FLAGS[expect.staticCollision];
+      if (!flag) failures.push(`${label} unsupported expected collision flag "${expect.staticCollision}"`);
+      else if (!mesh.collisionTraceFlag) failures.push(`${label} collision trace flag unavailable: ${mesh.measurementErrors?.collisionTraceFlag ?? 'Unreal did not report it'}`);
+      else if (mesh.collisionTraceFlag !== flag) failures.push(`${label} stored collision trace flag is ${mesh.collisionTraceFlag}, expected ${flag}`);
+    }
+    if (expect.staticDoubleSided !== undefined) {
+      if (typeof mesh.doubleSidedGeometry !== 'boolean') failures.push(`${label} double-sided geometry setting unavailable: ${mesh.measurementErrors?.doubleSidedGeometry ?? 'Unreal did not report it'}`);
+      else if (mesh.doubleSidedGeometry !== expect.staticDoubleSided) failures.push(`${label} double-sided geometry setting is ${mesh.doubleSidedGeometry}, expected ${expect.staticDoubleSided}`);
+    }
     if (expect.staticBounds) {
       if (!mesh.boundsCm) failures.push(`${label} bounds unavailable: ${mesh.measurementErrors?.boundsCm ?? 'Unreal did not report bounds'}`);
       else if (!close(mesh.boundsCm.size,expect.staticBounds.size)) failures.push(`${label} bounds size ${mesh.boundsCm.size.join(',')} cm, expected ${expect.staticBounds.size.join(',')} cm ±${tolerance} cm per axis`);
@@ -646,6 +667,8 @@ export interface VerifyUnrealOptions extends UnrealExpectations {
   contract?: string; timeoutMs?: number; logFile?: string; cacheDir?: string; quiet?: boolean;
   /** Progress lines go here (stderr by default). */
   progress?: (line: string) => void;
+  /** Strict JSON options file. Configures scratch imports; never loads a user's project. */
+  importOptionsFile?: string;
 }
 
 function killTree(pid: number) {
@@ -660,6 +683,11 @@ async function pruneLogs(dir: string, keep: number) {
 
 /** Import `glb` into a scratch Unreal project through Interchange and check it. Throws when Unreal is absent. */
 export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): Promise<UnrealReport> {
+  let importOptions: UnrealImportOptions | undefined;
+  if (options.importOptionsFile) {
+    try { importOptions = parseUnrealImportOptions(JSON.parse(await readFile(resolve(options.importOptionsFile), 'utf8'))); }
+    catch (error) { throw Object.assign(new Error(`Cannot read Unreal import options ${options.importOptionsFile}: ${(error as Error).message}`), { code: 'CLI_ARGUMENT_ERROR' }); }
+  }
   const input = resolve(glb);
   await stat(input).catch(() => { throw Object.assign(new Error(`GLB not found: ${input}`), { code: 'CLI_ARGUMENT_ERROR' }); });
   const bytes = new Uint8Array(await readFile(input));
@@ -690,7 +718,7 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
     const source = /\.glb$/i.test(input) ? join(work, `${assetName}.glb`) : input;
     if (source !== input) await writeFile(source, bytes);
     const request = join(work, 'request.json'), reportPath = join(work, 'report.json');
-    await writeFile(request, JSON.stringify({ glb: slashes(source), destination: `/Game/Verify/${assetName}`, report: slashes(reportPath) }));
+    await writeFile(request, JSON.stringify({ glb: slashes(source), destination: `/Game/Verify/${assetName}`, report: slashes(reportPath), ...(importOptions ? { importOptions } : {}) }));
     const script = fileURLToPath(new URL('../scripts/unreal-verify-import.py', import.meta.url));
     const args = unrealCommandLine({ project, script, log: logFile });
     say(`Unreal ${unreal.version} at ${unreal.editor}`);
@@ -724,7 +752,16 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
     const review = reviewUnrealReport(report, options);
     report.failures = review.failures; report.warnings.push(...review.warnings);
     report.ok = report.failures.length === 0;
-    report.expectations = { ...(options.contract ? { contract: options.contract } : {}), morphs: options.morphs, bones: options.bones, ...(options.parents && Object.keys(options.parents).length ? { parents: options.parents } : {}), ...(options.staticBounds ? {staticBounds:options.staticBounds}:{}), ...(options.staticMesh ? {staticMesh:options.staticMesh}:{}), ...(options.staticNanite !== undefined ? {staticNanite:options.staticNanite}:{}), ...(options.staticFullPrecisionUVs !== undefined ? {staticFullPrecisionUVs:options.staticFullPrecisionUVs}:{}), ...(options.axisCalibration ? {axisCalibration:true}:{}) };
+    report.expectations = {
+      ...(options.contract ? { contract: options.contract } : {}), morphs: options.morphs, bones: options.bones,
+      ...(options.parents && Object.keys(options.parents).length ? { parents: options.parents } : {}),
+      ...(options.staticBounds ? { staticBounds: options.staticBounds } : {}), ...(options.staticMesh ? { staticMesh: options.staticMesh } : {}),
+      ...(options.staticNanite !== undefined ? { staticNanite: options.staticNanite } : {}),
+      ...(options.staticFullPrecisionUVs !== undefined ? { staticFullPrecisionUVs: options.staticFullPrecisionUVs } : {}),
+      ...(options.staticCollision !== undefined ? { staticCollision: options.staticCollision } : {}),
+      ...(options.staticDoubleSided !== undefined ? { staticDoubleSided: options.staticDoubleSided } : {}),
+      ...(options.axisCalibration ? { axisCalibration: true } : {}),
+    };
     await rm(join(root, 'Content', 'Verify'), { recursive: true, force: true });
     return report;
   } finally {
