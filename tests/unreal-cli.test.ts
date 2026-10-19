@@ -71,6 +71,7 @@ it.each([
   ['barrel.glb', '--expect-bounds-cm', '1,,3'], ['barrel.glb', '--bounds-tolerance-cm', '-1'],
   ['barrel.glb', '--expect-nanite', 'maybe'], ['barrel.glb', '--expect-full-precision-uvs', 'true'],
   ['--axis-calibration', '--contract', 'arkit-face/1'],
+  ['--axis-calibration', '--bounds-tolerance-cm', '5'],
 ])('rejects malformed or ambiguous static arguments %j before an engine launch', async (...args: string[]) => {
   await run(...args);
   expect(verifyUnreal).not.toHaveBeenCalled(); expect(verifyUnrealAxisCalibration).not.toHaveBeenCalled();

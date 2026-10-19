@@ -255,6 +255,7 @@ export async function main(args = process.argv): Promise<void> {
     if (options.axisCalibration && (file || options.contract || options.expectMorphs || options.expectBones || options.expectBoundsCm || options.staticMesh || options.expectNanite || options.expectFullPrecisionUvs)) argumentError('--axis-calibration runs its own built-in contract; omit the file and other expectation flags');
     const toleranceCm = Number(options.boundsToleranceCm);
     if (!Number.isFinite(toleranceCm) || toleranceCm < 0) argumentError('--bounds-tolerance-cm must be a non-negative number');
+    if (!options.expectBoundsCm && toleranceCm !== 0.1) argumentError('A custom --bounds-tolerance-cm requires --expect-bounds-cm; axis calibration uses a fixed 0.1 cm tolerance');
     const onOff = (value: string | undefined, flag: string) => {
       if (value === undefined) return undefined;
       if (!['on','off'].includes(value)) argumentError(`${flag} must be on or off`);
