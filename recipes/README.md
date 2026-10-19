@@ -1,11 +1,16 @@
-# Reproducible concept recipes
+# Editable concept recipes
 
 These source recipes exercise the existing agent-meshes authoring interfaces.
 They are editable starting points, not production assets or new CLI commands.
 The Space to Grow sibling project consumes them as a visual acceptance fixture.
 Recipes live in the source/plugin checkout's `recipes/` directory, not in the
 immutable managed runtime. Copy them from that source location into authored
-inputs; invoke all builds through the managed launcher as usual.
+inputs; invoke all builds through the managed launcher as usual. These recipes
+show particular constructions, proportions and palettes. Reuse the lesson that
+fits a new brief rather than treating a passing cast study as a required design.
+See [face design](../skills/mesh-rigging/references/face-design.md) and
+[native build identity](../skills/mesh-build/references/native-build-identity.md)
+for project ownership, selected helpers and declared dependency limitations.
 
 ## Stylized characters
 

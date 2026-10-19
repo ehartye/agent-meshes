@@ -9,7 +9,8 @@ install npm packages, download Chromium, or generate meshes.
 | --- | --- |
 | Root README/AGENTS/CLAUDE/LICENSE, `.github/README.md`, Markdown under `skills/`, or documentation/evidence under `docs/` | None; quick checks still gate |
 | TypeScript/CSS/HTML under `src/`, or `tests/**/*.test.ts` | Full Windows JavaScript and Linux system-Chromium jobs |
-| Python under `recipes/`, `scripts/blender_lib/`, or top-level `tests/` | JavaScript/browser and four Python lanes; broad geometry sweeps deferred |
+| Python shared helpers or top-level helper tests | JavaScript/browser and face/geometry contract jobs; broad geometry sweeps deferred |
+| Python recipes or `tests/stylized_*.py` | The helper jobs plus character, costume and face recipe examples |
 | Versions, dependencies, fixtures, selection/fixture helpers, CI/risk policy, other scripts or unknown paths | All runtime jobs and every geometry sweep |
 | Manual dispatch, Monday 06:17 UTC schedule, or PR labeled `ci:full` | All runtime jobs |
 | Version tag `v*` | Separate release-identity workflow; requires matching successful full-CI evidence |
@@ -35,7 +36,11 @@ default branch:
 gh workflow run check.yml --ref <branch>
 ```
 
-Every original runtime test/typecheck/build command remains in its existing lane.
+Every original runtime test/typecheck/build command remains present. Recipe-specific
+character, costume and stylized-face checks have separate jobs, selected for recipe
+edits and every full run. Shared helper edits retain helper contracts without
+rebuilding an unrelated example cast. This is an ownership boundary, not a claim
+that a passing helper test establishes the quality of every resulting character.
 Python commands use `AGENT_MESHES_TEST_LANE=merge` for ordinary known Python
 changes, and `full` for release/shared/policy inputs, manual/scheduled runs and
 `ci:full`. Local commands default to `full`. The explicit IDs and reasons in
@@ -69,7 +74,7 @@ coverage mapping are in the [trim plan](../docs/superpowers/plans/2026-10-18-tri
 
 Put the version bump into the candidate before final CI. Package, lockfile and
 plugin manifest changes still select full coverage. After the aggregate gate
-passes with both runtime groups and every geometry sweep selected, it uploads `candidate.json` under an
+passes with both runtime groups, recipe examples and every geometry sweep selected, it uploads `candidate.json` under an
 artifact named for the checked Git tree. A docs-only, JS-only or merge-only geometry run cannot produce
 release authorization.
 
