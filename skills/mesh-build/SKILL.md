@@ -25,6 +25,11 @@ adds nine donor banks, Toy Maker tools and a protected offline demo generator.
 Load `mesh-setup` first. Commands run through the managed launcher
 (`node "<plugin-root>/scripts/run-managed.js" ...`, written `mesh` below).
 
+For native Blender builds with project imports or donor data, read
+[native build identity](references/native-build-identity.md) before declaring a
+reproducible asset or updating helper versions. Keep editable recipes in the
+project and consume the exported GLB in the app.
+
 ## One-off export
 
 ```text

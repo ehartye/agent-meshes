@@ -52,9 +52,11 @@ test('record uses the checked Git tree and refuses partial scope or a dirty trac
   git('init', '-q'); git('config', 'user.name', 'Release test'); git('config', 'user.email', 'release@example.invalid');
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'agent-meshes', version: '0.19.0' }));
   git('add', '.'); git('commit', '-qm', 'candidate');
-  const env = { GITHUB_REPOSITORY: expected.repository, GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1', CI_JAVASCRIPT: 'true', CI_PYTHON: 'true', CI_GEOMETRY_SWEEPS: 'true' };
+  const env = { GITHUB_REPOSITORY: expected.repository, GITHUB_SHA: git('rev-parse', 'HEAD'), GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1', CI_JAVASCRIPT: 'true', CI_PYTHON: 'true', CI_GEOMETRY_SWEEPS: 'true', CI_RECIPE_EXAMPLES: 'true' };
   assert.throws(() => recordCandidate(root, { ...env, CI_GEOMETRY_SWEEPS: 'false' }), /full/);
   assert.throws(() => recordCandidate(root, { ...env, CI_GEOMETRY_SWEEPS: undefined }), /full/);
+  assert.throws(() => recordCandidate(root, { ...env, CI_RECIPE_EXAMPLES: 'false' }), /full/);
+  assert.throws(() => recordCandidate(root, { ...env, CI_RECIPE_EXAMPLES: undefined }), /full/);
   const recorded = recordCandidate(root, env);
   assert.equal(recorded.tree, git('rev-parse', 'HEAD^{tree}'));
   assert.equal(recorded.version, '0.19.0');

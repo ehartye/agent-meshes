@@ -143,10 +143,13 @@ the recipe plus a batch of edits, kept as files so it can be rebuilt. To deliver
 model, `save <name>.mesh.json` from the workspace and point `build.json` at it with
 `"project":"<name>.mesh.json"` (see mesh-build).
 
-A **talking head or any face with blendshapes** (blink, squint, gaze, emotions, a jaw with
-teeth) is not a recipe or a JSON-operations model: author it in Blender with the face-rig
-helpers and check it against the `arkit-face/1` contract. Read the face-rig section of
-[mesh-rigging](../mesh-rigging/SKILL.md) first.
+For a **face**, choose the required motion and consumer contract before the construction.
+A static or rigid face may fit the workspace parts model. Custom blendshapes or an existing
+sculpt generally need an authoring route that preserves their topology and morphs; use
+[mesh-tool-selection](../mesh-tool-selection/SKILL.md). Read the face section of
+[mesh-rigging](../mesh-rigging/SKILL.md) for composable Blender helpers and transferable
+failure diagnosis. Select `arkit-face/1` only when the consumer needs that supported profile;
+a face with a few custom expressions does not automatically need it.
 In Blender sources, `material(name, '#e8a27c', emission='#ffaa00')` takes sRGB hex colors straight
 from a concept sheet (or linear tuples) and can glow (lens glass, a bulb). **Glass** is
 `material(name, '#eaf6ff', roughness=.04, opacity=.16, ior=1.5)` (alphaMode BLEND, double-sided by

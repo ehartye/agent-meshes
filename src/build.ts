@@ -14,6 +14,7 @@ import { authorGLB } from './author.ts';
 import { mergeModes, type MergeMode } from './export-merge.ts';
 import { checkLimits, limitsSchema } from './glb-limits.ts';
 import { lintSilhouette, silhouette } from './silhouette.ts';
+import { captureBuildInputs, captureBuildToolchain, checkToolchainPin } from './build-provenance.ts';
 
 const markerName = '.agent-meshes-build.json';
 /** Optional Blender pass over the exported GLB: subdivision, smoothing and a clouds displacement on named meshes. */
@@ -28,7 +29,16 @@ const buildVerifySchema = limitsSchema.extend({
     tolerance: z.number().min(0).finite().optional(), allow: z.array(z.tuple([z.number(), z.number()])).optional(),
   }).strict().optional(),
 }).strict();
-const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), blender: z.object({ script: z.string().min(1) }).strict().optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional(), target: z.literal('uefn').optional(), renderVertexBudget: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(), merge: z.enum(mergeModes as [MergeMode, ...MergeMode[]]).optional(), verify: buildVerifySchema.optional() }).strict()
+const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, 'Expected a lowercase SHA-256 digest');
+/** Explicit config-relative files, with optional reviewed byte pins; no import discovery or directory expansion. */
+const blenderSchema = z.object({
+  script: z.string().min(1),
+  inputs: z.array(z.object({ path: z.string().min(1), sha256: sha256Schema.optional() }).strict()).optional(),
+  toolchain: z.object({
+    agentMeshesVersion: z.string().min(1), helpersSha256: sha256Schema, blenderVersion: z.string().min(1).optional(),
+  }).strict().optional(),
+}).strict();
+const configSchema = z.object({ version: z.literal(1), project: z.string().min(1).optional(), operations: z.string().min(1).optional(), blender: blenderSchema.optional(), name: z.string().min(1).optional(), output: z.string().min(1), refine: refineSchema.optional(), target: z.literal('uefn').optional(), renderVertexBudget: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(), merge: z.enum(mergeModes as [MergeMode, ...MergeMode[]]).optional(), verify: buildVerifySchema.optional() }).strict()
   .refine(config => !(config.merge && config.blender), 'merge applies to project and operations inputs; a Blender-authored GLB is not merged by agent-meshes')
   .refine(config => [config.project, config.operations, config.blender].filter(Boolean).length === 1, 'Exactly one project, operations or blender input is required')
   .refine(config => config.renderVertexBudget === undefined || config.target !== undefined, 'renderVertexBudget requires an explicit target')
@@ -108,16 +118,37 @@ async function move(source: string, destination: string): Promise<void> {
   }
 }
 
+/** Replace the receipt itself, never write through a path a decorator may have changed into a link. */
+async function writeBuildReceipt(stage: string, name: 'authoring.json' | 'verification.json', receipt: unknown): Promise<void> {
+  const destination = join(stage, name);
+  if (await exists(destination)) {
+    const info = await lstat(destination);
+    if (!info.isFile() || info.nlink !== 1) throw new Error(`${name} must be a regular file without links`);
+  }
+  const temporary = join(stage, `.${name}-${randomUUID()}.tmp`);
+  await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx' });
+  await move(temporary, destination);
+}
+
 export interface AuthoredAsset { name: string }
 export async function buildAsset(configPath: string, options: { decorate?: (project: Project, stage: string) => Promise<string[]>; decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]> } = {}): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding)[] }> {
   const configFile = await realpath(resolve(configPath));
-  const config = configSchema.parse(JSON.parse(await readFile(configFile, 'utf8')));
+  const configBytes = await readFile(configFile);
+  const config = configSchema.parse(JSON.parse(configBytes.toString('utf8')));
   const geometryTarget = config.target ? { target: config.target, renderVertexBudget: config.renderVertexBudget } : undefined;
   const input = await realpath(resolve(dirname(configFile), config.project ?? config.operations ?? config.blender!.script));
   const requestedOutput = resolve(dirname(configFile), config.output);
   // Resolve parent aliases, but never follow an output symlink into somebody else's directory.
   const output = join(await canonical(dirname(requestedOutput)), basename(requestedOutput));
   if (dirname(output) === output || inside(output, configFile) || inside(output, input)) throw new Error('Build output cannot contain its config or input source');
+  const inputs = config.blender ? await captureBuildInputs(configFile, input, config.blender.inputs ?? [], output) : undefined;
+  if (inputs && inputs.config.sha256 !== createHash('sha256').update(configBytes).digest('hex')) throw new Error('Build config changed while reading');
+  const tools = config.blender ? await captureBuildToolchain(undefined, output) : undefined;
+  if (config.blender?.toolchain && tools) {
+    // The actual Blender version is available only after the runner's completion report.
+    const { blenderVersion: _blenderVersion, ...pin } = config.blender.toolchain;
+    checkToolchainPin(pin, tools.identity);
+  }
   await mkdir(dirname(output), { recursive: true });
   const lockPath = join(dirname(output), `.${basename(output)}.agent-meshes.lock`);
   const lock = await open(lockPath, 'wx').catch((error: NodeJS.ErrnoException) => { if (error.code === 'EEXIST') throw new Error('Build output is locked by another build in progress'); throw error; });
@@ -128,6 +159,7 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
     await checkOwnership(output, configFile);
     stage = await mkdtemp(join(dirname(output), `.${basename(output)}.stage-`));
     let files: string[];
+    let finishAuthoring: (() => Promise<void>) | undefined;
     const warnings: (ProjectWarning | DetachedFinding)[] = [];
     /** The detached-part lint on the final GLB: always recorded; a failing verify.maxGap budget has already stopped the build. */
     const lintDetached = (bytes: Uint8Array, limits: { detached?: DetachedReport } | null): DetachedReport => {
@@ -136,19 +168,42 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       return report;
     };
     if (config.blender) {
-      const source = await readFile(input);
       const result = await authorGLB(input, join(stage, 'model.glb'));
-      const authored = await readFile(join(stage, 'model.glb'));
-      const verification = await verifyGLB(authored, geometryTarget);
-      if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
-      const enclosures = await checkEnclosures(authored);
-      const limits = checkBuildLimits(authored, config.verify);
-      const detached = lintDetached(authored, limits);
+      checkToolchainPin(config.blender.toolchain, { ...tools!.identity, blenderVersion: result.blender });
+      const bytes = await readFile(join(stage, 'model.glb'));
+      const recordVerification = async (current: Uint8Array) => {
+        const verification = await verifyGLB(current, geometryTarget);
+        if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
+        const enclosures = await checkEnclosures(current);
+        const limits = checkBuildLimits(current, config.verify);
+        warnings.length = 0;
+        const detached = lintDetached(current, limits);
+        await writeBuildReceipt(stage!, 'verification.json', { ...verification, ...(enclosures ? { enclosures } : {}), detached, ...(limits ? { limits } : {}) });
+      };
+      await recordVerification(bytes);
       files = ['model.glb', 'verification.json', 'authoring.json'];
-      await Promise.all([
-        writeFile(join(stage, 'verification.json'), `${JSON.stringify({ ...verification, ...(enclosures ? { enclosures } : {}), detached, ...(limits ? { limits } : {}) }, null, 2)}\n`),
-        writeFile(join(stage, 'authoring.json'), `${JSON.stringify({ version: 1, source: { script: portable(relative(dirname(configFile), input)), sha256: createHash('sha256').update(source).digest('hex') }, blender: result.blender, meshes: result.meshes }, null, 2)}\n`),
-      ]);
+      const receipt = {
+        version: 1,
+        source: { script: inputs!.entry.path, sha256: inputs!.entry.sha256 },
+        blender: result.blender, meshes: result.meshes,
+        provenance: {
+          dependencyDiscovery: 'entry-and-declared-only', inputs: inputs!.files,
+          toolchain: { ...tools!.identity, blenderVersion: result.blender }, helpers: tools!.files,
+          pins: { inputs: inputs!.pins, toolchain: config.blender.toolchain ?? null },
+          output: { path: 'model.glb', sha256: createHash('sha256').update(bytes).digest('hex') },
+        },
+      };
+      await writeBuildReceipt(stage, 'authoring.json', receipt);
+      finishAuthoring = async () => {
+        // Hash the final staged artifact after decoration, rather than an earlier runner buffer.
+        const info = await lstat(join(stage!, 'model.glb'));
+        if (!info.isFile() || info.nlink !== 1) throw new Error('Authored model.glb must be a regular file without links');
+        const finalBytes = await readFile(join(stage!, 'model.glb'));
+        const finalHash = createHash('sha256').update(finalBytes).digest('hex');
+        if (finalHash !== receipt.provenance.output.sha256) await recordVerification(finalBytes);
+        receipt.provenance.output.sha256 = finalHash;
+        await writeBuildReceipt(stage!, 'authoring.json', receipt);
+      };
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
     } else {
       const source: unknown = JSON.parse(await readFile(input, 'utf8'));
@@ -186,10 +241,15 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       if (options.decorate) files.push(...await options.decorate(structuredClone(project), stage));
     }
     checkFiles(files);
-    await writeFile(join(stage, markerName), `${JSON.stringify({ version: 1, generator: 'agent-meshes', config: portable(relative(output, configFile)), files }, null, 2)}\n`);
+    if (finishAuthoring) await finishAuthoring();
+    await writeFile(join(stage, markerName), `${JSON.stringify({ version: 1, generator: 'agent-meshes', config: portable(relative(output, configFile)), files }, null, 2)}\n`, { flag: 'wx' });
     await checkTree(stage, files);
+    // Include config/entry/import/data changes and helper-tree additions/removals during authoring or decoration.
+    if (tools) await tools.assertUnchanged();
+    if (inputs) await inputs.assertUnchanged();
     // Check again just before replacing, so files added during a long render are preserved.
-    if (await checkOwnership(output, configFile)) {
+    const owned = await checkOwnership(output, configFile);
+    if (owned) {
       backup = join(dirname(output), `.${basename(output)}.backup-${randomUUID()}`);
       await move(output, backup);
     }

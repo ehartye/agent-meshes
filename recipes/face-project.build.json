@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "name": "Project-owned stylized face example",
+  "blender": {
+    "script": "face_project.py",
+    "inputs": [
+      { "path": "stylized_character.py" },
+      { "path": "stylized_walk.py" },
+      { "path": "stylized_face.py" }
+    ]
+  },
+  "output": "../artifacts/face-project"
+}

@@ -6,9 +6,9 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export function planChanges(paths, { full = false } = {}) {
-  const all = { javascript: true, python: true, geometrySweeps: true };
+  const all = { javascript: true, python: true, geometrySweeps: true, recipeExamples: true };
   if (full || !Array.isArray(paths)) return all;
-  let javascript = false, python = false;
+  let javascript = false, python = false, recipeExamples = false;
   for (const file of paths) {
     if (typeof file !== 'string' || file.includes('..') || file.includes('\\')) return all;
     if (/^(README\.md|AGENTS\.md|CLAUDE\.md|LICENSE|\.github\/README\.md)$/.test(file)
@@ -22,17 +22,18 @@ export function planChanges(paths, { full = false } = {}) {
     if (['tests/geometry_test_scope.py', 'tests/geometry_scope.py'].includes(file)) return all;
     if (/^(recipes\/.*|scripts\/blender_lib\/.*|tests\/[^/]+)\.py$/.test(file)) {
       javascript = true; python = true;
+      if (file.startsWith('recipes/') || /^tests\/(stylized_.*|face_recipe_parity)\.py$/.test(file)) recipeExamples = true;
       continue;
     }
     // Dependencies, version, fixtures, CI and unknown inputs still require every sweep.
     return all;
   }
-  return { javascript, python, geometrySweeps: false };
+  return { javascript, python, geometrySweeps: false, recipeExamples };
 }
 
 export function gateFailures(plan, results) {
-  if (typeof plan.javascript !== 'boolean' || typeof plan.python !== 'boolean' || typeof plan.geometrySweeps !== 'boolean' || (plan.geometrySweeps && !plan.python)) return ['invalid plan'];
-  const expected = { quick: 'success', node: plan.javascript ? 'success' : 'skipped', browser: plan.javascript ? 'success' : 'skipped', python: plan.python ? 'success' : 'skipped' };
+  if (typeof plan.javascript !== 'boolean' || typeof plan.python !== 'boolean' || typeof plan.geometrySweeps !== 'boolean' || typeof plan.recipeExamples !== 'boolean' || (plan.recipeExamples && !plan.python) || (plan.geometrySweeps && (!plan.python || !plan.recipeExamples))) return ['invalid plan'];
+  const expected = { quick: 'success', node: plan.javascript ? 'success' : 'skipped', browser: plan.javascript ? 'success' : 'skipped', python: plan.python ? 'success' : 'skipped', examples: plan.recipeExamples ? 'success' : 'skipped' };
   return Object.entries(expected).filter(([job, result]) => results[job] !== result).map(([job, result]) => `${job}: expected ${result}, got ${results[job] ?? 'missing'}`);
 }
 
@@ -60,9 +61,9 @@ function main() {
     const directory = mkdtempSync(join(process.env.RUNNER_TEMP || tmpdir(), 'meshes-ci-'));
     const pathsFile = join(directory, 'changed-paths.json');
     writeFileSync(pathsFile, JSON.stringify(paths ?? []) + '\n');
-    const output = `javascript=${plan.javascript}\npython=${plan.python}\ngeometry_sweeps=${plan.geometrySweeps}\npaths_file=${pathsFile}\n`;
+    const output = `javascript=${plan.javascript}\npython=${plan.python}\ngeometry_sweeps=${plan.geometrySweeps}\nrecipe_examples=${plan.recipeExamples}\npaths_file=${pathsFile}\n`;
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, output);
-    const summary = `CI plan: ${paths === null ? 'full (no PR diff)' : `${paths.length} changed paths`}; JavaScript/browser=${plan.javascript}; Python=${plan.python}; geometry sweeps=${plan.geometrySweeps}.\n`;
+    const summary = `CI plan: ${paths === null ? 'full (no PR diff)' : `${paths.length} changed paths`}; JavaScript/browser=${plan.javascript}; Python=${plan.python}; geometry sweeps=${plan.geometrySweeps}; recipe examples=${plan.recipeExamples}.\n`;
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
     console.log(summary.trim());
     return;
@@ -73,9 +74,10 @@ function main() {
       if (!['true', 'false'].includes(value)) throw new Error(`Missing or invalid ${name}`);
       return value === 'true';
     };
-    const failures = gateFailures({ javascript: boolean('CI_JAVASCRIPT'), python: boolean('CI_PYTHON'), geometrySweeps: boolean('CI_GEOMETRY_SWEEPS') }, {
+    const failures = gateFailures({ javascript: boolean('CI_JAVASCRIPT'), python: boolean('CI_PYTHON'), geometrySweeps: boolean('CI_GEOMETRY_SWEEPS'), recipeExamples: boolean('CI_RECIPE_EXAMPLES') }, {
       quick: process.env.CI_QUICK_RESULT, node: process.env.CI_NODE_RESULT,
       python: process.env.CI_PYTHON_RESULT, browser: process.env.CI_BROWSER_RESULT,
+      examples: process.env.CI_EXAMPLES_RESULT,
     });
     if (failures.length) throw new Error(failures.join('\n'));
     console.log('Every selected suite passed; only explicitly unselected suites were skipped.');

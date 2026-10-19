@@ -94,6 +94,20 @@ for form, anatomy, topology, deformation, hands, faces, cloth and diagnosis, and
 [consumer patterns](scripts/blender_lib/references/consumer-patterns.md) for reusable
 lessons from Space2Grow, Art Explorers/The Fort, Talking Heads and Internal Race.
 
+## Project-owned face designs
+
+The [face design guide](skills/mesh-rigging/references/face-design.md) starts from
+required motion and the consumer contract. Use selected geometry/Blender helpers;
+choose the optional ARKit profile only when needed. Existing face imports remain
+available behind a smaller facade. The editable
+[project entrypoint](recipes/face_project.py) demonstrates explicit composition
+for the hm08 character example. Keep shape choices, palette and acceptance images
+in the project; the app consumes GLB output. Native builds can declare imported
+inputs and pin reviewed helper/tool identities; see
+[native build identity](skills/mesh-build/references/native-build-identity.md) for
+availability and limitations. CI checks helper contracts independently from
+particular recipe studies; it does not prescribe one face or hood style.
+
 ## Organized rig library and Blender references
 
 The [rig library guide](scripts/blender_lib/references/rig-library.md) covers the

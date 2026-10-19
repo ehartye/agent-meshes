@@ -622,6 +622,32 @@ no MPFB or GPL code.
 
 `recipes/stylized_face.py` is the consumer. The design is `docs/design/parametric-head.md`.
 
+## Composing face operations
+
+Choose the motion and consumer contract before a head construction. A static
+face, a rigid robot, a few custom expressions and an ARKit head can use different
+subsets. The optional hm08 character recipe is one example, not a face topology
+or style requirement. See [face design and failure diagnosis](../../skills/mesh-rigging/references/face-design.md).
+
+`agent_meshes_face` remains the compatible import facade, also reexported by
+`agent_meshes_author`. Its implementation is separated into:
+
+- `agent_meshes_face_geometry`: pure vertices/faces, motion geometry, surface
+  contact and associated input checks; imports without Blender.
+- `agent_meshes_face_contract`: selected face extras and GLB metadata/morph
+  utilities. Use the ARKit profile only when that consumer contract is wanted.
+- `agent_meshes_face_blender`: Blender objects, binding, shape keys, materials
+  and composing selected geometry into exported meshes.
+
+Existing imported names remain available. For a new small geometry task, import
+the few required operations rather than copying a whole head recipe. Design
+constants, topology choice, palette and target poses belong in project inputs.
+The shared helpers execute at build time; game applications consume the GLB.
+Declare project modules/data and pin reviewed tool identities through the
+[native build identity](../../skills/mesh-build/references/native-build-identity.md)
+contract. A helper unit check establishes supported operation behavior, not the
+quality of every face assembled from it.
+
 ## Face-rig helpers (`arkit-face/1`)
 
 Side-set or rolled continuous eyes use `oriented_eye_hole` from

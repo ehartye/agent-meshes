@@ -22,6 +22,7 @@ jobs:
       javascript: ${{ steps.plan.outputs.javascript }}
       python: ${{ steps.plan.outputs.python }}
       geometry_sweeps: ${{ steps.plan.outputs.geometry_sweeps }}
+      recipe_examples: ${{ steps.plan.outputs.recipe_examples }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,7 +117,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [costume, character, face, geometry]
+        suite: [face, geometry]
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -128,14 +129,10 @@ jobs:
           python-version: '3.12'
       - run: pip install numpy
       # Keep each suite as a separate step so failures and timings stay visible.
-      - if: matrix.suite == 'character'
-        run: python tests/stylized_character.py
-      - if: matrix.suite == 'character'
-        run: python tests/stylized_walk.py
-      - if: matrix.suite == 'costume'
-        run: python tests/stylized_costume.py
       - if: matrix.suite == 'face'
-        run: python tests/stylized_face.py
+        run: python tests/face_components.py
+      - if: matrix.suite == 'face'
+        run: python tests/face_composition.py
       - if: matrix.suite == 'face'
         run: python tests/blender_face_geometry.py
       - if: matrix.suite == 'face'
@@ -193,10 +190,39 @@ jobs:
       - if: matrix.suite == 'geometry'
         run: python tests/rig-library-output-protection.py
 
+  examples:
+    name: Recipe examples (${{ matrix.suite }}, windows-latest)
+    needs: quick
+    if: needs.quick.outputs.recipe_examples == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [character, costume, face]
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      AGENT_MESHES_TEST_LANE: ${{ needs.quick.outputs.geometry_sweeps == 'true' && 'full' || 'merge' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install numpy
+      - if: matrix.suite == 'character'
+        run: python tests/stylized_character.py
+      - if: matrix.suite == 'character'
+        run: python tests/stylized_walk.py
+      - if: matrix.suite == 'costume'
+        run: python tests/stylized_costume.py
+      - if: matrix.suite == 'face'
+        run: python tests/stylized_face.py
+      - if: matrix.suite == 'face'
+        run: python tests/face_recipe_parity.py
+
   required:
     name: CI required
     if: ${{ always() }}
-    needs: [quick, node, python, system-browser]
+    needs: [quick, node, python, system-browser, examples]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -209,19 +235,22 @@ jobs:
           CI_JAVASCRIPT: ${{ needs.quick.outputs.javascript }}
           CI_PYTHON: ${{ needs.quick.outputs.python }}
           CI_GEOMETRY_SWEEPS: ${{ needs.quick.outputs.geometry_sweeps }}
+          CI_RECIPE_EXAMPLES: ${{ needs.quick.outputs.recipe_examples }}
           CI_QUICK_RESULT: ${{ needs.quick.result }}
           CI_NODE_RESULT: ${{ needs.node.result }}
           CI_PYTHON_RESULT: ${{ needs.python.result }}
           CI_BROWSER_RESULT: ${{ needs.system-browser.result }}
+          CI_EXAMPLES_RESULT: ${{ needs.examples.result }}
         # Only deliberately unselected jobs may be skipped. Missing scope fails.
         run: node scripts/ci-plan.mjs gate
       - name: Record the fully validated release candidate
         id: candidate
-        if: needs.quick.outputs.javascript == 'true' && needs.quick.outputs.python == 'true' && needs.quick.outputs.geometry_sweeps == 'true'
+        if: needs.quick.outputs.javascript == 'true' && needs.quick.outputs.python == 'true' && needs.quick.outputs.geometry_sweeps == 'true' && needs.quick.outputs.recipe_examples == 'true'
         env:
           CI_JAVASCRIPT: ${{ needs.quick.outputs.javascript }}
           CI_PYTHON: ${{ needs.quick.outputs.python }}
           CI_GEOMETRY_SWEEPS: ${{ needs.quick.outputs.geometry_sweeps }}
+          CI_RECIPE_EXAMPLES: ${{ needs.quick.outputs.recipe_examples }}
         run: node .github/scripts/release-candidate.mjs record
       - uses: actions/upload-artifact@v4
         if: steps.candidate.outputs.tree != ''
