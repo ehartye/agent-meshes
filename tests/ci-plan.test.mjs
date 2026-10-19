@@ -4,10 +4,46 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { planChanges, gateFailures, pullRequestPaths } from '../scripts/ci-plan.mjs';
+import { planChanges, gateFailures, pullRequestPaths, readTestingPhase } from '../scripts/ci-plan.mjs';
+
+test('dev PRs use only quick checks even for versions, policy or unknown inputs', () => {
+  const quick = { javascript: false, python: false, geometrySweeps: false, recipeExamples: false };
+  for (const paths of [null, ['package.json'], ['.testing/risk.yml'], ['new/data.bin'], ['scripts/blender_lib/agent_meshes_face.py']]) {
+    assert.deepEqual(planChanges(paths, { phase: 'dev' }), quick);
+    assert.deepEqual(planChanges(paths, { phase: 'dev', full: true }), { javascript: true, python: true, geometrySweeps: true, recipeExamples: true });
+  }
+  assert.throws(() => planChanges([], { phase: 'typo' }), /phase/);
+  assert.deepEqual(planChanges(['package.json'], { phase: 'test' }), { javascript: true, python: true, geometrySweeps: true, recipeExamples: true });
+});
+
+test('planner reads the checked risk map and retains explicit full dev runs', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-dev-policy-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  mkdirSync(join(root, '.testing'));
+  const policy = join(root, '.testing/risk.yml');
+  const output = join(root, 'outputs');
+  const script = resolve('scripts/ci-plan.mjs');
+  assert.throws(() => readTestingPhase(root));
+  for (const body of ['consumers: []\n', 'phase: typo\n', 'phase: dev\nphase: production\n', 'phase: dev\nphase : production\n', 'phase: dev\n"phase": production\n']) {
+    writeFileSync(policy, body);
+    assert.throws(() => readTestingPhase(root), /phase/);
+  }
+  writeFileSync(policy, 'phase: dev # sole owner\n');
+  assert.equal(readTestingPhase(root), 'dev');
+  const run = event => spawnSync(process.execPath, [script, 'plan'], {
+    cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: '', GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: '' },
+  });
+  assert.equal(run('pull_request').status, 0);
+  assert.match(readFileSync(output, 'utf8'), /phase=dev\njavascript=false\npython=false/);
+  writeFileSync(output, '');
+  assert.equal(run('schedule').status, 0);
+  assert.match(readFileSync(output, 'utf8'), /geometry_sweeps=true\nrecipe_examples=true/);
+  writeFileSync(policy, 'phase: typo\n');
+  assert.equal(run('pull_request').status, 1);
+});
 
 test('documentation-only changes avoid every expensive suite, including deleted docs', () => {
   assert.deepEqual(planChanges(['README.md', 'skills/mesh-build/SKILL.md', 'docs/validation/check.json']), { javascript: false, python: false, geometrySweeps: false, recipeExamples: false });

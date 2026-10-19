@@ -1,8 +1,9 @@
-# Owner-confirmed 2026-10-18. First matching area wins.
-phase: production
+# Owner-confirmed 2026-10-19: sole user, fast pre-release iteration.
+# Keep phase as one plain top-level enum. First matching area wins.
+phase: dev
 consumers:
-  - Installed agent-meshes plugins and downstream project repositories, including Dead Redline.
-  - Existing saved projects and published authoring/build/export APIs must remain usable.
+  - The owner's plugin installations and personal project repositories, including Dead Redline; no external users or production support promise.
+  - Preserve the owner's saved projects and source/output safety; phase alone does not authorize deleting data or breaking APIs.
 weights:
   wait: 1
   agent: 1
@@ -13,17 +14,17 @@ lanes:
     runs: affected-files
     trigger: agent-edit
   merge:
-    runs: critical+standard in affected areas; unknown scope runs all
+    runs: affected checks locally; quick non-blocking Linux observer on ordinary PRs
     trigger: pull-request
-    os: [ubuntu, windows]
+    os: [ubuntu]
   scheduled:
     runs: all
     trigger: weekly-cron
     os: [ubuntu, windows]
   release:
-    runs: all+clean-managed-install
-    trigger: version-tag-or-manual
-    os: [ubuntu, windows]
+    runs: identity-only tag check in dev; full evidence required in test/production; owner smoke as needed
+    trigger: version-tag
+    os: [ubuntu]
 areas:
   - path: tests/geometry_test_scope.py
     tier: critical

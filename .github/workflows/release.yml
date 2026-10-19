@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Require successful full CI for this exact versioned source tree
+      - name: Verify identity and phase-appropriate CI evidence
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/release-candidate.mjs verify

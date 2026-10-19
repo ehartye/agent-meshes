@@ -4,10 +4,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { recordCandidate, verifyCandidate, verifyTag, findCandidate } from '../.github/scripts/release-candidate.mjs';
+import { recordCandidate, verifyCandidate, verifyTag, findCandidate, verifyRelease } from '../.github/scripts/release-candidate.mjs';
 
 const expected = { repository: 'ehartye/agent-meshes', tree: 'a'.repeat(40), version: '0.19.0' };
 const run = { id: 123, run_attempt: 1, status: 'completed', conclusion: 'success', path: '.github/workflows/check.yml', head_repository: { full_name: expected.repository }, html_url: 'https://github.com/ehartye/agent-meshes/actions/runs/123' };
@@ -17,6 +17,41 @@ test('tag must match the package version exactly', () => {
   assert.doesNotThrow(() => verifyTag('v0.19.0', '0.19.0'));
   assert.throws(() => verifyTag('v0.18.0', '0.19.0'), /version/);
   assert.throws(() => verifyTag('release', '0.19.0'), /version/);
+});
+
+test('only dev tags waive full evidence; every phase retains clean matching identity', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-dev-release-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  git('init', '-q'); git('config', 'user.name', 'Release test'); git('config', 'user.email', 'release@example.invalid');
+  mkdirSync(join(root, '.testing'));
+  const policy = join(root, '.testing/risk.yml');
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'agent-meshes', version: '0.20.0' }));
+  const env = { GITHUB_REPOSITORY: expected.repository, GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: 'v0.20.0' };
+  let requests = 0;
+  const noEvidence = { api: () => { requests++; return { artifacts: [] }; }, download: () => { throw new Error('No artifact'); } };
+  for (const phase of ['dev', 'test', 'production']) {
+    writeFileSync(policy, `phase: ${phase}\n`);
+    git('add', '.'); git('commit', '-qm', phase);
+    if (phase === 'dev') {
+      assert.deepEqual(verifyRelease(root, env, noEvidence), { repository: expected.repository, tree: git('rev-parse', 'HEAD^{tree}'), version: '0.20.0', phase, scope: 'identity-only' });
+      assert.equal(requests, 0);
+    } else {
+      assert.throws(() => verifyRelease(root, env, noEvidence), /full Check/);
+      const current = { ...expected, tree: git('rev-parse', 'HEAD^{tree}'), version: '0.20.0' };
+      const proof = { ...receipt, ...current };
+      const artifact = { name: `validated-tree-${current.tree}`, expired: false, workflow_run: { id: run.id } };
+      assert.equal(verifyRelease(root, env, {
+        api: path => path.includes('/artifacts?') ? { artifacts: [artifact] } : run,
+        download: () => proof,
+      }).receipt, proof);
+    }
+    assert.throws(() => verifyRelease(root, { ...env, GITHUB_REF_NAME: 'v0.19.0' }, noEvidence), /version/);
+    assert.throws(() => verifyRelease(root, { ...env, GITHUB_REF_TYPE: 'branch' }, noEvidence), /tag event/);
+    writeFileSync(policy, `phase: ${phase}\n# dirty\n`);
+    assert.throws(() => verifyRelease(root, env, noEvidence), /dirty/);
+    writeFileSync(policy, `phase: ${phase}\n`);
+  }
 });
 
 test('matching tree survives a squash commit while changed contents are refused', () => {

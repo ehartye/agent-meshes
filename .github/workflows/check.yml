@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      phase: ${{ steps.plan.outputs.phase }}
       javascript: ${{ steps.plan.outputs.javascript }}
       python: ${{ steps.plan.outputs.python }}
       geometry_sweeps: ${{ steps.plan.outputs.geometry_sweeps }}
@@ -221,7 +222,8 @@ jobs:
 
   required:
     name: CI required
-    if: ${{ always() }}
+    # Ordinary dev PRs have just the quick observer. Explicit full runs still gate.
+    if: ${{ always() && (needs.quick.outputs.phase != 'dev' || needs.quick.outputs.javascript == 'true' || needs.quick.outputs.python == 'true') }}
     needs: [quick, node, python, system-browser, examples]
     runs-on: ubuntu-latest
     timeout-minutes: 5
