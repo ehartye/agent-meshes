@@ -101,11 +101,13 @@ that those dependencies or the resulting mesh are valid. Use normal/forced
 generation when that input contract is not established.
 
 The change key includes config/entry/declared bytes, shared helpers, authoring
-implementation, Node/platform, working directory, environment digest and a
+implementation and its absolute helper location, Node/platform, working directory, environment digest and a
 recognized complete Blender installation. Environment values are not written
 to the cache. Tool files are byte-hashed on each check, including bundled scripts,
 Python and data; an unchanged filename/version alone is not enough. Hashing has
-a real cost even when Blender is skipped. Store launchers, unrecognized distro
+a real cost even when Blender is skipped. Moving between a checkout and an installed
+runtime regenerates even when their helper bytes match, since Python can observe
+module and wrapper locations. Store launchers, unrecognized distro
 layouts, linked runtime files and external Blender/Python/helper overrides fall
 back to generation rather than claiming a cache hit. Undeclared local shared-helper
 shadows and bytecode-only shared helpers also fall back. Supported launches use

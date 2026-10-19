@@ -112,7 +112,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
   const implementation = await Promise.all(['build.ts', 'author.ts', 'build-native-cache.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
   const cwd = process.cwd();
   const key = digest({
-    policy: 'declared-inputs-complete/factory-startup/fresh-python-source@2', identity, cwd,
+    policy: 'declared-inputs-complete/factory-startup/fresh-python-source@2', identity, cwd, helperRoot,
     environment: Object.entries(environment).sort(([a], [b]) => a.localeCompare(b)),
     node: process.version, platform: process.platform, arch: process.arch,
     command, runtime: snapshots.map(item => ({ path: portable(relative(root, item.path)), sha256: item.sha256 ?? 'directory' })),

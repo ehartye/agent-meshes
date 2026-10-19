@@ -151,3 +151,12 @@ external prefix overrides and undeclared local shared-helper shadows fall back.
 Recheck shared runtime state before publication, run native GREEN and get a fresh
 scoped review before accepting this revision. PR155 separately passed/merged at
 099decd3ac96a4d911fb96cd23fdec897e224994; this branch is rebased onto that main.
+
+## Reviewed revision: installation context
+
+A real source-to-managed control with identical implementation/helper bytes
+reproduced reuse of the wrong path-sensitive GLB. Python can observe the helper
+module and wrapper locations, so the key also records the absolute helper root.
+The source and managed copies must contain identical revised code when repeating
+GREEN; a miss caused only by different implementation digests would not validate
+this correction. Preserve the RED proof and verify managed reuse after the miss.
