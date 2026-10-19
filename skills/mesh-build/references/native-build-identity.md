@@ -211,7 +211,7 @@ generation when that input contract is not established.
 The change key includes config/entry/declared bytes, shared helpers, authoring
 implementation and its absolute helper location, Node/platform, working directory, environment digest and a
 recognized complete Blender installation. Environment values are not written
-to the cache. Tool files are byte-hashed on each check, including bundled scripts,
+to the cache. Tool files are byte-hashed on each standalone check, including bundled scripts,
 Python and data; an unchanged filename/version alone is not enough. Hashing has
 a real cost even when Blender is skipped. Moving between a checkout and an installed
 runtime regenerates even when their helper bytes match, since Python can observe
@@ -236,3 +236,62 @@ The result's `incremental.blender` is `built` or `reused`, with a reason. Keep
 forced rebuilds in validation and compare the actual required output, rather than
 assuming one deterministic fixture proves all recipes reproducible. This is a
 local producer cache, not a remote cache or a promise that all build stages skip.
+
+### Share defaults and build a batch (0.23.0 and later)
+
+Put shared verification, strict-audit and toolchain settings in one JSON file:
+
+```json
+{
+  "version": 1,
+  "blender": { "readAudit": "strict", "inputs": [{ "dir": "lib" }] },
+  "verify": { "maxTriangles": 5000 }
+}
+```
+
+Each leaf config can use `"extends": "defaults.json"`, then specify its own
+`blender.script` and `output`. Nested objects merge; arrays and scalar values
+replace the inherited value. The leaf wins. Only `extends` resolves relative to
+the file declaring it. Every other path, including inherited inputs, scripts and
+output, remains relative to the leaf config. Keep that layout explicit rather
+than assuming paths follow the defaults file. One ancestor per file and at most
+16 configs are allowed; cycles and unsafe property names fail.
+
+All raw config hashes enter the native key. Extended native receipts also list
+`provenance.configurations`, leaf first. Ancestor changes, deletion, replacement
+or alias retargeting during generation prevent publication. Output cannot contain
+any config in the chain. Shared pins are validation requirements, never automatic
+pin updates. The final merged config must satisfy the ordinary strict schema.
+
+```text
+mesh build-batch build-barrel.json build-tank.json build-reaper.json --if-changed --no-preview
+```
+
+The explicit ordered batch accepts 1–1000 configs. It rejects duplicate canonical
+config paths, executes sequentially and stops at the first failure. Its JSON
+lists attempted `assets`, `unattempted` configs and `toolchain` capture/validation
+counts; a failed batch exits nonzero. Successfully published earlier assets stay
+published; the failing asset keeps its previous output. This is a per-asset
+transaction, not an all-or-nothing batch transaction. Give each config its own
+output directory. Ordinary `build` and per-asset `--force` semantics remain.
+
+Within one batch, full byte hashing of each selected Blender installation, helper
+toolchain and native implementation happens once. Before sharing and publishing,
+the session rechecks membership and high-resolution file metadata. A changed
+shared resource invalidates the session; no later asset uses it. Snapshots are
+private, and the session closes at the end. There is no persistent metadata cache
+or daemon. The next invocation hashes again. Input hashing, verification and
+requested previews still run per asset. Batching removes repeated tool hashing;
+it does not remove Blender generation time for changed assets.
+
+### Diagnose a native miss (0.23.0 and later)
+
+`incremental.reason` distinguishes `cache-record-missing`, `cache-record-invalid`,
+`legacy-cache-record`, `cache-key-changed`, `cache-output-missing` and
+`cache-output-corrupt`. A changed key also reports `changedComponents`: `inputs`,
+`tools`, `runtime`, `environment`, `cwd`, `location`, `platform` or `policy`.
+The cache stores each component's digest; it does not write environment names,
+values or raw working-directory paths into those components. Diagnoses explain
+the same authoritative key used for reuse. They never authorize a hit themselves.
+Old records rebuild once. Forced builds, unsupported launch environments and
+unclean read audits retain their specific reasons.

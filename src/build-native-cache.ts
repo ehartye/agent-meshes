@@ -76,7 +76,7 @@ export interface NativeCache {
   write: (stage: string, bytes: Uint8Array, result: { blender: string; meshes: number; readAudit: ReadAudit }) => Promise<void>;
   assertUnchanged: () => Promise<void>;
 }
-interface NativeIdentity { script: string; configFile: string; inputs: { path: string; sha256: string }[]; config: unknown; helpers: unknown }
+interface NativeIdentity { script: string; configFile: string; inputs: { path: string; sha256: string }[]; config: unknown; configurations?: { path: string; sha256: string }[]; helpers: unknown }
 
 /** Opt-in owner-declared dependency contract; never inferred from an old receipt. */
 export async function prepareNativeCache(location: BlenderLocation | null, identity: NativeIdentity, output: string, stage: string, session?: NativeBuildSession): Promise<{ cache?: NativeCache; reason: string }> {
@@ -121,7 +121,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     if (/changed while hashing|runtime changed|BUILD_SESSION_/.test(String(error))) throw error;
     return { reason: 'unsupported-blender-runtime-files' };
   }
-  const captureImplementation = () => Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-read-audit.ts', 'build-native-cache.ts', 'build-session.ts', 'build-batch.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
+  const captureImplementation = () => Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-read-audit.ts', 'build-native-cache.ts', 'build-session.ts', 'build-batch.ts', 'build-config.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
   const validateImplementation = async (expected: Snapshot[]) => {
     for (const file of expected) if (metadata(await lstat(file.path, { bigint: true })) !== file.metadata) throw new Error('Native build implementation changed during build');
   };
@@ -129,7 +129,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
   const cwd = process.cwd();
   // Exact digests are authoritative; component names only explain misses.
   const components: Components = {
-    inputs: digest({ config: identity.config, inputs: identity.inputs }),
+    inputs: digest({ config: identity.config, ...(identity.configurations ? { configurations: identity.configurations } : {}), inputs: identity.inputs }),
     tools: digest({ helpers: identity.helpers, implementation: implementation.map(item => item.sha256) }),
     runtime: digest(snapshots.map(item => ({ path: portable(relative(root, item.path)), sha256: item.sha256 ?? 'directory' }))),
     environment: digest(Object.entries(environment).sort(([a], [b]) => a.localeCompare(b))),

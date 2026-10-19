@@ -235,25 +235,48 @@ export async function main(args = process.argv): Promise<void> {
     print({ same: differences.length === 0, differences, a: left, b: right });
     if (differences.length) { process.stderr.write(`${differences.map(d => `DIFF ${d.field}: ${JSON.stringify(d.a)} -> ${JSON.stringify(d.b)}`).join('\n')}\n`); process.exitCode = 1; }
   });
-  program.command('verify-unreal <file>').description('Import a GLB into a scratch Unreal project headlessly (Interchange) and report what Unreal created; import only, no runtime render')
+  program.command('verify-unreal [file]').description('Import a GLB or built-in axis calibration into a scratch Unreal project and report what Unreal created; import only, no runtime render')
     .option('--contract <name>', 'Require a rig contract\'s names verbatim, for example arkit-face/1')
     .option('--expect-morphs <list>', 'Comma-separated morph target names that must survive verbatim')
     .option('--expect-bones <list>', 'Comma-separated bone names that must exist')
+    .option('--expect-bounds-cm <x,y,z>', 'Require one static mesh to have this full XYZ size in Unreal centimetres')
+    .option('--bounds-tolerance-cm <cm>', 'Allowed size error per axis', '0.1')
+    .option('--static-mesh <name>', 'Exact static mesh asset path or basename for expectations')
+    .option('--expect-nanite <on|off>', 'Require the static mesh Nanite enabled setting')
+    .option('--expect-full-precision-uvs <on|off>', 'Require the full-precision UV build setting at every static LOD')
+    .option('--axis-calibration', 'Import built-in asymmetric signed-axis markers instead of a supplied file')
     .option('--timeout <seconds>', 'Stop Unreal after this long (first runs compile shaders)', '1800')
     .option('--log <file>', 'Write the Unreal log here instead of the cache Logs directory')
     .option('--json', 'Print only one compact JSON line: no progress or pretty-printing').action(async (file, options) => {
     const unreal = await import('./unreal.ts');
     const { contractExpectations } = await import('./arkit-face.ts');
+    const argumentError = (message: string): never => { throw Object.assign(new Error(message), { code: 'CLI_ARGUMENT_ERROR' }); };
+    if (!file && !options.axisCalibration) argumentError('Supply a GLB file or --axis-calibration');
+    if (options.axisCalibration && (file || options.contract || options.expectMorphs || options.expectBones || options.expectBoundsCm || options.staticMesh || options.expectNanite || options.expectFullPrecisionUvs)) argumentError('--axis-calibration runs its own built-in contract; omit the file and other expectation flags');
+    const toleranceCm = Number(options.boundsToleranceCm);
+    if (!Number.isFinite(toleranceCm) || toleranceCm < 0) argumentError('--bounds-tolerance-cm must be a non-negative number');
+    const onOff = (value: string | undefined, flag: string) => {
+      if (value === undefined) return undefined;
+      if (!['on','off'].includes(value)) argumentError(`${flag} must be on or off`);
+      return value === 'on';
+    };
+    const staticNanite = onOff(options.expectNanite, '--expect-nanite');
+    const staticFullPrecisionUVs = onOff(options.expectFullPrecisionUvs, '--expect-full-precision-uvs');
     const base = options.contract ? contractExpectations(String(options.contract)) : { morphs: [], bones: [], parents: {} };
     const timeout = Number(options.timeout);
     if (!Number.isFinite(timeout) || timeout <= 0) throw Object.assign(new Error('--timeout must be a positive number of seconds'), { code: 'CLI_ARGUMENT_ERROR' });
     const morphs = [...new Set([...base.morphs, ...(options.expectMorphs ? unreal.parseNameList(String(options.expectMorphs)) : [])])];
     const bones = [...new Set([...base.bones, ...(options.expectBones ? unreal.parseNameList(String(options.expectBones)) : [])])];
-    const report = await unreal.verifyUnreal(resolve(file), {
+    const expectations = {
       morphs, bones, parents: base.parents, requireSkeletalMesh: Boolean(options.contract) || morphs.length > 0 || bones.length > 0, singleSkeletalMesh: Boolean(options.contract),
       ...(options.contract ? { contract: String(options.contract) } : {}), timeoutMs: timeout * 1000,
       ...(options.log ? { logFile: resolve(options.log) } : {}), quiet: Boolean(options.json),
-    });
+      ...(options.expectBoundsCm ? { staticBounds: { size: unreal.parseUnrealBounds(String(options.expectBoundsCm)), toleranceCm } } : {}),
+      ...(options.staticMesh ? { staticMesh: String(options.staticMesh) } : {}),
+      ...(staticNanite !== undefined ? { staticNanite } : {}),
+      ...(staticFullPrecisionUVs !== undefined ? { staticFullPrecisionUVs } : {}),
+    };
+    const report = options.axisCalibration ? await unreal.verifyUnrealAxisCalibration(expectations) : await unreal.verifyUnreal(resolve(file), expectations);
     process.stdout.write(`${options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2)}\n`);
     if (!report.ok) process.exitCode = 1;
   });

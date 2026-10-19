@@ -40,6 +40,40 @@ async function fixture() {
   return { root, installation, command, script, data, config, output, settings, bytes };
 }
 
+it('inherits shared defaults, records every config and invalidates changed ancestor bytes', async () => {
+  const f = await fixture();
+  const defaults = join(f.root, 'defaults.json');
+  await writeFile(defaults, JSON.stringify({ version: 1, blender: { inputs: f.settings.blender.inputs, readAudit: 'strict' }, verify: { maxTriangles: 1000 } }));
+  await writeFile(f.config, JSON.stringify({ extends: 'defaults.json', blender: { script: 'bird.py' }, output: 'generated' }));
+  await buildAsset(f.config, { ifChanged: true });
+  expect((await buildAsset(f.config, { ifChanged: true })).incremental?.blender).toBe('reused');
+  const receipt = JSON.parse(await readFile(join(f.output, 'authoring.json'), 'utf8'));
+  expect(receipt.provenance.configurations.map((file: {path: string}) => file.path)).toEqual(['build.json', 'defaults.json']);
+  expect(receipt.provenance.inputs.map((file: {path: string}) => file.path)).toContain('design.py');
+  await writeFile(defaults, JSON.stringify({ version: 1, blender: { inputs: f.settings.blender.inputs, readAudit: 'strict' }, verify: { maxTriangles: 2000 } }));
+  expect((await buildAsset(f.config, { ifChanged: true })).incremental).toMatchObject({ blender: 'built', reason: 'cache-key-changed', changedComponents: ['inputs'] });
+  expect(authorGLB).toHaveBeenCalledTimes(2);
+});
+
+it('rejects ancestor config changes during decoration and preserves previous output', async () => {
+  const f = await fixture(), defaults = join(f.root, 'defaults.json');
+  await writeFile(defaults, JSON.stringify({ version: 1 }));
+  await writeFile(f.config, JSON.stringify({ ...f.settings, extends: 'defaults.json' }));
+  await buildAsset(f.config);
+  const previous = await readFile(join(f.output, 'authoring.json'));
+  await expect(buildAsset(f.config, { decorateAsset: async () => { await writeFile(defaults, '{"version":1,"name":"changed"}'); return []; } })).rejects.toThrow(/Build config changed/);
+  expect(await readFile(join(f.output, 'authoring.json'))).toEqual(previous);
+});
+
+it('rejects output containing an inherited config before launching Blender', async () => {
+  const f = await fixture();
+  await mkdir(f.output);
+  await writeFile(join(f.output, 'defaults.json'), '{"version":1}');
+  await writeFile(f.config, JSON.stringify({ ...f.settings, extends: 'generated/defaults.json' }));
+  await expect(buildAsset(f.config)).rejects.toThrow(/output cannot contain/i);
+  expect(authorGLB).not.toHaveBeenCalled();
+});
+
 it('reuses unchanged native authoring while running current decoration and verification', async () => {
   const { config, output } = await fixture();
   let count = 0;
