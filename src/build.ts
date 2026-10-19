@@ -31,10 +31,13 @@ const buildVerifySchema = limitsSchema.extend({
   }).strict().optional(),
 }).strict();
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/, 'Expected a lowercase SHA-256 digest');
-/** Explicit config-relative files, with optional reviewed byte pins; no import discovery or directory expansion. */
+/** Explicit config-relative files or bounded trees; no Python import discovery. */
 const blenderSchema = z.object({
   script: z.string().min(1),
-  inputs: z.array(z.object({ path: z.string().min(1), sha256: sha256Schema.optional() }).strict()).optional(),
+  inputs: z.array(z.union([
+    z.object({ path: z.string().min(1), sha256: sha256Schema.optional() }).strict(),
+    z.object({ dir: z.string().min(1), include: z.array(z.string().min(1)).min(1).max(100).optional(), exclude: z.array(z.string().min(1)).max(100).optional(), maxFiles: z.number().int().min(1).max(10000).optional(), sha256: sha256Schema.optional() }).strict(),
+  ])).optional(),
   toolchain: z.object({
     agentMeshesVersion: z.string().min(1), helpersSha256: sha256Schema, blenderVersion: z.string().min(1).optional(),
   }).strict().optional(),
@@ -203,8 +206,9 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
         blender: result.blender, meshes: result.meshes,
         provenance: {
           dependencyDiscovery: 'entry-and-declared-only', inputs: inputs!.files,
+          ...(inputs!.trees.length ? { inputTrees: inputs!.trees } : {}),
           toolchain: { ...tools!.identity, blenderVersion: result.blender }, helpers: tools!.files,
-          pins: { inputs: inputs!.pins, toolchain: config.blender.toolchain ?? null },
+          pins: { inputs: inputs!.pins, ...(inputs!.trees.length ? { inputTrees: inputs!.treePins } : {}), toolchain: config.blender.toolchain ?? null },
           output: { path: 'model.glb', sha256: createHash('sha256').update(bytes).digest('hex') },
         },
       };

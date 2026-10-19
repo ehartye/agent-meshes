@@ -41,6 +41,56 @@ included. Declare additional files individually, relative to `build.json`:
 }
 ```
 
+### Declare a library tree (0.21.0 and later)
+
+Use a named subdirectory when imported modules or parameters change together:
+
+```json
+{
+  "version": 1,
+  "blender": {
+    "script": "prop.py",
+    "inputs": [
+      { "dir": "lib", "exclude": ["notes/**"], "maxFiles": 1000 },
+      { "dir": "parameters", "include": ["**/*.json", "**/.*.json"] }
+    ]
+  },
+  "output": "generated/prop"
+}
+```
+
+An omitted `include` selects every regular file, including dotfiles. Explicit
+patterns use Node's POSIX glob behavior: `*` and `?` stay within a path component,
+and a complete `**` component spans directories. Dot paths need explicit dot
+patterns. Patterns are relative to the declared directory; `exclude` removes
+matches. Brace lists, brackets, negation, extglobs, absolute paths and traversal
+are rejected. `__pycache__`, `.pyc` and `.pyo` are always excluded. This is
+declared expansion, not Python import discovery or a file-read audit.
+
+Trees must be named config-relative subdirectories; `.` and paths outside the
+config directory are rejected. The default and maximum selected-file budget is
+10,000 per tree; `maxFiles` can lower it. Traversal is bounded at 50,000 entries
+per tree. Empty matching sets remain tracked. Links, overlapping declarations,
+non-file entries and output/tree overlap fail before publishing. Existing file
+declarations and their optional byte pins remain supported.
+
+`provenance.inputs` lists the entry and every selected file's raw-byte SHA256.
+`provenance.inputTrees` records each directory, normalized patterns, budget,
+expanded config-relative paths and actual `sha256`. Its digest is SHA256 of the
+UTF-8 JSON serialization of the tree's sorted `[{"path", "sha256"}]` records,
+with config-relative POSIX paths and no whitespace or newline. File names and
+raw line endings are significant. Copy that reviewed digest into the tree
+declaration's optional `sha256` to pin the complete selected membership/bytes;
+editable trees can remain unpinned. `provenance.pins.inputTrees` names pinned
+directories. No absolute project paths are added to that provenance.
+
+Adding, removing or editing a selected file changes native reuse identity. The
+build re-expands membership and rechecks selected bytes before output
+replacement; a change during generation stops publication and preserves the
+prior owned output. Excluded files intentionally do not affect the key. Include
+all actual dependencies and relevant environment/tool inputs before opting into
+reuse; the tree feature does not establish complete dynamic dependency closure.
+
 Run the build once with the intended toolchain and review both asset and receipt.
 `authoring.json.provenance.inputs` contains the entry and declared file digests;
 `provenance.toolchain` contains `agentMeshesVersion`, `helpersSha256` and the
