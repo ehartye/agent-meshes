@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import type { BigIntStats } from 'node:fs';
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export interface DeclaredBuildInput { path: string; sha256?: string }
+export interface DeclaredFileInput { path: string; sha256?: string }
+export interface DeclaredTreeInput { dir: string; include?: string[]; exclude?: string[]; maxFiles?: number; sha256?: string }
+export type DeclaredBuildInput = DeclaredFileInput | DeclaredTreeInput;
 export interface BuildToolchainLock { agentMeshesVersion: string; helpersSha256: string; blenderVersion?: string }
 export interface FileIdentity { path: string; sha256: string }
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
@@ -54,6 +56,56 @@ async function snapshotFile(absolute: string, path: string, allowHardlinks = fal
 function protectOutput(output: string, source: string): void {
   if (inside(output, source)) throw new Error(`Build output cannot contain its config or input source: ${source}`);
 }
+
+function treePatterns(patterns: string[] | undefined, fallback: string[], name: string): string[] {
+  const values = patterns ?? fallback;
+  if (!Array.isArray(values) || (name === 'include' && values.length === 0) || values.length > 100) throw new Error(`Invalid input tree ${name} patterns`);
+  for (const pattern of values) {
+    if (typeof pattern !== 'string' || !pattern || isAbsolute(pattern) || /[\\:\[\]{}!()\x00-\x1f]/.test(pattern)
+      || pattern.split('/').some(piece => !piece || piece === '.' || piece === '..' || (piece.includes('**') && piece !== '**'))) throw new Error(`Unsafe input tree ${name} pattern: ${pattern}`);
+  }
+  return [...new Set(values)].sort();
+}
+
+/** Match portable glob paths; membership is captured again before publication. */
+async function expandInputTree(base: string, declaration: DeclaredTreeInput, output: string) {
+  checkDeclaredPath(declaration.dir);
+  // An omitted include watches every regular file, including dotfiles. Explicit
+  // patterns use Node's documented glob semantics (dot paths need dot patterns).
+  const include = declaration.include === undefined ? null : treePatterns(declaration.include, [], 'include');
+  const exclude = treePatterns(declaration.exclude, [], 'exclude');
+  const maxFiles = declaration.maxFiles ?? 10000;
+  if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > 10000) throw new Error('Input tree maxFiles limit must be between 1 and 10000');
+  const root = resolve(base, declaration.dir);
+  if (inside(root, output) || inside(output, root)) throw new Error('Build output cannot overlap a declared input tree');
+  if (!(await plainPath(root)).isDirectory()) throw new Error(`Input tree must be a directory: ${declaration.dir}`);
+  const paths: string[] = [];
+  const directories: { path: string; metadata: string }[] = [];
+  let visited = 0;
+  async function visit(directory: string): Promise<void> {
+    const before = await plainPath(directory);
+    directories.push({ path: portable(relative(base, directory)), metadata: metadata(before) });
+    for (const child of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
+      if (++visited > 50000) throw new Error('Input tree traversal exceeds the 50000-entry budget');
+      if (child.isSymbolicLink()) throw new Error(`Link in declared input tree: ${child.name}`);
+      if (child.name === '__pycache__' || /\.py[co]$/i.test(child.name)) continue;
+      const absolute = join(directory, child.name);
+      if (child.isDirectory()) await visit(absolute);
+      else if (child.isFile()) {
+        const path = portable(relative(root, absolute));
+        if ((include === null || include.some(pattern => posix.matchesGlob(path, pattern))) && !exclude.some(pattern => posix.matchesGlob(path, pattern))) {
+          const name = portable(relative(base, absolute));
+          checkDeclaredPath(name);
+          paths.push(name);
+          if (paths.length > maxFiles) throw new Error(`Input tree file limit exceeded: ${declaration.dir} (maximum ${maxFiles})`);
+        }
+      } else throw new Error(`Non-file in declared input tree: ${child.name}`);
+    }
+    if (metadata(before) !== metadata(await plainPath(directory))) throw new Error(`Input tree changed while listing: ${declaration.dir}`);
+  }
+  await visit(root);
+  return { dir: declaration.dir, include, exclude, maxFiles, paths: paths.sort(), directories };
+}
 async function assertSnapshots(snapshots: Snapshot[]): Promise<void> {
   for (const expected of snapshots) {
     try {
@@ -70,16 +122,26 @@ export async function captureBuildInputs(configFile: string, script: string, dec
   // hard-link support remains; newly declared inputs use strict file identity.
   const config = await snapshotFile(resolve(configFile), portable(relative(base, configFile)), true);
   const entry = resolve(base, script);
-  const declarations = new Map<string, DeclaredBuildInput>();
-  for (const file of declared) {
+  const declarations = new Map<string, DeclaredFileInput>();
+  const expandedTrees: { declaration: DeclaredTreeInput; expanded: Awaited<ReturnType<typeof expandInputTree>> }[] = [];
+  function addDeclaration(file: DeclaredFileInput): void {
     checkDeclaredPath(file.path);
     const key = pathKey(resolve(base, file.path));
     if (declarations.has(key)) throw new Error(`Duplicate declared build input: ${file.path}`);
     if (file.sha256 !== undefined && !/^[0-9a-f]{64}$/.test(file.sha256)) throw new Error(`Invalid SHA-256 pin for build input: ${file.path}`);
     declarations.set(key, file);
   }
+  for (const declaration of declared) {
+    if ('dir' in declaration) {
+      if (declaration.sha256 !== undefined && !/^[0-9a-f]{64}$/.test(declaration.sha256)) throw new Error(`Invalid input tree SHA-256 pin: ${declaration.dir}`);
+      const expanded = await expandInputTree(base, declaration, output);
+      if (expandedTrees.some(tree => pathKey(resolve(base, tree.declaration.dir)) === pathKey(resolve(base, declaration.dir)))) throw new Error(`Duplicate declared input tree: ${declaration.dir}`);
+      expandedTrees.push({ declaration, expanded });
+      for (const path of expanded.paths) addDeclaration({ path });
+    } else addDeclaration(declaration);
+  }
   const paths = new Map([[pathKey(entry), entry]]);
-  for (const file of declared) {
+  for (const file of declarations.values()) {
     const absolute = resolve(base, file.path);
     if (!paths.has(pathKey(absolute))) paths.set(pathKey(absolute), absolute);
   }
@@ -91,12 +153,29 @@ export async function captureBuildInputs(configFile: string, script: string, dec
     snapshots.push(snapshot);
   }
   snapshots.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  const byPath = new Map(snapshots.map(file => [pathKey(file.absolute), file]));
+  const trees = expandedTrees.map(({ declaration, expanded }) => {
+    const records = expanded.paths.map(path => publicIdentity(byPath.get(pathKey(resolve(base, path)))!));
+    const sha256 = hash(Buffer.from(JSON.stringify(records)));
+    if (declaration.sha256 !== undefined && declaration.sha256 !== sha256) throw new Error(`Input tree SHA-256 pin mismatch: ${declaration.dir}`);
+    // Directory metadata guards this attempt (including transient membership),
+    // but must not enter portable provenance or future-build reuse identity.
+    const { directories: _directories, ...publicTree } = expanded;
+    return { ...publicTree, sha256 };
+  });
   for (const file of [config, ...snapshots]) protectOutput(output, file.absolute);
   return {
     files: snapshots.map(publicIdentity), config: publicIdentity(config),
+    trees, treePins: expandedTrees.filter(tree => tree.declaration.sha256 !== undefined).map(tree => tree.declaration.dir),
     entry: publicIdentity(snapshots.find(file => pathKey(file.absolute) === pathKey(entry))!),
     pins: snapshots.filter(file => declarations.get(pathKey(file.absolute))?.sha256 !== undefined).map(file => file.path),
-    assertUnchanged: () => assertSnapshots([config, ...snapshots]),
+    assertUnchanged: async () => {
+      for (const { declaration, expanded } of expandedTrees) {
+        const current = await expandInputTree(base, declaration, output);
+        if (JSON.stringify(current) !== JSON.stringify(expanded)) throw new Error(`Input tree changed during build: ${declaration.dir}`);
+      }
+      await assertSnapshots([config, ...snapshots]);
+    },
   };
 }
 

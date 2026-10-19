@@ -32,6 +32,23 @@ async function fixture() {
   return { directory, config, source, output: join(directory, 'generated') };
 }
 
+it('accepts declared trees through build JSON and protects the prior output from membership changes', async () => {
+  const { directory, config, output } = await fixture();
+  await mkdir(join(directory, 'lib'));
+  await writeFile(join(directory, 'lib', 'shape.py'), 'WIDTH=1\n');
+  await writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py', inputs: [{ dir: 'lib', include: ['**/*.py'] }] }, output: 'generated' }));
+  await buildAsset(config);
+  const before = await readFile(join(output, 'model.glb'));
+  const receipt = JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'));
+  expect(receipt.provenance.inputTrees[0].paths).toEqual(['lib/shape.py']);
+  expect(receipt.provenance.inputs.map((file: { path: string }) => file.path)).toEqual(['bird.py', 'lib/shape.py']);
+  await expect(buildAsset(config, { decorateAsset: async () => {
+    await writeFile(join(directory, 'lib', 'added.py'), '# added during generation');
+    return [];
+  } })).rejects.toThrow(/tree.*changed/i);
+  expect(await readFile(join(output, 'model.glb'))).toEqual(before);
+});
+
 it('builds verified authored assets without inventing an editable primitive project', async () => {
   const { config, output, directory, source } = await fixture();
   const decorate = vi.fn();

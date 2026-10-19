@@ -109,7 +109,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     if (/changed while hashing/.test(String(error))) throw error;
     return { reason: 'unsupported-blender-runtime-files' };
   }
-  const implementation = await Promise.all(['build.ts', 'author.ts', 'build-native-cache.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
+  const implementation = await Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-native-cache.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
   const cwd = process.cwd();
   const key = digest({
     policy: 'declared-inputs-complete/factory-startup/fresh-python-source@2', identity, cwd, helperRoot,

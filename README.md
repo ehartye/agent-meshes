@@ -2,11 +2,18 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.21.0 adds declared native input trees: list a library directory once,
+optionally filter or pin its selected files, and invalidate Blender reuse when
+matching files are added, removed or edited. Receipts show the expanded files
+and tree digest; changes during generation stop publication. Existing explicit
+file declarations remain supported. See [native input identity](skills/mesh-build/references/native-build-identity.md).
+
 Release 0.20.0 adds opt-in incremental native Blender builds (`--if-changed`) and
 forced refreshes (`--force`), explicit input declarations and toolchain pins,
 and composable face helpers with project-owned design recipes. Verification and
 previews still run when Blender output is reused. CI separates shared helper
-contracts from recipe examples while retaining full release validation. Run
+contracts from recipe examples. Current repository CI follows the owner's
+[dev/pre-release policy](.github/README.md). Run
 `mesh-setup` after updating the plugin.
 
 Release 0.19.0 adds the mesh-tool-selection guide: choose an authoring approach,
