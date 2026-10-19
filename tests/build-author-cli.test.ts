@@ -36,3 +36,10 @@ it('build CLI omits authored preview for both suppression flags and all decorato
   expect(typeof buildAsset.mock.calls[1][1].decorate).toBe('function');
   expect(previewHTML).not.toHaveBeenCalled();
 });
+
+it.each(['--if-changed', '--force'])('forwards %s without changing authored preview defaults', async flag => {
+  await main(['node', 'agent-meshes', 'build', 'build.json', flag]);
+  const options = buildAsset.mock.calls[0][1];
+  expect(options[flag === '--if-changed' ? 'ifChanged' : 'force']).toBe(true);
+  expect(typeof options.decorateAsset).toBe('function');
+});
