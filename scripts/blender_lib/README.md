@@ -30,6 +30,26 @@ export_glb(path, objects, vertex_color='ACTIVE', all_vertex_colors=False)
 export_glb(path, objects, vertex_color='NONE')  # omit vertex colors
 ```
 
+Normal `build()` sources can select the same controls without a custom export
+runner or build-config extension:
+
+```python
+EXPORT_VERTEX_COLOR = 'ACTIVE'
+EXPORT_ALL_VERTEX_COLORS = False
+
+def build():
+    # Construct and return the objects, with the intended render color selected.
+    return objects
+```
+
+The wrapper forwards only constants present in the source namespace. Omission
+preserves its original export invocation; explicit `None` retains the native
+default, and explicit `False` is forwarded. Accepted values and capability
+validation are the same as the helper below. A normal staged `build` rejects
+invalid constants before publishing a replacement, preserving the last output.
+These controls select exported color data; they do not select preview shading,
+change material alpha modes or establish the appearance in a target engine.
+
 Omit either option, or pass `None`, to retain that native exporter default and
 existing callers' behavior. Blender 5.2.2 LTS defaults to `MATERIAL` (export color
 when used by the material). In a real texture × named `CraftColor` multiply graph,
@@ -59,6 +79,11 @@ The real Blender fixture checks GLB color accessors, native/default behavior,
 unchanged PBR texture slots and embedded image payloads, invalid-input effects,
 and selection restoration on success and native export failure. Read its
 `report.json` completion marker when a Store launcher returns early.
+`python -B tests/blender_author_export_controls.py` checks wrapper forwarding
+without Blender. `npm test -- tests/vertex-color-build-blender.test.ts` uses a
+real selected Blender to verify normal builds, decoded CORNER RGBA values,
+default equality, `NONE` omission and prior-output preservation on invalid
+controls; it skips when Blender is unavailable.
 
 ## Image materials with authored UVs
 

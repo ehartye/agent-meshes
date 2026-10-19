@@ -235,25 +235,49 @@ export async function main(args = process.argv): Promise<void> {
     print({ same: differences.length === 0, differences, a: left, b: right });
     if (differences.length) { process.stderr.write(`${differences.map(d => `DIFF ${d.field}: ${JSON.stringify(d.a)} -> ${JSON.stringify(d.b)}`).join('\n')}\n`); process.exitCode = 1; }
   });
-  program.command('verify-unreal <file>').description('Import a GLB into a scratch Unreal project headlessly (Interchange) and report what Unreal created; import only, no runtime render')
+  program.command('verify-unreal [file]').description('Import a GLB or built-in axis calibration into a scratch Unreal project and report what Unreal created; import only, no runtime render')
     .option('--contract <name>', 'Require a rig contract\'s names verbatim, for example arkit-face/1')
     .option('--expect-morphs <list>', 'Comma-separated morph target names that must survive verbatim')
     .option('--expect-bones <list>', 'Comma-separated bone names that must exist')
+    .option('--expect-bounds-cm <x,y,z>', 'Require one static mesh to have this full XYZ size in Unreal centimetres')
+    .option('--bounds-tolerance-cm <cm>', 'Allowed size error per axis', '0.1')
+    .option('--static-mesh <name>', 'Exact static mesh asset path or basename for expectations')
+    .option('--expect-nanite <on|off>', 'Require the static mesh Nanite enabled setting')
+    .option('--expect-full-precision-uvs <on|off>', 'Require the full-precision UV build setting at every static LOD')
+    .option('--axis-calibration', 'Import built-in asymmetric signed-axis markers instead of a supplied file')
     .option('--timeout <seconds>', 'Stop Unreal after this long (first runs compile shaders)', '1800')
     .option('--log <file>', 'Write the Unreal log here instead of the cache Logs directory')
     .option('--json', 'Print only one compact JSON line: no progress or pretty-printing').action(async (file, options) => {
     const unreal = await import('./unreal.ts');
     const { contractExpectations } = await import('./arkit-face.ts');
+    const argumentError = (message: string): never => { throw Object.assign(new Error(message), { code: 'CLI_ARGUMENT_ERROR' }); };
+    if (!file && !options.axisCalibration) argumentError('Supply a GLB file or --axis-calibration');
+    if (options.axisCalibration && (file || options.contract || options.expectMorphs || options.expectBones || options.expectBoundsCm || options.staticMesh || options.expectNanite || options.expectFullPrecisionUvs)) argumentError('--axis-calibration runs its own built-in contract; omit the file and other expectation flags');
+    const toleranceCm = Number(options.boundsToleranceCm);
+    if (!Number.isFinite(toleranceCm) || toleranceCm < 0) argumentError('--bounds-tolerance-cm must be a non-negative number');
+    if (!options.expectBoundsCm && toleranceCm !== 0.1) argumentError('A custom --bounds-tolerance-cm requires --expect-bounds-cm; axis calibration uses a fixed 0.1 cm tolerance');
+    const onOff = (value: string | undefined, flag: string) => {
+      if (value === undefined) return undefined;
+      if (!['on','off'].includes(value)) argumentError(`${flag} must be on or off`);
+      return value === 'on';
+    };
+    const staticNanite = onOff(options.expectNanite, '--expect-nanite');
+    const staticFullPrecisionUVs = onOff(options.expectFullPrecisionUvs, '--expect-full-precision-uvs');
     const base = options.contract ? contractExpectations(String(options.contract)) : { morphs: [], bones: [], parents: {} };
     const timeout = Number(options.timeout);
     if (!Number.isFinite(timeout) || timeout <= 0) throw Object.assign(new Error('--timeout must be a positive number of seconds'), { code: 'CLI_ARGUMENT_ERROR' });
     const morphs = [...new Set([...base.morphs, ...(options.expectMorphs ? unreal.parseNameList(String(options.expectMorphs)) : [])])];
     const bones = [...new Set([...base.bones, ...(options.expectBones ? unreal.parseNameList(String(options.expectBones)) : [])])];
-    const report = await unreal.verifyUnreal(resolve(file), {
+    const expectations = {
       morphs, bones, parents: base.parents, requireSkeletalMesh: Boolean(options.contract) || morphs.length > 0 || bones.length > 0, singleSkeletalMesh: Boolean(options.contract),
       ...(options.contract ? { contract: String(options.contract) } : {}), timeoutMs: timeout * 1000,
       ...(options.log ? { logFile: resolve(options.log) } : {}), quiet: Boolean(options.json),
-    });
+      ...(options.expectBoundsCm ? { staticBounds: { size: unreal.parseUnrealBounds(String(options.expectBoundsCm)), toleranceCm } } : {}),
+      ...(options.staticMesh ? { staticMesh: String(options.staticMesh) } : {}),
+      ...(staticNanite !== undefined ? { staticNanite } : {}),
+      ...(staticFullPrecisionUVs !== undefined ? { staticFullPrecisionUVs } : {}),
+    };
+    const report = options.axisCalibration ? await unreal.verifyUnrealAxisCalibration(expectations) : await unreal.verifyUnreal(resolve(file), expectations);
     process.stdout.write(`${options.json ? JSON.stringify(report) : JSON.stringify(report, null, 2)}\n`);
     if (!report.ok) process.exitCode = 1;
   });
@@ -382,20 +406,34 @@ export async function main(args = process.argv): Promise<void> {
     const { buildAssembly } = await import('./physical/assembly.ts');
     print(await buildAssembly(manifest, directory));
   });
+  const buildOptionsFor = async (options: { preview?: boolean; previewPage?: boolean; ifChanged?: boolean; force?: boolean }) => {
+    const preview = options.preview !== false, previewPage = options.previewPage !== false;
+    const decorate = (await import('./capture.ts')).decoratorFor({ preview, previewPage });
+    const decorateAsset = preview && previewPage ? async (asset: { name: string }, stage: string): Promise<string[]> => {
+      const { previewHTML } = await import('./preview-html.ts');
+      await writeFile(resolve(stage, 'preview.html'), await previewHTML(asset.name, await readFile(resolve(stage, 'model.glb'))));
+      return ['preview.html'];
+    } : undefined;
+    return { decorate, decorateAsset, ifChanged: options.ifChanged, force: options.force };
+  };
   program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')
     .option('--if-changed', 'Reuse native Blender output when declared inputs and tracked tools match (declare every dependency)')
     .option('--force', 'Regenerate native Blender output and refresh its incremental cache')
     .option('--no-preview', 'Skip browser renders and the standalone preview page')
     .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html').action(async (config, options) => {
     const { buildAsset } = await import('./build.ts');
-    const decorate = (await import('./capture.ts')).decoratorFor({ preview: options.preview, previewPage: options.previewPage });
-    const decorateAsset = options.preview && options.previewPage ? async (asset: { name: string }, stage: string): Promise<string[]> => {
-      const { previewHTML } = await import('./preview-html.ts');
-      await writeFile(resolve(stage, 'preview.html'), await previewHTML(asset.name, await readFile(resolve(stage, 'model.glb'))));
-      return ['preview.html'];
-    } : undefined;
-    process.stdout.write(`${JSON.stringify(await buildAsset(config, { decorate, decorateAsset, ifChanged: options.ifChanged, force: options.force }))}\n`);
+    print(await buildAsset(config, await buildOptionsFor(options)));
   });
+  program.command('build-batch <configs...>').description('Build an explicit list sequentially, sharing native tool hashes for this invocation')
+    .option('--if-changed', 'Reuse unchanged native Blender output with current verification')
+    .option('--force', 'Regenerate native Blender output for every attempted asset')
+    .option('--no-preview', 'Skip browser renders and standalone preview pages')
+    .option('--no-preview-page', 'Keep PNG renders but skip standalone previews')
+    .action(async (configs, options) => {
+      const { buildAssets } = await import('./build-batch.ts');
+      const result = await buildAssets(configs, await buildOptionsFor(options));
+      print(result); if (!result.ok) process.exitCode = 1;
+    });
   try {
     await program.parseAsync(args);
   } catch (error) {

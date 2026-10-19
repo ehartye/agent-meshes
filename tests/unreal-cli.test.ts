@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-const { verifyUnreal } = vi.hoisted(() => ({ verifyUnreal: vi.fn() }));
-vi.mock('../src/unreal.ts', async original => ({ ...(await original<typeof import('../src/unreal.ts')>()), verifyUnreal }));
+const { verifyUnreal, verifyUnrealAxisCalibration } = vi.hoisted(() => ({ verifyUnreal: vi.fn(), verifyUnrealAxisCalibration: vi.fn() }));
+vi.mock('../src/unreal.ts', async original => ({ ...(await original<typeof import('../src/unreal.ts')>()), verifyUnreal, verifyUnrealAxisCalibration }));
 
 import { main } from '../src/cli.ts';
 import { ARKIT_FACE_REQUIRED_BONES, ARKIT_FACE_REQUIRED_MORPHS } from '../src/arkit-face.ts';
 
 let stdout = '', stderr = '';
 beforeEach(() => {
-  stdout = ''; stderr = ''; process.exitCode = undefined; verifyUnreal.mockReset();
+  stdout = ''; stderr = ''; process.exitCode = undefined; verifyUnreal.mockReset(); verifyUnrealAxisCalibration.mockReset();
   vi.spyOn(process.stdout, 'write').mockImplementation(chunk => { stdout += String(chunk); return true; });
   vi.spyOn(process.stderr, 'write').mockImplementation(chunk => { stderr += String(chunk); return true; });
 });
@@ -50,4 +50,30 @@ it('rejects an unknown contract and a bad timeout before starting Unreal', async
   await run('head.glb', '--timeout', '0');
   expect(JSON.parse(stderr).error.message).toMatch(/timeout/i);
   expect(verifyUnreal).not.toHaveBeenCalled();
+});
+
+it('forwards static-prop bounds and build-setting expectations with one mesh selector', async () => {
+  verifyUnreal.mockResolvedValue({ ok: true, failures: [] });
+  await run('barrel.glb', '--expect-bounds-cm', '80,80,120', '--bounds-tolerance-cm', '0.5', '--static-mesh', 'Barrel', '--expect-nanite', 'off', '--expect-full-precision-uvs', 'on');
+  expect(verifyUnreal.mock.calls[0][1]).toMatchObject({ staticBounds: { size: [80,80,120], toleranceCm: 0.5 }, staticMesh: 'Barrel', staticNanite: false, staticFullPrecisionUVs: true });
+});
+
+it('runs the built-in signed axis calibration without a file', async () => {
+  verifyUnrealAxisCalibration.mockResolvedValue({ ok: true, failures: [] });
+  await run('--axis-calibration', '--json');
+  expect(verifyUnrealAxisCalibration).toHaveBeenCalledOnce();
+  expect(verifyUnreal).not.toHaveBeenCalled();
+  expect(JSON.parse(stdout).ok).toBe(true);
+});
+
+it.each([
+  [], ['barrel.glb', '--axis-calibration'], ['barrel.glb', '--expect-bounds-cm', '1,2'],
+  ['barrel.glb', '--expect-bounds-cm', '1,,3'], ['barrel.glb', '--bounds-tolerance-cm', '-1'],
+  ['barrel.glb', '--expect-nanite', 'maybe'], ['barrel.glb', '--expect-full-precision-uvs', 'true'],
+  ['--axis-calibration', '--contract', 'arkit-face/1'],
+  ['--axis-calibration', '--bounds-tolerance-cm', '5'],
+])('rejects malformed or ambiguous static arguments %j before an engine launch', async (...args: string[]) => {
+  await run(...args);
+  expect(verifyUnreal).not.toHaveBeenCalled(); expect(verifyUnrealAxisCalibration).not.toHaveBeenCalled();
+  expect(JSON.parse(stderr).error.code).toBe('CLI_ARGUMENT_ERROR');
 });

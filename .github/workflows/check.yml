@@ -147,6 +147,10 @@ jobs:
       - if: matrix.suite == 'geometry'
         run: python -B tests/blender_read_audit.py
       - if: matrix.suite == 'geometry'
+        run: python -B tests/blender_author_export_controls.py
+      - if: matrix.suite == 'geometry'
+        run: python -B tests/unreal-verify-import.test.py
+      - if: matrix.suite == 'geometry'
         run: python tests/blender_author_geometry.py
       - if: matrix.suite == 'geometry'
         run: python tests/blender_author_skin.py

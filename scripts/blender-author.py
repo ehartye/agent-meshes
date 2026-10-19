@@ -40,7 +40,13 @@ def main(source, output):
     meshes = sum(obj.type == 'MESH' for obj in objects)
     if not meshes:
         raise ValueError('build() must return at least one mesh')
-    export_glb(str(output), objects, animation_mode=namespace.get('EXPORT_ANIMATION_MODE', 'ACTIONS'))
+    export_options = {}
+    for source_name, option in [('EXPORT_VERTEX_COLOR', 'vertex_color'),
+                                ('EXPORT_ALL_VERTEX_COLORS', 'all_vertex_colors')]:
+        if source_name in namespace:
+            export_options[option] = namespace[source_name]
+    export_glb(str(output), objects, animation_mode=namespace.get('EXPORT_ANIMATION_MODE', 'ACTIONS'),
+               **export_options)
     return meshes, audit.finish()
 
 

@@ -18,6 +18,8 @@ import { lintSilhouette, silhouette } from './silhouette.ts';
 import { captureBuildInputs, captureBuildToolchain, checkToolchainPin } from './build-provenance.ts';
 import { nativeCacheFiles, prepareNativeCache } from './build-native-cache.ts';
 import { classifyReadAudit, type ReadAudit } from './build-read-audit.ts';
+import type { NativeBuildSession } from './build-session.ts';
+import { loadBuildConfig } from './build-config.ts';
 
 const markerName = '.agent-meshes-build.json';
 /** Optional Blender pass over the exported GLB: subdivision, smoothing and a clouds displacement on named meshes. */
@@ -144,10 +146,10 @@ export interface BuildOptions {
   decorate?: (project: Project, stage: string) => Promise<string[]>;
   decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]>;
 }
-export async function buildAsset(configPath: string, options: BuildOptions = {}): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding | { code: 'BLENDER_READ_AUDIT'; message: string })[]; readAudit?: ReadAudit; incremental?: { blender: 'built' | 'reused'; reason: string } }> {
+export async function buildAsset(configPath: string, options: BuildOptions = {}, session?: NativeBuildSession): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding | { code: 'BLENDER_READ_AUDIT'; message: string })[]; readAudit?: ReadAudit; incremental?: { blender: 'built' | 'reused'; reason: string; changedComponents?: string[] } }> {
   const configFile = await realpath(resolve(configPath));
-  const configBytes = await readFile(configFile);
-  const config = configSchema.parse(JSON.parse(configBytes.toString('utf8')));
+  const loadedConfig = await loadBuildConfig(configFile);
+  const config = configSchema.parse(loadedConfig.value);
   const incremental = options.ifChanged === true || options.force === true;
   if (incremental && !config.blender) throw new Error('Incremental Blender flags require a native blender.script build');
   const geometryTarget = config.target ? { target: config.target, renderVertexBudget: config.renderVertexBudget } : undefined;
@@ -155,10 +157,10 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
   const requestedOutput = resolve(dirname(configFile), config.output);
   // Resolve parent aliases, but never follow an output symlink into somebody else's directory.
   const output = join(await canonical(dirname(requestedOutput)), basename(requestedOutput));
-  if (dirname(output) === output || inside(output, configFile) || inside(output, input)) throw new Error('Build output cannot contain its config or input source');
+  if (dirname(output) === output || loadedConfig.sources.some(file => inside(output, resolve(dirname(configFile), file.path))) || inside(output, input)) throw new Error('Build output cannot contain its config or input source');
   const inputs = config.blender ? await captureBuildInputs(configFile, input, config.blender.inputs ?? [], output) : undefined;
-  if (inputs && inputs.config.sha256 !== createHash('sha256').update(configBytes).digest('hex')) throw new Error('Build config changed while reading');
-  const tools = config.blender ? await captureBuildToolchain(undefined, output) : undefined;
+  if (inputs && inputs.config.sha256 !== loadedConfig.leafSha256) throw new Error('Build config changed while reading');
+  const tools = config.blender ? await captureBuildToolchain(undefined, output, session) : undefined;
   if (config.blender?.toolchain && tools) {
     // The actual Blender version is available only after the runner's completion report.
     const { blenderVersion: _blenderVersion, ...pin } = config.blender.toolchain;
@@ -175,7 +177,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
     stage = await mkdtemp(join(dirname(output), `.${basename(output)}.stage-`));
     let files: string[];
     let finishAuthoring: (() => Promise<void>) | undefined;
-    let incrementalResult: { blender: 'built' | 'reused'; reason: string } | undefined;
+    let incrementalResult: { blender: 'built' | 'reused'; reason: string; changedComponents?: string[] } | undefined;
     let readAudit: ReadAudit | undefined;
     const warnings: (ProjectWarning | DetachedFinding | { code: 'BLENDER_READ_AUDIT'; message: string })[] = [];
     /** The detached-part lint on the final GLB: always recorded; a failing verify.maxGap budget has already stopped the build. */
@@ -185,14 +187,17 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
       return report;
     };
     if (config.blender) {
-      const prepared = incremental ? await prepareNativeCache(findBlender(), { config: inputs!.config, inputs: inputs!.files, helpers: tools!.identity, script: input, configFile }, output, stage) : undefined;
-      const cached = prepared?.cache && !options.force ? await prepared.cache.read(output) : undefined;
+      const prepared = incremental ? await prepareNativeCache(findBlender(), { config: inputs!.config, configurations: loadedConfig.sources, inputs: inputs!.files, helpers: tools!.identity, script: input, configFile }, output, stage, session) : undefined;
+      // A changed previously shared tool must not escape into fallback generation.
+      if (session && !prepared?.cache) await session.assertUnchanged();
+      const lookup = prepared?.cache && !options.force ? await prepared.cache.read(output) : undefined;
+      const cached = lookup?.value;
       if (cached) await writeFile(join(stage, 'model.glb'), cached.bytes, { flag: 'wx' });
       const result = cached ?? await authorGLB(input, join(stage, 'model.glb'), prepared?.cache?.launch ?? { pythonCachePrefix: join(stage, '.agent-meshes-python-imports') });
       readAudit = cached?.readAudit ?? classifyReadAudit(result.readAudit, { base: dirname(configFile), inputs: inputs!.files, helperRoot: fileURLToPath(new URL('../', import.meta.url)), helpers: tools!.files });
       if (config.blender.readAudit === 'strict' && readAudit.status !== 'clean') throw Object.assign(new Error(`READ_AUDIT_FAILED: ${readAudit.status}; undeclared reads: ${readAudit.undeclaredReads.join(', ') || '(none resolved)'}`), { code: 'READ_AUDIT_FAILED', readAudit });
       const cacheable = readAudit.status === 'clean';
-      if (incremental) incrementalResult = { blender: cached ? 'reused' : 'built', reason: cached ? 'matching-native-cache' : options.force ? 'forced' : prepared!.reason };
+      if (incremental) incrementalResult = { blender: cached ? 'reused' : 'built', reason: cached ? 'matching-native-cache' : options.force ? 'forced' : lookup?.reason ?? prepared!.reason, ...(lookup?.changedComponents ? { changedComponents: lookup.changedComponents } : {}) };
       if (incrementalResult && !cacheable) incrementalResult.reason = `read-audit-${readAudit.status}`;
       checkToolchainPin(config.blender.toolchain, { ...tools!.identity, blenderVersion: result.blender });
       const bytes = await readFile(join(stage, 'model.glb'));
@@ -214,6 +219,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
         blender: result.blender, meshes: result.meshes,
         provenance: {
           dependencyDiscovery: 'entry-and-declared-only', inputs: inputs!.files,
+          ...(loadedConfig.sources.length > 1 ? { configurations: loadedConfig.sources } : {}),
           readAudit,
           ...(inputs!.trees.length ? { inputTrees: inputs!.trees } : {}),
           toolchain: { ...tools!.identity, blenderVersion: result.blender }, helpers: tools!.files,
@@ -231,10 +237,10 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
         if (finalHash !== receipt.provenance.output.sha256) await recordVerification(finalBytes);
         receipt.provenance.output.sha256 = finalHash;
         await writeBuildReceipt(stage!, 'authoring.json', receipt);
-        if (prepared?.cache && cacheable) {
+        if (prepared?.cache) {
           await prepared.cache.assertUnchanged();
-          await prepared.cache.write(stage!, bytes, { ...result, readAudit: readAudit! });
-        }
+          if (cacheable) await prepared.cache.write(stage!, bytes, { ...result, readAudit: readAudit! });
+        } else if (session) await session.assertUnchanged();
       };
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
     } else {
@@ -279,6 +285,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {})
     // Include config/entry/import/data changes and helper-tree additions/removals during authoring or decoration.
     if (tools) await tools.assertUnchanged();
     if (inputs) await inputs.assertUnchanged();
+    await loadedConfig.assertUnchanged();
     // Check again just before replacing, so files added during a long render are preserved.
     const owned = await checkOwnership(output, configFile, incremental);
     if (owned) {

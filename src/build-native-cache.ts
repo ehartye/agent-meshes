@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { AuthorOptions } from './author.ts';
 import type { BlenderLocation } from './refine.ts';
 import { readAuditSchema, type ReadAudit } from './build-read-audit.ts';
+import type { NativeBuildSession } from './build-session.ts';
 
 export const nativeCacheFiles = ['.agent-meshes-blender-cache.json', '.agent-meshes-blender-cache.bin'] as const;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -15,8 +16,11 @@ const byteDigest = (bytes: Uint8Array) => createHash('sha256').update(bytes).dig
 const metadata = (info: BigIntStats) => [info.dev, info.ino, info.size, info.mtimeNs, info.ctimeNs, info.mode, info.nlink].join(':');
 const portable = (name: string) => name.split(sep).join('/');
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
+const componentsSchema = z.object({ inputs: sha, tools: sha, runtime: sha, environment: sha, cwd: sha, location: sha, platform: sha, policy: sha }).strict();
+type Components = z.infer<typeof componentsSchema>;
+export interface NativeCacheLookup { value?: { bytes: Buffer; blender: string; meshes: number; readAudit: ReadAudit }; reason: string; changedComponents?: (keyof Components)[] }
 const recordSchema = z.object({
-  schema: z.literal('agent-meshes/native-blender-cache@1'), key: sha,
+  schema: z.literal('agent-meshes/native-blender-cache@2'), key: sha, components: componentsSchema,
   outputSha256: sha, blender: z.string().min(1), meshes: z.number().int().positive(),
   readAudit: readAuditSchema.refine(report => report.status === 'clean' && report.installed && !report.truncated && report.unresolvedEvents === 0 && report.undeclaredReads.length === 0),
 }).strict();
@@ -68,14 +72,14 @@ async function runtimeRoot(command: string): Promise<string | undefined> {
 
 export interface NativeCache {
   launch: AuthorOptions;
-  read: (output: string) => Promise<{ bytes: Buffer; blender: string; meshes: number; readAudit: ReadAudit } | undefined>;
+  read: (output: string) => Promise<NativeCacheLookup>;
   write: (stage: string, bytes: Uint8Array, result: { blender: string; meshes: number; readAudit: ReadAudit }) => Promise<void>;
   assertUnchanged: () => Promise<void>;
 }
-interface NativeIdentity { script: string; configFile: string; inputs: { path: string; sha256: string }[]; config: unknown; helpers: unknown }
+interface NativeIdentity { script: string; configFile: string; inputs: { path: string; sha256: string }[]; config: unknown; configurations?: { path: string; sha256: string }[]; helpers: unknown }
 
 /** Opt-in owner-declared dependency contract; never inferred from an old receipt. */
-export async function prepareNativeCache(location: BlenderLocation | null, identity: NativeIdentity, output: string, stage: string): Promise<{ cache?: NativeCache; reason: string }> {
+export async function prepareNativeCache(location: BlenderLocation | null, identity: NativeIdentity, output: string, stage: string, session?: NativeBuildSession): Promise<{ cache?: NativeCache; reason: string }> {
   const environment = { ...process.env };
   if (Object.keys(environment).some(name => environment[name] && (/^BLENDER_/i.test(name) || /^(PYTHONPATH|PYTHONHOME|PYTHONUSERBASE|PYTHONPYCACHEPREFIX|AGENT_MESHES_DEV_LIB)$/i.test(name)))) return { reason: 'external-runtime-override' };
   const helperRoot = fileURLToPath(new URL('../scripts/blender_lib/', import.meta.url));
@@ -100,26 +104,40 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
   const contained = (path: string) => !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`);
   if (contained(overlap) || contained(reverse)) throw new Error('Build output cannot overlap the Blender installation');
   let snapshots: Snapshot[];
-  try {
+  const captureRuntime = async () => {
     const listing = await tree(root);
-    const hashed = await batches(listing, async item => {
+    return batches(listing, async item => {
       const info = await lstat(item.path);
       return info.isDirectory() ? item : hashFile(item.path);
     });
-    snapshots = hashed;
+  };
+  const validateRuntime = async (expected: Snapshot[]) => {
+    const current = await tree(root);
+    if (current.length !== expected.length || current.some((item, index) => item.path !== expected[index].path || item.metadata !== expected[index].metadata)) throw new Error('Blender runtime changed during build');
+  };
+  try {
+    snapshots = session ? await session.get('blenderRuntime', command, captureRuntime, validateRuntime) : await captureRuntime();
   } catch (error) {
-    if (/changed while hashing/.test(String(error))) throw error;
+    if (/changed while hashing|runtime changed|BUILD_SESSION_/.test(String(error))) throw error;
     return { reason: 'unsupported-blender-runtime-files' };
   }
-  const implementation = await Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-read-audit.ts', 'build-native-cache.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
+  const captureImplementation = () => Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-read-audit.ts', 'build-native-cache.ts', 'build-session.ts', 'build-batch.ts', 'build-config.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
+  const validateImplementation = async (expected: Snapshot[]) => {
+    for (const file of expected) if (metadata(await lstat(file.path, { bigint: true })) !== file.metadata) throw new Error('Native build implementation changed during build');
+  };
+  const implementation = session ? await session.get('nativeImplementation', fileURLToPath(new URL('./', import.meta.url)), captureImplementation, validateImplementation) : await captureImplementation();
   const cwd = process.cwd();
-  const key = digest({
-    policy: 'declared-inputs-complete/factory-startup/fresh-python-source@2', identity, cwd, helperRoot,
-    environment: Object.entries(environment).sort(([a], [b]) => a.localeCompare(b)),
-    node: process.version, platform: process.platform, arch: process.arch,
-    command, runtime: snapshots.map(item => ({ path: portable(relative(root, item.path)), sha256: item.sha256 ?? 'directory' })),
-    implementation: implementation.map(item => item.sha256),
-  });
+  // Exact digests are authoritative; component names only explain misses.
+  const components: Components = {
+    inputs: digest({ config: identity.config, ...(identity.configurations ? { configurations: identity.configurations } : {}), inputs: identity.inputs }),
+    tools: digest({ helpers: identity.helpers, implementation: implementation.map(item => item.sha256) }),
+    runtime: digest(snapshots.map(item => ({ path: portable(relative(root, item.path)), sha256: item.sha256 ?? 'directory' }))),
+    environment: digest(Object.entries(environment).sort(([a], [b]) => a.localeCompare(b))),
+    cwd: digest(cwd), location: digest({ script: identity.script, configFile: identity.configFile, helperRoot, command, root }),
+    platform: digest({ node: process.version, platform: process.platform, arch: process.arch }),
+    policy: digest('declared-inputs-complete/factory-startup/fresh-python-source/component-key@3'),
+  };
+  const key = digest(components);
   async function plainBytes(path: string): Promise<Buffer> {
     const before = await lstat(path, { bigint: true });
     if (!before.isFile() || before.nlink !== 1n) throw new Error('Native cache must use regular files without links');
@@ -132,32 +150,35 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     read: async directory => {
       let record: Record;
       try {
-        const parsed = recordSchema.safeParse(JSON.parse((await plainBytes(join(directory, nativeCacheFiles[0]))).toString('utf8')));
-        if (!parsed.success || parsed.data.key !== key) return;
+        const raw = JSON.parse((await plainBytes(join(directory, nativeCacheFiles[0]))).toString('utf8'));
+        if (raw && typeof raw === 'object' && raw.schema === 'agent-meshes/native-blender-cache@1') return { reason: 'legacy-cache-record' };
+        const parsed = recordSchema.safeParse(raw);
+        if (!parsed.success || parsed.data.key !== digest(parsed.data.components)) return { reason: 'cache-record-invalid' };
+        if (parsed.data.key !== key) return { reason: 'cache-key-changed', changedComponents: (Object.keys(components) as (keyof Components)[]).filter(name => components[name] !== parsed.data.components[name]) };
         record = parsed.data;
       } catch (error) {
-        if (error instanceof SyntaxError || (error as NodeJS.ErrnoException).code === 'ENOENT') return;
+        if (error instanceof SyntaxError) return { reason: 'cache-record-invalid' };
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { reason: 'cache-record-missing' };
         throw error;
       }
       let bytes: Buffer;
       try { bytes = await plainBytes(join(directory, nativeCacheFiles[1])); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-      if (byteDigest(bytes) !== record.outputSha256) return;
-      return { bytes, blender: record.blender, meshes: record.meshes, readAudit: record.readAudit };
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { reason: 'cache-output-missing' }; throw error; }
+      if (byteDigest(bytes) !== record.outputSha256) return { reason: 'cache-output-corrupt' };
+      return { reason: 'matching-native-cache', value: { bytes, blender: record.blender, meshes: record.meshes, readAudit: record.readAudit } };
     },
     write: async (stage, bytes, result) => {
-      const record: Record = { schema: 'agent-meshes/native-blender-cache@1', key, outputSha256: byteDigest(bytes), blender: result.blender, meshes: result.meshes, readAudit: result.readAudit };
+      const record: Record = { schema: 'agent-meshes/native-blender-cache@2', key, components, outputSha256: byteDigest(bytes), blender: result.blender, meshes: result.meshes, readAudit: result.readAudit };
       // Exclusive creation in the private stage cannot follow a decorator's link
       // or overwrite a file it created. The output transaction publishes both.
       await writeFile(join(stage, nativeCacheFiles[1]), bytes, { flag: 'wx' });
       await writeFile(join(stage, nativeCacheFiles[0]), `${JSON.stringify(record, null, 2)}\n`, { flag: 'wx' });
     },
     assertUnchanged: async () => {
-      const current = await tree(root);
-      if (current.length !== snapshots.length || current.some((item, index) => item.path !== snapshots[index].path || item.metadata !== snapshots[index].metadata)) throw new Error('Blender runtime changed during build');
+      await validateRuntime(snapshots);
       const shared = await tree(helperRoot);
       if (shared.length !== helperFiles.length || shared.some((item, index) => item.path !== helperFiles[index].path || item.metadata !== helperFiles[index].metadata)) throw new Error('Shared Python runtime changed during build');
-      for (const expected of implementation) if (metadata(await lstat(expected.path, { bigint: true })) !== expected.metadata) throw new Error('Native build implementation changed during build');
+      await validateImplementation(implementation);
     },
   };
   return { cache, reason: 'no-matching-native-cache' };

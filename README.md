@@ -2,6 +2,12 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.23.0 adds static-prop Unreal inspection and signed-axis calibration,
+native `build()` vertex-colour export controls, shared config defaults and an
+explicit batch that hashes each toolchain once per invocation. Native cache
+misses identify changed key components. See [native build identity](skills/mesh-build/references/native-build-identity.md)
+and [static-prop checks](skills/mesh-build/references/unreal-static-props.md).
+
 Release 0.21.0 adds declared native input trees: list a library directory once,
 optionally filter or pin its selected files, and invalidate Blender reuse when
 matching files are added, removed or edited. Receipts show the expanded files
