@@ -21,3 +21,11 @@ it('refuses further use after close and releases snapshots', async () => {
   await expect(session.get('helperToolchain', '/helpers', async () => 'other', async () => {})).rejects.toThrow(/BUILD_SESSION_CLOSED/);
   expect(session.stats().captures).toEqual({ helperToolchain: 1 });
 });
+
+it('owns private snapshots rather than exposing mutable capture or caller aliases', async () => {
+  const session=new NativeBuildSession(),source={identity:{sha:'original'},files:['source.py']};
+  const first=await session.get('helperToolchain','/helpers',async()=>source,async()=>{});
+  first.identity.sha='caller mutation';first.files.push('invented.py');source.identity.sha='capture alias mutation';
+  const next=await session.get('helperToolchain','/helpers',async()=>source,async value=>{value.files.push('validator mutation');});
+  expect(next).toEqual({identity:{sha:'original'},files:['source.py']});
+});

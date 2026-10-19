@@ -18,15 +18,17 @@ export class NativeBuildSession {
         this.#failed = Object.assign(new Error(`BUILD_SESSION_CHANGED: ${kind}: ${String(cause)}`, { cause }), { code: 'BUILD_SESSION_CHANGED' });
         throw this.#failed;
       }
-      return existing.value as T;
+      return structuredClone(existing.value) as T;
     }
-    const value = await capture();
+    // Resources are structured-cloneable data. Neither callers, capture aliases
+    // nor validation callbacks receive the privately owned snapshot itself.
+    const value = structuredClone(await capture());
     // A snapshot must still match after its complete capture, before sharing.
-    await validate(value);
-    this.#entries.set(id, { kind, value, validate: () => validate(value) });
+    await validate(structuredClone(value));
+    this.#entries.set(id, { kind, value, validate: () => validate(structuredClone(value)) });
     this.#captures[kind] = (this.#captures[kind] ?? 0) + 1;
     this.#validations[kind] = (this.#validations[kind] ?? 0) + 1;
-    return value;
+    return structuredClone(value);
   }
   stats() { return { captures: { ...this.#captures }, validations: { ...this.#validations } }; }
   async assertUnchanged() {
