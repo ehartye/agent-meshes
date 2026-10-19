@@ -193,3 +193,16 @@ snapshot of all private implementation names; published export compatibility
 remains covered. Two separate read-only planning respondents compared one robot/
 hood scenario with and without candidate guidance; this adds two calls outside
 the delivery workflow's eight-call budget and does not establish asset efficacy.
+
+## Reviewed revision R1
+
+Fresh verification run509e281c-0fa5-499f-8445-1b1fa22bb88a found decorated-output
+verification could be stale. Root reproduced/fixed that boundary and added direct
+recipe-scope enforcement to the release recorder. These are coordinator-owned
+build/CI contracts. Preserve the original successful face review and the original
+build finding. Freeze the new candidate and request one fresh bounded build/CI
+review (explicit empty bundle, restricted read-only policy); do not replay old
+writers or claim the first candidate's checks cover the changed bytes. This uses
+one of the two planned revision rounds. Root owns fresh seam/typecheck/docs/CI and
+native smoke checks; observers attach through terminal. No uncertain effects are
+being repeated.

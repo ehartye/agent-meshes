@@ -119,13 +119,13 @@ async function move(source: string, destination: string): Promise<void> {
 }
 
 /** Replace the receipt itself, never write through a path a decorator may have changed into a link. */
-async function writeAuthoringReceipt(stage: string, receipt: unknown): Promise<void> {
-  const destination = join(stage, 'authoring.json');
+async function writeBuildReceipt(stage: string, name: 'authoring.json' | 'verification.json', receipt: unknown): Promise<void> {
+  const destination = join(stage, name);
   if (await exists(destination)) {
     const info = await lstat(destination);
-    if (!info.isFile() || info.nlink !== 1) throw new Error('Authoring receipt must be a regular file without links');
+    if (!info.isFile() || info.nlink !== 1) throw new Error(`${name} must be a regular file without links`);
   }
-  const temporary = join(stage, `.authoring-${randomUUID()}.tmp`);
+  const temporary = join(stage, `.${name}-${randomUUID()}.tmp`);
   await writeFile(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { flag: 'wx' });
   await move(temporary, destination);
 }
@@ -171,13 +171,17 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
       const result = await authorGLB(input, join(stage, 'model.glb'));
       checkToolchainPin(config.blender.toolchain, { ...tools!.identity, blenderVersion: result.blender });
       const bytes = await readFile(join(stage, 'model.glb'));
-      const verification = await verifyGLB(bytes, geometryTarget);
-      if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
-      const enclosures = await checkEnclosures(bytes);
-      const limits = checkBuildLimits(bytes, config.verify);
-      const detached = lintDetached(bytes, limits);
+      const recordVerification = async (current: Uint8Array) => {
+        const verification = await verifyGLB(current, geometryTarget);
+        if (!verification.ok) throw new Error(`Authored GLB verification failed with ${verification.errors} errors`);
+        const enclosures = await checkEnclosures(current);
+        const limits = checkBuildLimits(current, config.verify);
+        warnings.length = 0;
+        const detached = lintDetached(current, limits);
+        await writeBuildReceipt(stage!, 'verification.json', { ...verification, ...(enclosures ? { enclosures } : {}), detached, ...(limits ? { limits } : {}) });
+      };
+      await recordVerification(bytes);
       files = ['model.glb', 'verification.json', 'authoring.json'];
-      await writeFile(join(stage, 'verification.json'), `${JSON.stringify({ ...verification, ...(enclosures ? { enclosures } : {}), detached, ...(limits ? { limits } : {}) }, null, 2)}\n`);
       const receipt = {
         version: 1,
         source: { script: inputs!.entry.path, sha256: inputs!.entry.sha256 },
@@ -189,13 +193,16 @@ export async function buildAsset(configPath: string, options: { decorate?: (proj
           output: { path: 'model.glb', sha256: createHash('sha256').update(bytes).digest('hex') },
         },
       };
-      await writeAuthoringReceipt(stage, receipt);
+      await writeBuildReceipt(stage, 'authoring.json', receipt);
       finishAuthoring = async () => {
         // Hash the final staged artifact after decoration, rather than an earlier runner buffer.
         const info = await lstat(join(stage!, 'model.glb'));
         if (!info.isFile() || info.nlink !== 1) throw new Error('Authored model.glb must be a regular file without links');
-        receipt.provenance.output.sha256 = createHash('sha256').update(await readFile(join(stage!, 'model.glb'))).digest('hex');
-        await writeAuthoringReceipt(stage!, receipt);
+        const finalBytes = await readFile(join(stage!, 'model.glb'));
+        const finalHash = createHash('sha256').update(finalBytes).digest('hex');
+        if (finalHash !== receipt.provenance.output.sha256) await recordVerification(finalBytes);
+        receipt.provenance.output.sha256 = finalHash;
+        await writeBuildReceipt(stage!, 'authoring.json', receipt);
       };
       if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
     } else {

@@ -36,9 +36,17 @@ helper identity. It does not repair the separate managed-runtime identity issue
 or discover arbitrary Python's complete dependency closure.
 
 An integrated typecheck caught the producer's temporary Node/Vitest union-call
-adapter. The final test uses the normal Vitest runner; typecheck and24 authored
+adapter. The final test uses the normal Vitest runner; typecheck and25 authored
 build/provenance seam tests pass. Broader required CI and final project-pilot
 receipts are recorded in the wiki/current execution evidence, not invented here.
 The [one planning comparison](comparison.md) is not asset-quality/time-savings
 evidence. Previous native Unreal grouping and face-construction failures are
 outside this slice and are not reported as fixed.
+
+Fresh independent workflow review found a stale-verification gap when a decoration
+callback replaces the authored GLB. A failing invalid/over-budget output control
+reproduced it. Finalization now revalidates changed bytes, refreshes verification
+and writes receipts atomically without following linked destinations. The full
+release recorder also requires recipe-example scope directly. These fixes have
+focused rejection/preservation controls and require a new frozen candidate gate;
+the original review and superseded CI remain historical evidence.

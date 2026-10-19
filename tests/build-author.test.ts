@@ -149,27 +149,37 @@ it('keeps the extension strict and optional without accepting partial tool locks
 
 it('hashes the final staged model after decoration and preserves receipt availability in the callback', async () => {
   const { config, output } = await fixture();
-  const finalBytes = await exportGLB(applyOperation(createProject('final fixture'), { op: 'add', part: { name: 'different_body' } }));
+  const finalBytes = await exportGLB(applyOperation(applyOperation(createProject('final fixture'), { op: 'add', part: { name: 'different_body' } }), { op: 'add', part: { name: 'extra', position: [2, 0, 0] } }));
+  await writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py' }, output: 'generated', verify: { maxTriangles: 1000 } }));
+  let initialTriangles = 0;
   await buildAsset(config, { decorateAsset: async (_asset, stage) => {
     expect(JSON.parse(await readFile(join(stage, 'authoring.json'), 'utf8')).blender).toBe('5.0.1');
+    initialTriangles = JSON.parse(await readFile(join(stage, 'verification.json'), 'utf8')).limits.triangles;
     await writeFile(join(stage, 'model.glb'), finalBytes); return [];
   } });
   const receipt = JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'));
   expect(await readFile(join(output, 'model.glb'))).toEqual(Buffer.from(finalBytes));
   expect(receipt.provenance.output.sha256).toBe(createHash('sha256').update(finalBytes).digest('hex'));
+  const verified = JSON.parse(await readFile(join(output, 'verification.json'), 'utf8'));
+  expect(verified.ok).toBe(true);
+  expect(verified.limits.triangles).toBeGreaterThan(initialTriangles);
 });
 
 it('does not write through a linked receipt created during decoration and cleans the failed stage', async () => {
   const { config, directory, output, source } = await fixture();
   await buildAsset(config);
   const before = await readFile(join(output, 'model.glb'));
-  await expect(buildAsset(config, { decorateAsset: async (_asset, stage) => {
-    await rm(join(stage, 'authoring.json'));
-    await link(join(directory, 'bird.py'), join(stage, 'authoring.json'));
-    return [];
-  } })).rejects.toThrow(/link/i);
-  expect(await readFile(join(directory, 'bird.py'), 'utf8')).toBe(source);
-  expect(await readFile(join(output, 'model.glb'))).toEqual(before);
+  const changed = await exportGLB(applyOperation(createProject('replacement'), { op: 'add', part: { name: 'replacement' } }));
+  for (const name of ['authoring.json', 'verification.json']) {
+    await expect(buildAsset(config, { decorateAsset: async (_asset, stage) => {
+      await rm(join(stage, name));
+      await link(join(directory, 'bird.py'), join(stage, name));
+      if (name === 'verification.json') await writeFile(join(stage, 'model.glb'), changed);
+      return [];
+    } })).rejects.toThrow(/link/i);
+    expect(await readFile(join(directory, 'bird.py'), 'utf8')).toBe(source);
+    expect(await readFile(join(output, 'model.glb'))).toEqual(before);
+  }
   expect((await readdir(directory)).filter(name => /\.stage-|\.lock|\.backup-/.test(name))).toEqual([]);
 });
 
@@ -225,4 +235,20 @@ it('preserves canonical legacy config aliases and hard-linked entry files withou
   await link(join(real, 'bird.py'), join(real, 'entry-linked.py'));
   await writeFile(join(real, 'build.json'), JSON.stringify({ version: 1, blender: { script: 'entry-linked.py' }, output: 'generated' }));
   await expect(buildAsset(join(real, 'build.json'))).resolves.toHaveProperty('output');
+});
+
+
+it('rejects invalid or over-budget decorated models while preserving the last verified output', async () => {
+  const { config, output, directory } = await fixture();
+  await writeFile(config, JSON.stringify({ version: 1, blender: { script: 'bird.py' }, output: 'generated', verify: { maxTriangles: 68 } }));
+  await buildAsset(config);
+  const before = await readFile(join(output, 'model.glb'));
+  const overBudget = await exportGLB(applyOperation(applyOperation(createProject('over budget'), { op: 'add', part: { name: 'one' } }), { op: 'add', part: { name: 'two', position: [2, 0, 0] } }));
+  for (const replacement of [Buffer.from('invalid GLB'), Buffer.from(overBudget)]) {
+    await expect(buildAsset(config, { decorateAsset: async (_asset, stage) => {
+      await writeFile(join(stage, 'model.glb'), replacement); return [];
+    } })).rejects.toThrow();
+    expect(await readFile(join(output, 'model.glb'))).toEqual(before);
+    expect((await readdir(directory)).filter(name => /\.stage-|\.lock|\.backup-/.test(name))).toEqual([]);
+  }
 });

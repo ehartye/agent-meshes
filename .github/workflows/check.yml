@@ -250,6 +250,7 @@ jobs:
           CI_JAVASCRIPT: ${{ needs.quick.outputs.javascript }}
           CI_PYTHON: ${{ needs.quick.outputs.python }}
           CI_GEOMETRY_SWEEPS: ${{ needs.quick.outputs.geometry_sweeps }}
+          CI_RECIPE_EXAMPLES: ${{ needs.quick.outputs.recipe_examples }}
         run: node .github/scripts/release-candidate.mjs record
       - uses: actions/upload-artifact@v4
         if: steps.candidate.outputs.tree != ''
