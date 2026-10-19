@@ -158,7 +158,7 @@ declared **project root**, matching the selected input boundary. `reads` lists
 observed project paths and `undeclaredReads` identifies
 those absent from entry/expanded input declarations. Exact hashed helper files
 and installed Blender runtime paths are classified separately. Other paths appear
-in `externalReads`, relative to the config; they are **outside the enforced scope**,
+in the CLI's `externalReads`, relative to the input base; they are **outside the enforced scope**,
 remain owner-reviewed dependencies and are not made fresh by this diagnostic.
 Blender may inspect an external extension-registry cache during export, for example.
 
@@ -262,7 +262,9 @@ than assuming paths follow the defaults file. One ancestor per file and at most
 16 configs are allowed; cycles and unsafe property names fail.
 
 All raw config hashes enter the native key. Extended native receipts also list
-`provenance.configurations`, leaf first. Ancestor changes, deletion, replacement
+`provenance.configurations`, leaf first, with paths relative to the leaf config
+even when a project root is selected. This list is distinct from root-relative
+native input identities. Ancestor changes, deletion, replacement
 or alias retargeting during generation prevent publication. Output cannot contain
 any config in the chain. Shared pins are validation requirements, never automatic
 pin updates. The final merged config must satisfy the ordinary strict schema.
