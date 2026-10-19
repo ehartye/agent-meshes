@@ -9,6 +9,7 @@ import { auditMorphNames, SHARED_MORPH_FIX, UE_FALLBACK_MORPH_NAME, type MorphNa
 import { auditSkins, type SkinAudit } from './gltf-skins.ts';
 import { ARKIT_FACE_CONTRACT } from './arkit-face.ts';
 import { auditGlass, type GlassMaterial } from './gltf-materials.ts';
+import { createUnrealAxisCalibrationGLB, UNREAL_AXIS_CALIBRATION } from './unreal-calibration.ts';
 
 /**
  * Unreal destination check: import a GLB into a scratch UE project headlessly through
@@ -202,9 +203,26 @@ export interface UnrealSkeletalMeshFacts {
   /** Why `boneParents` could not be read. */
   boneParentsError?: string;
 }
+export type UnrealVector3 = [number, number, number];
+/** Asset-local, Unreal XYZ centimetres. Size is the full min-to-max span, not half extent. */
+export interface UnrealBoundsCm { space: 'asset-local'; includesBoundsExtensions: true; min: UnrealVector3; max: UnrealVector3; center: UnrealVector3; size: UnrealVector3 }
+export interface UnrealStaticMeshFacts {
+  path: string; lods: number; vertices: number[]; materials?: (UnrealMaterialFacts | null)[];
+  /** Render-resource triangles per LOD (Nanite fallback when Nanite is enabled), not source/Nanite cluster triangles. */
+  triangles?: (number | null)[];
+  /** Triangles in the Nanite representation, distinct from render-resource LOD triangles. */
+  naniteTriangles?: number | null;
+  boundsCm?: UnrealBoundsCm | null;
+  /** Asset enable setting only: does not assert hardware support or that Nanite rendered. */
+  naniteEnabled?: boolean | null;
+  /** Source-model build setting per LOD, not a measurement of GPU UV buffers. */
+  fullPrecisionUVs?: (boolean | null)[];
+  /** Unavailable measurements stay null and carry a reason. */
+  measurementErrors?: Record<string, string>;
+}
 export interface UnrealRawReport {
   ok: boolean; engineVersion?: string; destination: string; importReturned: boolean; error?: string;
-  assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: { path: string; lods: number; vertices: number[]; materials?: (UnrealMaterialFacts | null)[] }[];
+  assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: UnrealStaticMeshFacts[];
 }
 /** What the GLB itself says before Unreal sees it: its morph name, skin and glass audits, or why it could not be read. */
 export interface UnrealPreflight { morphNames?: MorphNameAudit; skins?: SkinAudit; glass?: GlassMaterial[]; error?: string }
@@ -221,7 +239,7 @@ export interface UnrealReport {
   assetsByClass: Record<string, string[]>; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: UnrealRawReport['staticMeshes'];
   morphTargets: string[]; bones: string[];
   log: { file: string; importErrors: string[]; importWarnings: string[]; otherErrors: string[]; interchangeCompleted: boolean; windowFound: boolean };
-  expectations?: { contract?: string; morphs: string[]; bones: string[]; parents?: Record<string, string | null> };
+  expectations?: Omit<UnrealExpectations, 'requireSkeletalMesh' | 'singleSkeletalMesh'>;
   /**
    * The GLB's rendered vertices (triangles' distinct vertices, from the pre-flight) against
    * LOD 0 of every SkeletalMesh and StaticMesh Unreal made. Absent when the GLB was unreadable.
@@ -345,6 +363,14 @@ export interface UnrealExpectations {
   singleSkeletalMesh?: boolean;
   /** Required bone parents: a bone mapped to its parent bone, or null for the skin's root joint. */
   parents?: Record<string, string | null>;
+  /** Full XYZ size of exactly one selected StaticMesh in Unreal centimetres. */
+  staticBounds?: { size: UnrealVector3; toleranceCm?: number; mesh?: string };
+  /** Exact path or asset basename; needed when there is more than one StaticMesh. */
+  staticMesh?: string;
+  staticNanite?: boolean;
+  staticFullPrecisionUVs?: boolean;
+  /** Built-in asymmetric marker fixture only; checks signed center and unequal size per label. */
+  axisCalibration?: boolean;
 }
 
 const quoted = (names: readonly string[], limit = 8) => names.slice(0, limit).map(n => `"${n}"`).join(', ') + (names.length > limit ? ` and ${names.length - limit} more` : '');
@@ -564,8 +590,56 @@ export function reviewUnrealReport(report: UnrealReport, expect: UnrealExpectati
     } else if (glass.blendMode === null) warnings.push(`glass material "${glass.material}": Unreal did not report a blend mode, so its translucency is unchecked`);
     else if (!glass.ok) failures.push(`glass material "${glass.material}" (${glass.gltf}) imported opaque: Unreal material "${glass.unreal}" has blend mode ${glass.blendMode}, so the surface behind it would be hidden`);
   }
+  failures.push(...staticPropFailures(report, expect));
   if (errors.length) failures.push(`${report.log.importErrors.length} import error(s): ${report.log.importErrors.join(' | ')}`);
   return { failures, warnings };
+}
+
+/** Parse full XYZ bounds in Unreal centimetres. */
+export function parseUnrealBounds(value: string): UnrealVector3 {
+  const parts = value.split(',').map(v => Number(v.trim()));
+  if (parts.length !== 3 || parts.some(v => !Number.isFinite(v) || v <= 0)) throw Object.assign(new Error('Expected bounds as three positive finite full sizes in centimetres: x,y,z'), { code: 'CLI_ARGUMENT_ERROR' });
+  return parts as UnrealVector3;
+}
+
+function staticPropFailures(report: UnrealReport, expect: UnrealExpectations): string[] {
+  const failures: string[] = [];
+  const tolerance = expect.staticBounds?.toleranceCm ?? 0.1;
+  if (!Number.isFinite(tolerance) || tolerance < 0) return ['bounds tolerance must be a finite nonnegative number of centimetres'];
+  const close = (a: UnrealVector3, b: UnrealVector3) => Array.isArray(a) && a.length === 3 && b.length === 3 && a.every((v,i) => Number.isFinite(v) && Number.isFinite(b[i]) && Math.abs(v-b[i]) <= tolerance);
+  if (expect.axisCalibration) {
+    if (report.staticMeshes.length !== UNREAL_AXIS_CALIBRATION.length) failures.push(`axis calibration: expected ${UNREAL_AXIS_CALIBRATION.length} StaticMeshes, found ${report.staticMeshes.length}`);
+    for (const marker of UNREAL_AXIS_CALIBRATION) {
+      const matches = report.staticMeshes.filter(m => m.path.split('/').pop() === marker.name);
+      if (matches.length !== 1) { failures.push(`axis calibration: expected exactly one StaticMesh labeled "${marker.name}", found ${matches.length}`); continue; }
+      const bounds = matches[0].boundsCm;
+      if (!bounds) failures.push(`axis calibration: "${marker.name}" bounds unavailable: ${matches[0].measurementErrors?.boundsCm ?? 'Unreal did not report bounds'}`);
+      else {
+        if (!close(bounds.center,marker.unrealCenterCm)) failures.push(`axis calibration: "${marker.name}" center ${bounds.center.join(',')} cm, expected ${marker.unrealCenterCm.join(',')} cm (glTF +X→UE +X, +Y→+Z, +Z→+Y; check axis mapping or mirroring)`);
+        if (!close(bounds.size,marker.unrealSizeCm)) failures.push(`axis calibration: "${marker.name}" size ${bounds.size.join(',')} cm, expected ${marker.unrealSizeCm.join(',')} cm (check units/scale)`);
+      }
+    }
+  }
+  if (expect.staticBounds || expect.staticNanite !== undefined || expect.staticFullPrecisionUVs !== undefined) {
+    const selector = expect.staticMesh ?? expect.staticBounds?.mesh;
+    const matches = selector ? report.staticMeshes.filter(m=>m.path===selector || m.path.split('/').pop()===selector) : report.staticMeshes;
+    if (matches.length !== 1) return [...failures, `static-prop expectations need exactly one StaticMesh, found ${matches.length}${selector ? ` matching "${selector}"` : '; select one with --static-mesh'}`];
+    const mesh = matches[0], label = `StaticMesh ${assetName(mesh.path)}`;
+    if (expect.staticBounds) {
+      if (!mesh.boundsCm) failures.push(`${label} bounds unavailable: ${mesh.measurementErrors?.boundsCm ?? 'Unreal did not report bounds'}`);
+      else if (!close(mesh.boundsCm.size,expect.staticBounds.size)) failures.push(`${label} bounds size ${mesh.boundsCm.size.join(',')} cm, expected ${expect.staticBounds.size.join(',')} cm ±${tolerance} cm per axis`);
+    }
+    if (expect.staticNanite !== undefined) {
+      if (typeof mesh.naniteEnabled !== 'boolean') failures.push(`${label} Nanite enabled setting unavailable: ${mesh.measurementErrors?.naniteEnabled ?? 'Unreal did not report it'}`);
+      else if (mesh.naniteEnabled !== expect.staticNanite) failures.push(`${label} Nanite enabled setting is ${mesh.naniteEnabled}, expected ${expect.staticNanite}`);
+    }
+    if (expect.staticFullPrecisionUVs !== undefined) {
+      const values=mesh.fullPrecisionUVs;
+      if (!values || mesh.lods < 1 || values.length !== mesh.lods || values.some(v=>typeof v !== 'boolean')) failures.push(`${label} full-precision UV build setting unavailable for one or more LODs: ${Object.entries(mesh.measurementErrors ?? {}).filter(([key])=>key.startsWith('fullPrecisionUVs')).map(([,reason])=>reason).join('; ') || 'Unreal did not report it'}`);
+      else for (const [lod,value] of values.entries()) if (value !== expect.staticFullPrecisionUVs) failures.push(`${label} LOD ${lod} full-precision UV build setting is ${value}, expected ${expect.staticFullPrecisionUVs}`);
+    }
+  }
+  return failures;
 }
 
 export interface VerifyUnrealOptions extends UnrealExpectations {
@@ -650,7 +724,7 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
     const review = reviewUnrealReport(report, options);
     report.failures = review.failures; report.warnings.push(...review.warnings);
     report.ok = report.failures.length === 0;
-    report.expectations = { ...(options.contract ? { contract: options.contract } : {}), morphs: options.morphs, bones: options.bones, ...(options.parents && Object.keys(options.parents).length ? { parents: options.parents } : {}) };
+    report.expectations = { ...(options.contract ? { contract: options.contract } : {}), morphs: options.morphs, bones: options.bones, ...(options.parents && Object.keys(options.parents).length ? { parents: options.parents } : {}), ...(options.staticBounds ? {staticBounds:options.staticBounds}:{}), ...(options.staticMesh ? {staticMesh:options.staticMesh}:{}), ...(options.staticNanite !== undefined ? {staticNanite:options.staticNanite}:{}), ...(options.staticFullPrecisionUVs !== undefined ? {staticFullPrecisionUVs:options.staticFullPrecisionUVs}:{}), ...(options.axisCalibration ? {axisCalibration:true}:{}) };
     await rm(join(root, 'Content', 'Verify'), { recursive: true, force: true });
     return report;
   } finally {
@@ -663,3 +737,12 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
 
 /** Whether an Unreal install can be found (integration tests skip without one). */
 export const unrealAvailable = () => { try { return findUnreal() !== null; } catch { return false; } };
+
+/** Import the built-in diagnostic fixture. Uses the same locked scratch project and checks. */
+export async function verifyUnrealAxisCalibration(options: VerifyUnrealOptions): Promise<UnrealReport> {
+  const dir = join(tmpdir(), `agent-meshes-axis-calibration-${randomUUID()}`);
+  await mkdir(dir, {recursive:true});
+  const glb=join(dir,'AxisCalibration.glb');
+  try { await writeFile(glb,createUnrealAxisCalibrationGLB()); return await verifyUnreal(glb,{...options,axisCalibration:true}); }
+  finally { await rm(dir,{recursive:true,force:true}); }
+}

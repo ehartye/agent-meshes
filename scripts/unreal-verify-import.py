@@ -7,6 +7,7 @@ what Unreal created. The Node side parses the log for errors and warnings betwee
 the AGENT_MESHES_IMPORT_BEGIN and AGENT_MESHES_IMPORT_END markers.
 """
 import json
+import math
 import os
 import re
 import traceback
@@ -101,6 +102,49 @@ def material_facts(material):
 def static_mesh_facts(mesh):
     lods = mesh.get_num_lods()
     facts = {'path': mesh.get_path_name().split('.')[0], 'lods': lods, 'vertices': [mesh.get_num_vertices(lod) for lod in range(lods)]}
+    # These are render-resource (fallback for Nanite) triangles, not source/Nanite cluster counts.
+    # UE5.8: UStaticMesh::GetNumTriangles / GetBoundingBox; StaticMeshEditorSubsystem
+    # GetNaniteSettings / GetLodBuildSettings. Keep unknown distinct from false/zero.
+    errors = {}
+    def measure(key, operation):
+        try:
+            return operation()
+        except Exception as exc:
+            errors[key] = type(exc).__name__ + ': ' + str(exc)
+            return None
+    def nonnegative(value):
+        if value < 0:
+            raise ValueError('Unreal returned an unavailable negative measurement')
+        return int(value)
+    def setting(value):
+        if not isinstance(value, bool):
+            raise ValueError('Unreal did not return a boolean build setting')
+        return value
+    def vector(value):
+        result = [float(value.x), float(value.y), float(value.z)]
+        if not all(math.isfinite(component) for component in result):
+            raise ValueError('Unreal returned non-finite bounds')
+        return result
+    def bounds():
+        box = mesh.get_bounding_box()
+        low, high = vector(box.min), vector(box.max)
+        return {'space': 'asset-local', 'includesBoundsExtensions': True,
+                'min': low, 'max': high,
+                'center': [(a + b) / 2 for a, b in zip(low, high)],
+                'size': [b - a for a, b in zip(low, high)]}
+    facts['triangles'] = [measure('triangles[' + str(lod) + ']', lambda lod=lod: nonnegative(mesh.get_num_triangles(lod))) for lod in range(lods)]
+    facts['naniteTriangles'] = measure('naniteTriangles', lambda: nonnegative(mesh.get_num_nanite_triangles()))
+    facts['boundsCm'] = measure('boundsCm', bounds)
+    # PythonScriptCommandlet does not instantiate every editor subsystem. These getters
+    # are asset queries with no initialized subsystem state (UE5.8 source); use a
+    # class-default query object there. These calls never modify the default object.
+    subsystem = unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem)
+    if subsystem is None:
+        subsystem = unreal.get_default_object(unreal.StaticMeshEditorSubsystem)
+    facts['naniteEnabled'] = measure('naniteEnabled', lambda: setting(subsystem.get_nanite_settings(mesh).get_editor_property('enabled')))
+    facts['fullPrecisionUVs'] = [measure('fullPrecisionUVs[' + str(lod) + ']', lambda lod=lod: setting(subsystem.get_lod_build_settings(mesh, lod).get_editor_property('use_full_precision_u_vs'))) for lod in range(lods)]
+    if errors:
+        facts['measurementErrors'] = errors
     try:
         facts['materials'] = [material_facts(slot.get_editor_property('material_interface')) for slot in mesh.get_editor_property('static_materials')]
     except Exception:
@@ -141,4 +185,5 @@ def main():
         json.dump(report, handle, indent=1)
 
 
-main()
+if __name__ == '__main__':
+    main()
