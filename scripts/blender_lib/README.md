@@ -66,6 +66,13 @@ and agrees with the omitted option on Blender 5.2.2. `NAME` is not exposed; it
 would need a separate named-layer argument. `all_vertex_colors` accepts only
 `None` or a bool.
 
+`mesh preview source.py --views body-front --shading color,vertex --sheet` compares
+material viewport color with the active RGB attribute. It also accepts the exported
+GLB. Workbench preview uses `active_color_index`, so align it with `render_color_index`
+before judging source/export agreement. Preview leaves those selections and shader
+nodes alone. It is a lit RGB diagnostic, not alpha-mask visualization or a substitute
+for the consumer's material, texture and transparency checks.
+
 Invalid values and unavailable native enum modes fail before object iteration,
 selection changes or export. There is no fallback to a different export mode.
 The overrides change no color layers, shader nodes, texture files or material

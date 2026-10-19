@@ -276,6 +276,7 @@ mesh preview asset-src/mara/build.json --views head --shading matcap,wire,cavity
   - `wire` shows edge flow over the matcap.
   - `cavity` shows creases and ridges.
   - `color` shows material colors.
+  - `vertex` shows the active RGB color attribute, for POINT or CORNER paint and imported GLBs.
   - `all` renders every shading.
 - **Poses.** `--pose name:key=w,...` sets shape-key weights and can be repeated. `--shape` adds
   weights to every pose. Armatures stay in the rest pose unless you pass `--posed`.
@@ -283,6 +284,12 @@ mesh preview asset-src/mara/build.json --views head --shading matcap,wire,cavity
   `--sheet` adds `sheet.png`, with one row per pose.
 - **Output.** Files are named `<pose>-<view>-<shading>.png`, plus a `preview.json` manifest, in
   `--out` (default `preview/` beside the source).
+
+For paint inspection, use `--shading color,vertex --sheet`. Workbench vertex mode uses
+`mesh.color_attributes.active_color_index`; `ACTIVE` GLB export uses `render_color_index`.
+Align both explicitly when comparing source and export. Preview does not select another
+layer or rewrite shaders. This is a lit RGB diagnostic: alpha masks, textures, shader
+graphs and final engine appearance require their own checks. Defaults remain matcap.
 
 `mesh preview --worker` keeps one headless Blender running and waits on a queue folder. Later
 `mesh preview` calls hand their job to it and skip Blender's startup, which is slow through the

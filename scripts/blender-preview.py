@@ -35,7 +35,7 @@ VIEWS = {
     'eyes': (0, 0, .4, 'head', -.25), 'mouth': (0, 0, .4, 'head', -.75), 'mouth-q34': (35, -10, .45, 'head', -.75),
     'body-front': (0, 0, 1.0, 'body'), 'body-q34': (35, 5, 1.0, 'body'), 'body-side': (90, 0, 1.0, 'body'), 'body-back': (180, 0, 1.0, 'body'),
 }
-SHADINGS = ('matcap', 'wire', 'cavity', 'zebra', 'color')
+SHADINGS = ('matcap', 'wire', 'cavity', 'zebra', 'color', 'vertex')
 LENS = 85.0
 
 
@@ -143,6 +143,9 @@ def set_shading(scene, shading, wires):
         sh.cavity_type = 'BOTH'
         sh.cavity_ridge_factor = sh.cavity_valley_factor = 2.0
         sh.curvature_ridge_factor = sh.curvature_valley_factor = 2.0
+    elif shading == 'vertex':
+        sh.light = 'STUDIO'
+        sh.color_type = 'VERTEX'
     else:
         sh.light = 'STUDIO'
         sh.color_type = 'MATERIAL'

@@ -1,0 +1,75 @@
+{
+  "ok": true,
+  "scope": "Isolated candidate managed setup, bytecode generation and normal source/GLB vertex-preview launch; not marketplace delivery or engine acceptance",
+  "version": "0.25.0",
+  "node": "24.18.0",
+  "blender": "C:\\Users\\ehart\\tools\\blender\\blender-5.2.2-windows-x64\\blender.exe",
+  "blenderSource": "AGENT_MESHES_BLENDER",
+  "fingerprint": "42fa47a745e5bcbe7afae7ed2b0493bfec37a929f66c2b0528cff4e5fe4aa124",
+  "sourceFingerprintUnchanged": true,
+  "runtimeFingerprintUnchanged": true,
+  "inputInventoryHasBytecode": false,
+  "generatedCacheFiles": [
+    [
+      "blender-preview.cpython-312.pyc"
+    ],
+    [
+      "blender-preview.cpython-312.pyc"
+    ]
+  ],
+  "installationReadyAfterNativePreview": true,
+  "previews": [
+    {
+      "name": "source",
+      "version": 1,
+      "source": "C:\\Users\\ehart\\AppData\\Local\\Temp\\agent-meshes-runtime-vertex-preview-20261019\\mesh-vertex-preview-BxcluN\\corner\\asset.py",
+      "blender": "5.2.2 LTS",
+      "views": [
+        "body-front"
+      ],
+      "shadings": [
+        "color",
+        "vertex"
+      ],
+      "poses": [
+        {
+          "name": "rest",
+          "shapes": {}
+        }
+      ],
+      "size": 128,
+      "files": [
+        "rest-body-front-color.png",
+        "rest-body-front-vertex.png"
+      ],
+      "sheet": "sheet.png",
+      "seconds": 1.94
+    },
+    {
+      "name": "exported",
+      "version": 1,
+      "source": "C:\\Users\\ehart\\AppData\\Local\\Temp\\agent-meshes-runtime-vertex-preview-20261019\\mesh-vertex-preview-BxcluN\\corner\\model.glb",
+      "blender": "5.2.2 LTS",
+      "views": [
+        "body-front"
+      ],
+      "shadings": [
+        "color",
+        "vertex"
+      ],
+      "poses": [
+        {
+          "name": "rest",
+          "shapes": {}
+        }
+      ],
+      "size": 128,
+      "files": [
+        "rest-body-front-color.png",
+        "rest-body-front-vertex.png"
+      ],
+      "sheet": "sheet.png",
+      "seconds": 2.17
+    }
+  ]
+}

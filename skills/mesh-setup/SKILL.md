@@ -68,6 +68,11 @@ overrides the managed home for both setup and launch and must stay outside the p
 checkout. If the report carries `pathHint`, the bare `agent-meshes` command needs that directory
 on PATH; skills never depend on it.
 
+Generated Python `__pycache__` directories and `.pyc`/`.pyo` files are excluded from the
+shared runtime inventory used for fingerprinting, copying and verification. A generated
+cache alone does not need reinstalling; real Python source/resource changes still do.
+This runtime rule does not change an asset build's declared input or cache-key contract.
+
 ## Invocation used by every mesh skill
 
 ```text
