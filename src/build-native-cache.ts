@@ -9,6 +9,7 @@ import type { AuthorOptions } from './author.ts';
 import type { BlenderLocation } from './refine.ts';
 import { readAuditSchema, type ReadAudit } from './build-read-audit.ts';
 import type { NativeBuildSession } from './build-session.ts';
+import { prepareBuildEnvironment } from './build-environment.ts';
 
 export const nativeCacheFiles = ['.agent-meshes-blender-cache.json', '.agent-meshes-blender-cache.bin'] as const;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -76,11 +77,12 @@ export interface NativeCache {
   write: (stage: string, bytes: Uint8Array, result: { blender: string; meshes: number; readAudit: ReadAudit }) => Promise<void>;
   assertUnchanged: () => Promise<void>;
 }
-interface NativeIdentity { script: string; configFile: string; inputs: { path: string; sha256: string }[]; config: unknown; configurations?: { path: string; sha256: string }[]; helpers: unknown }
+interface NativeIdentity { script: string; configFile: string; inputRoot?: string; inputs: { path: string; sha256: string }[]; config: unknown; configurations?: { path: string; sha256: string }[]; helpers: unknown }
 
 /** Opt-in owner-declared dependency contract; never inferred from an old receipt. */
-export async function prepareNativeCache(location: BlenderLocation | null, identity: NativeIdentity, output: string, stage: string, session?: NativeBuildSession): Promise<{ cache?: NativeCache; reason: string }> {
-  const environment = { ...process.env };
+export async function prepareNativeCache(location: BlenderLocation | null, identity: NativeIdentity, output: string, stage: string, session?: NativeBuildSession, launchEnvironment = prepareBuildEnvironment()): Promise<{ cache?: NativeCache; reason: string }> {
+  if (process.permission) return { reason: 'unsupported-node-permission-mode' };
+  const environment = launchEnvironment.env;
   if (Object.keys(environment).some(name => environment[name] && (/^BLENDER_/i.test(name) || /^(PYTHONPATH|PYTHONHOME|PYTHONUSERBASE|PYTHONPYCACHEPREFIX|AGENT_MESHES_DEV_LIB)$/i.test(name)))) return { reason: 'external-runtime-override' };
   const helperRoot = fileURLToPath(new URL('../scripts/blender_lib/', import.meta.url));
   let helperFiles: Snapshot[];
@@ -88,7 +90,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
   catch { return { reason: 'unsupported-shared-python-runtime' }; }
   if (helperFiles.some(file => file.path.endsWith('.pyc') && !relative(helperRoot, file.path).split(sep).includes('__pycache__'))) return { reason: 'bytecode-only-helper' };
   const pathKey = (path: string) => process.platform === 'win32' ? path.toLowerCase() : path;
-  const declared = new Set(identity.inputs.map(file => pathKey(resolve(dirname(identity.configFile), file.path))));
+  const declared = new Set(identity.inputs.map(file => pathKey(resolve(identity.inputRoot ?? dirname(identity.configFile), file.path))));
   for (const entry of await readdir(dirname(identity.script), { withFileTypes: true })) {
     if (!/^agent_meshes_/.test(entry.name) || (!entry.isDirectory() && !/\.(py|pyc)$/.test(entry.name))) continue;
     const path = join(dirname(identity.script), entry.name, ...(entry.isDirectory() ? ['__init__.py'] : []));
@@ -121,7 +123,7 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     if (/changed while hashing|runtime changed|BUILD_SESSION_/.test(String(error))) throw error;
     return { reason: 'unsupported-blender-runtime-files' };
   }
-  const captureImplementation = () => Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-read-audit.ts', 'build-native-cache.ts', 'build-session.ts', 'build-batch.ts', 'build-config.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
+  const captureImplementation = () => Promise.all(['build.ts', 'author.ts', 'build-provenance.ts', 'build-read-audit.ts', 'build-native-cache.ts', 'build-session.ts', 'build-batch.ts', 'build-config.ts', 'build-environment.ts'].map(name => hashFile(fileURLToPath(new URL(name, import.meta.url)))));
   const validateImplementation = async (expected: Snapshot[]) => {
     for (const file of expected) if (metadata(await lstat(file.path, { bigint: true })) !== file.metadata) throw new Error('Native build implementation changed during build');
   };
@@ -132,10 +134,10 @@ export async function prepareNativeCache(location: BlenderLocation | null, ident
     inputs: digest({ config: identity.config, ...(identity.configurations ? { configurations: identity.configurations } : {}), inputs: identity.inputs }),
     tools: digest({ helpers: identity.helpers, implementation: implementation.map(item => item.sha256) }),
     runtime: digest(snapshots.map(item => ({ path: portable(relative(root, item.path)), sha256: item.sha256 ?? 'directory' }))),
-    environment: digest(Object.entries(environment).sort(([a], [b]) => a.localeCompare(b))),
-    cwd: digest(cwd), location: digest({ script: identity.script, configFile: identity.configFile, helperRoot, command, root }),
+    environment: digest({ contract: launchEnvironment.contract, values: Object.entries(environment).filter(([,value]) => value !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) }),
+    cwd: digest(cwd), location: digest({ script: identity.script, configFile: identity.configFile, ...(identity.inputRoot ? { inputRoot: identity.inputRoot } : {}), helperRoot, command, root }),
     platform: digest({ node: process.version, platform: process.platform, arch: process.arch }),
-    policy: digest('declared-inputs-complete/factory-startup/fresh-python-source/component-key@3'),
+    policy: digest('declared-inputs-complete/factory-startup/fresh-python-source/declared-env/root-scope/component-key@4'),
   };
   const key = digest(components);
   async function plainBytes(path: string): Promise<Buffer> {

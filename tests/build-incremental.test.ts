@@ -40,6 +40,72 @@ async function fixture() {
   return { root, installation, command, script, data, config, output, settings, bytes };
 }
 
+it('ignores undeclared environment variables in both reuse identity and the actual child environment', async () => {
+  const f = await fixture();
+  await writeFile(f.config,JSON.stringify({...f.settings,blender:{...f.settings.blender,environment:{inputs:['MESH_STYLE']}}}));
+  vi.stubEnv('MESH_STYLE','ink');vi.stubEnv('MESH_RUN_ID','first');
+  await buildAsset(f.config,{ifChanged:true});
+  expect(authorGLB.mock.calls[0][2].env.MESH_STYLE).toBe('ink');expect(authorGLB.mock.calls[0][2].env.MESH_RUN_ID).toBeUndefined();
+  vi.stubEnv('MESH_RUN_ID','second');expect((await buildAsset(f.config,{ifChanged:true})).incremental?.blender).toBe('reused');
+  vi.stubEnv('MESH_STYLE','paper');
+  expect((await buildAsset(f.config,{ifChanged:true})).incremental).toMatchObject({blender:'built',reason:'cache-key-changed',changedComponents:['environment']});
+  const receipt=JSON.parse(await readFile(join(f.output,'authoring.json'),'utf8'));
+  expect(receipt.provenance.environment).toMatchObject({mode:'declared',inputs:['MESH_STYLE']});
+  expect(JSON.stringify(receipt.provenance.environment)).not.toContain('paper');
+});
+
+it.each(['plain','forced','fallback'] as const)('uses the same declared child environment for %s generation',async mode=>{
+  const f=await fixture();
+  await writeFile(f.config,JSON.stringify({...f.settings,blender:{...f.settings.blender,environment:{inputs:[]}}}));
+  vi.stubEnv('MESH_RUN_ID','not-an-input');vi.stubEnv('PYTHONPATH','excluded-parent-override');
+  if(mode==='fallback')findBlender.mockReturnValue({...findBlender(),detached:true});
+  const result=await buildAsset(f.config,mode==='plain'?{}:mode==='forced'?{force:true}:{ifChanged:true});
+  expect(authorGLB.mock.calls[0][2].env.MESH_RUN_ID).toBeUndefined();expect(authorGLB.mock.calls[0][2].env.PYTHONPATH).toBeUndefined();
+  if(mode==='fallback')expect(result.incremental?.reason).toBe('unsupported-blender-launcher');
+});
+
+it('builds two rooted assets from shared defaults/library and enforces reads across the root',async()=>{
+  const f=await fixture(),shared=join(f.root,'lib','shared.py');await mkdir(join(f.root,'lib'));await writeFile(shared,'WIDTH=1');
+  await writeFile(join(f.root,'defaults.json'),JSON.stringify({version:1,blender:{projectRoot:'../..',inputs:[{dir:'lib'}],readAudit:'strict'}}));
+  const configs:string[]=[];
+  for(const name of ['barrel','tank']){const leaf=join(f.root,'assets',name);await mkdir(leaf,{recursive:true});await writeFile(join(leaf,'asset.py'),'#asset');const config=join(leaf,'build.json');await writeFile(config,JSON.stringify({extends:'../../defaults.json',blender:{script:'asset.py'},output:'generated'}));configs.push(config);}
+  authorGLB.mockImplementation(async(source:string,destination:string)=>{await writeFile(destination,f.bytes);return{meshes:1,blender:'5.2.2 LTS',readAudit:{schema:1,installed:true,reads:[source,shared],runtimeRoots:[f.installation],unresolvedEvents:0,truncated:false}};});
+  expect((await buildAssets(configs,{ifChanged:true})).ok).toBe(true);
+  const warm=await buildAssets(configs,{ifChanged:true});expect(warm.assets.map(a=>a.ok&&a.result.incremental?.blender)).toEqual(['reused','reused']);
+  const output=join(f.root,'assets','barrel','generated'),previous=await readFile(join(output,'authoring.json'));
+  const receipt=JSON.parse(previous.toString());expect(receipt.provenance.inputRoot).toEqual({relativeToConfig:'../..',scope:'project-root'});expect(receipt.provenance.inputs.map((file:{path:string})=>file.path)).toContain('lib/shared.py');expect(receipt.provenance.readAudit.scope).toBe('project-root');
+  const original=authorGLB.getMockImplementation()!;authorGLB.mockImplementationOnce(async(...args:unknown[])=>{const r=await original(...args);return{...r,readAudit:{...r.readAudit,reads:[...r.readAudit.reads,join(f.root,'missed.py')]}};});
+  const failed=await buildAssets(configs,{force:true});expect(failed.ok).toBe(false);expect(failed.unattempted).toEqual([configs[1]]);expect(await readFile(join(output,'authoring.json'))).toEqual(previous);
+  await writeFile(shared,'WIDTH=2');const changed=await buildAssets(configs,{ifChanged:true});expect(changed.assets.map(a=>a.ok&&a.result.incremental?.changedComponents)).toEqual([['inputs'],['inputs']]);
+});
+
+it('keeps full external diagnostics locally while writing the portable schema2 receipt',async()=>{
+  const f=await fixture(),original=authorGLB.getMockImplementation()!;
+  authorGLB.mockImplementation(async(...args:unknown[])=>{const r=await original(...args);return{...r,readAudit:{...r.readAudit,reads:[...r.readAudit.reads,join(f.root,'..','machine-cache','file.bin')]}};});
+  const result=await buildAsset(f.config,{ifChanged:true});expect(result.readAudit?.externalReads).toEqual(['../machine-cache/file.bin']);
+  const receipt=JSON.parse(await readFile(join(f.output,'authoring.json'),'utf8'));expect(receipt.provenance.readAudit).toMatchObject({schema:2,status:'clean',externalReads:{count:1,paths:'omitted',coverage:'outside-enforced-scope'}});expect(JSON.stringify(receipt)).not.toContain('machine-cache');
+  expect((await buildAsset(f.config,{ifChanged:true})).readAudit).toEqual(result.readAudit);
+});
+
+it('rejects a requested output alias inside the project root before authoring',async()=>{
+  const f=await fixture();await mkdir(join(f.root,'real'));await symlink(join(f.root,'real'),join(f.root,'alias'),process.platform==='win32'?'junction':'dir');
+  await writeFile(f.config,JSON.stringify({...f.settings,output:'alias/generated',blender:{...f.settings.blender,projectRoot:'.'}}));
+  await expect(buildAsset(f.config)).rejects.toThrow(/link|alias/i);expect(authorGLB).not.toHaveBeenCalled();
+});
+
+it('suppresses undeclared Node coverage forwarding before key calculation and launch',async()=>{
+  const f=await fixture();await writeFile(f.config,JSON.stringify({...f.settings,blender:{...f.settings.blender,environment:{inputs:[]}}}));
+  vi.stubEnv('NODE_V8_COVERAGE','first-unused-path');await buildAsset(f.config,{ifChanged:true});
+  const launch=authorGLB.mock.calls[0][2];expect(Object.hasOwn(launch.env,'NODE_V8_COVERAGE')).toBe(true);expect(launch.env.NODE_V8_COVERAGE).toBeUndefined();
+  vi.stubEnv('NODE_V8_COVERAGE','second-unused-path');expect((await buildAsset(f.config,{ifChanged:true})).incremental?.blender).toBe('reused');
+});
+
+it('keeps inherited permission-mode builds available while declining incremental reuse',async()=>{
+  const f=await fixture(),previous=Object.getOwnPropertyDescriptor(process,'permission');
+  try{Object.defineProperty(process,'permission',{configurable:true,value:{}});const result=await buildAsset(f.config,{ifChanged:true});expect(result.incremental).toEqual({blender:'built',reason:'unsupported-node-permission-mode'});expect(result.files).not.toContain(nativeCacheFiles[0]);}
+  finally{if(previous)Object.defineProperty(process,'permission',previous);else Reflect.deleteProperty(process,'permission');}
+});
+
 it('inherits shared defaults, records every config and invalidates changed ancestor bytes', async () => {
   const f = await fixture();
   const defaults = join(f.root, 'defaults.json');

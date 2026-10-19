@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { classifyReadAudit } from '../src/build-read-audit.ts';
+import { classifyReadAudit, portableReadAudit } from '../src/build-read-audit.ts';
 
 const base = 'C:/project';
 const observation = (reads: string[], extra = {}) => ({ schema: 1, installed: true, reads, runtimeRoots: ['C:/tools/blender'], unresolvedEvents: 0, truncated: false, ...extra });
@@ -22,4 +22,27 @@ it('fails closed for missing, uninstalled, malformed, truncated and unresolved o
   for (const report of [undefined, {}, observation([], { installed: false }), observation([], { truncated: true }), observation([], { unresolvedEvents: 1 }), observation([42 as unknown as string])]) {
     expect(classifyReadAudit(report, context).status).toBe('incomplete');
   }
+});
+
+it('omits external machine paths from receipts without erasing their count or changing status', () => {
+  const report = classifyReadAudit(observation(['C:/project/asset.py', 'C:/project/missed.py', 'C:/Users/One/cache/data']), context);
+  const receipt = portableReadAudit(report);
+  expect(receipt).toMatchObject({ schema: 2, status: 'undeclared', reads: ['asset.py','missed.py'], undeclaredReads: ['missed.py'], externalReads: { count: 1, paths: 'omitted', coverage: 'outside-enforced-scope' } });
+  expect(JSON.stringify(receipt)).not.toContain('Users/One');
+  expect(report.externalReads).toHaveLength(1);
+  receipt.reads.push('receipt mutation'); expect(report.reads).not.toContain('receipt mutation');
+});
+
+it('writes identical audit receipts for equivalent reads at different machine roots', () => {
+  const first = classifyReadAudit(observation(['C:/project/asset.py', 'C:/Users/One/cache/a']), context);
+  const second = classifyReadAudit(observation(['C:/project/asset.py', 'D:/Users/Two/cache/a']), context);
+  expect(first.externalReads).not.toEqual(second.externalReads);
+  expect(portableReadAudit(first)).toEqual(portableReadAudit(second));
+  expect(portableReadAudit(classifyReadAudit(undefined, context))).toMatchObject({status:'incomplete',installed:false});
+});
+
+it('enforces the explicit project-root scope using root-relative declarations', () => {
+  const result = classifyReadAudit(observation(['C:/project/assets/asset.py','C:/project/lib/shared.py','C:/project/lib/missing.py']), { ...context, scope: 'project-root', inputs: [{path:'assets/asset.py'}, {path:'lib/shared.py'}] });
+  expect(result.scope).toBe('project-root'); expect(result.undeclaredReads).toEqual(['lib/missing.py']);
+  expect(portableReadAudit(result)).toMatchObject({scope:'project-root',status:'undeclared'});
 });

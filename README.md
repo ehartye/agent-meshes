@@ -2,6 +2,11 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.24.0 adds opt-in declared Blender environments and explicit project roots
+for shared input libraries. Portable authoring receipts omit machine-specific
+outside-read paths while the CLI retains full diagnostics. Existing configs keep
+their inherited environment and config-directory boundary. See [native build identity](skills/mesh-build/references/native-build-identity.md).
+
 Release 0.23.0 adds static-prop Unreal inspection and signed-axis calibration,
 native `build()` vertex-colour export controls, shared config defaults and an
 explicit batch that hashes each toolchain once per invocation. Native cache

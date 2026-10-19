@@ -117,12 +117,17 @@ async function assertSnapshots(snapshots: Snapshot[]): Promise<void> {
 }
 
 /** Entry + explicitly declared inputs only: this does not discover Python imports or dependency closure. */
-export async function captureBuildInputs(configFile: string, script: string, declared: DeclaredBuildInput[], output: string) {
-  const base = dirname(resolve(configFile));
+export async function captureBuildInputs(configFile: string, script: string, declared: DeclaredBuildInput[], output: string, inputRoot?: string) {
+  const leaf = dirname(resolve(configFile));
+  const base = inputRoot === undefined ? leaf : resolve(inputRoot);
+  const entry = resolve(leaf, script);
+  if (inputRoot !== undefined) {
+    for (const path of [resolve(configFile), entry, resolve(output)]) if (!inside(base, path)) throw new Error(`Build config, script and output must stay inside project root: ${path}`);
+    protectOutput(resolve(output), base);
+  }
   // buildAsset supplies canonical legacy config/entry paths. Their historical
-  // hard-link support remains; newly declared inputs use strict file identity.
-  const config = await snapshotFile(resolve(configFile), portable(relative(base, configFile)), true);
-  const entry = resolve(base, script);
+  // hard-link support remains without an explicit root; declared/root-scoped inputs are strict.
+  const config = await snapshotFile(resolve(configFile), portable(relative(base, resolve(configFile))), inputRoot === undefined);
   const declarations = new Map<string, DeclaredFileInput>();
   const expandedTrees: { declaration: DeclaredTreeInput; expanded: Awaited<ReturnType<typeof expandInputTree>> }[] = [];
   function addDeclaration(file: DeclaredFileInput): void {
@@ -149,7 +154,7 @@ export async function captureBuildInputs(configFile: string, script: string, dec
   const snapshots: Snapshot[] = [];
   for (const absolute of paths.values()) {
     const declaration = declarations.get(pathKey(absolute));
-    const snapshot = await snapshotFile(absolute, portable(relative(base, absolute)), declaration === undefined);
+    const snapshot = await snapshotFile(absolute, portable(relative(base, absolute)), declaration === undefined && inputRoot === undefined);
     if (declaration?.sha256 !== undefined && declaration.sha256 !== snapshot.sha256) throw new Error(`SHA-256 pin mismatch for build input: ${snapshot.path}`);
     snapshots.push(snapshot);
   }
@@ -176,6 +181,58 @@ export async function captureBuildInputs(configFile: string, script: string, dec
         if (JSON.stringify(current) !== JSON.stringify(expanded)) throw new Error(`Input tree changed during build: ${declaration.dir}`);
       }
       await assertSnapshots([config, ...snapshots]);
+    },
+  };
+}
+
+export interface BuildRootOptions {
+  configFile: string; projectRoot: string; configurations: { path: string }[]; script: string; output: string;
+}
+
+/** Resolve an explicit project boundary without allowing aliases to widen its scope.
+ * Config/source snapshots protect bytes; the boundary guard protects directory identity.
+ */
+export async function captureBuildRoot(options: BuildRootOptions) {
+  const { projectRoot } = options;
+  // Deliberately relative to the leaf config, even when the setting is inherited.
+  // Unlike input declarations, dot segments are needed here to name a shared root.
+  if (typeof projectRoot !== 'string' || !projectRoot || isAbsolute(projectRoot) || /[\\:\x00-\x1f]/.test(projectRoot)) throw new Error('Build projectRoot must be an explicit relative directory');
+  const config = resolve(options.configFile), leaf = dirname(config), base = resolve(leaf, projectRoot);
+  if (dirname(base) === base) throw new Error('Build projectRoot cannot be a filesystem root');
+  const script = resolve(leaf, options.script), output = resolve(options.output);
+  const configurations = [...new Set([config, ...options.configurations.map(source => resolve(leaf, source.path))])];
+  for (const path of [leaf, ...configurations, script, output]) if (!inside(base, path)) throw new Error(`Build config, script and output must stay inside project root: ${path}`);
+  for (const source of [base, ...configurations, script]) protectOutput(output, source);
+  const rootIdentity = (info: BigIntStats) => [info.dev, info.ino, info.mode].join(':');
+  async function validatePaths(): Promise<BigIntStats> {
+    const info = await plainPath(base);
+    if (!info.isDirectory()) throw new Error(`Build projectRoot must be a directory: ${base}`);
+    for (const path of [...configurations, script]) {
+      const file = await plainPath(path);
+      if (!file.isFile()) throw new Error(`Build config and script must be regular files inside project root: ${path}`);
+      if (file.nlink !== 1n) throw new Error(`Hard link in project root config or script: ${path}`);
+    }
+    // The output need not exist. Validate its nearest existing ancestor without
+    // following a linked component; creating output/staging directories is legitimate.
+    let ancestor = output;
+    for (;;) {
+      try { await lstat(ancestor); break; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) throw new Error(`Missing output ancestor inside project root: ${output}`);
+      ancestor = parent;
+    }
+    if (!(await plainPath(ancestor)).isDirectory()) throw new Error(`Build output must be a directory inside project root: ${output}`);
+    return info;
+  }
+  const expected = rootIdentity(await validatePaths());
+  return {
+    base,
+    receipt: { relativeToConfig: portable(relative(leaf, base)) || '.', scope: 'project-root' as const },
+    assertUnchanged: async () => {
+      try {
+        if (rootIdentity(await validatePaths()) !== expected) throw new Error('directory identity differs');
+      } catch (error) { throw new Error(`Build project root changed or became unsafe during build: ${base}`, { cause: error }); }
     },
   };
 }
