@@ -23,8 +23,8 @@ the added identity records to attribute exactly what was declared and generated.
 
 ## Declare and pin a native build
 
-This extension requires a build with `blender.inputs` and `blender.toolchain`
-support; the published 0.19.0 release predates it. The entry script is always
+Native builds support `blender.inputs` and `blender.toolchain` starting with
+0.20.0. The entry script is always
 included. Declare additional files individually, relative to `build.json`:
 
 ```json
@@ -87,7 +87,7 @@ mesh build build.json --if-changed
 mesh build build.json --force
 ```
 
-The published 0.19.0 release predates these flags. Default builds continue to run
+These flags are available starting with 0.20.0. Default builds continue to run
 Blender. `--force` regenerates and refreshes the incremental result; it does not
 silently keep the prior cached mesh. These flags currently support native
 `blender.script` configs, not workspace/refine or Unreal import/cook stages.
