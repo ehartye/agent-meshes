@@ -2,6 +2,13 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.26.0 excludes generated Python bytecode from managed runtime identity,
+copying and verification, so interpreter caches no longer cause false runtime
+mismatches. Explicit `preview --shading vertex` inspects active RGB attributes
+on native sources and GLBs; material shading and default matcap previews stay
+unchanged. See [preview guidance](skills/mesh-build/SKILL.md#fast-blender-previews-while-iterating)
+and [native/managed evidence](docs/validation/runtime-vertex-preview/README.md).
+
 Release 0.25.0 adds Unreal collision-setting checks and explicit import options,
 four-entry bounded rollback reuse, fixed Blender environment overrides, and a
 mesh-from-arrays helper preserving corner UVs and FLOAT_COLOR masks. Skills route
