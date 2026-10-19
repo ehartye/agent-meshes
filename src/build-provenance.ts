@@ -80,9 +80,11 @@ async function expandInputTree(base: string, declaration: DeclaredTreeInput, out
   if (inside(root, output) || inside(output, root)) throw new Error('Build output cannot overlap a declared input tree');
   if (!(await plainPath(root)).isDirectory()) throw new Error(`Input tree must be a directory: ${declaration.dir}`);
   const paths: string[] = [];
+  const directories: { path: string; metadata: string }[] = [];
   let visited = 0;
   async function visit(directory: string): Promise<void> {
     const before = await plainPath(directory);
+    directories.push({ path: portable(relative(base, directory)), metadata: metadata(before) });
     for (const child of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
       if (++visited > 50000) throw new Error('Input tree traversal exceeds the 50000-entry budget');
       if (child.isSymbolicLink()) throw new Error(`Link in declared input tree: ${child.name}`);
@@ -102,7 +104,7 @@ async function expandInputTree(base: string, declaration: DeclaredTreeInput, out
     if (metadata(before) !== metadata(await plainPath(directory))) throw new Error(`Input tree changed while listing: ${declaration.dir}`);
   }
   await visit(root);
-  return { dir: declaration.dir, include, exclude, maxFiles, paths: paths.sort() };
+  return { dir: declaration.dir, include, exclude, maxFiles, paths: paths.sort(), directories };
 }
 async function assertSnapshots(snapshots: Snapshot[]): Promise<void> {
   for (const expected of snapshots) {
@@ -156,7 +158,10 @@ export async function captureBuildInputs(configFile: string, script: string, dec
     const records = expanded.paths.map(path => publicIdentity(byPath.get(pathKey(resolve(base, path)))!));
     const sha256 = hash(Buffer.from(JSON.stringify(records)));
     if (declaration.sha256 !== undefined && declaration.sha256 !== sha256) throw new Error(`Input tree SHA-256 pin mismatch: ${declaration.dir}`);
-    return { ...expanded, sha256 };
+    // Directory metadata guards this attempt (including transient membership),
+    // but must not enter portable provenance or future-build reuse identity.
+    const { directories: _directories, ...publicTree } = expanded;
+    return { ...publicTree, sha256 };
   });
   for (const file of [config, ...snapshots]) protectOutput(output, file.absolute);
   return {

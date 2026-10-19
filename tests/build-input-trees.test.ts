@@ -62,6 +62,14 @@ it('retains empty declared trees so their first matching file invalidates the sn
   await expect(result.assertUnchanged()).rejects.toThrow(/tree.*changed/i);
 });
 
+it('rejects transient additions removed before publication', async () => {
+  const { root, capture } = await fixture();
+  const captured = await capture([{ dir: 'lib' }]);
+  await writeFile(join(root, 'lib', 'temporary.py'), '# observed during generation');
+  await rm(join(root, 'lib', 'temporary.py'));
+  await expect(captured.assertUnchanged()).rejects.toThrow(/tree.*changed/i);
+});
+
 it('omitted includes cover dotfiles while explicit patterns retain documented glob semantics', async () => {
   const { root, capture } = await fixture();
   await writeFile(join(root, 'lib', '.parameters.json'), '{"hidden":true}');

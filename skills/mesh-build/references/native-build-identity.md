@@ -87,7 +87,11 @@ directories. No absolute project paths are added to that provenance.
 Adding, removing or editing a selected file changes native reuse identity. The
 build re-expands membership and rechecks selected bytes before output
 replacement; a change during generation stops publication and preserves the
-prior owned output. Excluded files intentionally do not affect the key. Include
+prior owned output. Excluded files intentionally do not affect the key.
+Directory metadata is also guarded during that attempt: temporary additions or
+removals can abort generation even when final membership is restored, including
+conservative rejection for excluded membership changes. Directory timestamps
+are not part of the portable tree digest or future-build key. Include
 all actual dependencies and relevant environment/tool inputs before opting into
 reuse; the tree feature does not establish complete dynamic dependency closure.
 
