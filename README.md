@@ -2,6 +2,9 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
+Release 0.26.2 points the Unreal import references at the `unreal-import` skill in
+[agent-unreal](https://github.com/ehartye/agent-unreal), which now holds the Unreal importer.
+
 Release 0.26.1 separates the Unreal and Blender routes: mesh-tool-selection now states when to author in Blender
 and when to stay in Unreal, and hands Geometry Scripting, procedural-component and Nanite decisions to the
 `unreal-features` skill in [agent-unreal](https://github.com/ehartye/agent-unreal).

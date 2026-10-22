@@ -1,6 +1,6 @@
 # Static props in Unreal
 
-`verify-unreal` imports into its own locked scratch project through Interchange. It checks the imported asset; it does not render, run physics, cook, or modify the consuming game project. Use Agent Engine's guarded import helper to import into an owned destination in a real project.
+`verify-unreal` imports into its own locked scratch project through Interchange. It checks the imported asset; it does not render, run physics, cook, or modify the consuming game project. Use the `unreal-import` skill in agent-unreal (its guarded import helper) to import into an owned destination in a real project.
 
 ```text
 mesh verify-unreal barrel.glb --expect-bounds-cm 80,80,120 --bounds-tolerance-cm 0.1 --json
