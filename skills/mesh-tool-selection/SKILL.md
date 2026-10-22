@@ -37,7 +37,7 @@ These checks complement the real-project acceptance below; they do not establish
 | Blender headless script (`build()` to GLB) | Booleans, bevels, UVs, vertex colors, a hard-surface or static prop, repeatable batch export | `mesh-build` (Blender-authored static props, `mesh preview`) |
 | `bpy` as a module | The project's pipeline is already ordinary Python and wants Blender in-process | `mesh-setup` finds Blender; the module is not managed here |
 | Hand-authored Blender | A hero asset judged by eye, organic form | the person; use scripts for the repeatable parts |
-| Unreal editor Python / Interchange pipelines | Importing and configuring many assets the same way, batch commandlets | `mesh verify-unreal` for the import check; the project import is `engine-asset-import` (agent-engine) |
+| Unreal editor Python / Interchange pipelines | Importing and configuring many assets the same way, batch commandlets | `mesh verify-unreal` for the import check; the project import is `unreal-import` (agent-unreal) |
 | Unreal Geometry Script | Editor-time procedural assets that must become real StaticMeshes, or runtime variation | `unreal-features` skill, agent-unreal |
 | Unreal C++ procedural meshes | Geometry that depends on game state at run time | `unreal-features` skill, agent-unreal |
 | R3F/three.js, Godot or Unity mesh APIs | The project needs native generation or live vertex/topology updates | engine-specific responsibilities in the references above; outside this plugin's authoring runtime |
