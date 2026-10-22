@@ -10,7 +10,8 @@ during play**. A Blender generator plus Unreal import automation is one pipeline
 For routine work on an approved route, go straight to `mesh-build`, `mesh-rigging` or `mesh-setup`.
 For a new or failing route, work in this order:
 
-For Unreal's editor-baking versus live-geometry branches, use the [Unreal decision tree](references/unreal-decision-tree.md).
+For Unreal's editor-baking versus live-geometry branches, use the [Unreal decision tree](references/unreal-decision-tree.md);
+what to do inside Unreal is the `unreal-features` skill in agent-unreal.
 For R3F/three.js, Godot and Unity, read [engine implications](references/engine-implications.md) and
 [engine evidence](references/engine-evidence.md). The authoring tool does not choose the runtime representation.
 
@@ -36,9 +37,9 @@ These checks complement the real-project acceptance below; they do not establish
 | Blender headless script (`build()` to GLB) | Booleans, bevels, UVs, vertex colors, a hard-surface or static prop, repeatable batch export | `mesh-build` (Blender-authored static props, `mesh preview`) |
 | `bpy` as a module | The project's pipeline is already ordinary Python and wants Blender in-process | `mesh-setup` finds Blender; the module is not managed here |
 | Hand-authored Blender | A hero asset judged by eye, organic form | the person; use scripts for the repeatable parts |
-| Unreal editor Python / Interchange pipelines | Importing and configuring many assets the same way, batch commandlets | `mesh verify-unreal` for the import check |
-| Unreal Geometry Script | Editor-time procedural assets that must become real StaticMeshes, or runtime variation | outside this plugin |
-| Unreal C++ procedural meshes | Geometry that depends on game state at run time | outside this plugin |
+| Unreal editor Python / Interchange pipelines | Importing and configuring many assets the same way, batch commandlets | `mesh verify-unreal` for the import check; the project import is `engine-asset-import` (agent-engine) |
+| Unreal Geometry Script | Editor-time procedural assets that must become real StaticMeshes, or runtime variation | `unreal-features` skill, agent-unreal |
+| Unreal C++ procedural meshes | Geometry that depends on game state at run time | `unreal-features` skill, agent-unreal |
 | R3F/three.js, Godot or Unity mesh APIs | The project needs native generation or live vertex/topology updates | engine-specific responsibilities in the references above; outside this plugin's authoring runtime |
 | Code-driven CAD (build123d, CadQuery, OpenSCAD) | Exact dimensions, robust Booleans, mechanical parts, analytic measurements | export a GLB, then `mesh verify` here (importing a CAD GLB for rigging is not built yet) |
 
@@ -65,6 +66,22 @@ Return the chosen authoring route plus integration/runtime responsibilities, the
 and the smallest representative trial with acceptance checks. For each option presented, explain **Time, Risk,
 Complexity, Best practice and Maintainability** using the profiles; do not substitute low/medium/high labels.
 
+## Blender or Unreal
+
+Author in Blender (this plugin) when the geometry is fixed once the game is built and any of these hold: it is
+authored art (named parts, a rig, morph targets, vertex colours, a form judged by eye); it needs UV, bevel or Boolean
+quality, or exact CAD dimensions; many assets must come out identically and pass a validator; or the asset must also
+load in another engine.
+
+Stay in Unreal (`unreal-features`, agent-unreal) when the geometry depends on level data, gameplay state or player
+edits at run time; is parametric variation that exists only in the engine (Geometry Scripting, PCG, Water, Landmass);
+or is post-processing of an imported mesh (remesh, simplify, collision, LODs, Nanite settings).
+
+Build-time generation from a seed can go either way: pick Blender when it must be verified outside the editor or shared
+with another engine, Unreal when it needs engine data. Either way the result is a StaticMesh asset, and its Nanite,
+collision and LOD settings are Unreal's. Editor-only versus runtime functions, the C++ component choice and Unreal's
+Python limits are in agent-unreal.
+
 ## Rules that save a round trip
 
 - Use the managed Blender build wrapper when applicable. For direct CLI runs, pass `--python-exit-code 1`, pin
@@ -73,8 +90,6 @@ Complexity, Best practice and Maintainability** using the profiles; do not subst
   supported material properties or bake what is needed; check modifier, skin and morph interactions first.
 - Never assume a collision convention from another importer. `UBX_/UCX_` name prefixes are documented for
   Unreal's FBX path; test glTF directly.
-- Geometry Script has editor-only and runtime functions; Unreal's editor Python is not a shipped gameplay
-  runtime. Check the exact component/function, not just the plugin name. Treat "faster" as unmeasured until profiled.
 - Code-CAD output reaches an engine only through tessellation. Set tolerances on purpose, check watertightness
   and size, and run an execute-measure-retry loop rather than trusting a first script.
 - Validation proves format, not behaviour. Run `mesh verify`, a glTF validator and, for Unreal, `mesh verify-unreal`;

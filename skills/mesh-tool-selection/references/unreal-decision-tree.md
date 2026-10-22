@@ -7,22 +7,15 @@ user authorized. Authoring language, import automation and runtime mesh represen
 flowchart TD
     A[Read existing pipeline and authorized scope] --> B{Geometry needs live generation or edits?}
     B -- No --> C{Generate inside Unreal?}
-    C -- Yes --> D[Editor Geometry Script or existing C++ generator]
+    C -- Yes --> D[Editor Geometry Script or existing C++ generator: unreal-features, agent-unreal]
     C -- No --> E[Blender, named-part workspace or CAD]
     D --> F[Bake to StaticMesh assets]
     E --> G[Import to StaticMesh assets]
     F --> H[Check materials, collision, LODs and instancing]
     G --> H
 
-    B -- Yes --> I{Existing proven runtime route?}
-    I -- Yes --> J[Extend that route]
-    I -- No --> K[Test exact Geometry Script operations in a packaged slice]
-    K --> L{Supported and within budget?}
-    L -- Yes --> M[Runtime Geometry Script]
-    L -- No --> N[Evaluate C++ procedural components]
-    J --> O[Verify collision updates and frame cost in packaged gameplay]
-    M --> O
-    N --> O
+    B -- Yes --> I[Live generation in Unreal: unreal-features, agent-unreal]
+    I --> O[Verify collision updates and frame cost in packaged gameplay]
 ```
 
 ## Read the branches precisely
@@ -35,16 +28,10 @@ flowchart TD
   skeletal/morph animation does not by itself require a procedural mesh. Preserve addressed nodes, pivots, bones
   and deformation contracts before merging/baking.
   This tree's StaticMesh branch is for static props; a character or skeletal asset retains its rig pipeline.
-- **A Geometry Script trial is conditional.** Reuse a proven project route first. Otherwise test the exact runtime
-  operations and actor/component class, not just plugin availability. Editor-only asset creation or generated-actor
-  callbacks cannot establish packaged support. A failed trial may also justify simplifying the gameplay geometry;
-  it is not automatic permission to add a new component plugin.
-- **C++ is not one renderer.** ProceduralMeshComponent, DynamicMeshComponent, RealtimeMeshComponent and a runtime-built
-  UStaticMesh have different capabilities, collision costs and lifetime rules. Select the smallest extension of the
-  existing engine code that meets the measured need. Check third-party licensing and version support before adoption.
-- **Nanite is a separate compatibility gate.** In the captured UE 5.8 docs, stock UDynamicMeshComponent lacks Nanite,
-  LODs and instanced rendering; forward rendering and MSAA are unsupported by Nanite. Other asset representations,
-  including skeletal support, are version-specific. C++ alone does not establish Nanite eligibility or a speed gain.
+- **Runtime generation is decided inside Unreal.** Reuse a proven project route first. Otherwise the Geometry Script
+  trial, the choice between ProceduralMeshComponent, DynamicMeshComponent, RealtimeMeshComponent and a runtime-built
+  UStaticMesh, and the Nanite compatibility gate are covered by the Geometry Scripting, ProceduralMeshComponent and
+  Nanite references of the `unreal-features` skill in agent-unreal.
 
 ## Trial acceptance
 
