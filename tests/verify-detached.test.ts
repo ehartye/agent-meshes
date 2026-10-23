@@ -17,7 +17,7 @@ const add = (part: Extract<Operation, { op: 'add' }>['part']): Operation => ({ o
 const quarterX: [number, number, number, number] = [0.7071068, 0, 0, 0.7071068];
 const quarterY: [number, number, number, number] = [0, 0.7071068, 0, 0.7071068];
 
-// Reduced from the Sector Run part kit (agent-meshes lessons, friction 6): each passed batch --dry-run, verify and a
+// Reduced from a consuming part kit: each passed batch --dry-run, verify and a
 // glTF validator while a piece floated clear of the body.
 describe('the three part-kit cases', () => {
   const spine = add({ name: 'spine', geometry: { type: 'box', size: [1.4, 1.2, 6.6] }, position: [0, 0, -0.2] });

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Operation, Part, Vec2 } from '../src/core/types.ts';
 
-// The engine bell from the Sector Run kit: inner wall top to bottom, then outer wall bottom to top (renders correctly).
+// The engine bell from a consuming part kit: inner wall top to bottom, then outer wall bottom to top (renders correctly).
 const bell: Vec2[] = [[0.2, 0.5], [0.22, 0.1], [0.4, -0.5], [0.5, -0.5], [0.32, 0.2], [0.28, 0.5]];
 // The first attempt: outer wall first, top to bottom, then the inner wall (rendered inside out, silently).
 const bellInsideOut: Vec2[] = [...bell].reverse();

@@ -8,8 +8,8 @@ natural walk, no tearing.
 
 | stage | interpreter |
 |---|---|
-| UniRig inference, FBX import (bpy) | `C:\Users\ehart\AppData\Local\Programs\comfy-env\envs\unirig-nodes\.pixi\envs\default\python.exe` |
-| everything else (numpy/trimesh/pygltflib) | `C:\Users\ehart\repos\ComfyUI\venv\Scripts\python.exe` |
+| UniRig inference, FBX import (bpy) | the Python of the isolated UniRig environment (`UNIRIG_PYTHON`) |
+| everything else (numpy/trimesh/pygltflib) | the Python of the ComfyUI virtual environment, under `COMFYUI_DIR` |
 
 The isolated env crashes on `trimesh.load` of GLBs and on bpy's glTF export —
 mesh I/O stays in the stable venv; hand off arrays via `.npz`. Scripts end with

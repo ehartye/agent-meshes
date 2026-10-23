@@ -11,7 +11,7 @@ These statements do not relicense third-party FBX or Toy Maker helper code.
 
 Human-base and human-addon reference existing payloads under `../mannequins/`;
 no duplicate human bytes are added. That library's catalog/provenance remains
-authoritative for its historical Space2Grow source and human-base's198 exact
+authoritative for its historical source project and human-base's198 exact
 duplicate-channel removals. The new catalog additionally records the observed
 Mesh2Motion source pin/hash. The addon is unchanged; the base retains the already
 validated JSON-only repair and unchanged binary payload.

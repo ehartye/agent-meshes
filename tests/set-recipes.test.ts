@@ -71,12 +71,12 @@ describe('recipes/set-stats.mjs', () => {
   it('exits 2 on a usage error', () => { expect(stats().status).toBe(2); expect(stats('--budget', 'nope', 'x.glb').status).toBe(2); });
 });
 
-// The sheet needs Chromium and a managed release; CI has neither, so this runs on a machine that has run mesh-setup.
-const chess = join('C:/Users/ehart/repos/vr-chess/art/pieceset');
+// The sheet needs Chromium, a managed release and a directory of piece GLBs named by AGENT_MESHES_PIECESET_DIR; CI has none, so this runs on a machine that has them.
+const chess = process.env.AGENT_MESHES_PIECESET_DIR;
 const releases = join(process.env.AGENT_MESHES_HOME ?? join(homedir(), '.agent-meshes'), 'releases');
 const release = existsSync(releases) ? readdirSync(releases).filter(n => !n.startsWith('.')).sort().reverse().map(n => join(releases, n)).find(p => existsSync(join(p, 'managed-install.json'))) : undefined;
-const pieces = ['white_pawn.glb', 'white_king.glb'].map(n => join(chess, n));
-(release && pieces.every(existsSync) && !process.env.CI ? it : it.skip)('set-sheet.mjs renders a labelled sheet from one shared camera', () => {
+const pieces = chess ? ['white_pawn.glb', 'white_king.glb'].map(n => join(chess, n)) : [];
+(release && pieces.length > 0 && pieces.every(existsSync) && !process.env.CI ? it : it.skip)('set-sheet.mjs renders a labelled sheet from one shared camera', () => {
   const out = join(dir, 'sheet.png');
   const json = execFileSync(process.execPath, [resolve('recipes/set-sheet.mjs'), '--runtime-root', release!, '--out', out, '--views', 'front,q34', '--crop-bottom', '0.5', '--cell-scale', '0.5', '--json', ...pieces], { encoding: 'utf8', timeout: 120000 });
   const report = JSON.parse(json);

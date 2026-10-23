@@ -19,8 +19,8 @@ import numpy as np
 import body_plans
 
 GALLERY = RIGGING.parent / "gallery"
-ISO_PY = (r"C:\Users\ehart\AppData\Local\Programs\comfy-env\envs"
-          r"\unirig-nodes\.pixi\envs\default\python.exe")
+# Interpreter of the isolated UniRig environment (set UNIRIG_PYTHON).
+ISO_PY = os.environ["UNIRIG_PYTHON"]
 EXP = RIGGING / "exp_r1"
 EXP.mkdir(exist_ok=True)
 

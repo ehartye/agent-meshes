@@ -1,7 +1,7 @@
 /**
  * Socket-fit checker. Parts named `socket_*` are empty group nodes marking where other parts attach.
  * A contract lists the sockets a hull must provide, where, and optionally envelope boxes its geometry
- * must stay inside. The shape follows the sector-run part-kit contract.json (metres, glTF axes, ship
+ * must stay inside. The shape follows a consuming part-kit contract.json (metres, glTF axes, ship
  * space): `tolerance.socket` defaults to 0.001, `tolerance.envelope` to 0.01.
  *
  * Envelope bounds are the axis-aligned boxes of the built meshes in ship space (a rotated part's box

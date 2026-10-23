@@ -2,7 +2,7 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
-Release 0.28.0 lets `gait` read the `biped` recipe, so the planted-foot slide (`skate`) and the clip's design speed come from the plugin, and adds the biped's bone and part names and the slide check to mesh-rigging. Release 0.27.0 adds an `emissive` colour and `emissiveStrength` to the material model (glTF `emissiveFactor` and `KHR_materials_emissive_strength`), has `build` adopt an empty output directory and explain a refusal to replace one that holds other work, accepts `--preview` and `--preview-page` as the explicit defaults, and states the biped recipe's axes and rotation signs in mesh-rigging. Release 0.26.3 points the Unreal generation routes at the `unreal-procedural` and `unreal-rendering` skills that replace `unreal-features` in [agent-unreal](https://github.com/ehartye/agent-unreal) 0.6.0. Release 0.26.2 points the Unreal import references at the `unreal-import` skill in
+Release 0.28.1 removes project and machine specifics from the repository (private project names, home-directory paths, one wiki path) and adds a content test that keeps them out; vendored research scripts read their interpreter and checkout locations from environment variables. Release 0.28.0 lets `gait` read the `biped` recipe, so the planted-foot slide (`skate`) and the clip's design speed come from the plugin, and adds the biped's bone and part names and the slide check to mesh-rigging. Release 0.27.0 adds an `emissive` colour and `emissiveStrength` to the material model (glTF `emissiveFactor` and `KHR_materials_emissive_strength`), has `build` adopt an empty output directory and explain a refusal to replace one that holds other work, accepts `--preview` and `--preview-page` as the explicit defaults, and states the biped recipe's axes and rotation signs in mesh-rigging. Release 0.26.3 points the Unreal generation routes at the `unreal-procedural` and `unreal-rendering` skills that replace `unreal-features` in [agent-unreal](https://github.com/ehartye/agent-unreal) 0.6.0. Release 0.26.2 points the Unreal import references at the `unreal-import` skill in
 [agent-unreal](https://github.com/ehartye/agent-unreal), which now holds the Unreal importer.
 
 Release 0.26.1 separates the Unreal and Blender routes: mesh-tool-selection now states when to author in Blender
@@ -139,7 +139,7 @@ approved stylization.
 Read [character modeling craft](scripts/blender_lib/references/character-craft.md)
 for form, anatomy, topology, deformation, hands, faces, cloth and diagnosis, and
 [consumer patterns](scripts/blender_lib/references/consumer-patterns.md) for reusable
-lessons from Space2Grow, Art Explorers/The Fort, Talking Heads and Internal Race.
+lessons from several consuming projects.
 
 ## Project-owned face designs
 
@@ -1055,7 +1055,7 @@ Each spider leg has **coxa → trochanter → femur → patella → tibia → me
 
 `check:creatures` validates all five GLBs and every clip, reloads them independently, checks actual animated skin vertices and loops, and opens every standalone preview in Chromium. Tests also check minimum supporting-foot counts and sub-frame ground contact. The examples use authored procedural rigs; automatic rigging of arbitrary imported meshes and destination-engine integration are outside this release.
 
-Project design and delivery evidence are maintained in the owner's wiki under `wiki/authored/agent-meshes/`.
+Project design and delivery evidence are maintained in the owner's wiki.
 
 ### Ideal planar belt drives
 

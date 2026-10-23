@@ -5,8 +5,8 @@ RIGGING = Path(__file__).parent
 sys.path.insert(0, str(RIGGING))
 import numpy as np
 import body_plans
-ISO_PY = (r"C:\Users\ehart\AppData\Local\Programs\comfy-env\envs"
-          r"\unirig-nodes\.pixi\envs\default\python.exe")
+# Interpreter of the isolated UniRig environment (set UNIRIG_PYTHON).
+ISO_PY = os.environ["UNIRIG_PYTHON"]
 EXP = RIGGING / "exp_spider"; EXP.mkdir(exist_ok=True)
 MESH = RIGGING.parent / "gallery" / "ba4eb57e0f56" / "rig" / "mesh.npz"
 combos = [(2048, "", s) for s in (1, 2, 3, 4, 5, 6, 8, 9, 11, 13)] + \

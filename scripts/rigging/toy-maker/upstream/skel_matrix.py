@@ -21,8 +21,8 @@ import body_plans
 
 RIGGING = Path(__file__).parent
 GALLERY = RIGGING.parent / "gallery"
-ISO_PY = (r"C:\Users\ehart\AppData\Local\Programs\comfy-env\envs"
-          r"\unirig-nodes\.pixi\envs\default\python.exe")
+# Interpreter of the isolated UniRig environment (set UNIRIG_PYTHON).
+ISO_PY = os.environ["UNIRIG_PYTHON"]
 
 TOYS = {
     "fox": "c686134433de",       # quadruped, boneless bushy tail

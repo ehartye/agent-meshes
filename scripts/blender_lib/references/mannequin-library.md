@@ -10,7 +10,7 @@ brief and approved design determine your character; a donor mannequin supplies
 explicitly selected structure or motion, not a universal anatomy standard.
 
 The actual GLBs and [catalog](../../reference-assets/mannequins/catalog.json) ship
-inside the managed runtime. No Space2Grow checkout, network download or ignored
+inside the managed runtime. No source-project checkout, network download or ignored
 local artifact is required. Resolve paths from the executing package, not the
 current working directory. `capabilities` reports that package as `guidance.baseUrl`.
 
@@ -90,7 +90,7 @@ motion; a statistical correlation does not approve a body plan, acting style or 
 
 The [provenance record](../../reference-assets/mannequins/PROVENANCE.md) and catalog
 record source commit, generated asset hashes, clip maps, generator identity and
-validation scope. Human sources are the frozen Space2Grow Mesh2Motion/Quaternius
+validation scope. Human sources are the frozen source-project copies of the Mesh2Motion/Quaternius
 assets with their included CC0 statement. The separate Mixamo walk is excluded.
 No blanket CC0 license is assigned to this entire mixed-source library.
 
@@ -99,7 +99,7 @@ all samplers and the binary payload remain unchanged. The addon is byte-identica
 to its captured original. Each retains the upstream NODE_SKINNED_MESH_NON_ROOT
 warning. Both alien exports have zero validator errors/warnings, but eyes are
 placeholders and there are no facial controls. Their diagnostic walk/jog clips
-are not certification of full Space2Grow game gait, collisions or final art.
+are not certification of a consuming game's full gait, collisions or final art.
 
 A valid donor is not automatically compatible with a target's face, proportions,
 topology or engine. Keep source preservation, GLB validity, destination import,

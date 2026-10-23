@@ -2,7 +2,7 @@
 
 Use this guide when a model must retain its appearance and controls in a game,
 interactive lesson, face viewer or native engine. It transfers patterns exercised
-by Space2Grow 3D, Art Explorers, The Fort, Internal Race and Talking Heads. Examples establish
+by five consuming projects. Examples establish
 bounded workflows; they do not declare every consumer adaptation a shipped API.
 
 Start character work with [construction](character-construction.md),

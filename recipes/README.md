@@ -2,7 +2,7 @@
 
 These source recipes exercise the existing agent-meshes authoring interfaces.
 They are editable starting points, not production assets or new CLI commands.
-The Space to Grow sibling project consumes them as a visual acceptance fixture.
+A consuming game project uses them as a visual acceptance fixture.
 Recipes live in the source/plugin checkout's `recipes/` directory, not in the
 immutable managed runtime. Copy them from that source location into authored
 inputs; invoke all builds through the managed launcher as usual. These recipes
@@ -169,7 +169,7 @@ velocity and acceleration continuity, loop closure, segment lengths, torso and
 elbow articulation, stance height and skin weights. Exported skinning still needs browser verification:
 measure actual skinned outsole vertices at stance and compare both loop endpoints,
 then inspect side-view frames. Pure joint targets cannot prove the exported mesh
-follows them. The Space to Grow consumer keeps these checks in `scripts/check-motion.mjs`
+follows them. A consuming project keeps these checks in `scripts/check-motion.mjs`
 and tests playback controls in `scripts/check-walk-ui.mjs`.
 
 ## Living faces
@@ -246,7 +246,7 @@ Keep parameters, recipe version, source hash, build configuration, exported GLB
 validation and fixed camera captures together. A consumer may generate a
 self-contained authored file by copying the recipe and appending its `build()`
 entry point; that lets the entry SHA256 cover the combined recipe and parameters.
-Space to Grow follows that approach. Generated copies are never hand-edited.
+A consuming project follows that approach. Generated copies are never hand-edited.
 An entry hash alone does not cover external imports or donor data: prefer explicit
 project imports and declared inputs in new integrations, with reviewed toolchain
 pins. Generated combined files remain a supported compatibility route.
@@ -254,7 +254,7 @@ pins. Generated combined files remain a supported compatibility route.
 The current CLI creates fixed PNG views for operations assets but only an HTML
 preview for Blender-authored assets. `--no-preview-page` therefore gives no PNGs
 for authored assets. Consumers must capture their exported GLBs with the viewer;
-Space to Grow saves those outside build-owned model folders. This is a known
+A consuming project saves those outside build-owned model folders. This is a known
 workflow gap for a separate tool change, not a reason to manually patch renders.
 
 ## Static set tools

@@ -49,7 +49,7 @@ class CharacterContract(unittest.TestCase):
         for invalid in [{'height':float('nan')}, {'height':-1}, {'species':'typo'}, {'vacuum':'false'}, {'unexpected':1}]:
             with self.assertRaises(ValueError): recipe.geometry(invalid)
 
-# The Space to Grow cast (the recipe's reference fixture): height, age, presentation, species.
+# The reference cast (the recipe's fixture): height, age, presentation, species.
 CAST = {
     'mara': dict(height=1.82, age='adult', presentation='female', species='human', hair='#363544'),
     'oren': dict(height=1.88, age='adult', presentation='male', species='human', hair='#252c37'),
