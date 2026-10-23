@@ -50,6 +50,12 @@ they are not a sequential batch. Lengths are meters, +Y is up, quaternions are `
   it the same way; transmission refracts in three.js and Unreal but costs an extra render pass.
   Glass casts no shadow and gets no outline hull (either would hide what is behind it). Keep glass
   a separate part from anything opaque, and keep 1.5 cm or more between the glass and what it holds.
+- **Glow** is a `material` too. `emissive` is a `#rrggbb` colour the surface gives off (glTF
+  `emissiveFactor`); `emissiveStrength` 0 to 1000 (default 1) scales it and is written as
+  `KHR_materials_emissive_strength` when it is not 1, so it needs `emissive`. A lantern flame is
+  `{"metalness":0,"roughness":0.4,"emissive":"#ff8800","emissiveStrength":4}`. Parts that differ only in
+  glow export separate materials. three.js and Blender read both fields; for Unreal see
+  [static props](../../mesh-build/references/unreal-static-props.md#emissive-materials).
 
 ## Shells
 
@@ -103,6 +109,8 @@ rarely worth authoring by hand; a shell over rigid-bound parts gives smooth skin
 
 Poses are quaternion offsets from the rest rotation and never change bindings. `pose.target`
 solves a two-link chain so the end bone reaches a world-space `target`, bending toward `pole`.
+Axes and rotation signs (+Z front, +X tips +Y toward +Z, forward swing is negative X) are in
+[mesh-rigging](../../mesh-rigging/SKILL.md).
 
 ## Assemblies
 

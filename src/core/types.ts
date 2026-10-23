@@ -21,8 +21,9 @@ export type Binding =
 /**
  * Surface finish, 0 to 1 each: metalness 1 is bare metal, roughness 0 is a mirror. Glass adds opacity below 1 (glTF
  * alphaMode BLEND), transmission (KHR_materials_transmission), ior (KHR_materials_ior, 1 to 2.333) and doubleSided.
+ * A glow adds emissive (a #rrggbb colour, glTF emissiveFactor) and emissiveStrength (KHR_materials_emissive_strength).
  */
-export interface Material { metalness: number; roughness: number; /** glTF material name; identical name, colour and finish share one exported material. */ name?: string; opacity?: number; transmission?: number; ior?: number; doubleSided?: boolean }
+export interface Material { metalness: number; roughness: number; /** glTF material name; identical name, colour and finish share one exported material. */ name?: string; opacity?: number; transmission?: number; ior?: number; doubleSided?: boolean; emissive?: string; emissiveStrength?: number }
 /**
  * Optional shape refinements. Absent means the original behaviour exactly.
  * lathe: profileUnits, corners, angleRange, startAngle. prism: outlineUnits, axis, bevel.

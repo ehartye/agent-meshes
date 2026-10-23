@@ -1,7 +1,7 @@
 # CI efficiency audit, 2026-10-18
 
 The owner authorized smarter CI and confirmed a production risk map: installed
-plugins, downstream repositories (including Dead Redline), saved projects and
+plugins, downstream repositories, saved projects and
 published APIs remain consumers. Saved data, source/output safety and build/export
 contracts are critical. Modeling/rendering/generators are standard; prose is low.
 

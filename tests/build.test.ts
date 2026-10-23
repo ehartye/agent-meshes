@@ -60,6 +60,60 @@ it('refuses unowned directories and unexpected files in owned directories', asyn
   expect(await readFile(join(output, 'personal.txt'), 'utf8')).toBe('still keep me');
 });
 
+it('adopts an empty output directory that the project created beforehand', async () => {
+  const { directory, config, output } = await fixture();
+  await mkdir(output);
+  const result = await buildAsset(config);
+  expect(result.files).toEqual(expect.arrayContaining(['project.mesh.json', 'model.glb']));
+  expect(JSON.parse(await readFile(join(output, '.agent-meshes-build.json'), 'utf8')).generator).toBe('agent-meshes');
+  expect((await readdir(directory)).filter(name => name.includes('.stage-') || name.includes('.backup-') || name.includes('.lock'))).toEqual([]);
+});
+
+it('keeps a file that appears in an adopted empty directory while the build renders', async () => {
+  const { config, output } = await fixture();
+  await mkdir(output);
+  await expect(buildAsset(config, { decorate: async () => {
+    await writeFile(join(output, 'personal.txt'), 'new file'); return [];
+  } })).rejects.toThrow(/personal\.txt/);
+  expect(await readFile(join(output, 'personal.txt'), 'utf8')).toBe('new file');
+});
+
+it('names the directory, what it holds and the fix when output holds other work', async () => {
+  const { config, output } = await fixture();
+  await mkdir(output); await writeFile(join(output, 'personal.txt'), 'keep me'); await writeFile(join(output, 'notes.md'), 'and me');
+  const error = await buildAsset(config).then(() => undefined, (reason: unknown) => reason as Error & { code?: string; hint?: string });
+  expect(error?.code).toBe('BUILD_OUTPUT_NOT_OWNED');
+  expect(error?.message).toContain(await realpath(output));
+  expect(error?.message).toMatch(/2 entries/);
+  expect(error?.message).toContain('personal.txt');
+  expect(error?.hint).toMatch(/"output"/);
+  expect(error?.hint).toMatch(/different|move|delete/i);
+  expect(await readdir(output)).toEqual(['notes.md', 'personal.txt']);
+});
+
+it('says which config owns an output directory that another config built', async () => {
+  const { directory, config, output } = await fixture();
+  await buildAsset(config);
+  const other = join(directory, 'other.json');
+  await writeFile(other, JSON.stringify({ version: 1, project: 'source.json', output: 'generated' }));
+  const error = await buildAsset(other).then(() => undefined, (reason: unknown) => reason as Error & { code?: string; hint?: string });
+  expect(error?.code).toBe('BUILD_OUTPUT_OTHER_CONFIG');
+  expect(error?.message).toContain('build.json');
+  expect(error?.message).toContain('other.json');
+  expect(error?.hint).toMatch(/"output"/);
+  expect(JSON.parse(await readFile(join(output, '.agent-meshes-build.json'), 'utf8')).config).toBe('../build.json');
+});
+
+it('tells the user to move a stray file out of an owned output directory', async () => {
+  const { config, output } = await fixture();
+  await buildAsset(config); await writeFile(join(output, 'personal.txt'), 'still keep me');
+  const error = await buildAsset(config).then(() => undefined, (reason: unknown) => reason as Error & { code?: string; hint?: string });
+  expect(error?.code).toBe('BUILD_OUTPUT_UNOWNED_FILE');
+  expect(error?.message).toContain('personal.txt');
+  expect(error?.message).toContain(await realpath(output));
+  expect(error?.hint).toMatch(/move/i);
+});
+
 it('includes rendering artifacts only after the complete build succeeds', async () => {
   const { config, output } = await fixture();
   const result = await buildAsset(config, { decorate: async (_project, stage) => {

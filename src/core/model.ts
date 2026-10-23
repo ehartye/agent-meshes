@@ -78,15 +78,18 @@ export function validateGeometry(g: Part['geometry']): void {
  * Glass: opacity below 1 blends the surface over what is behind it (glTF alphaMode BLEND); transmission 0 to 1 is
  * physically transmitted light (KHR_materials_transmission) and ior the index of refraction (KHR_materials_ior, 1.5 is glass);
  * doubleSided draws both faces, so a hollow bubble shows its far wall. Omitted glass fields mean an opaque, one-sided surface.
+ * Glow: emissive is the colour the surface gives off (glTF emissiveFactor); emissiveStrength scales it, default 1, and
+ * above or below 1 is written as KHR_materials_emissive_strength. A strength needs an emissive colour.
  */
+const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 export const materialSchema = z.object({
   metalness: z.number().min(0).max(1).default(0), roughness: z.number().min(0).max(1).default(0.65),
   opacity: z.number().min(0).max(1).optional(), transmission: z.number().min(0).max(1).optional(),
   ior: z.number().min(1).max(2.333).optional(), doubleSided: z.boolean().optional(),
+  emissive: colorSchema.optional(), emissiveStrength: z.number().min(0).max(1000).optional(),
   /** glTF material name, for example PieceWhite. Parts with the same name, colour and finish export one shared material. */
   name: z.string().trim().min(1).max(100).optional(),
-}).strict();
-const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+}).strict().refine(m => m.emissiveStrength === undefined || m.emissive !== undefined, { message: 'emissiveStrength needs an emissive colour', path: ['emissiveStrength'] });
 /** A painted pattern baked into vertex colors in world space. `size` is the dot spacing, stripe period or check size in meters. */
 export const patternSchema = z.object({
   type: z.enum(['dots', 'stripes', 'checks']), color: colorSchema,
