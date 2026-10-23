@@ -14,7 +14,7 @@ temperature override; empty = model default 1.5). Candidate k uses SEED + 1000*k
 import os
 import sys
 
-COMFY = r"C:\Users\ehart\repos\ComfyUI"
+COMFY = os.environ["COMFYUI_DIR"]
 NODES = os.path.join(COMFY, "custom_nodes", "ComfyUI-UniRig", "nodes")
 sys.path.insert(0, COMFY)
 sys.path.insert(0, NODES)

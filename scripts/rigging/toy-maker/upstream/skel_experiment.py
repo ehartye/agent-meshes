@@ -10,10 +10,10 @@ SEED, TOY. Spec: docs/specs/2026-07-05-skeleton-quality.md
 """
 import os, sys, time, json
 
-COMFY = r"C:\Users\ehart\repos\ComfyUI"
+COMFY = os.environ["COMFYUI_DIR"]
 sys.path.insert(0, COMFY)
 sys.path.insert(0, os.path.join(COMFY, "custom_nodes", "ComfyUI-UniRig", "nodes"))
-sys.path.insert(0, r"C:\Users\ehart\repos\toy-maker\rigging")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.argv = [sys.argv[0]]
 import numpy as np
 import torch

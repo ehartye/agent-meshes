@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SIDECAR = os.environ.get("SKINTOKENS_DIR", r"C:\Users\ehart\repos\SkinTokens")
+SIDECAR = os.environ.get("SKINTOKENS_DIR", os.path.join(os.path.expanduser("~"), "SkinTokens"))
 REPO_URL = "https://github.com/VAST-AI-Research/SkinTokens.git"
 PIN = "273b691"          # last reviewed commit; bump deliberately, re-check patch
 VENV_PY = os.path.join(SIDECAR, ".venv", "Scripts", "python.exe")

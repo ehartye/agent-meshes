@@ -17,7 +17,7 @@ import subprocess
 
 import numpy as np
 
-SIDECAR = os.environ.get("SKINTOKENS_DIR", r"C:\Users\ehart\repos\SkinTokens")
+SIDECAR = os.environ.get("SKINTOKENS_DIR", os.path.join(os.path.expanduser("~"), "SkinTokens"))
 VENV_PY = os.path.join(SIDECAR, ".venv", "Scripts", "python.exe")
 CKPT = os.path.join(SIDECAR, "experiments",
                     "articulation_xl_quantization_256_token_4", "grpo_1400.ckpt")

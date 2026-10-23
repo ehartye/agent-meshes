@@ -1,6 +1,6 @@
 # Mannequin payload provenance
 
-Harvest source: `ehartye/space2grow-3d` commit
+Harvest source: a private game project repository, commit
 `0defa6dd6050b3c41a239d2ec136f6be48505b2d`. `catalog.json` records the
 source path, SHA-256 of each delivered GLB, skeleton/clip counts and walk/run map.
 

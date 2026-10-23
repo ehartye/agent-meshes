@@ -13,7 +13,7 @@ this sidecar is absent.
 python rigging/skintokens/setup_sidecar.py
 ```
 
-Clones the repo to `C:\Users\ehart\repos\SkinTokens` (override:
+Clones the repo to `~/SkinTokens` (override:
 `SKINTOKENS_DIR`), pins commit `273b691`, applies `tokenrig-sdpa.patch`,
 drops `flash_attn_interface.py` at the repo root, builds a uv py3.11 venv
 (torch 2.7 cu128 + requirements + scipy), downloads the two checkpoints

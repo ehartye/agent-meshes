@@ -8,7 +8,7 @@ The shared inventory excludes real `__pycache__` directories and `.pyc`/`.pyo` f
 
 Two regression cases first failed on fingerprint drift and copied bytecode. They then passed with the inventory fix, including negative controls for actual source/resource edits and installed source tampering.
 
-An isolated normal setup used a separate managed home and npm prefix. Python 3.12 compiled `blender-preview.py` in both the checkout and temporary managed runtime, producing real `.pyc` files. Source and runtime fingerprints stayed unchanged; the checked launcher rendered source and GLB previews, and the installation remained ready. [Managed receipt](managed-proof.json) retains the candidate fingerprint, selected Blender, preview manifests and check results. Absolute scratch paths are historical execution locations, not portable artifact links.
+An isolated normal setup used a separate managed home and npm prefix. Python 3.12 compiled `blender-preview.py` in both the checkout and temporary managed runtime, producing real `.pyc` files. Source and runtime fingerprints stayed unchanged; the checked launcher rendered source and GLB previews, and the installation remained ready. [Managed receipt](managed-proof.json) retains the candidate fingerprint, selected Blender, preview manifests and check results. Scratch locations appear as `<temp>` and the Blender install as `<tools>`; they are historical execution locations, not portable artifact links.
 
 ## Vertex RGB
 

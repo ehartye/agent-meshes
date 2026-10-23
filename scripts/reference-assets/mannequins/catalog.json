@@ -105,7 +105,7 @@
       ],
       "bodyPlan": "neutral human; same mannequin in two animation banks",
       "source": {
-        "repository": "https://github.com/ehartye/space2grow-3d",
+        "origin": "private game project repository (not published)",
         "commit": "0defa6dd6050b3c41a239d2ec136f6be48505b2d",
         "path": "review/gait-audition/assets/human-base.glb.gz"
       },
@@ -216,7 +216,7 @@
       ],
       "bodyPlan": "neutral human; same mannequin in two animation banks",
       "source": {
-        "repository": "https://github.com/ehartye/space2grow-3d",
+        "origin": "private game project repository (not published)",
         "commit": "0defa6dd6050b3c41a239d2ec136f6be48505b2d",
         "path": "review/gait-audition/assets/human-addon.glb.gz"
       },
@@ -260,11 +260,11 @@
       "bodyPlan": "digitigrade plant-kin adult",
       "heightMeters": 1.7,
       "source": {
-        "repository": "https://github.com/ehartye/space2grow-3d",
+        "origin": "private game project repository (not published)",
         "commit": "0defa6dd6050b3c41a239d2ec136f6be48505b2d",
         "path": "asset-src/pip-baseline/character.py"
       },
-      "license": "Space2Grow species recipe and Agent Meshes shared helpers; no blanket CC0 claim",
+      "license": "Species recipe from a private game project and Agent Meshes shared helpers; no blanket CC0 claim",
       "validation": {
         "errors": 0,
         "warnings": 0,
@@ -305,11 +305,11 @@
       "bodyPlan": "digitigrade plant-kin child",
       "heightMeters": 1.12,
       "source": {
-        "repository": "https://github.com/ehartye/space2grow-3d",
+        "origin": "private game project repository (not published)",
         "commit": "0defa6dd6050b3c41a239d2ec136f6be48505b2d",
         "path": "asset-src/nori-baseline/character.py"
       },
-      "license": "Space2Grow species recipe and Agent Meshes shared helpers; no blanket CC0 claim",
+      "license": "Species recipe from a private game project and Agent Meshes shared helpers; no blanket CC0 claim",
       "validation": {
         "errors": 0,
         "warnings": 0,
