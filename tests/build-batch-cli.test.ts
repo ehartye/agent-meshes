@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { main } from '../src/cli.ts';
-const { buildAssets, decoratorFor } = vi.hoisted(() => ({ buildAssets: vi.fn(), decoratorFor: vi.fn() }));
+const { buildAsset, buildAssets, decoratorFor } = vi.hoisted(() => ({ buildAsset: vi.fn(), buildAssets: vi.fn(), decoratorFor: vi.fn() }));
+vi.mock('../src/build.ts', () => ({ buildAsset }));
 vi.mock('../src/build-batch.ts', () => ({ buildAssets }));
 vi.mock('../src/capture.ts', () => ({ decoratorFor }));
 beforeEach(() => { vi.spyOn(process.stdout,'write').mockReturnValue(true); buildAssets.mockReset().mockResolvedValue({ok:true,assets:[],unattempted:[],toolchain:{captures:{}}}); decoratorFor.mockReset().mockReturnValue(undefined); });
@@ -18,4 +19,16 @@ it('prints structured partial results and exits1 on an asset failure',async()=>{
   await main(['node','meshes','build-batch','a.json','b.json','--force']);
   expect(process.stdout.write).toHaveBeenCalledWith(JSON.stringify(result)+'\n');
   expect(process.exitCode).toBe(1);expect(buildAssets.mock.calls[0][1].force).toBe(true);
+});
+it('accepts --preview and --preview-page as the explicit form of the defaults, for build and build-batch', async()=>{
+  buildAsset.mockReset().mockResolvedValue({output:'dist',files:[]});
+  await main(['node','meshes','build','a.json','--preview','--preview-page']);
+  expect(decoratorFor).toHaveBeenLastCalledWith({preview:true,previewPage:true});
+  await main(['node','meshes','build-batch','a.json','--preview','--preview-page']);
+  expect(decoratorFor).toHaveBeenLastCalledWith({preview:true,previewPage:true});
+  await main(['node','meshes','build','a.json']);
+  expect(decoratorFor).toHaveBeenLastCalledWith({preview:true,previewPage:true});
+  await main(['node','meshes','build','a.json','--no-preview']);
+  expect(decoratorFor).toHaveBeenLastCalledWith({preview:false,previewPage:true});
+  expect(process.exitCode ?? 0).toBe(0);
 });

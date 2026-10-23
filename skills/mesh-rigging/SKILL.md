@@ -47,6 +47,20 @@ half-angle sine and cosine: 30° about x is `[0.2588, 0, 0, 0.9659]`. `pose.targ
 world-space point with a three-bone chain and a `pole` that picks which way the middle joint
 bends. Poses are for inspection and for reading values back with `inspect`; a clip stores them.
 
+**Axes and signs.** Models are right-handed with +Y up, and the `biped` recipe faces +Z (the glTF front);
+its `_L` parts sit at -X and its `_R` parts at +X. A rotation follows the right-hand rule, so +X tips +Y
+toward +Z. A limb hangs down from its joint, so on the biped:
+
+| Joint | Rotation about X | Result |
+|---|---|---|
+| Arm or hip (`arm_*`, `leg_*_hip`) | negative | swings the limb forward (+Z) |
+| Arm or hip | positive | swings it back |
+| Knee (`leg_*_knee`) | positive | bends the knee and swings the foot back |
+| Chest | positive | leans the body forward |
+
+`{"op":"pose","name":"arm_R","rotation":[-0.2588,0,0,0.9659]}` swings the right arm 30° forward. Clip
+keys use the same signs. Check a recipe other than the biped with one `pose` and `inspect` before keying.
+
 `clip.set` writes the whole clip at once: a `duration` and one track per bone and property with
 keys at strictly increasing times from 0 through the duration. First and last keys equal make a
 seamless loop. Tracks are offsets from rest, so an untracked bone stays put.

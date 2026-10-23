@@ -83,6 +83,11 @@ function checkFiles(files: string[]): void {
   if (new Set(files).size !== files.length) throw new Error('Build file list contains duplicate files');
   for (const file of files) if (!file || isAbsolute(file) || file.includes('\\') || file.includes(':') || file.includes('\0') || file.split('/').some(piece => !piece || piece === '.' || piece === '..') || file === markerName) throw new Error(`Unsafe build artifact path: ${file}`);
 }
+/** An output-directory refusal: the message says what is wrong, `hint` says how to proceed (the CLI prints both). */
+function outputError(code: string, summary: string, hint: string): Error {
+  return Object.assign(new Error(`${summary} Hint: ${hint}`), { code, hint });
+}
+const replaceHint = 'A build replaces its whole output directory, so move the file out of it or give the build a different "output" in its config.';
 async function checkTree(directory: string, files: string[], allowMissing = false): Promise<void> {
   checkFiles(files);
   const expected = new Set([...files, markerName]);
@@ -92,10 +97,10 @@ async function checkTree(directory: string, files: string[], allowMissing = fals
       const name = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isSymbolicLink()) throw new Error(`Symlink in build output: ${name}`);
       if (entry.isDirectory()) {
-        if (![...expected].some(file => file.startsWith(`${name}/`))) throw new Error(`Unexpected directory in build output: ${name}`);
+        if (![...expected].some(file => file.startsWith(`${name}/`))) throw outputError('BUILD_OUTPUT_UNOWNED_FILE', `Unexpected directory "${name}" in build output ${directory}.`, replaceHint);
         await visit(join(path, entry.name), name);
       } else if (entry.isFile() && expected.has(name)) found.add(name);
-      else throw new Error(`Unexpected unowned file in build output: ${name}`);
+      else throw outputError('BUILD_OUTPUT_UNOWNED_FILE', `Unexpected unowned file "${name}" in build output ${directory}.`, replaceHint);
     }
   }
   await visit(directory, '');
@@ -104,11 +109,19 @@ async function checkTree(directory: string, files: string[], allowMissing = fals
 async function checkOwnership(output: string, config: string, allowMissing = false): Promise<boolean> {
   if (!await exists(output)) return false;
   const stat = await lstat(output);
-  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Build output must be an owned directory, not a symlink or file');
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw outputError('BUILD_OUTPUT_NOT_OWNED', `Build output ${output} is a ${stat.isSymbolicLink() ? 'symlink' : 'file'}, not a directory that agent-meshes created.`, 'Set "output" in the build config to a path that does not exist yet.');
   const markerPath = join(output, markerName);
-  if (!await exists(markerPath) || !(await lstat(markerPath)).isFile() || (await lstat(markerPath)).isSymbolicLink()) throw new Error('Output directory is not owned by agent-meshes');
-  const parsed = markerSchema.safeParse(JSON.parse(await readFile(markerPath, 'utf8')));
-  if (!parsed.success || parsed.data.config !== portable(relative(output, config))) throw new Error('Output ownership does not match this build config');
+  if (!await exists(markerPath) || !(await lstat(markerPath)).isFile() || (await lstat(markerPath)).isSymbolicLink()) {
+    const entries = await readdir(output);
+    // Nothing to lose: an empty directory is replaced by the build, which then marks it as owned.
+    if (entries.length === 0) return true;
+    const shown = entries.slice(0, 5).join(', ') + (entries.length > 5 ? `, and ${entries.length - 5} more` : '');
+    throw outputError('BUILD_OUTPUT_NOT_OWNED', `Build output ${output} is not owned by agent-meshes: it holds ${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} (${shown}) and no ${markerName} marker, and a build replaces its whole output directory.`, 'Set "output" in the build config to a different directory, or move or delete these entries.');
+  }
+  const marker = await readFile(markerPath, 'utf8').then(text => { try { return markerSchema.safeParse(JSON.parse(text)); } catch { return undefined; } });
+  if (!marker?.success) throw outputError('BUILD_OUTPUT_NOT_OWNED', `Build output ${output} has an unreadable ${markerName} marker.`, 'Set "output" in the build config to a different directory, or delete this one if it holds no work.');
+  const parsed = marker;
+  if (parsed.data.config !== portable(relative(output, config))) throw outputError('BUILD_OUTPUT_OTHER_CONFIG', `Build output ${output} belongs to the build config ${resolve(output, parsed.data.config)}, not ${config}.`, 'Give each build config its own "output" directory.');
   await checkTree(output, parsed.data.files, allowMissing);
   return true;
 }

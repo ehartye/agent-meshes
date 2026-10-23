@@ -154,7 +154,8 @@ In Blender sources, `material(name, '#e8a27c', emission='#ffaa00')` takes sRGB h
 from a concept sheet (or linear tuples) and can glow (lens glass, a bulb). **Glass** is
 `material(name, '#eaf6ff', roughness=.04, opacity=.16, ior=1.5)` (alphaMode BLEND, double-sided by
 default; `transmission=1` for KHR_materials_transmission); in the operation model it is
-`material: {opacity, transmission, ior, doubleSided}` ([operations](references/operations.md)).
+`material: {opacity, transmission, ior, doubleSided}` ([operations](references/operations.md)). A glow is
+`material: {emissive, emissiveStrength}` in the operation model and `emission=` in Blender sources.
 The character recipe's vacuum suit shows the pattern: a helmet fitted to the head it holds
 (`helmet_fit`), clear glass over a living face, an opaque shell and rims (recipes/README.md).
 

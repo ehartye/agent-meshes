@@ -1,4 +1,4 @@
-import { DoubleSide, MeshPhysicalMaterial, MeshStandardMaterial } from 'three';
+import { Color, DoubleSide, MeshPhysicalMaterial, MeshStandardMaterial } from 'three';
 import type { Material as ThreeMaterial, Object3D } from 'three';
 import { Mesh } from 'three';
 import type { Material } from '../core/types.ts';
@@ -19,6 +19,7 @@ export function finishMaterial(color: string, vertexColors: boolean, finish: Mat
     ? new MeshPhysicalMaterial({ ...base, transmission: transmission ?? 0, ior: ior ?? 1.5 })
     : new MeshStandardMaterial(base);
   if (finish.name) material.name = finish.name;
+  if (finish.emissive !== undefined) { material.emissive = new Color(finish.emissive); material.emissiveIntensity = finish.emissiveStrength ?? 1; }
   if (opacity < 1) { material.transparent = true; material.opacity = opacity; material.depthWrite = false; }
   return material;
 }

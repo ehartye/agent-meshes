@@ -3,11 +3,11 @@ import type { Material, MeshPhysicalMaterial, MeshStandardMaterial, Object3D } f
 
 /**
  * A key that is equal exactly when two authored materials would export as the same glTF material:
- * name, base colour, vertex-colour use, finish and the glass fields.
+ * name, base colour, vertex-colour use, finish, the glass fields and the glow.
  */
 export function materialKey(material: Material): string {
   const m = material as MeshStandardMaterial & Partial<MeshPhysicalMaterial>;
-  return JSON.stringify([m.type, m.name, m.color?.getHexString(), m.vertexColors, m.metalness, m.roughness, m.transparent, m.opacity, m.transmission ?? 0, m.ior ?? 1.5, m.side, m.alphaTest]);
+  return JSON.stringify([m.type, m.name, m.color?.getHexString(), m.vertexColors, m.metalness, m.roughness, m.transparent, m.opacity, m.transmission ?? 0, m.ior ?? 1.5, m.side, m.alphaTest, m.emissive?.getHexString(), m.emissiveIntensity]);
 }
 
 /**

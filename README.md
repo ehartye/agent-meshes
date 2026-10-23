@@ -2,7 +2,7 @@
 
 Named-part 3D authoring for coding agents, with a live browser workbench. Requires Node.js 24 or later.
 
-Release 0.26.3 points the Unreal generation routes at the `unreal-procedural` and `unreal-rendering` skills that replace `unreal-features` in [agent-unreal](https://github.com/ehartye/agent-unreal) 0.6.0. Release 0.26.2 points the Unreal import references at the `unreal-import` skill in
+Release 0.27.0 adds an `emissive` colour and `emissiveStrength` to the material model (glTF `emissiveFactor` and `KHR_materials_emissive_strength`), has `build` adopt an empty output directory and explain a refusal to replace one that holds other work, accepts `--preview` and `--preview-page` as the explicit defaults, and states the biped recipe's axes and rotation signs in mesh-rigging. Release 0.26.3 points the Unreal generation routes at the `unreal-procedural` and `unreal-rendering` skills that replace `unreal-features` in [agent-unreal](https://github.com/ehartye/agent-unreal) 0.6.0. Release 0.26.2 points the Unreal import references at the `unreal-import` skill in
 [agent-unreal](https://github.com/ehartye/agent-unreal), which now holds the Unreal importer.
 
 Release 0.26.1 separates the Unreal and Blender routes: mesh-tool-selection now states when to author in Blender

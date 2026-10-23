@@ -2,7 +2,7 @@
 # Keep phase as one plain top-level enum. First matching area wins.
 phase: dev
 consumers:
-  - The owner's plugin installations and personal project repositories, including Dead Redline; no external users or production support promise.
+  - The owner's plugin installations and personal project repositories; no external users or production support promise.
   - Preserve the owner's saved projects and source/output safety; phase alone does not authorize deleting data or breaking APIs.
 weights:
   wait: 1

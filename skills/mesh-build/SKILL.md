@@ -122,11 +122,14 @@ saved project). Paths resolve relative to the config. `mesh build build.json` pr
 isolated state, `project.mesh.json`, `model.glb`, `verification.json`, `front.png`, `side.png`,
 `perspective.png`, `<clip>.png` contact sheets, and a self-contained offline `preview.html` with
 orbit, playback and scrub (and, for a model with morphs, a slider per morph and the emotion
-presets from `extras.arkitFace`). `--no-preview` skips the browser entirely; `--no-preview-page` keeps
-the PNGs but skips the 1 MB preview page when your own page embeds the GLB. The output directory
-is replaced only when it is marked as owned by that config, so never point `output` at a
-directory holding other work. A failed build leaves the previous output in place; after a crash,
-confirm the process is gone before removing the adjacent `.agent-meshes.lock`.
+presets from `extras.arkitFace`). Renders and the preview page are on by default (`--preview` and
+`--preview-page` say so explicitly); `--no-preview` skips the browser entirely and `--no-preview-page` keeps
+the PNGs but skips the 1 MB preview page when your own page embeds the GLB. The output directory is the
+`output` field of the config (`build` has no `--out`). A build replaces that whole directory, so it
+creates a missing one, adopts an empty one, and replaces one only when its marker names that config.
+A directory holding other work is refused with `BUILD_OUTPUT_NOT_OWNED`, which names the directory and what
+it holds; set `output` to a different directory or move the files. A failed build leaves the previous output
+in place; after a crash, confirm the process is gone before removing the adjacent `.agent-meshes.lock`.
 
 ## Static props for a game engine: names, merge, budgets
 

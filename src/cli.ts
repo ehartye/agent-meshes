@@ -427,7 +427,9 @@ export async function main(args = process.argv): Promise<void> {
   program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')
     .option('--if-changed', 'Reuse native Blender output when declared inputs and tracked tools match (declare every dependency)')
     .option('--force', 'Regenerate native Blender output and refresh its incremental cache')
+    .option('--preview', 'Render views and write the standalone preview page (the default; --no-preview turns it off)')
     .option('--no-preview', 'Skip browser renders and the standalone preview page')
+    .option('--preview-page', 'Write the standalone preview.html (the default)')
     .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html').action(async (config, options) => {
     const { buildAsset } = await import('./build.ts');
     print(await buildAsset(config, await buildOptionsFor(options)));
@@ -435,7 +437,9 @@ export async function main(args = process.argv): Promise<void> {
   program.command('build-batch <configs...>').description('Build an explicit list sequentially, sharing native tool hashes for this invocation')
     .option('--if-changed', 'Reuse unchanged native Blender output with current verification')
     .option('--force', 'Regenerate native Blender output for every attempted asset')
+    .option('--preview', 'Render views and write standalone preview pages (the default; --no-preview turns it off)')
     .option('--no-preview', 'Skip browser renders and standalone preview pages')
+    .option('--preview-page', 'Write standalone previews (the default)')
     .option('--no-preview-page', 'Keep PNG renders but skip standalone previews')
     .action(async (configs, options) => {
       const { buildAssets } = await import('./build-batch.ts');
