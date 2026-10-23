@@ -1,9 +1,9 @@
 # Organized rigging and animation libraries
 
 Use this library when choosing a body-plan reference, extracting motion, fitting a
-prepared target rig or inspecting Toy Maker's rigging algorithms. The original
+prepared target rig or inspecting the imported rigging algorithms. The original
 [four-model mannequin library](mannequin-library.md) remains available, including
-Pip/Nori. The new catalog reuses its two human payloads; it does not replace them.
+the plant-kin pair. The new catalog reuses its two human payloads; it does not replace them.
 
 ## Discover and inspect
 
@@ -56,11 +56,11 @@ Run `readiness` to inspect module presence and optional external configuration.
 Use trusted NPZ inputs: upstream schemas contain Python object arrays.
 
 ```text
-<python> scripts/rigging/toy-maker/rig_library.py readiness
-<python> scripts/rigging/toy-maker/rig_library.py extract human-base Walk_Loop <project>/walk.npz
-<python> scripts/rigging/toy-maker/rig_library.py retarget human-base <project>/rigged.npz <project>/walk.npz <project>/walk.glb
-<python> scripts/rigging/toy-maker/rig_library.py extract fox Walk <project>/fox-walk.npz
-<python> scripts/rigging/toy-maker/rig_library.py retarget fox <project>/fox-rigged.npz <project>/fox-walk.npz <project>/fox-walk.glb
+<python> scripts/rigging/rig-tools/rig_library.py readiness
+<python> scripts/rigging/rig-tools/rig_library.py extract human-base Walk_Loop <project>/walk.npz
+<python> scripts/rigging/rig-tools/rig_library.py retarget human-base <project>/rigged.npz <project>/walk.npz <project>/walk.glb
+<python> scripts/rigging/rig-tools/rig_library.py extract fox Walk <project>/fox-walk.npz
+<python> scripts/rigging/rig-tools/rig_library.py retarget fox <project>/fox-rigged.npz <project>/fox-walk.npz <project>/fox-walk.glb
 ```
 
 Extraction samples actual GLB animation channels and FK at 60Hz. That rate matches
@@ -100,8 +100,8 @@ optional export leaves it null, and diagnostic presentation never claims a sibli
 ## Prepare weights and template candidates
 
 ```text
-<python> scripts/rigging/toy-maker/rig_library.py spider-template <project>/mesh.npz <project>/candidate.npz
-<python> scripts/rigging/toy-maker/rig_library.py prepare-skin <project>/source.glb <project>/inference.npz <project>/rigged.npz
+<python> scripts/rigging/rig-tools/rig_library.py spider-template <project>/mesh.npz <project>/candidate.npz
+<python> scripts/rigging/rig-tools/rig_library.py prepare-skin <project>/source.glb <project>/inference.npz <project>/rigged.npz
 ```
 
 `mesh.npz` contains vertices and faces. The spider template fits a clean eight-leg
@@ -120,9 +120,9 @@ No installer, sidecar setup script, model download or inference ran for this imp
 `readiness` is file/module presence, not an executed-backend certification.
 
 ```text
-<python> scripts/rigging/toy-maker/rig_library.py readiness --unirig-root <ComfyUI> --unirig-python <isolated-python> --skintokens-root <SkinTokens> --skintokens-python <sidecar-python>
-<python> scripts/rigging/toy-maker/rig_library.py infer-unirig <project>/mesh.npz <project>/rig.npz --comfy-root <ComfyUI> --python <isolated-python>
-<python> scripts/rigging/toy-maker/rig_library.py skin-skintokens <project>/mesh.npz <project>/candidate.npz <project>/skin.npz <project>/fresh-work-dir> --sidecar-root <SkinTokens> --python <sidecar-python>
+<python> scripts/rigging/rig-tools/rig_library.py readiness --unirig-root <ComfyUI> --unirig-python <isolated-python> --skintokens-root <SkinTokens> --skintokens-python <sidecar-python>
+<python> scripts/rigging/rig-tools/rig_library.py infer-unirig <project>/mesh.npz <project>/rig.npz --comfy-root <ComfyUI> --python <isolated-python>
+<python> scripts/rigging/rig-tools/rig_library.py skin-skintokens <project>/mesh.npz <project>/candidate.npz <project>/skin.npz <project>/fresh-work-dir> --sidecar-root <SkinTokens> --python <sidecar-python>
 ```
 
 These execution commands are unexecuted here. UniRig's worker replaces only the
@@ -134,12 +134,12 @@ and mesh-I/O failures. Model temperature uses `SKEL_TEMP`, never Windows `TEMP`.
 
 ## Preserved modules, licensing and verification scope
 
-The [module map and Python API](../../rigging/toy-maker/README.md) organize all
+The [module map and Python API](../../rigging/rig-tools/README.md) organize all
 26 source snapshots by role. Historical README claims, machine paths and fallback
-prose describe Toy Maker. Some snapshots write beside their source or assume old
+prose describe the original rigging project. Some snapshots write beside their source or assume old
 caches; use adapters or deliberately configure a project-owned copy.
 
-The [inventory](../../rigging/toy-maker/inventory.json) records source paths, pins,
+The [inventory](../../rigging/rig-tools/inventory.json) records source paths, pins,
 roles, bytes/hashes, tracked-at-pin flags and local-only artifacts. The
 [provenance record](../../reference-assets/rigs/PROVENANCE.md) separates CC0 GLBs,
 application/helper code, Adobe Mixamo and CMU/third-party FBX. The latter are

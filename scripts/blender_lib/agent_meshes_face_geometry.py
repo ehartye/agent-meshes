@@ -2635,7 +2635,7 @@ def shutter_hole(vertices, faces, center, eye_radius, hole_radius=None, max_edge
     rim runs straight back along the gaze axis to the eye center's depth (a tube in
     the face's material, which the blades slide through), and a cap of that radius
     closes it behind the eyeball. The skin stays one closed surface, so no view
-    through the hole finds the head's inside (the round-3 Bolt's single-layer tin
+    through the hole finds the head's inside (the round-3 robot's single-layer tin
     showed it below the shutters). Then it builds `shutter_geometry(center,
     eye_radius, surface=...)` against the holed face, which rejects blades that
     would slide out through the plate. Pass `shutter_options` as you would to
@@ -2939,7 +2939,7 @@ def chin_drop(rest, targets):
     """How far the lowest point (the chin) drops between rest and target positions: {'drop', 'height', 'ratio'}.
 
     `height` is the rest height (lowest to highest point) and `ratio` = drop / height;
-    the talking-heads bar wants a puppet jaw's chin to drop by at least 0.1 of the
+    the face-rig acceptance bar wants a puppet jaw's chin to drop by at least 0.1 of the
     head. A negative drop means the lowest point rises.
     """
     rest, targets = list(rest), list(targets)
@@ -4119,7 +4119,7 @@ def nose_geometry(vertices, faces, tip, size, nostrils=True, nostril_radius=None
                   max_edge=None):
     """Sculpt a round button nose with two nostril dimples into a skin, dense enough that it stays smooth.
 
-    For kids and other soft faces (Pip). `tip` is the (x, z) of the nose's middle on
+    For kids and other soft faces. `tip` is the (x, z) of the nose's middle on
     the face, `size` its (half width, half height, projection) in meters: a ball that
     stands `projection` proud of the skin along its normal, joined to it by a smooth
     union with a rounded fillet (`sculpt_skin`), so it reads as part of the face with
@@ -4211,7 +4211,7 @@ def ellipsoid_geometry(center, radii, rings=24, segments=32, exponent=2):
     """A closed, outward-wound UV ellipsoid with poles on the Z axis: a head blank to cut and morph.
 
     `exponent` above 2 makes a superellipsoid, |x/rx|^p + |y/ry|^p + |z/rz|^p = 1: a
-    tin can with rounded edges at 6 (Bolt), boxier as it grows. Flat faces keep a
+    tin can with rounded edges at 6, boxier as it grows. Flat faces keep a
     robot's recessed shutters and plates behind the skin.
     """
     cx, cy, cz = _vector(center, 3, 'Ellipsoid center')
@@ -4246,7 +4246,7 @@ def ellipsoid_sdf(point, center, radii):
     """Approximate signed distance from a point to an ellipsoid (exact for a sphere; negative inside), for sdf_blank.
 
     A head field calls this hundreds of thousands of times: the center and radii are checked once per distinct pair
-    (a Mossjaw build spent 17 minutes re-validating them), and a point that is already a tuple of three floats is used
+    (a frog-head build spent 17 minutes re-validating them), and a point that is already a tuple of three floats is used
     as it is.
     """
     try:
@@ -4660,7 +4660,7 @@ def brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50, 
                         down=12, inner_up=10, outer_up=10, skin=None, hole=None, sink=None, clearance=.0002, columns=16, sides=16):
     """A heavy brow ridge lying on the skin over an eye in a dome, with browDown, browInnerUp and browOuterUp morphs.
 
-    For heads whose eyes sit in domes (a frog, a creature; Mossjaw's ridge is his
+    For heads whose eyes sit in domes (a frog, a creature; a frog head's ridge is its
     brow). The ridge runs round the eye from `inner` degrees toward the nose to
     `outer` degrees away, centered `elevation` degrees above the gaze axis (arched up
     by `arch` in the middle) and `height` degrees tall, and it lies on the actual skin:
@@ -4803,7 +4803,7 @@ def dome_brow_geometry(hole, skin, side, roll=(152, 26), polar=(75, 67), height=
     """A heavy brow ridge arcing over an eye dome from the inner to the outer corner, laid on the skin, that rolls.
 
     For creatures whose eyes sit in domes (`eye_hole` mounds a skin that runs through
-    the eye): Mossjaw's brows. `hole` is the eye's `eye_hole`/`eye_holes` result and
+    the eye): a frog head's brows. `hole` is the eye's `eye_hole`/`eye_holes` result and
     `skin` the skin geometry it was cut into ({'vertices', 'faces'}). `roll` is
     (inner end, outer end) in degrees round the gaze axis (0 the outer side, 90 the
     top; side 'R' mirrors), `polar` the angle from the gaze axis at the ends and at the
@@ -5197,7 +5197,7 @@ def skin_brow_geometry(skin, side, inner, outer, height=.004, thickness=.0016, a
     return result
 
 
-# ---------------------------------------------------------------- robot parts (Bolt: plates, rubber mouth edge)
+# ---------------------------------------------------------------- robot parts (plates, rubber mouth edge)
 
 def _turn_y(point, pivot, degrees):
     """Turn `point` about the Y axis (the gaze axis) through `pivot`: positive lifts points on the +X side."""
@@ -5363,7 +5363,7 @@ def rubber_mouth_geometry(surface, mouth_z, half_width, jaw=None, radius=.0015, 
                           standoff=.0003, smile=(.0015, .004), frown=.004, stretch=.004, funnel=.004, pinch=.2):
     """A robot's rubber mouth edge: an upper and a lower rubber tube along the mouth slot, carrying the mouth shapes.
 
-    For heads whose jaw is a rigid plate (Bolt): the plates stay rigid and these
+    For heads whose jaw is a rigid plate: the plates stay rigid and these
     edges flex. The tubes run from -`half_width` to +`half_width` about `center_x`,
     just above and below `mouth_z`, touching at rest so the slot is closed, and sit
     `standoff` in front of the head's front `surface` (`front_surface(...)`). Morphs:

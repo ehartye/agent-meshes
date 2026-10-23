@@ -10,7 +10,7 @@ export interface PlacementInput { position?: Triple; rotation?: Triple; scale?: 
 export interface Placement { position: Triple; rotation: Triple; scale: Triple }
 
 const namePattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
-/** A model name: a letter, then up to 63 letters, digits, `_` or `-`. Names key colors (`pip/iris`), so no `/` or `#`. */
+/** A model name: a letter, then up to 63 letters, digits, `_` or `-`. Names key colors (`hero/iris`), so no `/` or `#`. */
 export function parseModelName(name: unknown): string {
   if (typeof name !== 'string' || !namePattern.test(name)) throw new Error(`Model name must be a letter followed by up to 63 letters, digits, _ or -: ${JSON.stringify(name)}`);
   return name;

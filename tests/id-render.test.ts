@@ -25,19 +25,19 @@ describe('ID colors', () => {
 
   it('resolves part#slot, part, then material, with model-scoped keys first', () => {
     const a = model(), b = model();
-    const targets = collectIdTargets([{ model: 'pip', root: a.root }, { model: 'bolt', root: b.root }]);
-    expect(targets.filter(t => t.model === 'pip').map(t => `${t.part}#${t.slot}:${t.material}`)).toEqual(['head#0:skin', 'eye_L#0:eyeWhite', 'eye_L#1:iris', 'hat#0:felt']);
+    const targets = collectIdTargets([{ model: 'hero', root: a.root }, { model: 'robot', root: b.root }]);
+    expect(targets.filter(t => t.model === 'hero').map(t => `${t.part}#${t.slot}:${t.material}`)).toEqual(['head#0:skin', 'eye_L#0:eyeWhite', 'eye_L#1:iris', 'hat#0:felt']);
     const colors = resolveIdColors(targets, {
-      materials: { skin: '#010101', iris: '#020202', 'bolt/iris': '#030303' },
-      parts: { 'eye_L#0': '#040404', 'pip/hat': '#050505' },
+      materials: { skin: '#010101', iris: '#020202', 'robot/iris': '#030303' },
+      parts: { 'eye_L#0': '#040404', 'hero/hat': '#050505' },
     });
     const at = (m: string, part: string, slot: number) => colors.get(targets.find(t => t.model === m && t.part === part && t.slot === slot)!);
-    expect(at('pip', 'head', 0)).toBe('#010101');
-    expect(at('pip', 'eye_L', 0)).toBe('#040404');
-    expect(at('pip', 'eye_L', 1)).toBe('#020202');
-    expect(at('bolt', 'eye_L', 1)).toBe('#030303');
-    expect(at('pip', 'hat', 0)).toBe('#050505');
-    expect(at('bolt', 'hat', 0)).toBe('#000000');
+    expect(at('hero', 'head', 0)).toBe('#010101');
+    expect(at('hero', 'eye_L', 0)).toBe('#040404');
+    expect(at('hero', 'eye_L', 1)).toBe('#020202');
+    expect(at('robot', 'eye_L', 1)).toBe('#030303');
+    expect(at('hero', 'hat', 0)).toBe('#050505');
+    expect(at('robot', 'hat', 0)).toBe('#000000');
     expect(resolveIdColors(targets, { other: null }).get(targets[0])).toBeNull();
   });
 
@@ -45,7 +45,7 @@ describe('ID colors', () => {
     const { root } = model(), targets = collectIdTargets([{ model: null, root }]);
     expect(() => resolveIdColors(targets, { materials: { irs: '#ff0000' } })).toThrow(/Unknown material "irs" in idRender; materials: eyeWhite, felt, iris, skin/);
     expect(() => resolveIdColors(targets, { parts: { 'eye_L#2': '#ff0000' } })).toThrow(/Unknown part "eye_L#2" in idRender; parts: eye_L, eye_L#0, eye_L#1, hat, hat#0, head, head#0/);
-    expect(() => resolveIdColors(targets, { parts: { 'pip/head': '#ff0000' } })).toThrow(/Unknown part "pip\/head"/);
+    expect(() => resolveIdColors(targets, { parts: { 'hero/head': '#ff0000' } })).toThrow(/Unknown part "hero\/head"/);
     expect(() => resolveIdColors(targets, { materials: { skin: 'tan' } })).toThrow(/materials.skin must be a #rrggbb color/);
     expect(() => resolveIdColors(targets, { background: 'black' } as never)).toThrow(/background must be a #rrggbb color/);
     expect(() => resolveIdColors(targets, { colour: {} } as never)).toThrow(/Unknown idRender option "colour"/);

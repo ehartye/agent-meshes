@@ -1,6 +1,6 @@
 # Neutral mannequin reference library
 
-For all nine human/animal animation banks and the organized Toy Maker rigging
+For all nine human/animal animation banks and the organized rigging
 tools, use the [rig library](rig-library.md): catalog/verify/offline-demo commands,
 portable CPU extraction/retargeting and explicit optional-backend readiness.
 It reuses the two humans below and keeps this four-model catalog intact.
@@ -18,8 +18,8 @@ current working directory. `capabilities` reports that package as `guidance.base
 | --- | --- | --- | --- | --- |
 | human-base | Neutral human mannequin | 66 bones | 88 clips | Human joint hierarchy, locomotion and interaction reference |
 | human-addon | Same human mannequin, alternate clips | 66 bones | 76 clips | Alternate walk/run styles and gestures; not another body type |
-| pip | Adult plant-kin, 1.70 m | 50 bones | Walk, jog and six joint diagnostics | Raised hock, long metatarsal, toe support, tail and crest anatomy |
-| nori | Child plant-kin, 1.12 m | 46 bones | Walk, jog and six joint diagnostics | Child proportions on that species; not a uniformly scaled adult |
+| plant-kin-adult | Adult plant-kin, 1.70 m | 50 bones | Walk, jog and six joint diagnostics | Raised hock, long metatarsal, toe support, tail and crest anatomy |
+| plant-kin-child | Child plant-kin, 1.12 m | 46 bones | Walk, jog and six joint diagnostics | Child proportions on that species; not a uniformly scaled adult |
 
 ## Open the offline demo
 
@@ -53,7 +53,7 @@ chosen clip and intended use alongside your model's build config.
    digitigrade foot have different support geometry. Identify hip, knee, raised
    ankle/hock, metatarsal and toes independently; the hock is not a backward knee.
 2. Compare cross-sections, shoulder/hip insertions, palm/thumb structure, tail and
-   center of mass against the target. Pip/Nori impose particular pear trunks,
+   center of mass against the target. These plant-kin bodies impose particular pear trunks,
    bulb heads, fronds and three-digit hands; those choices do not define all aliens.
 3. Select a role: visual study, joint-location donor, skin-weight donor or motion
    donor. State that role; do not silently transfer all four.

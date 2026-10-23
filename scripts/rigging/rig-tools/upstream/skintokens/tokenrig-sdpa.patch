@@ -15,7 +15,7 @@ index ab35e3f..192ca62 100755
          llm_config.pre_norm = True
          self.llm_config = llm_config
 -        self.transformer = AutoModelForCausalLM.from_config(config=llm_config, attn_implementation="flash_attention_2").to(torch.bfloat16)
-+        # toy-maker R4 eval: sdpa instead of flash_attention_2 (no flash-attn build for sm_120/Windows)
++        # rig-tools R4 eval: sdpa instead of flash_attention_2 (no flash-attn build for sm_120/Windows)
 +        self.transformer = AutoModelForCausalLM.from_config(config=llm_config, attn_implementation=os.environ.get("SKINTOKENS_ATTN", "sdpa")).to(torch.bfloat16)
          
          self.output_proj = nn.Sequential(

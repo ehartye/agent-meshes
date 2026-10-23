@@ -514,7 +514,7 @@ export function ballNose(head: SynthHead, gap = 0, swell = 0.003): void {
 }
 
 /**
- * A heavy brow ridge lying along a skin dome (Mossjaw's brow): a 30 mm dome beside the head with a ridge wrapped `arc`
+ * A heavy brow ridge lying along a skin dome (a frog head's brow): a 30 mm dome beside the head with a ridge wrapped `arc`
  * degrees round it, `lift` proud. The ridge's top lies farther out than its base, so at its ends the top reaches past
  * the base along the ridge's chord. `gap` lifts the whole ridge off the dome; `lean` lifts it more toward one end
  * (0 at the inner end, `lean` more at the outer end): a ridge touching at one end and hanging off elsewhere; `keel`

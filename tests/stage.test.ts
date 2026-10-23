@@ -36,9 +36,9 @@ const round = (values: readonly number[]) => values.map(v => Math.round(v * 1000
 
 describe('stage inputs', () => {
   it('accepts short model names and rejects everything else with the rule', () => {
-    expect(parseModelName('pip')).toBe('pip');
+    expect(parseModelName('hero')).toBe('hero');
     expect(parseModelName('Moss_jaw-2')).toBe('Moss_jaw-2');
-    for (const bad of ['', '2pip', 'a b', 'x'.repeat(65), 'pip/left', 42, null]) expect(() => parseModelName(bad)).toThrow(/Model name must/);
+    for (const bad of ['', '2hero', 'a b', 'x'.repeat(65), 'hero/left', 42, null]) expect(() => parseModelName(bad)).toThrow(/Model name must/);
   });
 
   it('parses placements with defaults, uniform scale and clear errors', () => {

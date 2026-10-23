@@ -7,7 +7,7 @@ Seven animal files are exact copies of `static/animations/<id>-animations.glb`.
 The [catalog](catalog.json) records each original path/hash and delivered hash.
 `LICENSE-CC0.MD` is the pinned upstream statement for models, blend files, rigs
 and animations. `LICENSE-MIT.MD` separately records the application-code terms.
-These statements do not relicense third-party FBX or Toy Maker helper code.
+These statements do not relicense third-party FBX or rigging helper code.
 
 Human-base and human-addon reference existing payloads under `../mannequins/`;
 no duplicate human bytes are added. That library's catalog/provenance remains
@@ -16,10 +16,10 @@ duplicate-channel removals. The new catalog additionally records the observed
 Mesh2Motion source pin/hash. The addon is unchanged; the base retains the already
 validated JSON-only repair and unchanged binary payload.
 
-Toy Maker source pin `78593cdd61d0bc3e7324648fd70a3760974e6b82` supplies 26 text
-files under `rigging/`, preserved exactly in `../../rigging/toy-maker/upstream/`.
+The rigging source pin `78593cdd61d0bc3e7324648fd70a3760974e6b82` supplies 26 text
+files under `rigging/`, preserved exactly in `../../rigging/rig-tools/upstream/`.
 Their original bytes/hashes, module roles and tracked-at-pin flags are in the
-[inventory](../../rigging/toy-maker/inventory.json). Exact snapshots deliberately
+[inventory](../../rigging/rig-tools/inventory.json). Exact snapshots deliberately
 retain historical prose and machine paths; portable adapters are new Meshes code.
 No blanket CC0 claim applies to this mixed-source code/assets collection.
 

@@ -1,8 +1,8 @@
-# Toy Maker rigging import
+# Rigging tools import
 
 Start with the [rig library guide](../../blender_lib/references/rig-library.md)
 and `python rig_library.py --help`. This directory provides portable adapters;
-`upstream/` holds all 26 exact text snapshots from Toy Maker
+`upstream/` holds all 26 exact text snapshots from the rigging source project
 `78593cdd61d0bc3e7324648fd70a3760974e6b82`. Their hashes, roles, original paths,
 and local-only cache/FBX inventory are in [inventory.json](inventory.json).
 Ignored local artifacts are explicitly distinguished from files tracked at that pin.
@@ -15,7 +15,7 @@ Ignored local artifacts are explicitly distinguished from files tracked at that 
 | Template skeleton | `spider_template.py` | Synthetic eight-leg positive and box-negative checked |
 | Weight preparation/filtering | `prep_skin.py`, `voxel_skin.py` | Imported, geodesic/unshred exercised by animal retarget; inference-to-source prep needs its own job |
 | Procedural/clip visualization | `build_rig_glb.py`, `build_mixamo_skeleton.py` | Source retained; fixed adjacent input defaults require deliberate relocation/configuration |
-| Diagnostics | `measure_stretch.py`, `check_biped.py` | Source retained; old byte gate needs Toy Maker's external baseline and Mixamo clip, not bundled here |
+| Diagnostics | `measure_stretch.py`, `check_biped.py` | Source retained; old byte gate needs the source project's external baseline and Mixamo clip, not bundled here |
 | Native FBX | `extract_mixamo.py` | Source retains Mixamo/CMU mapping and CMU up-axis conversion; native import not executed here |
 | USD | `usdskel.py` | Source retained; explicit asset presentation attempts optional export; native/Quick Look unverified |
 | UniRig | `rig_skin_test.py` | Explicit isolated worker adapter; model execution unverified |
@@ -26,7 +26,7 @@ Ignored local artifacts are explicitly distinguished from files tracked at that 
 
 The raw snapshots are unchanged, including machine paths and old results. Their
 presence is not a promise that every script runs unchanged after relocation.
-Toy Maker-owned code is retained under its original ownership; no new CC0 license
+Source-project-owned code is retained under its original ownership; no new CC0 license
 is assigned to helper code. The GLB reader's human name map cites Mesh2Motion MIT
 code; the seven art payloads carry the separate CC0 asset statement.
 
@@ -80,7 +80,7 @@ here runs those experiments, setup scripts or model downloads.
 ## Checks
 
 ```text
-<python-with-numpy-scipy-trimesh-pygltflib> tests/toy-maker-rig-library.py
+<python-with-numpy-scipy-trimesh-pygltflib> tests/rig-tools-rig-library.py
 node node_modules/vitest/vitest.mjs run tests/rig-library.test.ts
 node scripts/rig-library.mjs verify
 ```

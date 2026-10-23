@@ -1,4 +1,4 @@
-"""Local sdpa shim for flash-attn (toy-maker R4 eval, not upstream).
+"""Local sdpa shim for flash-attn (rig-tools R4 eval, not upstream).
 
 Both src/model/skin_vae_model.py and src/model/skin_vae/attention_processor.py
 try `from flash_attn_interface import flash_attn_func` first; this module on the

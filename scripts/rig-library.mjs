@@ -29,7 +29,7 @@ export async function verifyRigLibrary() {
       errors: validation.issues.numErrors, warnings: validation.issues.numWarnings,
       messages: validation.issues.messages });
   }
-  const inventory = JSON.parse(await readFile(resolve(packageRoot, 'scripts/rigging/toy-maker/inventory.json'), 'utf8'));
+  const inventory = JSON.parse(await readFile(resolve(packageRoot, 'scripts/rigging/rig-tools/inventory.json'), 'utf8'));
   const source = inventory.riggingFiles.filter(item => item.destination);
   for (const entry of source) {
     const bytes = await readFile(resolve(packageRoot, entry.destination));
@@ -92,7 +92,7 @@ async function main() {
     const ids = args.filter((_, i) => i !== outputIndex && i !== outputIndex + 1);
     console.log(JSON.stringify(await rigDemo(ids.length ? ids : ['human-base', 'human-addon', 'fox', 'spider'], args[outputIndex + 1]), null, 2));
   } else {
-    throw new Error('Usage: node scripts/rig-library.mjs catalog [--body-plan <plan>] [--role <role>] | verify | demo --out <file> [2–4 IDs]. CPU tools: python scripts/rigging/toy-maker/rig_library.py --help');
+    throw new Error('Usage: node scripts/rig-library.mjs catalog [--body-plan <plan>] [--role <role>] | verify | demo --out <file> [2–4 IDs]. CPU tools: python scripts/rigging/rig-tools/rig_library.py --help');
   }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

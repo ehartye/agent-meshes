@@ -16,7 +16,7 @@ const fixture = async (name: string, options?: Parameters<typeof arkitFaceFixtur
   const file = join(dir, name); await writeFile(file, arkitFaceFixtureGLB(options)); return file;
 };
 const contract = { ...contractExpectations('arkit-face/1'), requireSkeletalMesh: true, singleSkeletalMesh: true, contract: 'arkit-face/1', quiet: true };
-// Blender heads from the talking-heads bar's P9a evidence (round 2: good, head mesh left out of the skin, no skin at all).
+// Blender heads from the face-rig acceptance bar's P9a evidence (round 2: good, head mesh left out of the skin, no skin at all).
 const head = (name: string) => fileURLToPath(new URL(`./fixtures/heads/${name}`, import.meta.url));
 
 maybe('imports an arkit-face GLB through Interchange with every morph and bone verbatim', async () => {
@@ -97,7 +97,7 @@ maybe('blames the missing skin, not bone spelling, for a head with no skin at al
   expect(report.geometry).toMatchObject({ glbVertices: 3360, unrealVertices: 3352, missing: 8, tolerance: 34 });
 }, 40 * 60000);
 
-// Round-3 heads from the talking-heads bar's P9a evidence: eyeballs left out of the skin (derived, and built in Blender
+// Round-3 heads from the face-rig acceptance bar's P9a evidence: eyeballs left out of the skin (derived, and built in Blender
 // through `agent-meshes build` with the eyeballs not passed to bind_skin), eye bones not under head, two skins.
 maybe('fails, naming the unbound eyeball nodes, when Interchange silently drops eyeballs left out of the skin', async () => {
   for (const file of ['C-static-eyes.glb', 'bl3-staticeyes.glb']) {

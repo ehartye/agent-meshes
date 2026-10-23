@@ -1,4 +1,4 @@
-"""A round-faced kid head (Pip-like) authored only with the agent-meshes face helpers.
+"""A round-faced kid head authored only with the agent-meshes face helpers.
 
 It is the P1a round-5 critic's "Pim", written from the docs, with the two gaps it found closed: the brows come from
 `skin_brow_geometry(head, side, ..., hole=...)`, which lays each brow on the skin along its normal in every pose (the

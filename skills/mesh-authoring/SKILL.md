@@ -25,7 +25,7 @@ when finding a human/alien reference or choosing a rig/motion donor. Before asse
 handoff, consult [consumer patterns](../../scripts/blender_lib/references/consumer-patterns.md)
 for names, frames, material roles and controls that the destination must retain.
 
-For additional animal body plans and Toy Maker's imported rigging tools, use the
+For additional animal body plans and the imported rigging tools, use the
 [organized rig library](../../scripts/blender_lib/references/rig-library.md).
 
 Load `mesh-setup` and pass its check before the first command in a session. Every command below

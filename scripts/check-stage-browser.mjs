@@ -110,7 +110,7 @@ try {
     const lifted = face.worldPoint('eye_L');
     face.setPlacement({ position: [1.4, 0.3, 0] });
     const toFace = eye.map((v, i) => v - courierHead[i]);
-    let unknown = null; try { stage.model('pip'); } catch (e) { unknown = e.message; }
+    let unknown = null; try { stage.model('hero'); } catch (e) { unknown = e.message; }
     const duplicate = await stage.add('face', { glb: document.getElementById('face').textContent }).then(() => null, e => e.message);
     return { eye, lifted, toFace, unknown, duplicate, placement: face.getPlacement() };
   });
@@ -118,7 +118,7 @@ try {
   assert.deepEqual(anchors.eye.map(v => Math.round(v * 1000) / 1000), [1.24, 0.96, 0.3]);
   assert.ok(Math.abs(anchors.lifted[1] - anchors.eye[1] - 0.5) < 1e-9, 'moving a model moves its anchors');
   assert.ok(anchors.toFace[0] > 1, 'the courier finds the face to its right');
-  assert.match(anchors.unknown, /Unknown model "pip"; use one of fox, courier, face/);
+  assert.match(anchors.unknown, /Unknown model "hero"; use one of fox, courier, face/);
   assert.match(anchors.duplicate, /Model "face" already exists/);
   assert.deepEqual(anchors.placement, { position: [1.4, 0.3, 0], rotation: [0, 0, 0], scale: [2, 2, 2] });
 
@@ -163,7 +163,7 @@ try {
     const decoded = await new Promise(resolve => { const img = new Image(); img.onload = () => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; const g = c.getContext('2d'); g.drawImage(img, 0, 0); resolve(Array.from(g.getImageData(0, 0, img.width, img.height).data)); }; img.src = png; });
     const normalAfter = stage.screenshot();
     const errors = {};
-    for (const [key, bad] of Object.entries({ material: { materials: { 'face/skn': '#ff0000' } }, color: { materials: { 'face/skin': 'red' } }, size: { width: 0 }, model: { models: ['pip'] } })) { try { stage.idRender(bad); } catch (e) { errors[key] = e.message; } }
+    for (const [key, bad] of Object.entries({ material: { materials: { 'face/skn': '#ff0000' } }, color: { materials: { 'face/skin': 'red' } }, size: { width: 0 }, model: { models: ['hero'] } })) { try { stage.idRender(bad); } catch (e) { errors[key] = e.message; } }
     const summary = image => {
       const counts = MeshViewer.countColors(image), rows = {};
       for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) { const i = (y * image.width + x) * 4; const hex = '#' + [0, 1, 2].map(k => image.data[i + k].toString(16).padStart(2, '0')).join(''); if (hex === palette.teeth) { rows.sum = (rows.sum ?? 0) + y; rows.n = (rows.n ?? 0) + 1; } }
@@ -200,7 +200,7 @@ try {
   assert.match(id.errors.material, /Unknown material "face\/skn" in idRender; materials: .*skin/);
   assert.match(id.errors.color, /materials\.face\/skin must be a #rrggbb color/);
   assert.match(id.errors.size, /width must be an integer from 1 to 4096/);
-  assert.match(id.errors.model, /Unknown model "pip"/);
+  assert.match(id.errors.model, /Unknown model "hero"/);
   for (const [name, url] of Object.entries(id.images)) await writeFile(join(evidence, `id-${name}.png`), Buffer.from(url.split(',')[1], 'base64'));
   await page.screenshot({ path: join(evidence, 'stage.png'), clip: { x: 0, y: 0, width: 960, height: 480 } });
 

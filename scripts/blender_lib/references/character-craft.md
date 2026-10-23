@@ -231,7 +231,7 @@ Use color/value grouping to guide attention; verify identity in neutral lighting
 Gloss and outlines can clarify a style but can also hide seams or exaggerate tiny surface defects.
 Check skin, cloth, hair, ceramic, metal and glass with finishes appropriate to the brief; material polish cannot repair anatomy.
 Compare suspect finishes with the same camera, lighting, exposure and exported pose before changing the maps.
-The saloon's material-only response retains exact image/BIN bytes while reducing leather/fabric normal strength,
+The consuming game's material-only response retains exact image/BIN bytes while reducing leather/fabric normal strength,
 drying skin response and broadening metal highlights; decoded material fields and matching native close-ups
 establish that bounded change. They do not repair coarse grain already in albedo, synthetic facial construction,
 missing cloth folds or uniform wear. Texture provenance and a valid GLB are separate from believable finish.

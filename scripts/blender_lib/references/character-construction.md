@@ -69,7 +69,7 @@ Finalize topology-changing garment fitting before expressions on dependent
 meshes, or retain explicit correspondence. Re-check layer order and skin
 ownership after cutting, partitioning, thickness and fitting.
 
-Thin overlapping layers also need compatible deformation fields. In the saloon
+Thin overlapping layers also need compatible deformation fields. In a consuming game's
 costume pass, independently sampling a donor for a shirt and vest only 6 mm apart
 made the shirt pass through the vest during jogging. A shared, anatomically
 restricted torso/spine field kept those layers together; sleeves retained their
@@ -82,7 +82,7 @@ Compatible weights do not guarantee compatible bent surfaces. A long shirt edge
 can chord across several smaller vest faces and cross them during a torso curl.
 Compare actual triangulation and deformed surfaces before increasing offsets;
 subdivide only the deficient region and retain neutral fit, UVs and donor fields.
-Recheck anticipation, strike and deep recovery separately. The saloon candidate
+Recheck anticipation, strike and deep recovery separately. The consuming game's candidate
 removed sampled central-chest crossings at two strike poses while early/recovery
 crossings remained: two passing poses did not establish complete layer clearance.
 
@@ -132,7 +132,7 @@ passes its project's quality bar.
 For an ambiguous bright patch or exposed inner layer, retain the original world
 ray and repeat it against the same posed, exported triangles before and after
 the repair. Record the actual hit material and geometry: an unchanged jog ray
-in the saloon pass changed from linen to leather, while nearby pale shapes were
+in the consuming game's pass changed from linen to leather, while nearby pale shapes were
 real fingers. A pixel colour alone could not distinguish those causes. Keep the
 failed image/source and matching ray; one repaired sample does not prove full
 motion clearance.

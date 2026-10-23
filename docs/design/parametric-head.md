@@ -113,7 +113,7 @@ The 52 `faceunits01` shapes load as ARKit shape keys. The eye and jaw morphs are
   Its edge tucks into the skin. It rides the skin's morph deltas and is unfolded like the skin. The paint only colours
   it.
 - **The SDF head path.** `sdf_blank`, `eye_holes`, `sculpt_lips` and `nose_geometry` stay in the library for other
-  heads (talking-heads' bespoke heads use them). `stylized_face` no longer uses them.
+  heads (bespoke face-rig heads use them). `stylized_face` no longer uses them.
 - **Preview.** `agent-meshes preview` (Workbench matcap, wire, cavity and zebra, with head presets `eyes`, `mouth`
   and `mouth-q34`) is the iteration loop for head work. See `skills/mesh-build/SKILL.md`.
 

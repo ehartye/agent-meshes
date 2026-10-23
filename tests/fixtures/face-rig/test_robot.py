@@ -1,4 +1,4 @@
-"""Tin-can robot for the arkit-face/1 fixtures (Bolt's design), authored only with the agent-meshes face helpers.
+"""Tin-can robot for the arkit-face/1 fixtures, authored only with the agent-meshes face helpers.
 
 Recessed shutter eyes behind a flat face plate (each hole sealed by `shutter_hole`: a tube back from the plate and a
 cap behind the eye, so no view through it finds the head's inside), rigid brow plates, a skull and a hinged chin

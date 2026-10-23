@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('rig_library', ROOT / 'scripts/rigging/toy-maker/rig_library.py')
+SPEC = importlib.util.spec_from_file_location('rig_library', ROOT / 'scripts/rigging/rig-tools/rig_library.py')
 LIB = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(LIB)
 

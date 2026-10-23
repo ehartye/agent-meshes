@@ -3,7 +3,7 @@
 Use the [Blender CLI reference](references/blender-cli.md) for process invocation
 and completion; use the [Blender Python API reference](references/blender-api.md)
 for native `bpy`, helpers and export boundaries. Find additional body plans,
-animation banks and Toy Maker tools in the [organized rig library](references/rig-library.md).
+animation banks and rigging tools in the [organized rig library](references/rig-library.md).
 
 Before constructing or repairing a character, read the
 [character construction checklist](references/character-construction.md) for
@@ -223,7 +223,7 @@ lining with it. Garments and eyeballs cannot drive the solve. Inspect rest,
 partial/full blinks and oblique views: a valid export is not an eye-coverage test.
 The report includes measured eye margins and maximum rest adjustment.
 The current angular solver can leave small canthus gaps and a faceted closed
-rim on coarse sculpts. Oren's review still exposes one of 374 front eye rays at
+rim on coarse sculpts. A review of a character head still exposes one of 374 front eye rays at
 full blink; narrowing the corner fade and snapping to a nearby vertex did not
 resolve it. Do not treat this helper as full face-contract acceptance.
 
@@ -786,7 +786,7 @@ helpers are pure Python and return `{'vertices', 'faces', ...}` dicts in world
 coordinates; the Blender wrappers build objects with identity transforms. The
 pure-Python checks run with `python tests/blender_face_geometry.py`. The complete
 worked examples are `tests/fixtures/face-rig/test_head.py` (round eyes in
-`eye_hole` sockets, lids, an ear-hinged puppet jaw), `test_robot.py` (Bolt's tin
+`eye_hole` sockets, lids, an ear-hinged puppet jaw), `test_robot.py` (a tin
 can: recessed shutter eyes in `shutter_hole` tubes, brow plates, a skull and chin plate with
 thick edges, grille teeth, a rubber mouth edge) and `test_frog.py` (a wide frog:
 eyes in mounded `eye_hole` domes with brow ridges lying on the skin, nostrils that
@@ -927,7 +927,7 @@ keep_aperture=True)` rebuilds the skin round the eye as **one surface**:
   rising lower lid with a smaller lid. The lids' columns are reported in
   `lids['columns']` (each column's share `p` of the opening, `thickness` and the two
   lids' `upper_inner` and `lower_inner` radii).
-- **The hood.** Nesting costs a taller upper lid: on a head with Mossjaw's lid
+- **The hood.** Nesting costs a taller upper lid: on a frog-like head with lid
   settings (opening (48, 32, 40), corner 1.6, overlap 8, wide (15, 5)) the upper lid's
   inner radius grows from 1.31 to 1.43 eyeball radii with `squint_upper_share=.6`, and to 1.61 with .35. A margin at the same angle then
   stands higher in a front view (radius x sin(elevation)), so with `keep_aperture`
@@ -1124,7 +1124,7 @@ axis to the eye center's depth (a tube the blades slide through) and caps it beh
 the eyeball, then builds `shutter_geometry` against the holed plate (rejecting
 blades that would slide out through it). A plain `cut_hole` in a single-layer tin
 skin lets a view from below or the side look past the housing into the head (the
-round-3 Bolt). Pass the result to `build_eye(..., style='shutter', hole=...)`,
+round-3 tin-can robot). Pass the result to `build_eye(..., style='shutter', hole=...)`,
 which keeps the housing. The face plate must stand at least one eyeball radius in
 front of the eye center. The `arkit-face/1` verifier's
 `eye-oblique` check casts rays around each eye from the front, 3/4 (35 and 45
@@ -1208,7 +1208,7 @@ margin=4)` gives `yawMax`/`pitchMax` that keep the iris center inside the openin
 
 ### Jaw, mouth slit, teeth and interior
 
-**A puppet jaw drops the chin.** The talking-heads bar wants the chin and the
+**A puppet jaw drops the chin.** The face-rig acceptance bar wants the chin and the
 lower face outline to drop with the teeth (at `jawOpen` = 1 the face's lowest
 point drops by at least 10% of the head), not a hole opening in a fixed face. A
 hinge only lowers what is well *in front of* it, so **the pivot goes at the back
@@ -1325,7 +1325,7 @@ one.
 
 `exposed_teeth_geometry(surface, xs, mouth_z, length, width, style='saw',
 root=None, thickness=None, clearance=.0005, sizes=None, skin=None)` makes upper teeth that
-show with the mouth closed: Mossjaw's fangs, Pip's buck teeth. One tooth hangs
+show with the mouth closed: a frog's fangs, a kid's buck teeth. One tooth hangs
 at each x, `length` below the mouth line, its root reaching `root` (default 0.35 *
 length) up the upper lip. Each stands at least `clearance` in front of the
 skin along its whole height, root included (measured on its vertices, reported as
@@ -1462,7 +1462,7 @@ which seal the hole (above).
 - A robot: `brow_plate_geometry` (robot plates, below).
 
 `dome_brow_geometry(hole, skin, side, roll=(152, 26), polar=(75, 67), height=26,
-...)` (from the Mossjaw build) is a heavy ridge arcing over an eye dome from the
+...)` (from a frog-head build) is a heavy ridge arcing over an eye dome from the
 inner to the outer corner that *rolls*: browDown rolls its inner end down round the
 eye into an angry V and drops it forward onto the upper lid, browInnerUp rolls it
 the other way, browOuterUp lifts the outer end, and the lifts swell it up and off
@@ -1471,7 +1471,7 @@ the dome. It returns a `crest` weight per vertex (1 on top) for shading paint.
 `brow_ridge_geometry(center, radius, side, inner=20, outer=55, elevation=50,
 height=12, thickness=None, arch=4, down=12, inner_up=10, outer_up=10, skin=...,
 hole=..., sink=None, clearance=.0002)` builds a heavy brow ridge for eyes that sit
-in domes (Mossjaw's ridge is his brow). It runs round the eye from `inner` degrees
+in domes (a frog head's ridge is its brow). It runs round the eye from `inner` degrees
 toward the nose to `outer` degrees away, centered `elevation` degrees above the
 gaze axis, `height` degrees tall and `thickness` meters proud (18% of `radius`),
 and it **lies on the actual skin**: `skin` is the head skin with its eye holes cut
@@ -1500,7 +1500,7 @@ for name, targets in ridge['morphs'].items(): shape_key(brow, name, targets)
 ### Noses and soft forms: `nose_geometry` and `sculpt_skin`
 
 A `soft_offset` sculpt on a head blank's 6-8 mm faces pulls one vertex out into a
-spike (the "weird pointy thing" on round 1's Pip). Grow forms with these instead;
+spike (the "weird pointy thing" on a round-1 kid head). Grow forms with these instead;
 both refine the skin where the form is first, so it comes out smooth, and keep
 every other vertex's position and index.
 
@@ -1651,7 +1651,7 @@ part's own morphs and each skin morph that moves the skin near it) under `poses`
 
 ### Robot plates: brows, skull and chin plate, rubber mouth edge
 
-For a robot like Bolt, whose face is rigid metal plates:
+For a tin-can robot, whose face is rigid metal plates:
 
 - `ellipsoid_geometry(center, radii, exponent=6)` is a tin-can blank (a
   superellipsoid with rounded edges).
@@ -1697,8 +1697,8 @@ All 21 required morphs must exist.
 **Lid follow must be visible.** E2 wants the upper lid's edge higher at
 `eyeLookUp` = 1 (`eyeWide` = `lidFollow.up`) and lower at `eyeLookDown` = 1
 (`eyeBlink` = `lidFollow.down`). The contract's fallback `up` of .25 lifts the
-default lids (wide 10 degrees) by under a pixel at 512 px (round 3: Pip 0 px,
-Bolt 1 px), and the wide travel cannot grow much: blink 1 + wide 1 must still
+default lids (wide 10 degrees) by under a pixel at 512 px (round 3: kid head 0 px,
+robot head 1 px), and the wide travel cannot grow much: blink 1 + wide 1 must still
 close. So the helpers tie lid follow to the wide travel and write `up` .8: a lift
 of 1.7-2.8 mm on 12-20 mm eyes, and on the default shutters (wide .2 radii) 1.9-2.6
 mm. The verifier's `lid-follow` check measures the edge in a front view and fails
