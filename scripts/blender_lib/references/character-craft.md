@@ -96,7 +96,7 @@ Preserve the species' rest stance and limb proportions when borrowing motion; a 
 Child construction is an age-specific design, not an adult uniformly scaled down.
 Measure the intended head-to-body relationship, facial maturity, limb lengths, hands, feet and soft tissue against the reference.
 Avoid adding adult muscular landmarks or human infant proportions to every small nonhuman character.
-For [digitigrade plant-kin](../README.md#digitigrade-plant-kin-anatomy), child/adult helpers encode one particular body plan.
+For [digitigrade](../README.md#digitigrade-anatomy), child/adult helpers encode one particular body plan.
 Their pear trunk, bulb head, digits, fronds and tail are reusable only where they match the new intent.
 Inspect the supporting toes through stance and the full recovery arc; solving a target does not prove believable gait.
 Use the [gait analyzer](../../../src/gait-analysis.ts), with the appropriate reference and explicit interpretation of species limits.
@@ -124,7 +124,7 @@ Check web spaces, thumb clearance, knuckle rhythm, palm thickness and unintended
 Separate geometry errors, bone endpoint errors, palm orientation and weight leakage before choosing a repair.
 **Documented capability:** digitigrade `finger_scale` changes digit-chain lengths while retaining tip radii and palm roots.
 It therefore cannot alone repair tip shape, tubular sections, thumb orientation or fused hand topology.
-See [digitigrade anatomy](../README.md#digitigrade-plant-kin-anatomy) and [baked rotation styling](../README.md#styling-baked-rotations).
+See [digitigrade anatomy](../README.md#digitigrade-anatomy) and [baked rotation styling](../README.md#styling-baked-rotations).
 Scaling an entire baked rotation also scales splay and twist; it is not an anatomical grasp solver.
 
 ## 7. Head depth, eyes and mouth ownership

@@ -1,4 +1,4 @@
-"""The ratified adult digitigrade plant-kin anatomy, using the shared tool helper."""
+"""The ratified adult digitigrade anatomy, using the shared tool helper."""
 import json
 import os
 from pathlib import Path
@@ -14,7 +14,7 @@ def build(*,hand_dimensions=None):
     objects,rig=rig_anatomy(objects,anatomy)
     reference=Path(os.environ.get('MESH2MOTION',Path(__file__).resolve().parents[3]/'mesh2motion-app'))/'static/animations/kaiju-animations.glb'
     gait=bake_gaits(objects,anatomy,reference)
-    out=Path(__file__).resolve().parents[2]/'.local/plant-kin-adult-debug'
+    out=Path(__file__).resolve().parents[2]/'.local/digitigrade-adult-debug'
     out.mkdir(parents=True,exist_ok=True)
     (out/'anatomy.json').write_text(json.dumps(anatomy,indent=2),encoding='utf-8')
     (out/'rig.json').write_text(json.dumps(rig,indent=2),encoding='utf-8')

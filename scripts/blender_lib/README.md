@@ -1719,7 +1719,7 @@ Check the exported head with `node scripts/agent-meshes.mjs verify model.glb
 --contract arkit-face/1`, and look at it with `node scripts/check-face-rig-browser.mjs`
 (see the main README).
 
-## Digitigrade plant-kin anatomy
+## Digitigrade anatomy
 
 `agent_meshes_digitigrade_anatomy.anatomy(height=1.7, age='adult')` returns measured
 Z-up, -Y-facing landmarks for a pear trunk, S-neck, bulb head, three-digit hands,
@@ -2026,7 +2026,7 @@ for the Blender regression fixtures and `python tests/garment_cuts.py` for cuts.
 ## Selecting anatomical skin sources
 
 `agent_meshes_digitigrade_rig.skin_regions(anatomy, include=None)` returns the shared
-digitigrade plant-kin skin source surfaces. A nonempty collection of exact names restricts
+digitigrade skin source surfaces. A nonempty collection of exact names restricts
 that set; unknown names, eyes and crest surfaces are rejected. `None` selects
 all skin regions used by the body rig. Coordinates use the anatomy's height
 and age; returned surfaces remain in rest-space Blender Z-up coordinates.

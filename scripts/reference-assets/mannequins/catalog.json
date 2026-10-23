@@ -237,9 +237,9 @@
       "limitations": "Retains upstream skin-parent warning; normalized phase does not align different clip footfalls"
     },
     {
-      "id": "plant-kin-adult",
-      "label": "Adult plant-kin",
-      "path": "plant-kin-adult.glb",
+      "id": "digitigrade-adult",
+      "label": "Adult digitigrade humanoid",
+      "path": "digitigrade-adult.glb",
       "sha256": "bb519845a8c9ae479c4d5c05f4e8b0e23abb3e65714dd9b24beed560510469b0",
       "bones": 50,
       "clipCount": 8,
@@ -257,12 +257,12 @@
         "walk",
         "jog"
       ],
-      "bodyPlan": "digitigrade plant-kin adult",
+      "bodyPlan": "digitigrade adult",
       "heightMeters": 1.7,
       "source": {
         "origin": "private game project repository (not published)",
         "commit": "0defa6dd6050b3c41a239d2ec136f6be48505b2d",
-        "path": "adult plant-kin baseline recipe (path withheld)"
+        "path": "adult digitigrade humanoid baseline recipe (path withheld)"
       },
       "license": "Species recipe from a private game project and Agent Meshes shared helpers; no blanket CC0 claim",
       "validation": {
@@ -276,15 +276,15 @@
       },
       "limitations": "Placeholder eyes, no face controls; diagnostic walk/jog not full game-gait acceptance",
       "recipeSnapshot": {
-        "path": "source/plant-kin-adult-character.py.txt",
-        "sha256": "722c780801cae0e20be593fca454ac3006f739684b923116f838074ba2611a43",
+        "path": "source/digitigrade-adult-character.py.txt",
+        "sha256": "449dd75f15c63544493a9c35b9d5b2d1a8ae9194c9dfd371426db9c9afb50a72",
         "use": "Original wrapper text for inspection; copy into an owned project and configure inputs before execution"
       }
     },
     {
-      "id": "plant-kin-child",
-      "label": "Child plant-kin",
-      "path": "plant-kin-child.glb",
+      "id": "digitigrade-child",
+      "label": "Child digitigrade humanoid",
+      "path": "digitigrade-child.glb",
       "sha256": "87d0585f0f18aa48309612c568c79c1e8071dd2f39c391d0063eddabf1270cc5",
       "bones": 46,
       "clipCount": 8,
@@ -302,12 +302,12 @@
         "walk",
         "jog"
       ],
-      "bodyPlan": "digitigrade plant-kin child",
+      "bodyPlan": "digitigrade child",
       "heightMeters": 1.12,
       "source": {
         "origin": "private game project repository (not published)",
         "commit": "0defa6dd6050b3c41a239d2ec136f6be48505b2d",
-        "path": "child plant-kin baseline recipe (path withheld)"
+        "path": "child digitigrade humanoid baseline recipe (path withheld)"
       },
       "license": "Species recipe from a private game project and Agent Meshes shared helpers; no blanket CC0 claim",
       "validation": {
@@ -321,8 +321,8 @@
       },
       "limitations": "Placeholder eyes, no face controls; diagnostic walk/jog not full game-gait acceptance",
       "recipeSnapshot": {
-        "path": "source/plant-kin-child-character.py.txt",
-        "sha256": "e1ea8f67e41e91a9c5f7d46ea1db101931628e3da4fc2737d8c4dc360a928fc6",
+        "path": "source/digitigrade-child-character.py.txt",
+        "sha256": "96a4e4789019c58a686415c55fde30857618d010ceffafb54c14e37db596f207",
         "use": "Original wrapper text for inspection; copy into an owned project and configure inputs before execution"
       }
     }

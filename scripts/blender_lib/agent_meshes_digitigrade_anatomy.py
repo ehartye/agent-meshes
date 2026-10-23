@@ -1,4 +1,4 @@
-"""Digitigrade plant-kin anatomy, Z-up and facing -Y, in metres.
+"""Digitigrade anatomy, Z-up and facing -Y, in metres.
 
 Pure geometry plus a Blender adapter. The anatomical landmarks explicitly include
 the raised hock, long metatarsal, S-neck and counterweight tail. This is a static

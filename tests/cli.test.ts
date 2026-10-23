@@ -76,7 +76,7 @@ it('discovers shipped mannequin assets and craft references from an unrelated pr
   }
   const catalogUrl = new URL('scripts/reference-assets/mannequins/catalog.json', guidance.baseUrl);
   const catalog = JSON.parse(await readFile(catalogUrl, 'utf8'));
-  expect(catalog.models.map((model: { id: string }) => model.id)).toEqual(['human-base', 'human-addon', 'plant-kin-adult', 'plant-kin-child']);
+  expect(catalog.models.map((model: { id: string }) => model.id)).toEqual(['human-base', 'human-addon', 'digitigrade-adult', 'digitigrade-child']);
   for (const model of catalog.models) {
     const bytes = await readFile(new URL(model.path, catalogUrl));
     expect(createHash('sha256').update(bytes).digest('hex'), model.id).toBe(model.sha256);

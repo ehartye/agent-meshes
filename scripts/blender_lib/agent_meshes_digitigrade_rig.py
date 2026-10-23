@@ -1,4 +1,4 @@
-"""Anatomical plant-kin skeleton, source-region skinning and diagnostic poses.
+"""Anatomical digitigrade skeleton, source-region skinning and diagnostic poses.
 
 The fused surface is mapped back to named source surfaces, preventing nearby
 arms, legs and tail from borrowing each other's weights. No gait is implied by
