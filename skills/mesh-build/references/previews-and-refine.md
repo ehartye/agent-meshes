@@ -1,0 +1,80 @@
+# Blender previews, refine and the garment check
+
+Entry: [mesh-build](../SKILL.md).
+
+## Fast Blender previews while iterating
+
+`mesh preview <build.json|source.py>` runs a Blender-authored source's `build()` headlessly and
+renders Workbench PNGs from fixed cameras in the same run. It exports no GLB and starts no browser,
+so use it for every look while you shape a model, and keep the full build for final checks.
+
+```bash
+mesh preview asset-src/mara/build.json --views head --shading matcap,wire,cavity   --pose rest --pose blink:eyeBlinkLeft=1,eyeBlinkRight=1 --pose jaw:jawOpen=1 --sheet
+```
+
+- **Views.** `front`, `q34`, `side`, `below`, `above`, `close` (eyes to mouth), `eyes`, `mouth`, `mouth-q34`
+  and `back` frame the head, which is the mesh with face shape keys, or `--target <pattern>`. `body-front`, `body-q34`,
+  `body-side` and `body-back` frame everything. `head` and `body` are aliases for those sets.
+- **Shadings.**
+  - `matcap` shows lumps and ripples.
+  - `zebra` shows a reflection-stripe matcap; kinks in the stripes are curvature breaks.
+  - `wire` shows edge flow over the matcap.
+  - `cavity` shows creases and ridges.
+  - `color` shows material colors.
+  - `vertex` shows the active RGB color attribute, for POINT or CORNER paint and imported GLBs.
+  - `all` renders every shading.
+- **Poses.** `--pose name:key=w,...` sets shape-key weights and can be repeated. `--shape` adds
+  weights to every pose. Armatures stay in the rest pose unless you pass `--posed`.
+- **Other options.** `--hide 'hair*'` leaves meshes out. `--size` sets the square size in pixels.
+  `--sheet` adds `sheet.png`, with one row per pose.
+- **Output.** Files are named `<pose>-<view>-<shading>.png`, plus a `preview.json` manifest, in
+  `--out` (default `preview/` beside the source).
+
+For paint inspection, use `--shading color,vertex --sheet`. Workbench vertex mode uses
+`mesh.color_attributes.active_color_index`; `ACTIVE` GLB export uses `render_color_index`.
+Align both explicitly when comparing source and export. Preview does not select another
+layer or rewrite shaders. This is a lit RGB diagnostic: alpha masks, textures, shader
+graphs and final engine appearance require their own checks. Defaults remain matcap.
+
+`mesh preview --worker` keeps one headless Blender running and waits on a queue folder. Later
+`mesh preview` calls hand their job to it and skip Blender's startup, which is slow through the
+Store launcher, and edited helper modules are re-read for each job. `--no-worker-use` forces a fresh
+Blender run, and `mesh preview --stop-worker` stops the worker after its current job. Without a
+worker, every preview runs a one-shot Blender. The build time of the source itself is not saved: a
+character's face construction still takes its minute.
+
+## Optional Blender refine
+
+```json
+{"version":1,"name":"robin","operations":"operations.json","output":"dist",
+ "refine":{"subdivide":1,"noise":0.003,"noiseScale":0.04,"only":["robin"]}}
+```
+
+The `refine` block (or `mesh refine in.glb out.glb --subdivide 1 --noise 0.004 --noise-scale 0.05
+--only robin`) runs Blender headless: subdivision surface with smooth shading, plus an optional
+clouds-texture displacement for feathers or fur, keeping bones, skins, vertex colors and clips.
+The refined GLB is verified again. A build that asks for refinement fails when Blender is
+missing instead of shipping a coarser model. Renders still come from the unrefined project.
+Subdivision multiplies vertex count by about four per level, so keep shell resolution modest
+(around 44) on a model you will refine, and check the GLB size afterward.
+
+## Garment penetration check
+
+```text
+mesh check-garments character.glb
+mesh check-garments character.glb --clips jog --samples 32 --tolerance 0.003 --json
+```
+
+Samples every clip of a skinned GLB at evenly spaced phases (16 by default), poses each mesh as
+three.js skins it, and reports every place one part pushes into another: a lifted thigh tearing
+through a belt, a hand sinking into a hip, a boot cuff driving into the leg. A vertex counts when it
+was outside another closed part at rest and is inside it by more than the tolerance (2 mm) at a
+phase, so layers seated into the body at rest are never reported. Garments are `layer-*`, gloves,
+boots and outsoles by default (`--garments <regex>`); garment-vs-garment, garment-vs-body and
+garment self-folds (a surface folding through its own volume, measured against cloth more than
+3 cm away along the rest surface, and at most the cloth over it along its normal) are checked.
+The rest pose itself fails when two garments cross, each hiding a patch of the other's outward
+surface (a trouser leg wider than the boot shaft round it shows through in jagged patches);
+`--crossing-vertices` (8) and `--crossing-depth` (0.004 m) size that patch. `--ignore <regex>` leaves parts out. The JSON lists each
+intrusion by clip, phase, part pair, vertex count, depth and the deepest vertex's rest and posed
+position, plus the worst per pair; it exits 1 with one `FAIL` line per pair otherwise.

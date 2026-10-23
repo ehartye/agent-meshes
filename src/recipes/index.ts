@@ -20,11 +20,32 @@ const identity: Quat = [0, 0, 0, 1];
 const V = (p: Vec3) => new Vector3(...p);
 const xyz = (v: Vector3) => v.toArray() as Vec3;
 const rotation = (axis: Vec3, angle: number) => new Quaternion().setFromAxisAngle(V(axis).normalize(), angle).toArray() as Quat;
+/** The biped's clips. A foot is planted for `stance` of the cycle and moves `stride` metres in that time, so the character travels at stride / (stance * duration). */
+const bipedGaits = {
+  walk: { stride: 0.52, lift: 0.14, stance: 0.62, duration: 1.2, bob: 0.024 },
+  run: { stride: 0.8, lift: 0.3, stance: 0.4, duration: 0.6, bob: 0.04 },
+} as const;
+type BipedGait = { name: string; stride: number; lift: number; stance: number; duration: number; bob: number };
+function bipedGaitPlan(gaits: readonly string[] = ['walk'], speed?: number | Record<string, number>): BipedGait[] {
+  const known = Object.keys(bipedGaits);
+  if (speed !== undefined && typeof speed === 'object') for (const name of Object.keys(speed)) if (!gaits.includes(name)) throw new Error(`Speed names the clip ${name}, which is not among the requested gaits (${gaits.join(', ')})`);
+  return gaits.map(name => {
+    if (!known.includes(name)) throw new Error(`Unknown biped gait ${name}; the gaits are ${known.join(', ')}`);
+    const base = bipedGaits[name as keyof typeof bipedGaits];
+    const wanted = typeof speed === 'object' ? speed[name] : speed;
+    if (wanted === undefined) return { name, ...base };
+    if (!Number.isFinite(wanted) || wanted <= 0) throw new Error(`Speed for ${name} must be a positive number of metres per second, received ${wanted}`);
+    const duration = base.stride / (base.stance * wanted);
+    if (duration < 0.3 || duration > 4) throw new Error(`A speed of ${wanted} m/s gives a ${name} cycle of ${duration.toFixed(2)} s; the cycle must be between 0.3 and 4 s, so choose a speed between ${(base.stride / (base.stance * 4)).toFixed(2)} and ${(base.stride / (base.stance * 0.3)).toFixed(2)} m/s`);
+    return { name, ...base, duration };
+  });
+}
 interface Leg { name: string; hip: Vec3; knee: Vec3; foot: Vec3; pole: Vec3; phase: number; stride: number; lift: number; stance: number }
 
 /** Recipes produce ordinary editable projects; the runtime has no creature-specific rig rules. */
 export interface CreatureOptions {
-  /** Clips for equine or vulpine: any of walk, trot, gallop. Default walk and trot. */ gaits?: readonly string[];
+  /** Clips for equine or vulpine: any of walk, trot, gallop (default walk and trot); for biped: any of walk, run (default walk). */ gaits?: readonly string[];
+  /** Biped only: the travel speed in metres per second the stance foot is planted at, for every clip (a number) or per clip (a record). Sets the cycle length to stride / (stance * speed). Default: the clip's own design speed. */ speed?: number | Record<string, number>;
   /** Equine or vulpine only: smooth skin, retaining distinct equine hair, ears and hard hooves. */ shell?: boolean;
   /** Insectoid only: one clip per entry, each a touchdown phase (0 to 1) per leg in order L1 L2 L3 R1 R2 R3. */ legPhases?: Record<string, number[]>;
   /** Strandbeest only: crank positions along the crankshaft, four legs each. Default 3, at most 5. */ pairs?: number;
@@ -37,7 +58,10 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
   if (!creatureKinds.includes(kind)) throw new Error(`Unknown creature recipe: ${kind}`);
   const info = creatureInfo[kind];
   if (kind === 'equine' || kind === 'vulpine') return createQuadruped(kind, info.name, options.gaits, { shell: options.shell });
-  if (options.gaits || options.shell) throw new Error(`Gaits and shells are only configurable for equine and vulpine, not ${kind}`);
+  if (options.shell) throw new Error(`Shells are only configurable for equine and vulpine, not ${kind}`);
+  if (options.gaits && kind !== 'biped') throw new Error(`Gaits are only configurable for equine, vulpine or biped, not ${kind}`);
+  if (options.speed !== undefined && kind !== 'biped') throw new Error(`Speed is only configurable for biped, not ${kind}`);
+  const bipedClips = kind === 'biped' ? bipedGaitPlan(options.gaits, options.speed) : [];
   if (options.legPhases && kind !== 'insectoid') throw new Error(`Leg phases are only configurable for insectoid, not ${kind}`);
   const project: Project = { version: 1, name: info.name, parts: [], bones: [], clips: [] };
   const legs: Leg[] = [];
@@ -156,23 +180,25 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
   const duration = kind === 'biped' ? 1.2 : kind === 'insectoid' ? 1.4 : spiderGait.duration;
   const samples = Math.ceil(duration * 60);
   const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'arachnid' ? 0.003 : 0.01) * (1 - Math.cos(4 * Math.PI * t));
-  /** Sample one looping clip; phaseOf overrides each leg's touchdown phase in leg order. */
-  function sampleClip(name: string, phaseOf: (legIndex: number) => number): void {
+  /** Sample one looping clip; phaseOf overrides each leg's touchdown phase in leg order. A biped gait replaces the stride, lift, stance, cycle length and bob. */
+  function sampleClip(name: string, phaseOf: (legIndex: number) => number, gait?: BipedGait): void {
+    const clipDuration = gait?.duration ?? duration, clipSamples = Math.ceil(clipDuration * 60);
+    const clipBob = gait ? (t: number) => gait.bob * (1 - Math.cos(4 * Math.PI * t)) : bob;
     const clipTracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }];
     for (const leg of legs) for (const joint of ['hip', 'knee', 'ankle']) clipTracks.push({ bone: `${leg.name}_${joint}`, property: 'rotation', keys: [] });
     for (const leg of spiderLegs) for (const bone of leg.names) clipTracks.push({ bone, property: 'rotation', keys: [] });
     for (const { bone } of tracks) clipTracks.push({ bone, property: 'rotation', keys: [] });
-    for (let frame = 0; frame <= samples; frame++) {
-      const phase = frame === samples ? 0 : frame / samples, time = frame / samples * duration;
+    for (let frame = 0; frame <= clipSamples; frame++) {
+      const phase = frame === clipSamples ? 0 : frame / clipSamples, time = frame / clipSamples * clipDuration;
       let index = 0;
-      clipTracks[index++].keys.push({ time, value: [0, bob(phase), 0] });
+      clipTracks[index++].keys.push({ time, value: [0, clipBob(phase), 0] });
       legs.forEach((leg, legIndex) => {
-        const offset = footPath(phase + phaseOf(legIndex), leg.stride, leg.lift, leg.stance);
-        const target: Vec3 = [leg.foot[0] + offset[0], leg.foot[1] + offset[1] - bob(phase), leg.foot[2] + offset[2]];
+        const offset = footPath(phase + phaseOf(legIndex), gait?.stride ?? leg.stride, gait?.lift ?? leg.lift, gait?.stance ?? leg.stance);
+        const target: Vec3 = [leg.foot[0] + offset[0], leg.foot[1] + offset[1] - clipBob(phase), leg.foot[2] + offset[2]];
         const pose = solveLeg(leg.hip, leg.knee, leg.foot, target, leg.pole);
         for (const value of [pose.upper, pose.lower, pose.ankle]) clipTracks[index++].keys.push({ time, value });
       });
-      for (const leg of spiderLegs) for (const value of leg.sample(phase, bob(phase))) clipTracks[index++].keys.push({ time, value });
+      for (const leg of spiderLegs) for (const value of leg.sample(phase, clipBob(phase))) clipTracks[index++].keys.push({ time, value });
       for (const { sample } of tracks) clipTracks[index++].keys.push({ time, value: sample(phase) });
     }
     // Avoid quaternion sign flips between adjacent samples without changing orientation.
@@ -183,7 +209,7 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
       }
       track.keys.at(-1)!.value = [...track.keys[0].value];
     }
-    project.clips.push({ name, duration, tracks: clipTracks });
+    project.clips.push({ name, duration: clipDuration, tracks: clipTracks });
   }
   if (options.legPhases) {
     if (kind !== 'insectoid') throw new Error(`Leg phases are only configurable for insectoid, not ${kind}`);
@@ -191,7 +217,8 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
       if (phases.length !== legs.length) throw new Error(`Expected ${legs.length} phases for ${name}, received ${phases.length}`);
       sampleClip(name, legIndex => phases[legIndex]);
     }
-  } else sampleClip(info.gait, legIndex => legs[legIndex].phase);
+  } else if (kind === 'biped') for (const gait of bipedClips) sampleClip(gait.name, legIndex => legs[legIndex].phase, gait);
+  else sampleClip(info.gait, legIndex => legs[legIndex].phase);
   // Canonical JSON also turns signed zero from quaternion math into ordinary zero.
   return validateProject(JSON.parse(JSON.stringify(project)));
 }
