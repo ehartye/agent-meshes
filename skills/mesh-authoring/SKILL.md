@@ -134,7 +134,7 @@ Pick the kind by body plan: a person, robot or figure is `biped`; a horse, deer,
 any hoofed animal is `equine`; a fox, dog, cat, wolf or any pawed animal is `vulpine`; a beetle,
 ant or six-legged bug is `insectoid`; a spider is `arachnid`; a walking machine is `strandbeest`.
 Resize and recolor parts afterward to turn the fox into a cat or the horse into a deer. Options: `--gaits walk,trot,gallop`
-(quadrupeds), `--shell` (quadrupeds; one smooth skin with lathe hooves), `--leg-phases <json>`
+(quadrupeds; `walk,run` for the biped, with `--speed 0.99` or `--speed '{"walk":0.99,"run":3.5}'` to plant the stance foot at the speed your game moves the character), `--shell` (quadrupeds; one smooth skin with lathe hooves), `--leg-phases <json>`
 (insectoid; one clip per named set of six touchdown phases), `--pairs`, `--spacing`, `--patterns <json>`
 (strandbeest; Jansen's real linkage: `--pairs` counts crank positions, at most 5, and each position
 carries four legs, `leg_L_1f_*` front-facing and `leg_L_1b_*` back-facing on each side, so the feet
@@ -213,7 +213,7 @@ glTF material, so a rook is no longer 7 materials. For a flat-colour prop:
 
 Before 0.14.0 none of these fields exist (every part exported its own unnamed material), so check `capabilities` and
 `package.json` before relying on them; on an older release, post-process the GLB (keep `materials[0]`, name it, point every
-primitive at 0, delete `COLOR_0`/`COLOR_1`) or use the Blender route in mesh-build "Blender-authored static props".
+primitive at 0, delete `COLOR_0`/`COLOR_1`) or use the Blender route in [mesh-build](../mesh-build/references/blender-static-props.md).
 
 ## Generating variants at runtime
 

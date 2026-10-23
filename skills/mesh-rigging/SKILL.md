@@ -81,6 +81,8 @@ seamless loop. Tracks are offsets from rest, so an untracked bone stays put.
   Without `--travel-speed`, `stride.travelSpeed` is the clip's own design speed. The `biped` recipe's walk is
   planted at a design speed of 0.70 m/s; the same clip moved at 0.99 m/s measured `skate` 0.32. Match the
   speeds by setting the playback rate to travel speed over design speed, or by changing the clip duration.
+  The biped recipe does the second for you: `recipe biped --gaits walk,run --speed '{"walk":0.99,"run":3.5}'`
+  sets each cycle to stride / (stance fraction × speed) (0.3 to 4 s), and `mesh gait` then reports that speed as the clip's own.
   `gait` reads the recipe's bone names; its humanoid checks (spine flex, hands, `--gait walk`) do not apply.
 - Sample leg rotations densely (recipes bake at 60 samples per second, quadrupeds at 120) so
   feet stay planted; sparse keys make feet slide.
