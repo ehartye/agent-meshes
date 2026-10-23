@@ -1,4 +1,4 @@
-"""Reference-informed plant-kin locomotion with explicit toe contact targets.
+"""Reference-informed digitigrade locomotion with explicit toe contact targets.
 
 Blender Z up, forward -Y. Pure trajectory and IK functions are separately tested.
 """

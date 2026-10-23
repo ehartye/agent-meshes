@@ -3,7 +3,7 @@
 Use this library when choosing a body-plan reference, extracting motion, fitting a
 prepared target rig or inspecting the imported rigging algorithms. The original
 [four-model mannequin library](mannequin-library.md) remains available, including
-the plant-kin pair. The new catalog reuses its two human payloads; it does not replace them.
+the digitigrade pair. The new catalog reuses its two human payloads; it does not replace them.
 
 ## Discover and inspect
 

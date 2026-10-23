@@ -16,7 +16,7 @@ The source manifest declares Mesh2Motion human assets CC0; the included
 LICENSE-human-assets-CC0.txt is the Mesh2Motion asset statement. This is distinct
 from Mesh2Motion application code. The local Mixamo walk donor is excluded.
 
-The adult and child plant-kin are fresh exports of their baseline recipes
+The adult and child digitigrade humanoids are fresh exports of their baseline recipes
 (paths withheld), copied unchanged into isolated build trees.
 They use Agent Meshes 0.16.0 shared digitigrade anatomy, rig and gait helpers, managed
 fingerprint `39e1cc51878b946966ded9abb113600ec6d4ac4f524c30fd13cc256bc6df62e6`,
@@ -33,7 +33,7 @@ opened. This is bounded reference delivery, not all-clip collision, face, game g
 native engine import or final artistic acceptance. Asset hashes bind future use
 to the actual payload; do not imply a rebuild is byte-identical without checking.
 
-The original adult and child plant-kin Python wrapper text is retained under `source/`, with hashes
+The original adult and child digitigrade humanoid Python wrapper texts is retained under `source/`, with hashes
 in each catalog entry. These are inspection snapshots, not executable relocated
 build configs: copy and configure a project-owned source tree and its kaiju/native
 input prerequisites before rebuilding. Never run a wrapper inside the immutable
