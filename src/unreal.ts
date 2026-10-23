@@ -230,7 +230,15 @@ export interface UnrealRawReport {
   ok: boolean; engineVersion?: string; destination: string; importReturned: boolean; error?: string;
   assets: { path: string; class: string }[]; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: UnrealStaticMeshFacts[];
   importConfiguration?: UnrealImportConfiguration;
+  skeletalMeshGrouping?: UnrealSkeletalMeshGrouping;
 }
+/**
+ * The Interchange `CombineSkeletalMeshesBehavior` the scratch import used. Interchange's class default is
+ * BY_SKELETON (one SkeletalMesh per skeleton), but UE 5.8.2's DefaultGLTFAssetsPipeline asset stores
+ * DO_NOT_COMBINE (one SkeletalMesh per skinned mesh node), so the verifier sets BY_SKELETON on its scratch
+ * copy of the pipeline and reports the value it found in `engineDefault`.
+ */
+export interface UnrealSkeletalMeshGrouping { engineDefault: 'BY_SKELETON' | 'BY_SKELETON_VISIBLE_ONLY' | 'DO_NOT_COMBINE'; applied: 'BY_SKELETON' | 'BY_SKELETON_VISIBLE_ONLY' | 'DO_NOT_COMBINE' }
 /** What the GLB itself says before Unreal sees it: its morph name, skin and glass audits, or why it could not be read. */
 export interface UnrealPreflight { morphNames?: MorphNameAudit; skins?: SkinAudit; glass?: GlassMaterial[]; error?: string }
 /** One GLB glass material and what Unreal made of it: `ok` when the imported material renders translucent. */
@@ -243,6 +251,8 @@ export interface UnrealReport {
   unreal: { editor: string; version: string; engineVersion?: string; exitCode: number; timedOutAfterMs?: number };
   importer: 'Interchange'; verified: string; destination: string; importReturned: boolean; scriptError?: string;
   importConfiguration?: UnrealImportConfiguration;
+  /** Present for skinned GLBs and SkeletalMesh contracts: how the scratch import grouped skinned mesh nodes into SkeletalMeshes. */
+  skeletalMeshGrouping?: UnrealSkeletalMeshGrouping;
   summary: { skeletalMeshes: number; skeletons: number; materials: number; textures: number; animations: number; staticMeshes: number };
   assetsByClass: Record<string, string[]>; skeletalMeshes: UnrealSkeletalMeshFacts[]; staticMeshes: UnrealRawReport['staticMeshes'];
   morphTargets: string[]; bones: string[];
@@ -276,17 +286,37 @@ export interface UnrealGeometry {
  */
 export const UNREAL_WELD_TOLERANCE = 0.01;
 
+/** Unskinned, morph-free mesh nodes with geometry in a file that also has skinned meshes: the nodes the rig's SkeletalMesh does not get through a skin. */
+function unboundMeshNodes(audit: SkinAudit): SkinAudit['meshNodes'] {
+  if (!audit.meshNodes.some(n => n.skin !== null)) return [];
+  return audit.meshNodes.filter(n => n.skin === null && n.morphTargets === 0 && (n.vertices ?? 1) > 0);
+}
+
+/** The StaticMesh assets Unreal named after these mesh nodes (Interchange names a StaticMesh after its glTF node or mesh). */
+function staticMeshesNamed(nodes: SkinAudit['meshNodes'], staticMeshes: readonly { path: string }[]): { nodes: SkinAudit['meshNodes']; meshes: string[] } {
+  const found = new Set<string>();
+  const matched = nodes.filter(n => staticMeshes.some(m => {
+    const name = m.path.split('/').pop();
+    const hit = name !== undefined && (name === n.name || name === n.meshName);
+    if (hit) found.add(m.path);
+    return hit;
+  }));
+  return { nodes: matched, meshes: [...found] };
+}
+
 /**
  * Mesh nodes that Interchange's default pipeline drops without a warning: in a file with at
  * least one skinned mesh, `bAutoDetectMeshType` sets `bIgnoreStaticMeshes`
  * (InterchangeGenericMeshPipeline.cpp, GetMeshesInformationFromTranslatedData, UE 5.7), so an
  * unskinned mesh with no morph targets that is not parented under a joint is thrown away.
  * A morph-bearing unskinned mesh still becomes its own SkeletalMesh, and a mesh parented to a
- * joint is merged into the rig's SkeletalMesh (both seen in UE 5.7.3 runs).
+ * joint is merged into the rig's SkeletalMesh (both seen in UE 5.7.3 runs). UE 5.8.2 does not
+ * drop them: pass the StaticMeshes Unreal imported and nodes it kept as a StaticMesh are left out
+ * (see `unboundStaticMeshFailure`).
  */
-export function interchangeDroppedMeshNodes(audit: SkinAudit): SkinAudit['meshNodes'] {
-  if (!audit.meshNodes.some(n => n.skin !== null)) return [];
-  return audit.meshNodes.filter(n => n.skin === null && n.morphTargets === 0 && n.jointAncestor === null && (n.vertices ?? 1) > 0);
+export function interchangeDroppedMeshNodes(audit: SkinAudit, staticMeshes: readonly { path: string }[] = []): SkinAudit['meshNodes'] {
+  const kept = new Set(staticMeshesNamed(unboundMeshNodes(audit), staticMeshes).nodes);
+  return unboundMeshNodes(audit).filter(n => n.jointAncestor === null && !kept.has(n));
 }
 
 /** What the GLB should import as: every node's vertices, except that an unskinned static mesh reused by several nodes is one StaticMesh. */
@@ -307,7 +337,7 @@ function geometryOf(raw: UnrealRawReport, audit: SkinAudit | undefined): UnrealG
   const unrealVertices = [...raw.skeletalMeshes, ...raw.staticMeshes].reduce((sum, m) => sum + (m.vertices[0] ?? 0), 0);
   return {
     glbVertices, unrealVertices, missing: glbVertices - unrealVertices, tolerance: Math.ceil(glbVertices * UNREAL_WELD_TOLERANCE),
-    droppedByInterchange: interchangeDroppedMeshNodes(audit).map(n => n.name ?? `node ${n.node}`),
+    droppedByInterchange: interchangeDroppedMeshNodes(audit, raw.staticMeshes).map(n => n.name ?? `node ${n.node}`),
   };
 }
 
@@ -349,6 +379,7 @@ export function buildUnrealReport(raw: UnrealRawReport, log: ParsedUnrealLog, ru
     importer: 'Interchange',
     verified: 'import only: Interchange created these assets headlessly (-nullrhi); reported asset settings are not runtime ray/physics proof; nothing was rendered, animated, ray-traced or played at runtime',
     ...(raw.importConfiguration ? { importConfiguration: raw.importConfiguration } : {}),
+    ...(raw.skeletalMeshGrouping ? { skeletalMeshGrouping: raw.skeletalMeshGrouping } : {}),
     destination: raw.destination, importReturned: raw.importReturned, ...(raw.error ? { scriptError: raw.error } : {}),
     summary: {
       skeletalMeshes: count(c => c === 'SkeletalMesh'), skeletons: count(c => c === 'Skeleton'),
@@ -403,7 +434,7 @@ export const UNREAL_PROXY_ROOT = /_ProxyTrueRootJoint$/;
 function geometryFailure(report: UnrealReport, expect: UnrealExpectations): string | null {
   const g = report.geometry, audit = report.preflight?.skins;
   if (!g || !audit) return null;
-  const dropped = interchangeDroppedMeshNodes(audit);
+  const dropped = interchangeDroppedMeshNodes(audit, report.staticMeshes);
   const droppedVertices = dropped.reduce((sum, n) => sum + (n.vertices ?? 0), 0);
   const known = dropped.length > 0 && g.missing >= droppedVertices / 2;
   if (g.missing <= g.tolerance && !known) return null;
@@ -419,6 +450,26 @@ function geometryFailure(report: UnrealReport, expect: UnrealExpectations): stri
   const rig = rigSkin(audit, expect.bones);
   const eyes = expect.contract === ARKIT_FACE_CONTRACT ? `; under ${expect.contract}, weight each eyeball 100% to its eye bone (eye_L, eye_R)` : '';
   return `${head} (Unreal: ${ue}). Cause: the mesh ${one ? 'node' : 'nodes'} ${dropped.map(n => `"${nodeName(n)}" (${n.vertices} vertices)`).join(', ')} ${one ? 'is' : 'are'} not bound to the skin (the node has no "skin", no morph targets and no skin joint above it). In a GLB with skinned meshes, Interchange's default pipeline drops every such static mesh without a warning (bAutoDetectMeshType sets bIgnoreStaticMeshes in InterchangeGenericMeshPipeline.cpp), so ${one ? 'it' : 'they'} never reached Unreal. Fix: bind ${one ? 'it' : 'them'} to ${skinLabel(rig)} (joints ${quoted(rig.joints)})${eyes}.`;
+}
+
+/**
+ * Mesh nodes with no skin, in a GLB that also has skinned meshes, which Unreal imported as separate
+ * StaticMeshes. A StaticMesh does not follow the rig, so an eyeball left out of the skin cannot
+ * gaze. UE 5.7.3 dropped such a node, or merged it into the SkeletalMesh when it sat under a joint;
+ * UE 5.8.2 keeps it as a StaticMesh in both cases and gives the SkeletalMesh no geometry for it.
+ */
+function unboundStaticMeshFailure(report: UnrealReport, expect: UnrealExpectations): string | null {
+  const audit = report.preflight?.skins;
+  if (!audit) return null;
+  const { nodes, meshes } = staticMeshesNamed(unboundMeshNodes(audit), report.staticMeshes);
+  if (!nodes.length) return null;
+  const one = nodes.length === 1, rig = rigSkin(audit, expect.bones);
+  const under = nodes.filter(n => n.jointAncestor !== null);
+  const boned = nodes.filter(n => report.skeletalMeshes.some(m => m.bones.includes(nodeName(n))));
+  const parented = under.length ? ` Parenting a node under a joint does not bind it: ${quoted(under.map(nodeName))} ${under.length === 1 ? 'is' : 'are'} under ${quoted([...new Set(under.map(n => n.jointAncestor as string))])}${boned.length ? `, and Interchange gave the SkeletalMesh ${boned.length === 1 ? 'a bone' : 'bones'} named ${quoted(boned.map(nodeName))} while the geometry is only in the StaticMesh${meshes.length === 1 ? '' : 'es'}` : ''}.` : '';
+  const eyes = expect.contract === ARKIT_FACE_CONTRACT ? `; under ${expect.contract}, weight each eyeball 100% to its eye bone (eye_L, eye_R)` : '';
+  const fix = rig ? ` Fix: bind ${one ? 'it' : 'them'} to ${skinLabel(rig)} (joints ${quoted(rig.joints)})${eyes}.` : '';
+  return `the mesh ${one ? 'node' : 'nodes'} ${nodes.map(n => `"${nodeName(n)}" (${n.vertices} vertices)`).join(', ')} ${one ? 'is' : 'are'} not bound to the skin (the node has no "skin" and no morph targets), so Unreal imported ${one ? 'it' : 'them'} as ${one ? 'a separate StaticMesh' : 'separate StaticMeshes'} (${meshes.map(assetName).join(', ')}) and not as part of the SkeletalMesh. A StaticMesh does not follow the rig's bones.${parented}${fix}`;
 }
 
 /**
@@ -588,6 +639,8 @@ export function reviewUnrealReport(report: UnrealReport, expect: UnrealExpectati
   }
   const lost = geometryFailure(report, expect);
   if (lost) failures.push(lost);
+  const apart = unboundStaticMeshFailure(report, expect);
+  if (apart) (expect.requireSkeletalMesh ? failures : warnings).push(apart);
   const hierarchy = hierarchyFailure(report, expect, target, what);
   if (hierarchy) failures.push(hierarchy);
   const used = skins?.skins.filter(skin => skin.usedBy.length) ?? [];
@@ -718,7 +771,9 @@ export async function verifyUnreal(glb: string, options: VerifyUnrealOptions): P
     const source = /\.glb$/i.test(input) ? join(work, `${assetName}.glb`) : input;
     if (source !== input) await writeFile(source, bytes);
     const request = join(work, 'request.json'), reportPath = join(work, 'report.json');
-    await writeFile(request, JSON.stringify({ glb: slashes(source), destination: `/Game/Verify/${assetName}`, report: slashes(reportPath), ...(importOptions ? { importOptions } : {}) }));
+    // Skinned meshes (and any SkeletalMesh contract) are imported with BySkeleton; UE 5.8.2's default glTF pipeline asset does not combine.
+    const combine = options.requireSkeletalMesh || preflight.skins?.skins.length ? 'BY_SKELETON' : undefined;
+    await writeFile(request, JSON.stringify({ glb: slashes(source), destination: `/Game/Verify/${assetName}`, report: slashes(reportPath), ...(importOptions ? { importOptions } : {}), ...(combine ? { combineSkeletalMeshes: combine } : {}) }));
     const script = fileURLToPath(new URL('../scripts/unreal-verify-import.py', import.meta.url));
     const args = unrealCommandLine({ project, script, log: logFile });
     say(`Unreal ${unreal.version} at ${unreal.editor}`);

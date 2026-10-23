@@ -112,6 +112,35 @@ class ImportOptionsContracts(unittest.TestCase):
         self.assertEqual(len(params.values['override_pipelines']),2)
         self.assertIn('DefaultGLTFPipeline',params.values['override_pipelines'][1]);self.assertEqual(configured['interchange'],{'buildNanite':False,'useFullPrecisionUVs':True,'collision':False})
         self.assertIn(pipeline,keep_alive)
+    def grouping_api(self,engine_default='DO_NOT_COMBINE'):
+        api,pipeline,mesh_pipeline,common=self.api()
+        names=['BY_SKELETON','BY_SKELETON_VISIBLE_ONLY','DO_NOT_COMBINE']
+        api.InterchangeCombineSkeletalMeshesBehavior=types.SimpleNamespace(**{name:'<InterchangeCombineSkeletalMeshesBehavior.'+name+': '+str(index)+'>' for index,name in enumerate(names)})
+        mesh_pipeline.values['combine_skeletal_meshes_behavior']=getattr(api.InterchangeCombineSkeletalMeshesBehavior,engine_default)
+        return api,pipeline,mesh_pipeline
+    def test_skeletal_grouping_is_set_on_the_scratch_pipeline_and_the_engine_default_is_reported(self):
+        # UE 5.8.2 stores DO_NOT_COMBINE in DefaultGLTFAssetsPipeline, which imports one SkeletalMesh per skinned mesh node.
+        api,pipeline,mesh_pipeline=self.grouping_api('DO_NOT_COMBINE')
+        params=Property(override_pipelines=[])
+        with patch.object(module,'unreal',api):
+            configured,keep_alive=module.configure_import(params,None,'/Game/Verify/Head','BY_SKELETON')
+        self.assertEqual(configured['skeletalMeshGrouping'],{'engineDefault':'DO_NOT_COMBINE','applied':'BY_SKELETON'})
+        self.assertIn('BY_SKELETON',mesh_pipeline.values['combine_skeletal_meshes_behavior']);self.assertNotIn('interchange',configured)
+        self.assertEqual(len(params.values['override_pipelines']),2);self.assertIn('DefaultGLTFPipeline',params.values['override_pipelines'][1]);self.assertIn(pipeline,keep_alive)
+    def test_skeletal_grouping_combines_with_pipeline_options_and_rejects_other_values(self):
+        api,pipeline,mesh_pipeline=self.grouping_api('BY_SKELETON')
+        with patch.object(module,'unreal',api):
+            configured,_=module.configure_import(Property(override_pipelines=[]),{'schema':1,'interchange':{'buildNanite':False}},'/Game/Verify/Head','DO_NOT_COMBINE')
+            self.assertEqual(configured['skeletalMeshGrouping'],{'engineDefault':'BY_SKELETON','applied':'DO_NOT_COMBINE'});self.assertEqual(configured['interchange'],{'buildNanite':False})
+            for bad in ['by-skeleton','BY_SKELETON_VISIBLE','']:
+                with self.assertRaisesRegex(ValueError,'grouping|CombineSkeletalMeshesBehavior'):module.configure_import(Property(override_pipelines=[]),None,'/Game/Verify/Head',bad)
+    def test_skeletal_grouping_fails_when_the_engine_lacks_the_property(self):
+        api,pipeline,mesh_pipeline=self.grouping_api();del mesh_pipeline.values['combine_skeletal_meshes_behavior']
+        with patch.object(module,'unreal',api):
+            with self.assertRaisesRegex(Exception,'combine_skeletal_meshes_behavior'):module.configure_import(Property(override_pipelines=[]),None,'/Game/Verify/Head','BY_SKELETON')
+    def test_without_options_or_grouping_the_engine_pipeline_stack_is_left_alone(self):
+        params=Property(override_pipelines=[])
+        self.assertEqual(module.configure_import(params,None,'/Game/Verify/Prop'),({},[]));self.assertEqual(params.values['override_pipelines'],[])
     def test_missing_pipeline_property_fails_explicitly(self):
         api,pipeline,mesh_pipeline,common=self.api();del common.values['use_full_precision_u_vs']
         with patch.object(module,'unreal',api):
@@ -180,6 +209,24 @@ class ImportOptionsContracts(unittest.TestCase):
         self.assertEqual(len(report['assets']),1)
         self.assertEqual(report['staticMeshes'][0]['collisionTraceFlag'],'CTF_USE_COMPLEX_AS_SIMPLE')
         self.assertEqual(len(report['importConfiguration']['applied']['postImport']),1)
+    def test_main_reports_the_skeletal_grouping_it_applied_without_import_options(self):
+        api,pipeline,mesh_pipeline=self.grouping_api('DO_NOT_COMBINE')
+        events=[];params=Property(override_pipelines=[])
+        def import_asset(destination,source,received):
+            events.append(mesh_pipeline.values['combine_skeletal_meshes_behavior']);return True
+        api.InterchangeManager=types.SimpleNamespace(get_interchange_manager_scripted=lambda:types.SimpleNamespace(import_asset=import_asset),create_source_data=lambda path:path)
+        api.ImportAssetParameters=lambda:params
+        api.EditorAssetLibrary.does_directory_exist=lambda path:False
+        api.EditorAssetLibrary.list_assets=lambda *args,**kwargs:[]
+        api.SystemLibrary=types.SimpleNamespace(get_engine_version=lambda:'test')
+        api.log=lambda _:None;api.log_error=lambda _:None
+        with tempfile.TemporaryDirectory() as directory:
+            request=pathlib.Path(directory)/'request.json';report=pathlib.Path(directory)/'report.json'
+            request.write_text(json.dumps({'glb':'head.glb','destination':'/Game/Verify/Head','report':str(report),'combineSkeletalMeshes':'BY_SKELETON'}),encoding='utf-8')
+            with patch.object(module,'unreal',api),patch.dict(os.environ,{'AGENT_MESHES_UNREAL_REQUEST':str(request)}):module.main()
+            result=json.loads(report.read_text())
+        self.assertIs(result['ok'],True);self.assertEqual(len(events),1);self.assertIn('BY_SKELETON',events[0])
+        self.assertEqual(result['skeletalMeshGrouping'],{'engineDefault':'DO_NOT_COMBINE','applied':'BY_SKELETON'});self.assertNotIn('importConfiguration',result)
     def test_main_does_not_start_import_when_requested_property_is_unsupported(self):
         report,events=self.run_main({'schema':1,'interchange':{'buildNanite':False}},break_property=True)
         self.assertIs(report['ok'],False);self.assertIs(report['importReturned'],False);self.assertEqual(events,[])
