@@ -1077,7 +1077,7 @@
       "readiness": "CPU extraction available; target-specific retarget verification required"
     }
   ],
-  "moduleInventory": "../../rigging/toy-maker/inventory.json",
+  "moduleInventory": "../../rigging/rig-tools/inventory.json",
   "legacyMannequins": "../mannequins/catalog.json",
   "limits": [
     "Catalog presence is not all-clip/runtime/art acceptance",

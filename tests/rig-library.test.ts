@@ -23,7 +23,7 @@ it('checks actual source bytes, every catalog clip and all delivered GLBs', asyn
 it('rejects an unusable demo selection before producing files', async () => {
   await expect(rigDemo(['spider'], 'unused.html')).rejects.toThrow('distinct');
   await expect(rigDemo(['spider', '../outside'], 'unused.html')).rejects.toThrow('Unknown');
-  await expect(rigDemo(['human-base', 'fox'], join(packageRoot, 'scripts/rigging/toy-maker/unused.html')))
+  await expect(rigDemo(['human-base', 'fox'], join(packageRoot, 'scripts/rigging/rig-tools/unused.html')))
     .rejects.toThrow('bundled source');
   await expect(rigDemo(['human-base', 'fox'], 'source.py')).rejects.toThrow('.html');
 });

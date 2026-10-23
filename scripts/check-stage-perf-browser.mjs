@@ -1,4 +1,4 @@
-// Performance floor (talking-heads E8) for a face-driving stage at 1280x720: three skinned,
+// Performance floor (face-rig acceptance bar E8) for a face-driving stage at 1280x720: three skinned,
 // morph-heavy heads (one 12.5k-vertex glTF face mesh with six primitives that share 25 ARKit morphs,
 // a 3-bone skin, eyes on eye bones) driven every frame with 25 morph weights and two eye poses each.
 //   (a) In Chromium with GPU acceleration (headless, ANGLE on the real driver) at default quality:
@@ -31,7 +31,7 @@ const ARKIT = ['jawOpen', 'eyeBlinkLeft', 'eyeBlinkRight', 'eyeSquintLeft', 'eye
 const PRIMITIVES = ['skin', 'lid', 'teeth_upper', 'teeth_lower', 'tongue', 'cavity'];
 
 /**
- * A skinned head in the talking-heads layout: one glTF mesh `face` with six primitives (skin, lids,
+ * A skinned head in the face-rig layout: one glTF mesh `face` with six primitives (skin, lids,
  * upper and lower teeth, tongue, mouth cavity) that all carry the same 25 ARKit morphs, 12.5k
  * vertices skinned to neck, head and jaw; eyeballs and irises on eye bones.
  */
@@ -103,13 +103,13 @@ async function run({ label, launchArgs, quality }) {
       const g = document.getElementById('head').textContent;
       const options = {
         autoplay: false, background: '#e8dccb',
-        models: { pip: { glb: g, position: [-0.35, 0, 0], rotation: [0, 15, 0] }, moss: { glb: g }, bolt: { glb: g, position: [0.35, 0, 0], rotation: [0, -15, 0] } },
+        models: { hero: { glb: g, position: [-0.35, 0, 0], rotation: [0, 15, 0] }, frog: { glb: g }, robot: { glb: g, position: [0.35, 0, 0], rotation: [0, -15, 0] } },
       };
       if (quality) options.quality = quality;
       const s = await MeshViewer.mountStage(document.getElementById('stage'), options);
       s.frame();
-      const faceMorphs = s.model('pip').morphTargets('face');
-      const primitives = s.model('pip').root.getObjectByName('face').children.filter(child => child.isMesh);
+      const faceMorphs = s.model('hero').morphTargets('face');
+      const primitives = s.model('hero').root.getObjectByName('face').children.filter(child => child.isMesh);
       const percentile = (values, p) => { const sorted = [...values].sort((a, b) => a - b); return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))]; };
       const summary = values => (values.length ? { samples: values.length, median: percentile(values, 0.5), p95: percentile(values, 0.95), max: Math.max(...values) } : null);
       const measure = async (secs, drive) => {
@@ -119,13 +119,13 @@ async function run({ label, launchArgs, quality }) {
           if (!drive) return;
           const start = performance.now();
           t += 1 / 60;
-          // Pip speaks: one setMorph per curve for 25 face morphs (each reaching all six primitives) and
-          // two eye poses. Moss and Bolt listen: a batch of 25 morphs, eyes aimed at Pip's mouth.
-          const speaker = s.model('pip'), mouth = speaker.worldPoint('jaw', [0, 0, 0.1]);
+          // The hero speaks: one setMorph per curve for 25 face morphs (each reaching all six primitives) and
+          // two eye poses. The frog and robot listen: a batch of 25 morphs, eyes aimed at the hero's mouth.
+          const speaker = s.model('hero'), mouth = speaker.worldPoint('jaw', [0, 0, 0.1]);
           for (let k = 0; k < faceMorphs.length; k++) speaker.setMorph('face', faceMorphs[k], 0.5 + 0.5 * Math.sin(t * 7 + k));
           speaker.setPose('eye_L', { rotation: [5 * Math.cos(t), 10 * Math.sin(t), 0] });
           speaker.setPose('eye_R', { rotation: [5 * Math.cos(t), 10 * Math.sin(t), 0] });
-          for (const name of ['moss', 'bolt']) {
+          for (const name of ['frog', 'robot']) {
             const h = s.model(name), weights = {};
             for (let k = 0; k < faceMorphs.length; k++) weights[faceMorphs[k]] = 0.3 + 0.3 * Math.sin(t * 2 + k);
             h.setMorphs({ face: weights });
@@ -144,7 +144,7 @@ async function run({ label, launchArgs, quality }) {
       await measure(1, true); // warm up shader compilation
       const idle = (await measure(Math.min(5, seconds), false)).frame;
       const driven = await measure(seconds, true);
-      s.model('pip').setMorph('face', 'jawOpen', 0.95); s.sync();
+      s.model('hero').setMorph('face', 'jawOpen', 0.95); s.sync();
       const reached = primitives.every(p => p.morphTargetInfluences[p.morphTargetDictionary.jawOpen] === 0.95);
       const gl = s.renderer.getContext(), info = gl.getExtension('WEBGL_debug_renderer_info');
       const settings = { pixelRatio: s.renderer.getPixelRatio(), shadows: s.renderer.shadowMap.enabled, antialias: gl.getContextAttributes().antialias, environment: !!s.scene.environment, backend: info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER) };

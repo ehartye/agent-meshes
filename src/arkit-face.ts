@@ -13,7 +13,7 @@ export const ARKIT_FACE_REQUIRED_MORPHS = Object.freeze([
   'cheekSquintLeft', 'cheekSquintRight',
 ] as const);
 
-/** Morphs a head carries only when it has the feature (Bolt has no nose). */
+/** Morphs a head carries only when it has the feature (a tin-can robot head has no nose). */
 export const ARKIT_FACE_OPTIONAL_MORPHS = Object.freeze(['noseSneerLeft', 'noseSneerRight', 'mouthPucker', 'tongueOut', 'cheekPuff'] as const);
 
 /** `head` is the skin root; the eye bones pivot at each eyeball center. Left is the character's left (+X). */

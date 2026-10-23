@@ -1,4 +1,4 @@
-"""Explicit-path CPU adapters around the pinned Toy Maker source snapshots.
+"""Explicit-path CPU adapters around the pinned rigging source snapshots.
 
 No dependency installation, model downloads, backend selection or network access.
 NPZ inputs must be trusted: the imported upstream schema contains object arrays.
@@ -57,7 +57,7 @@ def upstream(name):
     # Keep upstream's bare internal imports confined to this known source directory.
     if str(UPSTREAM) not in sys.path:
         sys.path.insert(0, str(UPSTREAM))
-    spec = importlib.util.spec_from_file_location('toy_maker_' + name, UPSTREAM / (name + '.py'))
+    spec = importlib.util.spec_from_file_location('rig_tools_' + name, UPSTREAM / (name + '.py'))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -98,7 +98,7 @@ def extract(identifier, clip, output):
 def run_script(name, output, environment):
     destination = output_path(output)
     # No caller defaults or sibling paths: the adapter passes every input/output.
-    with tempfile.TemporaryDirectory(prefix='meshes-toy-maker-') as directory:
+    with tempfile.TemporaryDirectory(prefix='meshes-rig-tools-') as directory:
         result = subprocess.run([sys.executable, str(UPSTREAM / (name + '.py'))],
                                 cwd=directory, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1',
                                                     **environment},

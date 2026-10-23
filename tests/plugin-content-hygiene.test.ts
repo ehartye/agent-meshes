@@ -8,7 +8,9 @@ import { expect, it } from 'vitest';
 
 // Plugin content stays free of language about our own machines and non-plugin projects; that belongs in the wiki.
 // Generic patterns are checked here. Private project names are not listed in the repo: point
-// AGENT_MESHES_PRIVATE_TERMS_FILE at a local file with one case-insensitive term per line to check those too.
+// AGENT_MESHES_PRIVATE_TERMS_FILE at a local file with one term per line to check those too. A plain term matches
+// case-insensitively anywhere in a line; a term written /pattern/flags is a regular expression with exactly those flags
+// (no flags means case-sensitive), for names that are also ordinary words or substrings, such as /\bPip\b/.
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TEXT = new Set(['.md', '.mjs', '.js', '.ts', '.json', '.yml', '.yaml', '.py', '.html', '.sh', '.txt', '']);
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.cache', '.playwright-mcp', 'dist', 'dist-web', 'results']);
@@ -30,8 +32,13 @@ const RULES: [string, (line: string) => boolean][] = [
 
 it('plugin content names no home directory, GPU model, non-plugin repository or wiki path', () => {
   const termsFile = process.env.AGENT_MESHES_PRIVATE_TERMS_FILE;
-  const terms = termsFile ? readFileSync(termsFile, 'utf8').split(/\r?\n/).map(t => t.trim().toLowerCase()).filter(Boolean) : [];
-  const rules = [...RULES, ...terms.map((term): [string, (line: string) => boolean] => [`the private term "${term}"`, line => line.toLowerCase().includes(term)])];
+  const terms = termsFile ? readFileSync(termsFile, 'utf8').split(/\r?\n/).map(t => t.trim()).filter(Boolean) : [];
+  const rules = [...RULES, ...terms.map((term): [string, (line: string) => boolean] => {
+    const pattern = /^\/(.+)\/([a-z]*)$/.exec(term);
+    if (pattern) { const re = new RegExp(pattern[1], pattern[2]); return [`the private pattern ${term}`, line => re.test(line)]; }
+    const lower = term.toLowerCase();
+    return [`the private term "${term}"`, line => line.toLowerCase().includes(lower)];
+  })];
   const self = resolve(fileURLToPath(import.meta.url));
   const hits: string[] = [];
   for (const file of walk(ROOT)) {

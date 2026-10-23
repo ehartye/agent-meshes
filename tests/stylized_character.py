@@ -51,12 +51,12 @@ class CharacterContract(unittest.TestCase):
 
 # The reference cast (the recipe's fixture): height, age, presentation, species.
 CAST = {
-    'mara': dict(height=1.82, age='adult', presentation='female', species='human', hair='#363544'),
-    'oren': dict(height=1.88, age='adult', presentation='male', species='human', hair='#252c37'),
-    'tess': dict(height=1.22, age='child', presentation='female', species='human', hair='#614036'),
-    'kit': dict(height=1.19, age='child', presentation='male', species='human', hair='#303944'),
-    'pip': dict(height=1.65, age='adult', presentation='female', species='alien'),
-    'nori': dict(height=1.12, age='child', presentation='female', species='alien'),
+    'adult_f': dict(height=1.82, age='adult', presentation='female', species='human', hair='#363544'),
+    'adult_m': dict(height=1.88, age='adult', presentation='male', species='human', hair='#252c37'),
+    'child_f': dict(height=1.22, age='child', presentation='female', species='human', hair='#614036'),
+    'child_m': dict(height=1.19, age='child', presentation='male', species='human', hair='#303944'),
+    'alien_adult': dict(height=1.65, age='adult', presentation='female', species='alien'),
+    'alien_child': dict(height=1.12, age='child', presentation='female', species='alien'),
 }
 
 def _point_triangle(p, a, b, c):
@@ -146,12 +146,12 @@ class VacuumHelmetContract(unittest.TestCase):
         size = {}
         for name in CAST:
             _, by = self.suited(name); size[name] = by['helmet-glass']['fit']['radii']
-        for child, adult in [('tess', 'mara'), ('kit', 'oren'), ('nori', 'pip')]:
+        for child, adult in [('child_f', 'adult_f'), ('child_m', 'adult_m'), ('alien_child', 'alien_adult')]:
             self.assertLess(max(size[child]), max(size[adult]) - .01)
         # A child's head is proportionally larger, so its helmet shrinks less than its height does.
-        self.assertGreater(max(size['kit'])/max(size['oren']), 1.19/1.88 + .05)
+        self.assertGreater(max(size['child_m'])/max(size['adult_m']), 1.19/1.88 + .05)
         # The alien's wide, fronded head gives a differently shaped bubble.
-        human = size['oren'][0]/size['oren'][1]; alien = size['pip'][0]/size['pip'][1]
+        human = size['adult_m'][0]/size['adult_m'][1]; alien = size['alien_adult'][0]/size['alien_adult'][1]
         self.assertGreater(abs(alien - human), .04)
 
     def test_helmet_fit_is_derived_from_points(self):
@@ -209,16 +209,16 @@ class VacuumHelmetContract(unittest.TestCase):
                 self.assertEqual(encloses['parts'], [p['name'] for p in self.head_parts(parts)])
                 self.assertEqual(encloses['with'], ['helmet-shell'])
                 self.assertEqual((encloses['clearance'], encloses['maxClearance']), (.015, .04))
-        clothed = self.recipe().geometry(dict(CAST['mara'], vacuum=False))
+        clothed = self.recipe().geometry(dict(CAST['adult_f'], vacuum=False))
         self.assertFalse(any('extras' in p for p in clothed))
 
     def test_fieldwork_suit_language(self):
-        parts, by = self.suited('mara')
+        parts, by = self.suited('adult_f')
         for required in ['backpack', 'left-shoulder-pad', 'right-elbow-pad', 'left-thigh-pouch', 'belt-pouch-left']:
             self.assertIn(required, by)
         self.assertEqual(by['left-knee-panel']['color'], by['left-shoulder-pad']['color'])
         self.assertEqual(by['helmet-rim']['color'], by['helmet-neck-ring']['color'])
-        clothed = {p['name'] for p in self.recipe().geometry(dict(CAST['mara'], vacuum=False))}
+        clothed = {p['name'] for p in self.recipe().geometry(dict(CAST['adult_f'], vacuum=False))}
         self.assertFalse(any(n.startswith('helmet') or 'pouch' in n or n == 'backpack' for n in clothed))
 
 def load_tests(loader, tests, pattern):

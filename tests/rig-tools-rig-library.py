@@ -1,4 +1,4 @@
-"""Portable CPU checks against the imported Toy Maker code and real library GLBs."""
+"""Portable CPU checks against the imported rigging code and real library GLBs."""
 from pathlib import Path
 import importlib.util
 import json
@@ -8,7 +8,7 @@ import sys
 import hashlib
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('rig_library', ROOT / 'scripts/rigging/toy-maker/rig_library.py')
+SPEC = importlib.util.spec_from_file_location('rig_library', ROOT / 'scripts/rigging/rig-tools/rig_library.py')
 LIB = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(LIB)
 RECEIPTS = []
@@ -103,9 +103,9 @@ if __name__ == '__main__':
         ARTIFACTS.mkdir(parents=True, exist_ok=False)
     result = unittest.main(argv=[sys.argv[0]], exit=False).result
     if ARTIFACTS:
-        owned = ['scripts/rigging/toy-maker/rig_library.py', 'scripts/rigging/toy-maker/unirig_worker.py',
-                 'scripts/reference-assets/rigs/catalog.json', 'scripts/rigging/toy-maker/inventory.json',
-                 'tests/toy-maker-rig-library.py']
+        owned = ['scripts/rigging/rig-tools/rig_library.py', 'scripts/rigging/rig-tools/unirig_worker.py',
+                 'scripts/reference-assets/rigs/catalog.json', 'scripts/rigging/rig-tools/inventory.json',
+                 'tests/rig-tools-rig-library.py']
         report = {'ok': result.wasSuccessful(), 'testsRun': result.testsRun,
                   'scope': 'actual imported CPU extraction/retarget/template checks; no GPU or learned inference',
                   'python': sys.version, 'executable': sys.executable,

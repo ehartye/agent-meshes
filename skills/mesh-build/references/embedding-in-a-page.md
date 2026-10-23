@@ -22,8 +22,8 @@ Read [viewer API](viewer-api.md) for mount options and the puppet API (`setPose`
 pages and for scripted checks such as measuring foot contact over a stride.
 
 Several models on one page (a cast of characters, heads that look at each other) go on **one
-stage**, not several `mount` calls: `MeshViewer.mountStage(el, {models: {pip: {glb, position}, bolt:
-{glb, position, rotation, scale}}})` shares one renderer, camera and room, and `stage.model('pip')`
+stage**, not several `mount` calls: `MeshViewer.mountStage(el, {models: {hero: {glb, position}, robot:
+{glb, position, rotation, scale}}})` shares one renderer, camera and room, and `stage.model('hero')`
 is that model's own puppet plus `setPlacement`, `getPlacement`, `worldPoint(node, point?)` and
 `aimBone(bone, worldPoint, {maxYaw, maxPitch})` for pointing one model's eyes at another. Setters
 (`setMorph`, `setMorphs`, `setPose`, `setPoses`, `aimBone`) are deferred to one application per

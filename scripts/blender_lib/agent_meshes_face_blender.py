@@ -411,7 +411,7 @@ def add_jaw_open(obj, jaw, weight=None, name='jawOpen', rigid=False, min_chin_dr
     body (lower teeth, tongue, a robot chin plate). On a skin cut by `slit_mouth`,
     the tagged lower-lip seam (the `jaw_seam` point attribute) opens with the jaw and
     the upper-lip seam stays, whatever float rounding did to the mouth line.
-    `min_chin_drop` (a fraction, 0.1 for the talking-heads bar) rejects a jaw whose
+    `min_chin_drop` (a fraction, 0.1 for the face-rig acceptance bar) rejects a jaw whose
     lowest point drops by less than that share of the object's height: pass it for
     the head skin or chin plate so a hinge that only opens the lips fails here, not
     in review. Rejects morphs that fold faces.

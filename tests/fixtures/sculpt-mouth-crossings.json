@@ -1,5 +1,5 @@
 {
-  "provenance": "Mara authored sculpt/rig export, minimal triangle excerpts; rejected c9e30f4af696cec6c7ce37088f07634d07a110ca4cf636fb99d832e12869eb43, fitted/lining 34b85b7ed07bee03eb4a8c45f67ab77d4179af27ca597b646bd63f1a0dc5a07d",
+  "provenance": "Authored sculpt/rig export, minimal triangle excerpts; rejected c9e30f4af696cec6c7ce37088f07634d07a110ca4cf636fb99d832e12869eb43, fitted/lining 34b85b7ed07bee03eb4a8c45f67ab77d4179af27ca597b646bd63f1a0dc5a07d",
   "samples": [
     {
       "name": "rejected",
@@ -31,7 +31,7 @@
           ]
         },
         {
-          "label": "mara-skin",
+          "label": "sculpt-skin",
           "triangle": 7277,
           "rest": [
             -0.026905331760644913,
@@ -88,7 +88,7 @@
           ]
         },
         {
-          "label": "mara-skin",
+          "label": "sculpt-skin",
           "triangle": 7277,
           "rest": [
             -0.026905331760644913,
@@ -145,7 +145,7 @@
           ]
         },
         {
-          "label": "mara-skin",
+          "label": "sculpt-skin",
           "triangle": 451,
           "rest": [
             0.03920586779713631,

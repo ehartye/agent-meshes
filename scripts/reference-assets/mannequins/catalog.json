@@ -237,9 +237,9 @@
       "limitations": "Retains upstream skin-parent warning; normalized phase does not align different clip footfalls"
     },
     {
-      "id": "pip",
-      "label": "Pip · adult alien",
-      "path": "pip.glb",
+      "id": "plant-kin-adult",
+      "label": "Adult plant-kin",
+      "path": "plant-kin-adult.glb",
       "sha256": "15aa1157a25da46279bb7854cfcc86dc13a72aa6ec3fbe3472f100685987ca84",
       "bones": 50,
       "clipCount": 8,
@@ -262,7 +262,7 @@
       "source": {
         "origin": "private game project repository (not published)",
         "commit": "0defa6dd6050b3c41a239d2ec136f6be48505b2d",
-        "path": "asset-src/pip-baseline/character.py"
+        "path": "adult plant-kin baseline recipe (path withheld)"
       },
       "license": "Species recipe from a private game project and Agent Meshes shared helpers; no blanket CC0 claim",
       "validation": {
@@ -276,15 +276,15 @@
       },
       "limitations": "Placeholder eyes, no face controls; diagnostic walk/jog not full game-gait acceptance",
       "recipeSnapshot": {
-        "path": "source/pip-character.py.txt",
-        "sha256": "a0e1b839416eb2fb14ffd71fb6d5f96319c390a26ab1e276ab9e4daf0755ed25",
+        "path": "source/plant-kin-adult-character.py.txt",
+        "sha256": "1bd2970dd239daced24a6eab9879b36c01c9f599ed8b098b0d4f717327fd159b",
         "use": "Original wrapper text for inspection; copy into an owned project and configure inputs before execution"
       }
     },
     {
-      "id": "nori",
-      "label": "Nori · child alien",
-      "path": "nori.glb",
+      "id": "plant-kin-child",
+      "label": "Child plant-kin",
+      "path": "plant-kin-child.glb",
       "sha256": "b6f4c77cd600514cf478852c4467a75fa602eaec33442cb9bd9806db93bceab2",
       "bones": 46,
       "clipCount": 8,
@@ -307,7 +307,7 @@
       "source": {
         "origin": "private game project repository (not published)",
         "commit": "0defa6dd6050b3c41a239d2ec136f6be48505b2d",
-        "path": "asset-src/nori-baseline/character.py"
+        "path": "child plant-kin baseline recipe (path withheld)"
       },
       "license": "Species recipe from a private game project and Agent Meshes shared helpers; no blanket CC0 claim",
       "validation": {
@@ -321,8 +321,8 @@
       },
       "limitations": "Placeholder eyes, no face controls; diagnostic walk/jog not full game-gait acceptance",
       "recipeSnapshot": {
-        "path": "source/nori-character.py.txt",
-        "sha256": "6361b975e1b8908bc8ce7436a953f3654c331da8677138eb8b2e22efb96b5b8a",
+        "path": "source/plant-kin-child-character.py.txt",
+        "sha256": "040fc0da9758864d13653b5dce21f2310710d6910d71b35d5b055dabe0a25df7",
         "use": "Original wrapper text for inspection; copy into an owned project and configure inputs before execution"
       }
     }

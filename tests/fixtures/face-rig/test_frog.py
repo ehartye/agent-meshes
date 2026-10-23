@@ -1,4 +1,4 @@
-"""A wide, flat frog head (Mossjaw-like) authored only with the agent-meshes face helpers.
+"""A wide, flat frog head authored only with the agent-meshes face helpers.
 
 It started as the P1a round-1 critic's head, written from the docs, which exposed three gaps:
 a mid-head hinge that only opened a hole at the lips, a mouth line (.088) whose float32 rounding
@@ -72,7 +72,7 @@ def build():
     upper = mesh_from_geometry('teeth_upper', teeth_row_geometry('saw', (0, my + .005, MOUTH_Z + .002), .048, .03, 14, .006, row='upper'), [enamel_u])
     lower = mesh_from_geometry('teeth_lower', teeth_row_geometry('saw', (0, my + .007, MOUTH_Z - .002), .046, .03, 14, .005, row='lower'), [enamel_l])
     add_jaw_open(lower, jaw, rigid=True)
-    # Mossjaw's two exposed fangs hang in front of the closed lower lip, in their own material (declared below).
+    # The frog's two exposed fangs hang in front of the closed lower lip, in their own material (declared below).
     fang_enamel = material('teeth_exposed', (.95, .93, .82), roughness=.3)
     # They lie against the outside of the lips and ride the skin's own morphs (skin=head), so a funnelled or smiling lip
     # carries them instead of swallowing them.

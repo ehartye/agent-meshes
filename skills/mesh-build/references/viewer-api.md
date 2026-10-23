@@ -115,9 +115,9 @@ typo cannot silently count zero pixels. Outline hulls and the floor are not draw
 
 ```js
 const count = await page.evaluate(() => {
-  const pip = stage.model('pip');
-  pip.setMorph('face', 'eyeBlinkLeft', 1);
-  const image = stage.idRender({ models: ['pip'], materials: { iris: '#0000ff', skin: '#ff0000' }, width: 512, height: 512 });
+  const hero = stage.model('hero');
+  hero.setMorph('face', 'eyeBlinkLeft', 1);
+  const image = stage.idRender({ models: ['hero'], materials: { iris: '#0000ff', skin: '#ff0000' }, width: 512, height: 512 });
   return MeshViewer.countColors(image)['#0000ff'] ?? 0;   // 0 when the lid covers the iris
 });
 ```
@@ -130,16 +130,16 @@ its own independent puppet.
 ```js
 const stage = await MeshViewer.mountStage(el, {
   models: {
-    pip: { glb: pipBase64, position: [-0.6, 0, 0], rotation: [0, 10, 0] },
-    bolt: { glb: boltBytes, position: [0.6, 0, 0], scale: 1.1 },
+    hero: { glb: heroBase64, position: [-0.6, 0, 0], rotation: [0, 10, 0] },
+    robot: { glb: robotBytes, position: [0.6, 0, 0], scale: 1.1 },
   },
   background: '#f4efe6', view: 'front',
 });
-const pip = stage.model('pip'), bolt = stage.model('bolt');
-pip.setMorph('face', 'jawOpen', 0.6);           // only Pip's jaw moves
-const target = pip.worldPoint('jaw', [0, 0, 0.1]); // world-space [x, y, z]
-bolt.aimBone('eye_R', target, { maxYaw: 30 });    // Bolt looks at Pip's mouth
-stage.frame();                                   // fit all models; stage.frame({model: 'pip'}) fits one
+const hero = stage.model('hero'), robot = stage.model('robot');
+hero.setMorph('face', 'jawOpen', 0.6);           // only the hero's jaw moves
+const target = hero.worldPoint('jaw', [0, 0, 0.1]); // world-space [x, y, z]
+robot.aimBone('eye_R', target, { maxYaw: 30 });    // the robot looks at the hero's mouth
+stage.frame();                                   // fit all models; stage.frame({model: 'hero'}) fits one
 ```
 
 Stage options: `models` (`{name: {glb, position?, rotation?, scale?, autoplay?}}`; names are a

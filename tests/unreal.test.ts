@@ -167,16 +167,16 @@ describe('parseUnrealLog', () => {
 });
 
 export const RAW: UnrealRawReport = {
-  ok: true, engineVersion: '5.7.3-50162420+++UE5+Release-5.7', destination: '/Game/Verify/pip', importReturned: true,
+  ok: true, engineVersion: '5.7.3-50162420+++UE5+Release-5.7', destination: '/Game/Verify/hero', importReturned: true,
   assets: [
-    { path: '/Game/Verify/pip/pip/SkeletalMeshes/pip', class: 'SkeletalMesh' },
-    { path: '/Game/Verify/pip/pip/SkeletalMeshes/pip_Skeleton', class: 'Skeleton' },
-    { path: '/Game/Verify/pip/pip/SkeletalMeshes/pip_PhysicsAsset', class: 'PhysicsAsset' },
-    { path: '/Game/Verify/pip/pip/Materials/Skin', class: 'MaterialInstanceConstant' },
-    { path: '/Game/Verify/pip/pip/Textures/Albedo', class: 'Texture2D' },
+    { path: '/Game/Verify/hero/hero/SkeletalMeshes/hero', class: 'SkeletalMesh' },
+    { path: '/Game/Verify/hero/hero/SkeletalMeshes/pip_Skeleton', class: 'Skeleton' },
+    { path: '/Game/Verify/hero/hero/SkeletalMeshes/pip_PhysicsAsset', class: 'PhysicsAsset' },
+    { path: '/Game/Verify/hero/hero/Materials/Skin', class: 'MaterialInstanceConstant' },
+    { path: '/Game/Verify/hero/hero/Textures/Albedo', class: 'Texture2D' },
   ],
   skeletalMeshes: [{
-    path: '/Game/Verify/pip/pip/SkeletalMeshes/pip', skeleton: '/Game/Verify/pip/pip/SkeletalMeshes/pip_Skeleton',
+    path: '/Game/Verify/hero/hero/SkeletalMeshes/hero', skeleton: '/Game/Verify/hero/hero/SkeletalMeshes/pip_Skeleton',
     morphTargets: [...ARKIT_FACE_REQUIRED_MORPHS], bones: ['head', 'eye_L', 'eye_R'], lods: 1, vertices: [812], materialSlots: 2,
   }],
   staticMeshes: [],
@@ -184,11 +184,11 @@ export const RAW: UnrealRawReport = {
 
 describe('buildUnrealReport', () => {
   it('groups assets by class and merges parsed log findings', () => {
-    const report = buildUnrealReport(RAW, parseUnrealLog(LOG), { input: 'C:/a/pip.glb', editor: 'C:/UE/UnrealEditor-Cmd.exe', version: '5.7.3', exitCode: 0, logFile: 'C:/l.log', elapsedMs: 1234 });
+    const report = buildUnrealReport(RAW, parseUnrealLog(LOG), { input: 'C:/a/hero.glb', editor: 'C:/UE/UnrealEditor-Cmd.exe', version: '5.7.3', exitCode: 0, logFile: 'C:/l.log', elapsedMs: 1234 });
     expect(report.assetsByClass).toEqual({
-      SkeletalMesh: ['/Game/Verify/pip/pip/SkeletalMeshes/pip'], Skeleton: ['/Game/Verify/pip/pip/SkeletalMeshes/pip_Skeleton'],
-      PhysicsAsset: ['/Game/Verify/pip/pip/SkeletalMeshes/pip_PhysicsAsset'], MaterialInstanceConstant: ['/Game/Verify/pip/pip/Materials/Skin'],
-      Texture2D: ['/Game/Verify/pip/pip/Textures/Albedo'],
+      SkeletalMesh: ['/Game/Verify/hero/hero/SkeletalMeshes/hero'], Skeleton: ['/Game/Verify/hero/hero/SkeletalMeshes/pip_Skeleton'],
+      PhysicsAsset: ['/Game/Verify/hero/hero/SkeletalMeshes/pip_PhysicsAsset'], MaterialInstanceConstant: ['/Game/Verify/hero/hero/Materials/Skin'],
+      Texture2D: ['/Game/Verify/hero/hero/Textures/Albedo'],
     });
     expect(report.summary).toEqual({ skeletalMeshes: 1, skeletons: 1, materials: 1, textures: 1, animations: 0, staticMeshes: 0 });
     expect(report.morphTargets).toEqual([...ARKIT_FACE_REQUIRED_MORPHS]);
@@ -221,7 +221,7 @@ describe('checkUnrealReport', () => {
   });
 
   it('fails when no SkeletalMesh was created, on import errors, script errors and a bad exit code', () => {
-    const raw = { ...structuredClone(RAW), skeletalMeshes: [], assets: [{ path: '/Game/Verify/pip/pip', class: 'StaticMesh' }] };
+    const raw = { ...structuredClone(RAW), skeletalMeshes: [], assets: [{ path: '/Game/Verify/hero/hero', class: 'StaticMesh' }] };
     const log = { ...clean, importErrors: ['LogInterchangeImport: Error: bad'] };
     expect(checkUnrealReport(build(raw, log, 1), { morphs: [], bones: [], requireSkeletalMesh: true })).toEqual([
       'Unreal exited with code 1', 'no SkeletalMesh was created (assets: StaticMesh)', '1 import error(s): LogInterchangeImport: Error: bad',
@@ -356,7 +356,7 @@ describe('checkUnrealReport: one SkeletalMesh must carry the whole contract', ()
     raw.skeletalMeshes.push(mesh('Hat', [], ['Hat']));
     raw.assets.push({ path: `${base}/Hat`, class: 'SkeletalMesh' }, { path: `${base}/Hat_Skeleton`, class: 'Skeleton' });
     const failures = checkUnrealReport(build(raw), contract);
-    expect(failures).toEqual([expect.stringMatching(/^Unreal created 2 SkeletalMeshes \("pip", "Hat"\) and 2 Skeletons, but the arkit-face\/1 contract needs one SkeletalMesh on one Skeleton/)]);
+    expect(failures).toEqual([expect.stringMatching(/^Unreal created 2 SkeletalMeshes \("hero", "Hat"\) and 2 Skeletons, but the arkit-face\/1 contract needs one SkeletalMesh on one Skeleton/)]);
     expect(checkUnrealReport(build(raw), { ...contract, singleSkeletalMesh: false })).toEqual([]);
   });
 
@@ -515,7 +515,7 @@ describe('checkUnrealReport: glass keeps its translucency', () => {
 
   it('checks static mesh materials too, and warns when the blend mode could not be read', () => {
     const raw = structuredClone(RAW); raw.skeletalMeshes[0].materials = [imported[1]];
-    raw.staticMeshes = [{ path: '/Game/Verify/pip/bubble', lods: 1, vertices: [10], materials: [{ name: 'visor-glass', base: 'x' }, imported[2]] }];
+    raw.staticMeshes = [{ path: '/Game/Verify/hero/bubble', lods: 1, vertices: [10], materials: [{ name: 'visor-glass', base: 'x' }, imported[2]] }];
     const review = reviewUnrealReport(build(raw), expectations);
     expect(review.failures).toEqual([]);
     expect(review.warnings).toContain('glass material "visor-glass": Unreal did not report a blend mode, so its translucency is unchecked');

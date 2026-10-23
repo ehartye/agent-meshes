@@ -101,7 +101,7 @@ of primitives still needs purposeful cross-sections. Avoid capped limbs leaving
 shelves at a junction, thin fins pasted onto skin and garments tracing every
 body hollow. Preserve those shape decisions during reduction and posed fitting.
 
-A fixed furniture footprint does not require a block silhouette. The saloon's
+A fixed furniture footprint does not require a block silhouette. The consuming game's
 second environment response retained its table/chair bounds while adding turned
 supports, eased tabletop edges, depressed seats and joined curved back members.
 Check actual member intersections, seat depth, ground contact and the complete
@@ -161,7 +161,7 @@ joint landmarks/lengths and retarget through source/target world rest frames.
 Select the needed clips rather than exporting a whole library into every actor.
 
 Verify the conversion in the actual world matrix and sampled forward/left vectors.
-An imported quaternion-mode armature ignored the saloon wrapper's Euler assignment:
+An imported quaternion-mode armature ignored the consuming game's wrapper's Euler assignment:
 neutral fitted anchors still passed, while the zombie leaned backward and a hip
 looked malformed. Composing the matrix rotation flipped the measured toe/side axes
 and restored forward hunching without rebuilding the trousers. Check rotation mode
@@ -170,7 +170,7 @@ and posed anatomy before prescribing geometry or weight changes for that symptom
 Capture neutral attachment matrices only after explicitly restoring the fitted
 bind pose and updating the scene. The current reference retargeter clears the
 active action after baking, but leaves the sampled pose transforms/frame; clearing
-an action alone does not reset bone matrices. The saloon's first native checkpoint
+an action alone does not reset bone matrices. The consuming game's first native checkpoint
 caught grip offsets captured in that final pose. Preserve the caller's declared
 pose ownership instead of assuming any helper returned the model to rest.
 
@@ -187,7 +187,7 @@ deformed vertices; the earlier rigid POSITION scan cannot certify it.
 Audit calibration before naming an unsigned low-foot velocity a stride. Low feet
 can include forward recovery as well as backward stance; record signed projection,
 height selection, phase ranges/coverage and speed quantiles relative to the pelvis
-in explicit forward/up axes. The saloon Jog's reported 5.2156m equivalent cycle
+in explicit forward/up axes. The consuming game's Jog reported 5.2156m equivalent cycle
 distance implies about 1.68s per cycle at 3.1m/s. That consequence can look too slow
 for the scenario without proving corrupt motion: denser exported-pose measurements
 still found substantial backward speed. Check source and re-imported interpolation,
@@ -203,12 +203,12 @@ windup/contact/recovery, pause and retry with the delivered clip/skin. A hit-sta
 flag without an observed attack performance does not establish that behavior.
 
 Separate conservative influence bounds from the actual posed surface. In the
-saloon, a hunched head was visibly clear while the body's skin envelope covered
+consuming game, a hunched head was visibly clear while the body's skin envelope covered
 it: all 48 sampled head rays were initially classified as body hits. Keep the
 box as a broad phase and resolve the nearest non-head triangles before claiming
 visible-head targeting. The corrected actual-pose regression passes all 48.
 
-Measure surface-query cost in the destination. The saloon's collapse scanned
+Measure surface-query cost in the destination. The consuming game's collapse scanned
 every support vertex repeatedly during catch-up frames. Exact indexed world
 queries, bounded presentation batching and cached Float64 skin matrices reduced
 that work without replacing the skin with an approximate hull. The matrix
@@ -218,7 +218,7 @@ equivalence preserves the earlier sparse native poses; it does not establish
 browser frame pacing or continuous artistic quality. Keep captured source
 identities and the new comparison separate when reusing unchanged images.
 
-These are source-inspected and native-checkpoint lessons, not a completed saloon
+These are source-inspected and native-checkpoint lessons, not a completed consuming-game
 motion acceptance. See [reference-rig helpers](../README.md#fitting-a-reference-rig)
 and the actual [retarget implementation](../agent_meshes_retarget.py).
 
@@ -237,7 +237,7 @@ Before raw Three.js reads through cached object references, call `sync()` so
 pending pose and morph changes have been applied.
 
 For faces, choose the blink/gaze composition policy explicitly and apply lid
-follow exactly once. Talking Heads' soft union and Meshes preview's max-based
+follow exactly once. A face-rig project's soft union and Meshes preview's max-based
 composition are distinct policies; their combined results are not promised equal.
 Do not bake follow into inputs and then apply it again as a display layer.
 

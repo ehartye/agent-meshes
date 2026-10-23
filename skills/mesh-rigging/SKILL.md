@@ -11,7 +11,7 @@ For native Blender skeletons, weights, modifiers and actions, read the
 For background execution and completion checks, read the
 [Blender CLI reference](../../scripts/blender_lib/references/blender-cli.md).
 
-For human/animal motion donors, Toy Maker templates, portable retargeting and
+For human/animal motion donors, rigging templates, portable retargeting and
 skinning backends, read the [organized rig library](../../scripts/blender_lib/references/rig-library.md).
 
 Before placing character joints or binding skin/garments, read the

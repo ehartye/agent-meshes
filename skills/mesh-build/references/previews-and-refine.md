@@ -9,7 +9,7 @@ renders Workbench PNGs from fixed cameras in the same run. It exports no GLB and
 so use it for every look while you shape a model, and keep the full build for final checks.
 
 ```bash
-mesh preview asset-src/mara/build.json --views head --shading matcap,wire,cavity   --pose rest --pose blink:eyeBlinkLeft=1,eyeBlinkRight=1 --pose jaw:jawOpen=1 --sheet
+mesh preview asset-src/head/build.json --views head --shading matcap,wire,cavity   --pose rest --pose blink:eyeBlinkLeft=1,eyeBlinkRight=1 --pose jaw:jawOpen=1 --sheet
 ```
 
 - **Views.** `front`, `q34`, `side`, `below`, `above`, `close` (eyes to mouth), `eyes`, `mouth`, `mouth-q34`

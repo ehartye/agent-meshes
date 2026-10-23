@@ -9,17 +9,17 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'recipes'))
 import stylized_character as character
 import stylized_walk as walk
 
-MARA={'height':1.82,'presentation':'female','costume':{
+ADULT_F={'height':1.82,'presentation':'female','costume':{
     'shirt':{'color':'#e8e2d0'},'jacket':{'color':'#c8672e','badge':'#5d8a52'},
     'overalls':{'color':'#3a6f86','cargo':True},'belt':{'pouches':3},'gloves':{},'boots':{},'neck_ring':{}}}
-OREN={'height':1.88,'presentation':'male','build':1.3,'costume':{
+ADULT_M={'height':1.88,'presentation':'male','build':1.3,'costume':{
     'shirt':{'color':'#ece6d6'},'jacket':{'color':'#b8612f','badge':'#5d8a52'},'trousers':{'color':'#2e6b7c','cargo':True,'pockets':True},
     'belt':{'pouches':1},'backpack':{},'gloves':{}}}
-TESS={'height':1.14,'age':'child','costume':{
+CHILD_F={'height':1.14,'age':'child','costume':{
     'shirt':{'color':'#e9c25a'},'overalls':{'color':'#3b6a86','cuffs':'#86b3c9','buttons':'#d9a441','cargo':True,'pockets':True}}}
-KIT={'height':1.36,'age':'child','presentation':'male','costume':{
+CHILD_M={'height':1.36,'age':'child','presentation':'male','costume':{
     'hoodie':{'color':'#5c7d4a'},'trousers':{'color':'#2f4a73','cargo':True},'backpack':{}}}
-CAST={'mara':MARA,'oren':OREN,'tess':TESS,'kit':KIT}
+CAST={'adult_f':ADULT_F,'adult_m':ADULT_M,'child_f':CHILD_F,'child_m':CHILD_M}
 BODY=['tailored-torso','left-sleeve','right-sleeve','trouser-yoke','left-leg','right-leg']
 
 def mix(a,b,t):return a+(b-a)*t
@@ -30,7 +30,7 @@ def fused_name(name):return 'layer-top' if name in BODY[:3] else 'layer-bottom'
 
 class CostumeParameters(unittest.TestCase):
     def test_slots_fill_defaults_and_stay_idempotent(self):
-        p=character.parameters(TESS)
+        p=character.parameters(CHILD_F)
         self.assertEqual(character.parameters({'costume':{'shirt':{},'overalls':{}}})['costume']['overalls']['cargo'],False)
         self.assertIn('color',p['costume']['shirt'])
         self.assertEqual(character.parameters(p),p)
@@ -68,15 +68,15 @@ class BodyBuild(unittest.TestCase):
 class GarmentLayers(unittest.TestCase):
     def test_board_layers_and_props_are_present(self):
         expected={
-            'mara':['layer-top','layer-bottom','layer-shirt-front','layer-jacket-lapel-left','layer-jacket-lapel-right',
+            'adult_f':['layer-top','layer-bottom','layer-shirt-front','layer-jacket-lapel-left','layer-jacket-lapel-right',
                     'layer-jacket-collar','layer-jacket-hem','layer-bib','layer-strap-left','layer-strap-right',
                     'layer-belt','layer-buckle','layer-pouch-0','layer-pouch-2','layer-left-cargo-pocket',
                     'layer-left-sleeve-patch','layer-jacket-chest-pocket-left','left-hand-glove','right-hand-glove','layer-neck-plate'],
-            'oren':['layer-left-hip-pocket','layer-right-sleeve-patch','layer-shirt-front','layer-jacket-lapel-left','layer-belt','layer-buckle','layer-backpack',
+            'adult_m':['layer-left-hip-pocket','layer-right-sleeve-patch','layer-shirt-front','layer-jacket-lapel-left','layer-belt','layer-buckle','layer-backpack',
                     'layer-pack-strap-left','layer-pack-strap-right','left-hand-glove','layer-right-cargo-pocket'],
-            'tess':['layer-left-hip-pocket','layer-right-cargo-pocket','layer-back-bib','layer-bib','layer-strap-left','layer-bib-pocket','layer-left-leg-cuff','layer-right-leg-cuff',
+            'child_f':['layer-left-hip-pocket','layer-right-cargo-pocket','layer-back-bib','layer-bib','layer-strap-left','layer-bib-pocket','layer-left-leg-cuff','layer-right-leg-cuff',
                     'layer-left-sleeve-cuff','layer-bib-button-left'],
-            'kit':['layer-hood','layer-hoodie-zip','layer-hoodie-pocket','layer-hoodie-drawstring-left',
+            'child_m':['layer-hood','layer-hoodie-zip','layer-hoodie-pocket','layer-hoodie-drawstring-left',
                    'layer-hoodie-hem','layer-hood-lining','layer-backpack','layer-pack-strap-left','layer-left-cargo-pocket'],
         }
         for name,config in CAST.items():
@@ -86,13 +86,13 @@ class GarmentLayers(unittest.TestCase):
                 for gone in ['left-knee-panel','chest-terminal','front-fastener','left-ankle','left-boot-seam']:
                     self.assertNotIn(gone,by_name)
                 self.assertEqual(len(by_name),len(character_fixtures.get(config)[0]))
-        self.assertNotIn('layer-strap-left',parts({**OREN}))
-        self.assertNotIn('left-hand-glove',parts(TESS))
+        self.assertNotIn('layer-strap-left',parts({**ADULT_M}))
+        self.assertNotIn('left-hand-glove',parts(CHILD_F))
 
     def test_straps_reach_their_anchors(self):
         """Shoulder straps never end in mid-air: pack straps continue under the arm to the pack,
         and bib-overall straps meet a back bib at the waistband."""
-        for name in ['oren','kit']:
+        for name in ['adult_m','child_m']:
             config=CAST[name];by_name=parts(config)
             pack=by_name['layer-backpack']['vertices']
             for label in ['left','right']:
@@ -108,7 +108,7 @@ class GarmentLayers(unittest.TestCase):
                     front_end=max(lower,key=lambda v:v[2])
                     self.assertGreater(front_end[1]-rear[1],.05*character.landmarks(config)['s'])
                     self.assertLess(rear[2],max(v[2] for v in pack)+.02)
-        d=character.landmarks(TESS);s=d['s'];by_name=parts(TESS)
+        d=character.landmarks(CHILD_F);s=d['s'];by_name=parts(CHILD_F)
         bib=by_name['layer-back-bib']['vertices'];top=max(v[1] for v in bib)
         self.assertLess(min(v[1] for v in bib),d['hip_y']+.036*s)
         for label in ['left','right']:
@@ -117,19 +117,19 @@ class GarmentLayers(unittest.TestCase):
 
     def test_hood_and_tool_pouches_read_at_lineup_size(self):
         """A hoodie's hood lies on the upper back above the pack; tool pouches hang onto the thigh."""
-        d=character.landmarks(KIT);s=d['s'];sh=d['shoulder_y'];by_name=parts(KIT);body=character.body_surface(KIT)
+        d=character.landmarks(CHILD_M);s=d['s'];sh=d['shoulder_y'];by_name=parts(CHILD_M);body=character.body_surface(CHILD_M)
         hood=by_name['layer-hood-back']['vertices']
         self.assertLess(min(v[1] for v in hood),sh-.09*s)
         self.assertLess(min(v[2] for v in hood),min(v[2] for v in by_name['tailored-torso']['vertices'] if v[1]>sh-.09*s)-.015*s)
         self.assertLessEqual(max(v[1] for v in by_name['layer-backpack']['vertices']),sh-.085*s)
         self.assertGreater(max(body.value(v) for v in hood),0)
-        d=character.landmarks(MARA);s=d['s'];by_name=parts(MARA)
+        d=character.landmarks(ADULT_F);s=d['s'];by_name=parts(ADULT_F)
         pouch=by_name['layer-pouch-0']['vertices']
         self.assertLess(min(v[1] for v in pouch),d['hip_y']-.045*s)
 
     def test_overalls_bib_rises_from_a_waistband(self):
         """Overalls close round the waist, so the bib grows out of a band instead of hanging like an apron."""
-        for config in [TESS,MARA]:
+        for config in [CHILD_F,ADULT_F]:
             d=character.landmarks(config);s=d['s'];by_name=parts(config)
             band=by_name['layer-overalls-waistband']['vertices'];bib=by_name['layer-bib']['vertices']
             lo,hi=min(v[1] for v in band),max(v[1] for v in band)
@@ -147,7 +147,7 @@ class GarmentLayers(unittest.TestCase):
 
     def test_tool_belt_carries_hanging_tools(self):
         """A tool belt hangs a hammer and a wrench on the front of the thighs, clear of the cloth."""
-        config={**MARA,'costume':{**MARA['costume'],'belt':{'pouches':3,'tools':2}}}
+        config={**ADULT_F,'costume':{**ADULT_F['costume'],'belt':{'pouches':3,'tools':2}}}
         d=character.landmarks(config);s=d['s'];hip=d['hip_y']
         m=meshes(config);by_name={p['name']:p for p in m.parts}
         body=character.BodySurface({n:m.lofts[n] for n in character.BODY_LOFTS})
@@ -159,11 +159,11 @@ class GarmentLayers(unittest.TestCase):
                 self.assertGreater(min(v[2] for v in tool),0)
                 self.assertTrue(all(body.value(v)>0 for v in tool))
         with self.assertRaises(ValueError):character.parameters({'costume':{'shirt':{},'trousers':{},'belt':{'tools':5}}})
-        self.assertNotIn('layer-tool-0',parts(MARA))
+        self.assertNotIn('layer-tool-0',parts(ADULT_F))
 
     def test_belt_and_pouches_stand_over_the_overalls_waistband(self):
         """Stacked layers never show through each other: belt over waistband, pouches over belt."""
-        d=character.landmarks(MARA);s=d['s'];by_name=parts(MARA);body=character.body_surface(MARA)
+        d=character.landmarks(ADULT_F);s=d['s'];by_name=parts(ADULT_F);body=character.body_surface(ADULT_F)
         def outer(name):
             v=by_name[name]['vertices'];return v[:len(v)//2]
         lo,hi=d['hip_y']+.012*s,d['hip_y']+.035*s
@@ -211,7 +211,7 @@ class GarmentLayers(unittest.TestCase):
         self.assertTrue(all(count==2 for count in edges.values()),'slab must be closed')
 
 class WorkBoots(unittest.TestCase):
-    CONFIGS=[{},MARA,TESS,{'vacuum':True},{'species':'alien','age':'child','height':1.12}]
+    CONFIGS=[{},ADULT_F,CHILD_F,{'vacuum':True},{'species':'alien','age':'child','height':1.12}]
 
     def test_sole_is_one_continuous_piece_with_the_upper(self):
         for config in self.CONFIGS:
@@ -264,7 +264,7 @@ class WorkBoots(unittest.TestCase):
                 self.assertLess(min(v[1] for v in shaft),max(v[1] for v in by_name['left-boot']['vertices'])-.05*s)
                 tread=by_name['left-boot-tread']['vertices']
                 self.assertGreater(min(v[1] for v in tread),.003*s)
-        for config in [MARA,TESS]:
+        for config in [ADULT_F,CHILD_F]:
             by_name=parts(config);s=character.landmarks(config)['s']
             leg=by_name.get('layer-left-leg-hem') or by_name['layer-left-leg-cuff']
             with self.subTest(config=config['height']):
@@ -273,8 +273,8 @@ class WorkBoots(unittest.TestCase):
     def test_shaft_and_cuff_clear_the_trouser_leg_at_any_build(self):
         """A broad calf must never push the trouser leg through the shaft or the padded cuff at
         rest: both wrap the leg loft with a few millimetres to spare wherever the leg reaches."""
-        broad=dict(OREN,build=1.5)
-        for name,config in [('mara',MARA),('oren',OREN),('broad',broad),('tess',TESS),('kit',KIT)]:
+        broad=dict(ADULT_M,build=1.5)
+        for name,config in [('adult_f',ADULT_F),('adult_m',ADULT_M),('broad',broad),('child_f',CHILD_F),('child_m',CHILD_M)]:
             m=meshes(config);s=character.landmarks(config)['s']
             for side in ['left','right']:
                 leg=character.BodySurface({'leg':m.lofts[side+'-leg']})
@@ -292,7 +292,7 @@ class WorkBoots(unittest.TestCase):
 
     def test_collar_dips_at_the_heel(self):
         """The padded collar sits lower at the back, so a deeply bent knee folds the calf clear of it."""
-        for config in [MARA,KIT]:
+        for config in [ADULT_F,CHILD_M]:
             by_name=parts(config);s=character.landmarks(config)['s'];cuff=by_name['left-boot-cuff']['vertices']
             heel=min(v[2] for v in cuff);top=lambda vs:max(v[1] for v in vs)
             with self.subTest(config=config['height']):
@@ -300,12 +300,12 @@ class WorkBoots(unittest.TestCase):
 
     def test_tread_lugs_stay_off_the_heel_and_toe_curves(self):
         """Seen from behind the heel is one rounded sole: no lug block stands off its curve."""
-        by_name=parts(TESS);s=character.landmarks(TESS)['s'];tread=by_name['left-boot-tread']['vertices']
+        by_name=parts(CHILD_F);s=character.landmarks(CHILD_F)['s'];tread=by_name['left-boot-tread']['vertices']
         self.assertGreaterEqual(min(v[2] for v in tread),(character.BOOT_HEEL+character.BOOT_HEEL_ROUND)*s-1e-9)
         self.assertLessEqual(max(v[2] for v in tread),(character.BOOT_TOE-character.BOOT_TOE_ROUND)*s+1e-9)
 
     def test_boot_details(self):
-        for config,laces in [({},True),(MARA,True),({'vacuum':True},False)]:
+        for config,laces in [({},True),(ADULT_F,True),({'vacuum':True},False)]:
             by_name=parts(config)
             with self.subTest(config=config):
                 for piece in ['shaft','cuff','tread']:self.assertIn('left-boot-'+piece,by_name)
@@ -330,7 +330,7 @@ class GarmentRig(unittest.TestCase):
             side=[v for v in torso if d['chest_y']-.1*s<v[1]<d['shoulder_y']-.04*s]
             rows=walk.skin_weights('layer-top',side,d)
             return max(sum(w for bone,w in row.items() if 'arm' in bone) for row in rows)
-        for name in ['mara','oren','kit']:
+        for name in ['adult_f','adult_m','child_m']:
             config=CAST[name];plain={k:v for k,v in config.items() if k!='costume'}
             with self.subTest(name=name):
                 self.assertLessEqual(side_arm_weight(config),side_arm_weight(plain)+.05)
@@ -338,12 +338,12 @@ class GarmentRig(unittest.TestCase):
     def test_trousers_and_belt_skin_as_one_garment_over_the_hip(self):
         """The hip blends down the upper thigh, the crotch shares both thighs, and a pouch or
         pocket takes the weights of the cloth it sits on."""
-        d=character.landmarks(MARA);s=d['s'];hip=d['hip_y']
+        d=character.landmarks(ADULT_F);s=d['s'];hip=d['hip_y']
         front=walk.skin_weights('layer-bottom',[(.096*s,hip-.12*s,.1*s)],d)[0]
         self.assertTrue(.2<front['pelvis']<.8,front)
         crotch=walk.skin_weights('layer-bottom',[(0,hip-.1*s,0)],d)[0]
         self.assertAlmostEqual(crotch['left-thigh'],crotch['right-thigh'])
-        by_name=parts(MARA);pouch=by_name['layer-pouch-0']['vertices']
+        by_name=parts(ADULT_F);pouch=by_name['layer-pouch-0']['vertices']
         low=[v for v in pouch if v[1]<hip-.02*s]
         self.assertTrue(all(row.get('left-thigh',0)+row.get('right-thigh',0)>0 for row in walk.skin_weights('layer-pouch-0',low,d)))
         # A cargo pocket and the leg under it share weights: standoff does not change the blend.
@@ -353,7 +353,7 @@ class GarmentRig(unittest.TestCase):
 
     def test_buckle_rides_the_belt_as_one_rigid_plate(self):
         """A buckle never tears in two when the thigh lifts: it moves as the belt point at its centre."""
-        for config in [MARA,OREN]:
+        for config in [ADULT_F,ADULT_M]:
             d=character.landmarks(config);buckle=parts(config)['layer-buckle']['vertices']
             rows=walk.skin_weights('layer-buckle',buckle,d)
             belt=parts(config)['layer-belt']['vertices'];s=d['s']
@@ -366,7 +366,7 @@ class GarmentRig(unittest.TestCase):
 
     def test_inseam_below_the_crotch_binds_its_own_thigh(self):
         """Only the crotch shares both thighs: an inner knee never follows the other leg's swing."""
-        d=character.landmarks(OREN);s=d['s'];hip=d['hip_y']
+        d=character.landmarks(ADULT_M);s=d['s'];hip=d['hip_y']
         inner=walk.skin_weights('layer-bottom',[(-.03*s,hip-.43*s,-.02*s)],d)[0]
         self.assertEqual(inner.get('right-thigh',0),0)
         crotch=walk.skin_weights('layer-bottom',[(-.03*s,hip-.12*s,0)],d)[0]
@@ -374,7 +374,7 @@ class GarmentRig(unittest.TestCase):
 
     def test_inner_elbow_blends_wider_than_the_point_of_the_elbow(self):
         """A bent arm rolls the sleeve into a crease at the inner elbow instead of folding it through itself."""
-        d=character.landmarks(MARA);s=d['s'];hip=d['hip_y'];wrist=hip+.095*s;elbow=(wrist+d['shoulder_y'])/2
+        d=character.landmarks(ADULT_F);s=d['s'];hip=d['hip_y'];wrist=hip+.095*s;elbow=(wrist+d['shoulder_y'])/2
         x=d['shoulder_w']*.49+.092*s-.015*s
         def forearm(z,dy):return walk.skin_weights('layer-top',[(x,elbow+dy,z)],d)[0].get('right-forearm',0)
         front,back=.012*s+.05*s,.012*s-.05*s
@@ -383,7 +383,7 @@ class GarmentRig(unittest.TestCase):
         self.assertEqual(forearm(back,.07*s),0)
 
     def test_boot_shaft_follows_the_shin_and_sole_the_foot(self):
-        d=character.landmarks(MARA);by_name=parts(MARA)
+        d=character.landmarks(ADULT_F);by_name=parts(ADULT_F)
         sole=walk.skin_weights('left-outsole',by_name['left-outsole']['vertices'],d)
         self.assertTrue(all(row=={'left-foot':1} for row in sole))
         cuff=walk.skin_weights('left-boot-cuff',by_name['left-boot-cuff']['vertices'],d)
@@ -392,7 +392,7 @@ class GarmentRig(unittest.TestCase):
     def test_boot_cuff_binds_like_the_hem_beside_it(self):
         """Round every side of a child's knee blend, a cuff point and the hem point at the same
         direction round their own axes take the same weights, so the jog never slides one into the other."""
-        d=character.landmarks(KIT);s=d['s'];x0=d['leg_x'];y=character.boot_height(character.BOOT_TOP_Y,True)*s
+        d=character.landmarks(CHILD_M);s=d['s'];x0=d['leg_x'];y=character.boot_height(character.BOOT_TOP_Y,True)*s
         for angle in [k*math.tau/8 for k in range(8)]:
             c,sn=math.cos(angle),math.sin(angle)
             hem=walk.skin_weights('layer-right-leg-hem',[(x0+.06*s*c,y,-.006*s+.06*s*sn)],d)[0]
@@ -418,7 +418,7 @@ class GarmentRig(unittest.TestCase):
         The hip and knee blend over a long reach, so the cloth stretches and the spacing to one
         sampled body vertex moves a few millimetres; check-garments on the built GLB is the
         binding penetration test."""
-        for name in ['mara','kit']:
+        for name in ['adult_f','child_m']:
             config=CAST[name];d=character.landmarks(config);s=d['s'];by_name=parts(config)
             body=[(fused_name(n),v,'sleeve' in n) for n in BODY for v in by_name[n]['vertices']]
             for part in by_name.values():
@@ -440,7 +440,7 @@ class GarmentRig(unittest.TestCase):
 
     def test_swinging_hands_clear_the_tool_pouches(self):
         """Belt pouches sit off the arm's swing lane, so a hand never brushes into one."""
-        config=MARA;d=character.landmarks(config);s=d['s'];by_name=parts(config)
+        config=ADULT_F;d=character.landmarks(config);s=d['s'];by_name=parts(config)
         pouch=[v for n,p in by_name.items() if n.startswith('layer-pouch') for v in p['vertices'][::2]]
         for side in ['left','right']:
             hand=[v for n,p in by_name.items() if n.startswith(side+'-') and any(t in n for t in ['palm','finger','thumb','glove']) for v in p['vertices'][::3]]

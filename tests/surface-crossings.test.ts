@@ -50,8 +50,8 @@ describe('strict triangle surface crossings', () => {
     const detached = { ...through, points: through.points.map((v, i) => i % 3 === 2 ? v + 2 : v) };
     expect(surfaceCrossings([skin], [detached])).toEqual([]);
   });
-  it('reproduces the rejected Mara gum and isolates the fitted correction', () => {
-    const fixture = JSON.parse(readFileSync(new URL('./fixtures/mara-mouth-crossings.json', import.meta.url), 'utf8'));
+  it('reproduces the rejected sculpt gum and isolates the fitted correction', () => {
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/sculpt-mouth-crossings.json', import.meta.url), 'utf8'));
     for (const sample of fixture.samples) {
       const jaw = sample.name === 'lining' ? .5 : .25;
       const [part, face] = sample.parts.map((p: {label: string; rest: number[]; jawOpen: number[]; triangle: number}) => ({

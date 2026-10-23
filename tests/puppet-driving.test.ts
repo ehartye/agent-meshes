@@ -193,11 +193,11 @@ describe('aimBone', () => {
 describe('stage driving', () => {
   it('lets one model aim an eye at another model', async () => {
     const stage = createStageScene();
-    const pip = stage.add('pip', await headGltf(), { position: [-0.4, 0, 0], rotation: [0, 30, 0] });
-    const moss = stage.add('moss', await headGltf(), { position: [0.4, 0, 0], rotation: [0, -30, 0] });
-    const mouth = pip.worldPoint('jaw', [0, 0, 0.1]);
-    moss.aimBone('eye_L', mouth);
-    const eye = moss.bone('eye_L');
+    const hero = stage.add('hero', await headGltf(), { position: [-0.4, 0, 0], rotation: [0, 30, 0] });
+    const frog = stage.add('frog', await headGltf(), { position: [0.4, 0, 0], rotation: [0, -30, 0] });
+    const mouth = hero.worldPoint('jaw', [0, 0, 0.1]);
+    frog.aimBone('eye_L', mouth);
+    const eye = frog.bone('eye_L');
     const toMouth = new Vector3(...mouth).sub(eye.getWorldPosition(new Vector3())).normalize();
     expect(MathUtils.radToDeg(forward(eye).angleTo(toMouth))).toBeLessThan(1e-4);
   });

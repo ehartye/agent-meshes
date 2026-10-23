@@ -67,7 +67,7 @@ Neither background mode nor a subprocess provides a filesystem sandbox.
 ## Windows Store launchers and completion
 
 A Store `blender-launcher.exe` can return before the real Blender process ends;
-its exit zero and empty stdout do not establish completion. On the Saloon host,
+its exit zero and empty stdout do not establish completion. On a Windows host,
 5.2.2 LTS background Python execution wrote its native completion record, while
 the launcher's `--help` returned no output. Invoking `bpy.app.binary_path` directly
 under WindowsApps was denied. Do not change permissions or assume that the reported

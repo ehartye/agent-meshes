@@ -42,7 +42,7 @@ def build():
     rejects(lambda: build_eye(rig, 'L', (.03, -.07, .14), .012, style='shutter', hole=blank_hole), 'shutters')
 
     skin_material = material('skin', (.6, .4, .3))
-    # sRGB hex colors and emission (Bolt's lens glass, antenna bulb).
+    # sRGB hex colors and emission (a robot's lens glass, antenna bulb).
     glow = material('lens_glass', '#88ccff', emission='#ffaa00', emission_strength=2)
     shader = glow.node_tree.nodes['Principled BSDF']
     assert abs(shader.inputs['Base Color'].default_value[0] - .2462) < 1e-3, tuple(shader.inputs['Base Color'].default_value)

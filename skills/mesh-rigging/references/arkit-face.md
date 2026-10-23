@@ -17,7 +17,7 @@ exposed fangs). The rules that are easy to get wrong:
   squint 1 or + wide 1 must still hide the eyeball, so the helpers size lids and blades for every
   weight in [0, 1]^3 and reject settings that cannot. Flat shutters need a flat face with the eyes
   recessed behind it; pass `surface=front_surface(...)` so blades that would poke out are rejected.
-- Robot faces made of plates (Bolt): `split_plates` splits a closed head into a skull and a chin
+- Robot faces made of plates (a tin-can robot): `split_plates` splits a closed head into a skull and a chin
   plate with thick, closed edges (pass `gum_z` so the plate's rim stays below the gums),
   `brow_plate_geometry` makes rigid brow bars with the brow morphs, and `rubber_mouth_geometry`
   makes the rubber mouth edge that carries smile, frown, stretch and funnel while the plates stay

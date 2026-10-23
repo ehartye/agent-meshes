@@ -292,7 +292,7 @@ class ShutterTests(unittest.TestCase):
         return span(upper), span(lower)
 
     def test_every_blink_squint_wide_combination_covers_the_eyeball(self):
-        # The critic's Bolt (aperture 1.3 r) and the defaults. Blades translate, so edges are linear in the weights.
+        # The critic's robot head (aperture 1.3 r) and the defaults. Blades translate, so edges are linear in the weights.
         grid = [k / 4 for k in range(5)]
         for options in ({}, dict(aperture=RADIUS * 1.3125), dict(squint=.3, wide=(.3, .2)), dict(opening=(.9, .8), meet=.2)):
             shutter = shutter_geometry(CENTER, RADIUS, **options)
@@ -826,7 +826,7 @@ class SurfaceFitTests(unittest.TestCase):
         with self.assertRaises(ValueError): cut_hole(head['vertices'], head['faces'], center, radii, exponent=1)
 
 class BrowTests(unittest.TestCase):
-    """brow_ridge_geometry lays a heavy ridge on the skin over an eye in a dome (Mossjaw's brow is his ridge)."""
+    """brow_ridge_geometry lays a heavy ridge on the skin over an eye in a dome (a frog head's brow is its ridge)."""
     # The round-4 critic's swamp creature: a squat head, big eyes high on domes, a heavy ridge over each.
     HEAD, EYE, R, OPENING = ((0, 0, .115), (.125, .09, .095)), (.052, -.04, .178), .024, (50, 40, 30)
 
@@ -954,7 +954,7 @@ def moved(rest, morphs, weights):
 
 
 class RobotPartsTests(unittest.TestCase):
-    """Bolt's rigid brow plates, the skull / chin-plate split and the rubber mouth edge."""
+    """A tin-can robot's rigid brow plates, the skull / chin-plate split and the rubber mouth edge."""
     head = dict(center=(0, 0, .13), radii=(.075, .065, .10), mouth_z=.085)
 
     def blank(self):
@@ -1336,7 +1336,7 @@ class EyeHoleTests(unittest.TestCase):
             eye_window(shutter_geometry(self.EYE, self.R))
 
     def test_a_wide_mound_blend_meets_the_socket_dip_without_a_step(self):
-        # The Pip builder: at blend=.016 on a 17 mm eye the mound reached past where the socket dip starts, and the
+        # The kid-head builder: at blend=.016 on a 17 mm eye the mound reached past where the socket dip starts, and the
         # two disagreed there: a 3 mm step and a jagged line under each eye (skin faces turned 50 degrees there).
         eye, radius = (.034, -.066, .152), .017
         blank = ellipsoid_geometry((0, 0, .13), (.088, .085, .11), rings=56, segments=72)
@@ -1520,7 +1520,7 @@ class EyeHoleTests(unittest.TestCase):
         for i in snapped['boundary']: self.assertAlmostEqual(math.dist(snapped['vertices'][i], self.EYE), .0185, delta=.0015)
 
     def test_the_rim_runs_on_the_window_with_no_saw_teeth(self):
-        # Pip round 2: the clip's snap reused a vertex up to 15% of an edge off the window without moving it, so the
+        # Kid-head round 2: the clip's snap reused a vertex up to 15% of an edge off the window without moving it, so the
         # skin's rim zig-zagged round the window and showed as stair steps and jagged bands under each eye. Near
         # vertices now slide onto the window first, so every rim vertex lies on it.
         eye, radius = (.034, -.066, .152), .017
@@ -1727,7 +1727,7 @@ class ContinuousEyeHoleTests(unittest.TestCase):
     """eye_hole's default (style='continuous'): the skin itself flows over the eyeball as the lids, one surface."""
     KID = ((0, 0, .13), (.088, .085, .11)), (.034, -.066, .152), .017, (46, 40, 30)
     FROG = ((0, 0, .12), (.11, .085, .10)), (.045, -.052, .182), .02, (48, 36, 28)
-    # Big round lantern eyes, with the lid settings of the talking-heads Mossjaw head (opening (56, 32, 40), corner 1.6,
+    # Big round lantern eyes, with the lid settings of a frog-like head (opening (56, 32, 40), corner 1.6,
     # overlap 8, wide (15, 5)) on a plain ellipsoid: a wider opening and bigger swings than the kid and the frog.
     LANTERN = ((0, .006, .146), (.164, .118, .096)), (.064, -.064, .146), .034, (56, 32, 40)
     # The same lantern eyes at the settings a real head of this kind can be built with (an opening wider than 48 degrees
@@ -2010,7 +2010,7 @@ class MidlineSeamTests(unittest.TestCase):
     """Where `eye_holes` joins the kept half of a head to its mirror image (the glabella between close-set eyes), the two
     halves share one row of vertices on x = 0 and nothing sits beside it.
 
-    The talking-heads Mossjaw head (P3 wave 0, critic round 1): its blank is symmetric only to a millimetre (the sdf
+    A frog-like head (P3 wave 0, critic round 1): its blank is symmetric only to a millimetre (the sdf
     unions the two eye domes one after the other), so the normals of the vertices on its midline lean sideways, and a
     refinement that split the edge between two of them put the new vertex a few microns off the midline. `eye_holes` took
     that for a point beside the seam, kept it, mirrored it, and left a sliver of triangles 10 microns wide down the
@@ -2130,7 +2130,7 @@ class AngryBrowTests(unittest.TestCase):
     """A strong angry V: a lowered brow whose inner end comes down onto the upper lid, with no face folding over."""
 
     def test_a_strong_angry_v_rests_on_the_upper_lid_without_folding(self):
-        # The Pip builder: skin_brow_geometry folded brow faces when browDown slid a brow over skin whose normals turn
+        # The kid-head builder: skin_brow_geometry folded brow faces when browDown slid a brow over skin whose normals turn
         # quickly (the socket dip by the eye hole), and could not reach an angry V. Its footprints could land on the
         # hole's wall and lining, and the brow now stands off along one normal per cross-section.
         eye, radius = (.034, -.060, .152), .02
@@ -2153,12 +2153,12 @@ class AngryBrowTests(unittest.TestCase):
 
 
 class DomeBrowTests(unittest.TestCase):
-    """dome_brow_geometry (upstreamed from the Mossjaw builder): a heavy ridge on an eye dome that rolls into an angry V."""
+    """dome_brow_geometry (upstreamed from a frog-head builder): a heavy ridge on an eye dome that rolls into an angry V."""
 
     def test_the_ridge_lies_on_the_dome_and_rolls_without_folding(self):
         from agent_meshes_face import dome_brow_geometry, eye_holes
         blank = ellipsoid_geometry((0, 0, .12), (.11, .085, .10), rings=56, segments=72)
-        # Mossjaw's builder made this helper against shell-lid holes; on a continuous hole its browInnerUp end cap still
+        # A frog-head builder made this helper against shell-lid holes; on a continuous hole its browInnerUp end cap still
         # floats (a known gap, in the round-8 report), so it is proven on style='shells' here.
         cut = eye_holes(blank['vertices'], blank['faces'], (.045, -.052, .182), .02, opening=(48, 36, 28), style='shells')
         skin = {'vertices': cut['vertices'], 'faces': cut['faces']}
@@ -2177,7 +2177,7 @@ class DomeBrowTests(unittest.TestCase):
 
 class SkinBrowTests(unittest.TestCase):
     """skin_brow_geometry lays a kid's brow on the skin along its normal, sunk at the edges, in every pose."""
-    # The round-5 critic's Pip-like head: a round face, big lidded eyes in eye holes, brows over the socket dip.
+    # The round-5 critic's kid-like head: a round face, big lidded eyes in eye holes, brows over the socket dip.
     HEAD, EYE, R, OPENING = ((0, 0, .13), (.088, .085, .11)), (.034, -.066, .152), .017, (46, 40, 30)
 
     def skin(self, morphs=True, masked=True):
@@ -2303,7 +2303,7 @@ def max_dihedral(vertices, faces, near):
 
 class NoseTests(unittest.TestCase):
     """nose_geometry sculpts a round button nose with nostril dimples into the skin, dense enough to stay smooth."""
-    # The round-5 critic's Pip-like blank at its documented resolution.
+    # The round-5 critic's kid-like blank at its documented resolution.
     HEAD = ((0, 0, .13), (.088, .085, .11))
     TIP, SIZE = (0, .118), (.011, .01, .009)
 
@@ -2773,7 +2773,7 @@ class SkinPaintTests(unittest.TestCase):
         self.assertLess(max(abs(a - b) for a, b in zip(values, values[1:])), .02, 'smoothly: 1 mm apart differ little')
 
     def test_tint_for_turns_the_material_color_into_a_shade(self):
-        # The Pip builder: shade maps (a hair cap's grooves, an ear's bowl, iris rings) need the tint that turns the
+        # The kid-head builder: shade maps (a hair cap's grooves, an ear's bowl, iris rings) need the tint that turns the
         # material color into a given color; it had to write its own.
         from agent_meshes_face import tint_for
         from agent_meshes_author import linear_color
