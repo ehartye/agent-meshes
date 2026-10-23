@@ -11,7 +11,7 @@ For routine work on an approved route, go straight to `mesh-build`, `mesh-riggin
 For a new or failing route, work in this order:
 
 For Unreal's editor-baking versus live-geometry branches, use the [Unreal decision tree](references/unreal-decision-tree.md);
-what to do inside Unreal is the `unreal-features` skill in agent-unreal.
+what to do inside Unreal is the `unreal-procedural` skill (or another unreal-* domain skill) in agent-unreal.
 For R3F/three.js, Godot and Unity, read [engine implications](references/engine-implications.md) and
 [engine evidence](references/engine-evidence.md). The authoring tool does not choose the runtime representation.
 
@@ -38,8 +38,8 @@ These checks complement the real-project acceptance below; they do not establish
 | `bpy` as a module | The project's pipeline is already ordinary Python and wants Blender in-process | `mesh-setup` finds Blender; the module is not managed here |
 | Hand-authored Blender | A hero asset judged by eye, organic form | the person; use scripts for the repeatable parts |
 | Unreal editor Python / Interchange pipelines | Importing and configuring many assets the same way, batch commandlets | `mesh verify-unreal` for the import check; the project import is `unreal-import` (agent-unreal) |
-| Unreal Geometry Script | Editor-time procedural assets that must become real StaticMeshes, or runtime variation | `unreal-features` skill, agent-unreal |
-| Unreal C++ procedural meshes | Geometry that depends on game state at run time | `unreal-features` skill, agent-unreal |
+| Unreal Geometry Script | Editor-time procedural assets that must become real StaticMeshes, or runtime variation | `unreal-procedural` skill, agent-unreal |
+| Unreal C++ procedural meshes | Geometry that depends on game state at run time | `unreal-procedural` skill, agent-unreal |
 | R3F/three.js, Godot or Unity mesh APIs | The project needs native generation or live vertex/topology updates | engine-specific responsibilities in the references above; outside this plugin's authoring runtime |
 | Code-driven CAD (build123d, CadQuery, OpenSCAD) | Exact dimensions, robust Booleans, mechanical parts, analytic measurements | export a GLB, then `mesh verify` here (importing a CAD GLB for rigging is not built yet) |
 
@@ -73,7 +73,7 @@ authored art (named parts, a rig, morph targets, vertex colours, a form judged b
 quality, or exact CAD dimensions; many assets must come out identically and pass a validator; or the asset must also
 load in another engine.
 
-Stay in Unreal (`unreal-features`, agent-unreal) when the geometry depends on level data, gameplay state or player
+Stay in Unreal (`unreal-procedural`, agent-unreal) when the geometry depends on level data, gameplay state or player
 edits at run time; is parametric variation that exists only in the engine (Geometry Scripting, PCG, Water, Landmass);
 or is post-processing of an imported mesh (remesh, simplify, collision, LODs, Nanite settings).
 

@@ -7,14 +7,14 @@ user authorized. Authoring language, import automation and runtime mesh represen
 flowchart TD
     A[Read existing pipeline and authorized scope] --> B{Geometry needs live generation or edits?}
     B -- No --> C{Generate inside Unreal?}
-    C -- Yes --> D[Editor Geometry Script or existing C++ generator: unreal-features, agent-unreal]
+    C -- Yes --> D[Editor Geometry Script or existing C++ generator: unreal-procedural, agent-unreal]
     C -- No --> E[Blender, named-part workspace or CAD]
     D --> F[Bake to StaticMesh assets]
     E --> G[Import to StaticMesh assets]
     F --> H[Check materials, collision, LODs and instancing]
     G --> H
 
-    B -- Yes --> I[Live generation in Unreal: unreal-features, agent-unreal]
+    B -- Yes --> I[Live generation in Unreal: unreal-procedural, agent-unreal]
     I --> O[Verify collision updates and frame cost in packaged gameplay]
 ```
 
@@ -31,7 +31,7 @@ flowchart TD
 - **Runtime generation is decided inside Unreal.** Reuse a proven project route first. Otherwise the Geometry Script
   trial, the choice between ProceduralMeshComponent, DynamicMeshComponent, RealtimeMeshComponent and a runtime-built
   UStaticMesh, and the Nanite compatibility gate are covered by the Geometry Scripting, ProceduralMeshComponent and
-  Nanite references of the `unreal-features` skill in agent-unreal.
+  Nanite references of the `unreal-procedural` and `unreal-rendering` skills in agent-unreal.
 
 ## Trial acceptance
 
