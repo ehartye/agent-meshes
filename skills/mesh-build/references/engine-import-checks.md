@@ -38,8 +38,21 @@ claiming Unreal support. Later runs take seconds. A first run on a new engine ca
 shaders for minutes, so the default `--timeout` is 1800 s.
 
 This proves the **import only**. Nothing is rendered or animated in Unreal. When you report it,
-say "imports into UE 5.7 via Interchange with names intact", not "works in Unreal". A missing
-morph often means a dead shape: Unreal drops morphs that move no triangle vertex.
+say "imports into UE <version> via Interchange with names intact" (the version is in the report),
+not "works in Unreal". A missing morph often means a dead shape: Unreal drops morphs that move no
+triangle vertex.
+
+**Combine Skeletal Meshes depends on the engine.** Checked on UE 5.8.2, with the head checks first
+recorded on 5.7.3. Interchange's `CombineSkeletalMeshesBehavior` is `BySkeleton` in code, one
+SkeletalMesh per skeleton, but the 5.8.2 `DefaultGLTFAssetsPipeline` asset stores `DoNotCombine`. A
+default glTF import then makes one SkeletalMesh per skinned mesh node: a head, its teeth and both
+eyeballs on one skin become three SkeletalMeshes on one Skeleton, and the contract rejects that.
+`BySkeleton` and `BySkeletonVisibleOnly` both give one SkeletalMesh (3360 vertices, 21 morphs) for
+those heads, which have no hidden nodes. For a skinned GLB or a SkeletalMesh check,
+`verify-unreal` sets `BySkeleton` on a scratch copy of that pipeline and reports the value it found
+and the value it applied as `skeletalMeshGrouping` (`engineDefault`, `applied`). A project that
+imports with the engine's default glTF pipeline needs the same setting (Combine Skeletal Meshes:
+Combine All That Use Same Skeleton), or the model arrives as several SkeletalMeshes.
 
 **Never put one morph name on two glTF meshes.** If `jawOpen` is on a Face mesh and on a separate
 Teeth mesh, UE 5.7's glTF parser (`GLTFAsset.cpp`) throws away *every* morph name in the file
@@ -60,10 +73,14 @@ A GLB with no skin at all gets only that made-up bone. `verify-unreal` reads the
 (`preflight.skins`, `src/gltf-skins.ts`) and names which of these it is. In Blender, parent every
 mesh (face and eyeballs) to the one armature with an Armature modifier before exporting.
 
-**Unbound meshes vanish from the import.** In a GLB that has a skin, Interchange silently drops
-every mesh node with no `skin`, no morphs and no joint above it: no StaticMesh, no warning. The
-easy mistake is building eyeballs with a `blender_lib` source and not passing them to `bind_skin`:
-the head imports with no eyes. `verify-unreal` compares the GLB's welded vertex count with what
-Unreal imported and fails naming the dropped nodes. Bind the eyeballs to the skin, 100% to
+**Unbound meshes do not join the rig.** In a GLB that has a skin, a mesh node with no `skin` and no
+morphs is not part of the rig's SkeletalMesh. UE 5.7.3 dropped it with no warning and no StaticMesh,
+unless it sat under a joint, when it merged into the SkeletalMesh. UE 5.8.2 imports it as a separate
+StaticMesh in both cases (1100 of an eyeball's 1104 vertices after welding). For a node under a joint
+it also adds a bone named after the node, but the geometry stays in the StaticMesh, so a parent joint
+does not bind a mesh. The easy mistake is building eyeballs with a `blender_lib` source and not
+passing them to `bind_skin`: the eyes are missing (5.7) or never gaze (5.8). `verify-unreal` fails a
+rig check with the node names and the fix, on 5.7 from the missing vertices and on 5.8 from the
+StaticMeshes Unreal made; without a rig check, 5.8 only warns. Bind the eyeballs to the skin, 100% to
 `eye_L`/`eye_R`. Eye bones must be children of `head` (a flat armature fails the hierarchy check),
 and a GLB with two skins that Unreal happened to merge only warns.

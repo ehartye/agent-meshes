@@ -430,6 +430,49 @@ describe('reviewUnrealReport: geometry Unreal dropped, the bone hierarchy and ex
     expect(reviewUnrealReport(build(imported('C2', 3360, parents), 'C2-static-eyes-parented-to-eye-bones.glb'), contract).failures).toEqual([]);
   });
 
+  describe('as UE 5.8.2 imported eyeballs with no skin (recorded: a head-only SkeletalMesh and a StaticMesh of 1100 vertices per eyeball)', () => {
+    const eyeballs = ['Eyeball_L', 'Eyeball_R'].map(n => ({ path: `/Game/Verify/C/C/StaticMeshes/${n}`, lods: 1, vertices: [1100] }));
+    const at58 = (file: string, parents: Record<string, string | null> = GOOD_PARENTS) => build(imported('C', 1152, parents, structuredClone(eyeballs)), file);
+
+    it('fails the contract, naming the nodes that became StaticMeshes, with nothing counted as dropped', () => {
+      for (const file of ['C-static-eyes.glb', 'bl3-staticeyes.glb']) {
+        const report = at58(file);
+        expect(report.geometry).toEqual({ glbVertices: 3360, unrealVertices: 3352, missing: 8, tolerance: 34, droppedByInterchange: [] });
+        const { failures, warnings } = reviewUnrealReport(report, contract);
+        expect(warnings).toEqual([]);
+        expect(failures).toHaveLength(1);
+        expect(failures[0]).toMatch(/^the mesh nodes "Eyeball_L" \(1104 vertices\), "Eyeball_R" \(1104 vertices\) are not bound to the skin \(the node has no "skin" and no morph targets\), so Unreal imported them as separate StaticMeshes \("Eyeball_L", "Eyeball_R"\) and not as part of the SkeletalMesh\. A StaticMesh does not follow the rig's bones\. Fix: bind them to skin 0 "HeadRig"/);
+        expect(failures[0]).toContain('weight each eyeball 100% to its eye bone');
+        expect(failures[0]).not.toMatch(/Parenting a node under a joint/);
+      }
+    });
+
+    it('says a parent joint does not bind an eyeball, and that the SkeletalMesh got a bone but not the geometry', () => {
+      const parents = { head: null, eye_L: 'head', Eyeball_L: 'eye_L', eye_R: 'head', Eyeball_R: 'eye_R' };
+      const { failures } = reviewUnrealReport(at58('C2-static-eyes-parented-to-eye-bones.glb', parents), contract);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toContain('Parenting a node under a joint does not bind it: "Eyeball_L", "Eyeball_R" are under "eye_L", "eye_R", and Interchange gave the SkeletalMesh bones named "Eyeball_L", "Eyeball_R" while the geometry is only in the StaticMeshes.');
+    });
+
+    it('only warns when no SkeletalMesh was asked for, since a static prop beside a rig is legitimate', () => {
+      const report = at58('C-static-eyes.glb');
+      const review = reviewUnrealReport(report, { morphs: [], bones: [], requireSkeletalMesh: false });
+      expect(review.failures).toEqual([]);
+      expect(review.warnings).toEqual([expect.stringMatching(/^the mesh nodes "Eyeball_L" \(1104 vertices\), "Eyeball_R" \(1104 vertices\) are not bound to the skin/)]);
+    });
+
+    it('does not fire for a StaticMesh that does not come from an unbound mesh node', () => {
+      const other = build(imported('bl_good', 3360, GOOD_PARENTS, [{ path: '/Game/Verify/bl_good/StaticMeshes/Prop', lods: 1, vertices: [10] }]), 'bl-good.glb');
+      expect(reviewUnrealReport(other, contract).failures.join(' ')).not.toMatch(/not bound to the skin/);
+    });
+  });
+
+  it('records the skeletal mesh grouping the verifier applied, from the import script report', () => {
+    const grouping = { engineDefault: 'DO_NOT_COMBINE', applied: 'BY_SKELETON' } as const;
+    expect(build({ ...imported('bl_good', 3360), skeletalMeshGrouping: grouping }, 'bl-good.glb').skeletalMeshGrouping).toEqual(grouping);
+    expect(build(imported('bl_good', 3360), 'bl-good.glb')).not.toHaveProperty('skeletalMeshGrouping');
+  });
+
   it('tolerates the few vertices StaticMesh builds weld, but not a missing mesh without a known cause', () => {
     // bl-noskin in UE 5.7.3: the face on a made-up bone, each eyeball a StaticMesh of 1100 of its 1104 vertices.
     const statics = ['Eyeball_L', 'Eyeball_R'].map(n => ({ path: `/Game/Verify/bl_noskin/bl_noskin/StaticMeshes/${n}`, lods: 1, vertices: [1100] }));

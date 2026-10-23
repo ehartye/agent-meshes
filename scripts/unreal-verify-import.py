@@ -29,6 +29,14 @@ INTERCHANGE_PROPERTIES = {
 }
 
 
+def grouping_name(value):
+    """The stored UInterchangeGenericMeshPipeline::CombineSkeletalMeshesBehavior enum value, by name."""
+    match = re.search(r'\b(BY_SKELETON_VISIBLE_ONLY|BY_SKELETON|DO_NOT_COMBINE)\b', str(value))
+    if match is None:
+        raise ValueError('Unreal returned an unsupported CombineSkeletalMeshesBehavior: ' + str(value))
+    return match.group(1)
+
+
 def collision_flag_name(value):
     """The stored UBodySetup enum; CTF_USE_DEFAULT is deliberately not project-resolved."""
     match = re.search(r'\bCTF_[A-Z_]+\b', str(value))
@@ -63,17 +71,25 @@ def validate_import_options(options):
         fail('declare at least one supported setting')
 
 
-def configure_import(parameters, options, destination):
+def configure_import(parameters, options, destination, grouping=None):
     """Duplicate the engine's glTF defaults into scratch; preserve the glTF-specific second stage.
 
     UE5.8 BaseEngine.ini chooses DefaultGLTFAssetsPipeline + DefaultGLTFPipeline.
     OverridePipelines replaces that whole stack, so supplying only a bare generic
     pipeline would silently lose the glTF extension/material stage. Never modify the
     loaded engine pipeline asset itself. Its scratch duplicate is deleted with Verify.
+
+    `grouping` names a CombineSkeletalMeshesBehavior (BY_SKELETON, BY_SKELETON_VISIBLE_ONLY
+    or DO_NOT_COMBINE). The class default is BY_SKELETON, but the DefaultGLTFAssetsPipeline
+    asset of UE 5.8.2 stores DO_NOT_COMBINE, which imports every skinned mesh node as its own
+    SkeletalMesh. The value read back from the engine asset is reported as `engineDefault`.
     """
-    validate_import_options(options)
-    values = options.get('interchange', {})
-    if not values:
+    if options is not None:
+        validate_import_options(options)
+    values = (options or {}).get('interchange', {})
+    if grouping is not None and grouping_name(grouping) != grouping:
+        raise ValueError('Unsupported skeletal mesh grouping: ' + str(grouping))
+    if not values and grouping is None:
         return {}, []
     base = '/Interchange/Pipelines/DefaultGLTFAssetsPipeline.DefaultGLTFAssetsPipeline'
     gltf = '/Interchange/Pipelines/DefaultGLTFPipeline.DefaultGLTFPipeline'
@@ -89,6 +105,7 @@ def configure_import(parameters, options, destination):
     if gltf_pipeline is None:
         raise RuntimeError('Cannot load the engine DefaultGLTFPipeline; import options will not fall back to a different pipeline')
     applied = {}
+    grouped = None
     for key, value in values.items():
         owner_key, property_key = INTERCHANGE_PROPERTIES[key]
         owner = pipeline.get_editor_property(owner_key)
@@ -99,11 +116,24 @@ def configure_import(parameters, options, destination):
         if type(actual) is not bool or actual != value:
             raise RuntimeError('Interchange property readback differs for ' + key + ' (' + property_key + ')')
         applied[key] = actual
+    if grouping is not None:
+        mesh_pipeline = pipeline.get_editor_property('mesh_pipeline')
+        if mesh_pipeline is None:
+            raise RuntimeError('Unsupported Interchange property owner: mesh_pipeline')
+        engine_default = grouping_name(mesh_pipeline.get_editor_property('combine_skeletal_meshes_behavior'))
+        mesh_pipeline.set_editor_property('combine_skeletal_meshes_behavior', getattr(unreal.InterchangeCombineSkeletalMeshesBehavior, grouping))
+        actual = grouping_name(mesh_pipeline.get_editor_property('combine_skeletal_meshes_behavior'))
+        if actual != grouping:
+            raise RuntimeError('Interchange property readback differs for combine_skeletal_meshes_behavior')
+        grouped = {'engineDefault': engine_default, 'applied': actual}
     paths = [pipeline.get_path_name(), gltf]
     parameters.set_editor_property('override_pipelines', [unreal.SoftObjectPath(path) for path in paths])
     if len(parameters.get_editor_property('override_pipelines')) != 2:
         raise RuntimeError('Interchange did not retain the two configured glTF pipeline overrides')
-    return {'interchange': applied, 'pipelines': [base, gltf]}, [pipeline, gltf_pipeline]
+    configured = {'pipelines': [base, gltf], **({'interchange': applied} if applied else {})}
+    if grouped is not None:
+        configured['skeletalMeshGrouping'] = grouped
+    return configured, [pipeline, gltf_pipeline]
 
 
 def apply_static_import_options(mesh, settings):
@@ -303,13 +333,18 @@ def main():
         parameters = unreal.ImportAssetParameters()
         parameters.is_automated = True
         options = request.get('importOptions')
+        grouping = request.get('combineSkeletalMeshes')
         # Retain strong references until synchronous import_asset returns; its soft
         # paths must still resolve when Interchange duplicates the override stack.
         pipeline_references = []
         if options is not None:
             report['importConfiguration'] = {'requested': options, 'applied': {}}
-            applied, pipeline_references = configure_import(parameters, options, destination)
-            report['importConfiguration']['applied'] = applied
+        if options is not None or grouping is not None:
+            applied, pipeline_references = configure_import(parameters, options, destination, grouping)
+            if 'skeletalMeshGrouping' in applied:
+                report['skeletalMeshGrouping'] = applied.pop('skeletalMeshGrouping')
+            if options is not None:
+                report['importConfiguration']['applied'] = applied
         report['importReturned'] = bool(manager.import_asset(destination, source, parameters))
         for path in unreal.EditorAssetLibrary.list_assets(destination, recursive=True, include_folder=False):
             if path.startswith(destination + '/__VerifyOptions/'):

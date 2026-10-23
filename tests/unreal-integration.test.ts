@@ -4,11 +4,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { contractExpectations } from '../src/arkit-face.ts';
-import { unrealAvailable, verifyUnreal } from '../src/unreal.ts';
+import { findUnreal, unrealAvailable, verifyUnreal } from '../src/unreal.ts';
 import { arkitFaceFixtureGLB } from './fixtures/arkit-face-glb.ts';
 
 // Real UnrealEditor-Cmd runs. Skipped where Unreal is absent (CI) or AGENT_MESHES_SKIP_UNREAL is set.
-const maybe = unrealAvailable() && !process.env.AGENT_MESHES_SKIP_UNREAL ? it : it.skip;
+const runs = unrealAvailable() && !process.env.AGENT_MESHES_SKIP_UNREAL;
+const maybe = runs ? it : it.skip;
+// The heads below were recorded on UE 5.7.3. UE 5.8 imports an unskinned mesh in a skinned file as a StaticMesh, where 5.7 dropped it
+// or merged it into the SkeletalMesh, so those tests are skipped on 5.8 and 5.8-specific tests pin what 5.8.2 does instead.
+const engineVersion = runs ? findUnreal()?.version ?? '' : '';
+const [engineMajor = 0, engineMinor = 0] = engineVersion.split('.').map(Number);
+const onUE58 = engineMajor > 5 || (engineMajor === 5 && engineMinor >= 8);
+const recordedOn57 = (title: string, reason: string, run: () => Promise<void>, timeout: number) => {
+  if (runs && onUE58) console.info(`skipped on UE ${engineVersion}: "${title}": ${reason}`);
+  return (runs && !onUE58 ? it : it.skip)(runs && onUE58 ? `${title} [skipped on UE ${engineVersion}: ${reason}]` : title, run, timeout);
+};
+const onlyOn58 = runs && onUE58 ? it : it.skip;
 const dirs: string[] = [];
 afterAll(async () => { for (const dir of dirs) await rm(dir, { recursive: true, force: true }); });
 const fixture = async (name: string, options?: Parameters<typeof arkitFaceFixtureGLB>[0]) => {
@@ -99,7 +110,8 @@ maybe('blames the missing skin, not bone spelling, for a head with no skin at al
 
 // Round-3 heads from the face-rig acceptance bar's P9a evidence: eyeballs left out of the skin (derived, and built in Blender
 // through `agent-meshes build` with the eyeballs not passed to bind_skin), eye bones not under head, two skins.
-maybe('fails, naming the unbound eyeball nodes, when Interchange silently drops eyeballs left out of the skin', async () => {
+recordedOn57('fails, naming the unbound eyeball nodes, when Interchange silently drops eyeballs left out of the skin',
+  'UE 5.8 imports eyeballs left out of the skin as StaticMeshes instead of dropping them (see the 5.8 test below)', async () => {
   for (const file of ['C-static-eyes.glb', 'bl3-staticeyes.glb']) {
     const report = await verifyUnreal(head(file), contract);
     expect(report.summary.staticMeshes).toBe(0);
@@ -112,14 +124,51 @@ maybe('fails, naming the unbound eyeball nodes, when Interchange silently drops 
   }
 }, 40 * 60000);
 
-maybe('passes a fresh Blender-built head and eyeballs parented to the eye bones, with every vertex imported', async () => {
-  for (const file of ['bl3-good.glb', 'C2-static-eyes-parented-to-eye-bones.glb']) {
+// Recorded on UE 5.8.2: the heads whose eyeball nodes have no skin. The SkeletalMesh holds only the head (1152 vertices); each eyeball is
+// a StaticMesh of 1100 of its 1104 vertices, so no vertex is missing beyond the tolerance, and the contract still fails because a
+// StaticMesh does not follow the eye bones.
+onlyOn58('fails, naming the unbound eyeball nodes, when UE 5.8 imports them as separate StaticMeshes', async () => {
+  for (const file of ['C-static-eyes.glb', 'bl3-staticeyes.glb', 'C2-static-eyes-parented-to-eye-bones.glb']) {
     const report = await verifyUnreal(head(file), contract);
-    expect(report.failures).toEqual([]);
-    expect(report.warnings).toEqual([]);
-    expect(report.geometry).toMatchObject({ glbVertices: 3360, unrealVertices: 3360, missing: 0 });
-    expect(report.skeletalMeshes[0].boneParents).toMatchObject({ head: null, eye_L: 'head', eye_R: 'head' });
+    expect(report.summary).toMatchObject({ skeletalMeshes: 1, skeletons: 1, staticMeshes: 2 });
+    expect(report.skeletalMeshes.map(m => m.vertices[0])).toEqual([1152]);
+    expect(report.staticMeshes.map(m => m.path.split('/').pop()).sort()).toEqual(['Eyeball_L', 'Eyeball_R']);
+    expect(report.geometry).toMatchObject({ glbVertices: 3360, unrealVertices: 3352, missing: 8, tolerance: 34, droppedByInterchange: [] });
+    expect(report.ok).toBe(false);
+    expect(report.failures).toHaveLength(1);
+    expect(report.failures[0]).toMatch(/^the mesh nodes "Eyeball_L" \(1104 vertices\), "Eyeball_R" \(1104 vertices\) are not bound to the skin .* so Unreal imported them as separate StaticMeshes \("Eyeball_L", "Eyeball_R"\) and not as part of the SkeletalMesh\. A StaticMesh does not follow the rig's bones\./);
+    expect(report.failures[0]).toMatch(/Fix: bind them to skin 0 "HeadRig"/);
+    expect(report.failures[0]).toMatch(/weight each eyeball 100% to its eye bone/);
+    // Under a joint (C2) the SkeletalMesh gets bones named after the eyeballs but no geometry for them.
+    expect(/Parenting a node under a joint does not bind it: "Eyeball_L", "Eyeball_R" are under "eye_L", "eye_R", and Interchange gave the SkeletalMesh bones named "Eyeball_L", "Eyeball_R"/.test(report.failures[0])).toBe(file.startsWith('C2'));
   }
+}, 40 * 60000);
+
+maybe('passes a fresh Blender-built head, with every vertex imported', async () => {
+  const report = await verifyUnreal(head('bl3-good.glb'), contract);
+  expect(report.failures).toEqual([]);
+  expect(report.warnings).toEqual([]);
+  expect(report.geometry).toMatchObject({ glbVertices: 3360, unrealVertices: 3360, missing: 0 });
+  expect(report.skeletalMeshes[0].boneParents).toMatchObject({ head: null, eye_L: 'head', eye_R: 'head' });
+}, 40 * 60000);
+
+recordedOn57('passes eyeballs parented to the eye bones, with every vertex imported',
+  'UE 5.8 gives the SkeletalMesh bones for such eyeballs but keeps their geometry only in StaticMeshes (see the 5.8 test above)', async () => {
+  const report = await verifyUnreal(head('C2-static-eyes-parented-to-eye-bones.glb'), contract);
+  expect(report.failures).toEqual([]);
+  expect(report.warnings).toEqual([]);
+  expect(report.geometry).toMatchObject({ glbVertices: 3360, unrealVertices: 3360, missing: 0 });
+  expect(report.skeletalMeshes[0].boneParents).toMatchObject({ head: null, eye_L: 'head', eye_R: 'head' });
+}, 40 * 60000);
+
+// Recorded on UE 5.8.2: its DefaultGLTFAssetsPipeline stores CombineSkeletalMeshesBehavior DoNotCombine, which imports each skinned
+// mesh node as its own SkeletalMesh (the head and both eyeballs of bl-good.glb), so the verifier sets BySkeleton on its scratch copy.
+onlyOn58('imports the Blender head as one SkeletalMesh because the verifier combines skeletal meshes by skeleton', async () => {
+  const report = await verifyUnreal(head('bl-good.glb'), contract);
+  expect(report.skeletalMeshGrouping).toEqual({ engineDefault: 'DO_NOT_COMBINE', applied: 'BY_SKELETON' });
+  expect(report.failures).toEqual([]);
+  expect(report.summary).toMatchObject({ skeletalMeshes: 1, skeletons: 1, staticMeshes: 0 });
+  expect(report.skeletalMeshes[0].vertices).toEqual([3360]);
 }, 40 * 60000);
 
 maybe('fails eye bones that are not children of head, read from Unreal\'s reference skeleton', async () => {
