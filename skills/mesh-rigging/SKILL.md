@@ -61,6 +61,12 @@ toward +Z. A limb hangs down from its joint, so on the biped:
 `{"op":"pose","name":"arm_R","rotation":[-0.2588,0,0,0.9659]}` swings the right arm 30° forward. Clip
 keys use the same signs. Check a recipe other than the biped with one `pose` and `inspect` before keying.
 
+**Biped names.** Bones: `root` (the pelvis, which carries the body bob), `chest`, `head`, `arm_L|R`,
+`elbow_L|R`, and per leg `leg_L|R_hip`, `leg_L|R_knee` and `leg_L|R_ankle`. `leg_L_foot`, `hand_L` and the
+other limb pieces are parts bound to those bones, not bones. The ankle bone rests 0.10 m above the floor and
+the foot's lowest vertex about 0.02 m above it, so track a sole by following the ankle and offsetting down
+to the floor. `_L` parts sit at -X, which is the character's anatomical right.
+
 `clip.set` writes the whole clip at once: a `duration` and one track per bone and property with
 keys at strictly increasing times from 0 through the duration. First and last keys equal make a
 seamless loop. Tracks are offsets from rest, so an untracked bone stays put.
@@ -69,6 +75,13 @@ seamless loop. Tracks are offsets from rest, so an untracked bone stays put.
 
 - Clips are in place: stance feet move backward at a uniform speed while lifted feet return
   forward, and the game moves the root. Ground speed is `stride / (stance fraction × duration)`.
+- Measure slide without a browser: `mesh gait model.glb --clip walk --travel-speed <mps>`. `skate` is the
+  largest planted-sole speed over the ground as a fraction of travel speed (0.1 or less reads as planted);
+  `stanceSpeedRatio` is about 1 when the clip's design speed equals the speed the game moves the character.
+  Without `--travel-speed`, `stride.travelSpeed` is the clip's own design speed. The `biped` recipe's walk is
+  planted at a design speed of 0.70 m/s; the same clip moved at 0.99 m/s measured `skate` 0.32. Match the
+  speeds by setting the playback rate to travel speed over design speed, or by changing the clip duration.
+  `gait` reads the recipe's bone names; its humanoid checks (spine flex, hands, `--gait walk`) do not apply.
 - Sample leg rotations densely (recipes bake at 60 samples per second, quadrupeds at 120) so
   feet stay planted; sparse keys make feet slide.
 - Compensate root bob in the foot targets, otherwise the whole body floats. Check a stride by

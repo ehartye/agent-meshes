@@ -154,12 +154,15 @@ export function resolveGaitBones(names: string[], parentOf: (name: string) => st
     if (!hit) throw Object.assign(new Error(`Gait analysis cannot find a ${label} bone`), { code: 'GAIT_BONES' });
     return hit;
   };
-  const pelvis = find(unsided, /(pelvis|hips?)$/, 'pelvis'), head = find(unsided, /head$/, 'head');
+  // The compact recipe biped has no pelvis bone: its root carries the body motion and the legs hang from it.
+  const pelvis = unsided.find(name => /(pelvis|hips?)$/.test(baseOf(name))) ?? find(unsided.filter(name => parentOf(name) === null), /root$/, 'pelvis'), head = find(unsided, /head$/, 'head');
   const chain: string[] = [];
   for (let at = parentOf(head); at !== pelvis; at = parentOf(at)) {
     if (at === null) throw Object.assign(new Error(`Head ${head} does not descend from pelvis ${pelvis}`), { code: 'GAIT_BONES' });
     chain.unshift(at);
   }
+  // A chest bone beside the head, under the pelvis, stands in for a spine chain.
+  if (!chain.length) { const chest = unsided.find(name => parentOf(name) === pelvis && /(chest|spine)$/.test(baseOf(name))); if (chest) chain.push(chest); }
   const neck = [...chain].reverse().find(name => /neck/.test(baseOf(name))) ?? null;
   const spine = chain.filter(name => !/neck/.test(baseOf(name)));
   if (!spine.length) throw Object.assign(new Error('Gait analysis needs at least one spine joint between pelvis and head'), { code: 'GAIT_BONES' });
@@ -201,11 +204,11 @@ export function resolveGaitBones(names: string[], parentOf: (name: string) => st
         arm: { upper: wing(1), lower: wing(2) },
       };
     }
-    const thigh = find(list, /(thigh|upleg|upperleg)$/, `${s === 'a' ? 'left' : 'right'} thigh`);
-    const calf = find(list.filter(n => n !== thigh), /(calf|shin|lowerleg|leg)$/, 'calf');
+    const thigh = find(list, /(thigh|upleg|upperleg|hip)$/, `${s === 'a' ? 'left' : 'right'} thigh`);
+    const calf = find(list.filter(n => n !== thigh), /(calf|shin|lowerleg|knee|leg)$/, 'calf');
     const foot = find(list, /(foot|ankle|metatarsal)$/, 'foot');
     const toe = list.find(name => /(ball|toe|toebase|toes)$/.test(baseOf(name)));
-    const lower = find(list, /(forearm|lowerarm)$/, 'forearm');
+    const lower = find(list, /(forearm|lowerarm|elbow)$/, 'forearm');
     const upper = find(list.filter(n => n !== lower), /(upperarm|arm)$/, 'upper arm');
     const hand = list.find(name => /(hand|wrist)$/.test(baseOf(name)));
     return { leg: { thigh, calf, foot, ...(toe ? { toe } : {}) }, arm: { upper, lower, ...(hand ? { hand } : {}) } };
