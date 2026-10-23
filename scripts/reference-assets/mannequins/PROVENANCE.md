@@ -18,7 +18,7 @@ from Mesh2Motion application code. The local Mixamo walk donor is excluded.
 
 The adult and child plant-kin are fresh exports of their baseline recipes
 (paths withheld), copied unchanged into isolated build trees.
-They use Agent Meshes 0.16.0 shared sprout anatomy, rig and gait helpers, managed
+They use Agent Meshes 0.16.0 shared digitigrade anatomy, rig and gait helpers, managed
 fingerprint `39e1cc51878b946966ded9abb113600ec6d4ac4f524c30fd13cc256bc6df62e6`,
 and the local Mesh2Motion kaiju reference. The adult has five crest fronds and
 50 bones; the child has three fronds and 46 bones. Body proportions and placeholder

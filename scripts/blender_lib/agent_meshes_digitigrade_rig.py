@@ -6,7 +6,7 @@ the diagnostic animation clips.
 """
 import math
 import numpy as np
-from agent_meshes_sprout_kin import geometry, hand_point, _digit_chains
+from agent_meshes_digitigrade_anatomy import geometry, hand_point, _digit_chains
 
 
 def skeleton(a):
@@ -233,9 +233,9 @@ def rig_anatomy(objects,a,diagnostics=True,*,thumb_seams=False):
     from mathutils.bvhtree import BVHTree
     from agent_meshes_author import bind_skin
     bones=skeleton(a);weight=weight_function(a)
-    body=next(o for o in objects if o.name=='sprout-body')
+    body=next(o for o in objects if o.name=='digitigrade-body')
     rows,skin_report=anatomy_weights(body,a,hip_seams=True,neck_seam=True,waist_seam=True,thumb_seams=thumb_seams)
-    data=bpy.data.armatures.new('sprout-skeleton');arm=bpy.data.objects.new('sprout-rig',data)
+    data=bpy.data.armatures.new('digitigrade-skeleton');arm=bpy.data.objects.new('digitigrade-rig',data)
     bpy.context.scene.collection.objects.link(arm);bpy.context.view_layer.objects.active=arm;arm.select_set(True)
     bpy.ops.object.mode_set(mode='EDIT')
     for n,b in bones.items():

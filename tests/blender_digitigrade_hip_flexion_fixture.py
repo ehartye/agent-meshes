@@ -3,15 +3,15 @@ import bpy,json
 import numpy as np
 from pathlib import Path
 from mathutils.bvhtree import BVHTree
-from agent_meshes_sprout_kin import build_anatomy
-from agent_meshes_sprout_rig import rig_anatomy,skin_regions
-import agent_meshes_sprout_gait as gait
-import agent_meshes_sprout_kin as kin
+from agent_meshes_digitigrade_anatomy import build_anatomy
+from agent_meshes_digitigrade_rig import rig_anatomy,skin_regions
+import agent_meshes_digitigrade_gait as gait
+import agent_meshes_digitigrade_anatomy as kin
 
 EXPORT_ANIMATION_MODE='NLA_TRACKS'
 
 def build():
-    reference=json.loads((Path(__file__).parent/'fixtures/sprout-reference-rhythm.json').read_text())
+    reference=json.loads((Path(__file__).parent/'fixtures/digitigrade-reference-rhythm.json').read_text())
     curves={name:gait.periodic_curve(values) for name,values in reference['samples'].items()}
     gait._reference=lambda path:(lambda name,p:curves[name](p),dict(reference['provenance']))
     original_smoothing=kin._smooth_hip_join
@@ -32,7 +32,7 @@ def build():
     for age,height in [('child',1.12),('adult',1.7)]:
         for obj in objects:bpy.data.objects.remove(obj,do_unlink=True)
         objects,a=build_anatomy(height=height,age=age,clay=True)
-        body=next(o for o in objects if o.name=='sprout-body')
+        body=next(o for o in objects if o.name=='digitigrade-body')
         objects,_=rig_anatomy(objects,a);gait.bake_gaits(objects,a,None)
         # Classify from the original anatomical source surfaces, before posing.
         vertices=[];source_faces=[];regions=[]

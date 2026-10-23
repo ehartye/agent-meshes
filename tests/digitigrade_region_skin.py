@@ -1,8 +1,8 @@
 import sys,unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts/blender_lib'))
-from agent_meshes_sprout_kin import anatomy
-from agent_meshes_sprout_rig import skin_regions
+from agent_meshes_digitigrade_anatomy import anatomy
+from agent_meshes_digitigrade_rig import skin_regions
 
 class RegionSources(unittest.TestCase):
     def test_garment_source_excludes_nearby_arms_and_tail(self):

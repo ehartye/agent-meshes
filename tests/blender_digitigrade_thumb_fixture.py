@@ -4,10 +4,10 @@ from pathlib import Path
 import bpy
 import numpy as np
 from mathutils.bvhtree import BVHTree
-from agent_meshes_sprout_kin import build_anatomy
-from agent_meshes_sprout_rig import anatomy_weights,rig_anatomy,skeleton
+from agent_meshes_digitigrade_anatomy import build_anatomy
+from agent_meshes_digitigrade_rig import anatomy_weights,rig_anatomy,skeleton
 from agent_meshes_tessellation import triangulate_surface
-import agent_meshes_sprout_gait as gait
+import agent_meshes_digitigrade_gait as gait
 
 EXPORT_ANIMATION_MODE='NLA_TRACKS'
 
@@ -27,7 +27,7 @@ def build(age):
     tri=np.array([[0.,0,0],[1,0,0],[0,1,0]]);cross=np.array([[.2,.2,-1],[.3,.2,1],[.2,.3,1]])
     assert strict_crossing(tri,cross) and not strict_crossing(tri,cross+[3,0,0]) and not strict_crossing(tri,tri+[.05,.05,0])
     objects,a=build_anatomy(age=age,height=1.12 if age=='child' else 1.7,finger_scale=.70,thumb_scale=.85)
-    body=next(o for o in objects if o.name=='sprout-body')
+    body=next(o for o in objects if o.name=='digitigrade-body')
     for bad in [1,None,'yes']:
         try:anatomy_weights(body,a,thumb_seams=bad)
         except ValueError:pass
@@ -60,7 +60,7 @@ def build(age):
     for name,b in bones.items():
         np.testing.assert_allclose(arm.data.bones[name].head_local,b['head'],atol=3e-7,rtol=0)
         np.testing.assert_allclose(arm.data.bones[name].tail_local,b['tail'],atol=3e-7,rtol=0)
-    reference=json.loads((Path(__file__).parent/'fixtures/sprout-reference-rhythm.json').read_text())
+    reference=json.loads((Path(__file__).parent/'fixtures/digitigrade-reference-rhythm.json').read_text())
     curves={n:gait.periodic_curve(v) for n,v in reference['samples'].items()}
     gait._reference=lambda path:(lambda name,p:curves[name](p),dict(reference['provenance']))
     gait.bake_gaits(objects,a,None)

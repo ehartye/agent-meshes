@@ -122,7 +122,7 @@ For a nonhuman hand, define its grasp and contact behavior before copying human 
 Inspect both hands from palm, back and side in open, relaxed, curled and required grasp/contact poses.
 Check web spaces, thumb clearance, knuckle rhythm, palm thickness and unintended fused fingers.
 Separate geometry errors, bone endpoint errors, palm orientation and weight leakage before choosing a repair.
-**Documented capability:** sprout `finger_scale` changes digit-chain lengths while retaining tip radii and palm roots.
+**Documented capability:** digitigrade `finger_scale` changes digit-chain lengths while retaining tip radii and palm roots.
 It therefore cannot alone repair tip shape, tubular sections, thumb orientation or fused hand topology.
 See [digitigrade anatomy](../README.md#digitigrade-plant-kin-anatomy) and [baked rotation styling](../README.md#styling-baked-rotations).
 Scaling an entire baked rotation also scales splay and twist; it is not an anatomical grasp solver.

@@ -2,8 +2,8 @@
 import bpy
 import numpy as np
 from mathutils.bvhtree import BVHTree
-from agent_meshes_sprout_kin import build_anatomy
-from agent_meshes_sprout_rig import rig_anatomy,anatomy_weights
+from agent_meshes_digitigrade_anatomy import build_anatomy
+from agent_meshes_digitigrade_rig import rig_anatomy,anatomy_weights
 
 EXPORT_ANIMATION_MODE='NLA_TRACKS'
 
@@ -13,7 +13,7 @@ def build():
     for age,height in [('child',1.12),('adult',1.7)]:
         for obj in objects:bpy.data.objects.remove(obj,do_unlink=True)
         objects,a=build_anatomy(height=height,age=age,clay=True)
-        body=next(o for o in objects if o.name=='sprout-body')
+        body=next(o for o in objects if o.name=='digitigrade-body')
         rest=np.array([v.co[:] for v in body.data.vertices])
         # Isolate the hip pass for its preservation check. The subsequent waist
         # pass reads hip weights at pinned neighbours in the child proportions.

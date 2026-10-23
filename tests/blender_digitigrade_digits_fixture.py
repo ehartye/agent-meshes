@@ -2,8 +2,8 @@
 import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
-from agent_meshes_sprout_kin import anatomy, build_anatomy
-from agent_meshes_sprout_rig import rig_anatomy, skeleton
+from agent_meshes_digitigrade_anatomy import anatomy, build_anatomy
+from agent_meshes_digitigrade_rig import rig_anatomy, skeleton
 
 EXPORT_ANIMATION_MODE = 'NLA_TRACKS'
 
@@ -14,7 +14,7 @@ def build(age):
     assert a['finger_scale'] == .7 and a['thumb_scale'] == .6
     objects, _ = rig_anatomy(objects, a)
     arm = next(o for o in objects if o.type == 'ARMATURE')
-    body = next(o for o in objects if o.name == 'sprout-body')
+    body = next(o for o in objects if o.name == 'digitigrade-body')
     expected = skeleton(a)
     original = skeleton(anatomy(age=age, height=height))
     for name, bone in expected.items():
@@ -37,5 +37,5 @@ def build(age):
         assert 1 <= len(row) <= 4 and set(row) <= deform
         assert all(np.isfinite(w) and 0 < w <= 1 for w in row.values())
         assert abs(sum(row.values())-1) < 2e-6
-    print('SPROUT_DIGIT_CHECK', age, len(vertices), 'vertices; endpoints and skin weights verified')
+    print('DIGITIGRADE_DIGIT_CHECK', age, len(vertices), 'vertices; endpoints and skin weights verified')
     return objects

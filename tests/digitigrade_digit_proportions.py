@@ -10,10 +10,10 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts/blender_lib'))
-from agent_meshes_sprout_kin import anatomy, geometry, build_anatomy
-from agent_meshes_sprout_rig import skeleton, skin_regions, weight_function
+from agent_meshes_digitigrade_anatomy import anatomy, geometry, build_anatomy
+from agent_meshes_digitigrade_rig import skeleton, skin_regions, weight_function
 
-FIXTURE = json.loads((Path(__file__).parent / 'fixtures/sprout-default-hands.json').read_text())
+FIXTURE = json.loads((Path(__file__).parent / 'fixtures/digitigrade-default-hands.json').read_text())
 
 
 class DigitProportions(unittest.TestCase):

@@ -192,10 +192,10 @@ def build_anatomy(*,height=1.7,age='adult',skin='#b79ad6',crest='#79b25c',clay=F
     import bpy
     from agent_meshes_author import make_mesh,material,fuse_meshes
     a=anatomy(height=height,age=age,finger_scale=finger_scale,thumb_scale=thumb_scale);objects=[];skin_parts=[]
-    mats={kind:material('sprout-'+kind,color,roughness=.75) for kind,color in
+    mats={kind:material('digitigrade-'+kind,color,roughness=.75) for kind,color in
           [('skin',skin),('eye','#eee9df'),('detail',skin),('crest',crest)]}
     if clay:
-        neutral=material('sprout-clay','#a7adb2',roughness=.8)
+        neutral=material('digitigrade-clay','#a7adb2',roughness=.8)
         mats={kind:neutral for kind in mats}
     for p in geometry(height=height,age=age,finger_scale=finger_scale,thumb_scale=thumb_scale):
         obj=make_mesh(p['name'],p['vertices'],p['faces'],mats[p['kind']])
@@ -203,7 +203,7 @@ def build_anatomy(*,height=1.7,age='adult',skin='#b79ad6',crest='#79b25c',clay=F
         (skin_parts if p['kind']=='skin' else objects).append(obj)
     # A fixed relative voxel size preserves child-scale fingers. Fusion validates
     # one closed component; a detached finger/neck/tail must fail visibly.
-    body=fuse_meshes(skin_parts,'sprout-body',voxel_size=.004*a['scale'],smooth_passes=5)
+    body=fuse_meshes(skin_parts,'digitigrade-body',voxel_size=.004*a['scale'],smooth_passes=5)
     body.data.materials.clear();body.data.materials.append(mats['skin'])
     bpy.context.view_layer.objects.active=body
     dec=body.modifiers.new('Anatomy triangle budget','DECIMATE');dec.ratio=min(1,28000/max(1,len(body.data.polygons)*2))

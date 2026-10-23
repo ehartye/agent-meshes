@@ -2,9 +2,9 @@
 import json
 import os
 from pathlib import Path
-from agent_meshes_sprout_kin import build_anatomy
-from agent_meshes_sprout_rig import rig_anatomy
-from agent_meshes_sprout_gait import bake_gaits
+from agent_meshes_digitigrade_anatomy import build_anatomy
+from agent_meshes_digitigrade_rig import rig_anatomy
+from agent_meshes_digitigrade_gait import bake_gaits
 
 EXPORT_ANIMATION_MODE='NLA_TRACKS'
 

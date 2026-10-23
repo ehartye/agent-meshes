@@ -4,9 +4,9 @@ from pathlib import Path
 import unittest
 import numpy as np
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts/blender_lib'))
-from agent_meshes_sprout_gait import foot_path, two_bone, periodic_curve, fit_swing_lift
+from agent_meshes_digitigrade_gait import foot_path, two_bone, periodic_curve, fit_swing_lift
 
-class SproutGait(unittest.TestCase):
+class DigitigradeGait(unittest.TestCase):
     def test_contact_velocity_and_loop(self):
         for stance in [.62,.42]:
             stride=.30;lift=.10

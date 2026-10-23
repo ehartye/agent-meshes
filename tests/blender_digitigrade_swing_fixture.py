@@ -1,15 +1,15 @@
 """Gait fitting keeps knees open and planted toes grounded on adult/child rigs."""
 import bpy,math
 import numpy as np
-from agent_meshes_sprout_kin import build_anatomy
-from agent_meshes_sprout_rig import rig_anatomy
-import agent_meshes_sprout_gait as gait
+from agent_meshes_digitigrade_anatomy import build_anatomy
+from agent_meshes_digitigrade_rig import rig_anatomy
+import agent_meshes_digitigrade_gait as gait
 EXPORT_ANIMATION_MODE='NLA_TRACKS'
 def build(age_to_export=None,body_references=None):
     # Captured CC0 reference rhythm keeps the reproduction independent of downloads.
     from pathlib import Path
     import json
-    data=json.loads((Path(__file__).parent/'fixtures/sprout-reference-rhythm.json').read_text())
+    data=json.loads((Path(__file__).parent/'fixtures/digitigrade-reference-rhythm.json').read_text())
     curves={name:gait.periodic_curve(values) for name,values in data['samples'].items()}
     gait._reference=lambda path:(lambda name,p:curves[name](p),dict(data['provenance']))
     objects=[]
