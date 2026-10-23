@@ -6,10 +6,10 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'scripts/blender_lib'))
-from agent_meshes_sprout_kin import anatomy, geometry
+from agent_meshes_digitigrade_anatomy import anatomy, geometry
 
 
-class SproutKin(unittest.TestCase):
+class DigitigradeKin(unittest.TestCase):
     def test_digitigrade_landmarks_and_nonhuman_silhouette(self):
         for age, height in [('adult', 1.7), ('child', 1.12)]:
             a=anatomy(height=height, age=age); p=a['joints']

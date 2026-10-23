@@ -1721,7 +1721,7 @@ Check the exported head with `node scripts/agent-meshes.mjs verify model.glb
 
 ## Digitigrade plant-kin anatomy
 
-`agent_meshes_sprout_kin.anatomy(height=1.7, age='adult')` returns measured
+`agent_meshes_digitigrade_anatomy.anatomy(height=1.7, age='adult')` returns measured
 Z-up, -Y-facing landmarks for a pear trunk, S-neck, bulb head, three-digit hands,
 raised hocks, long metatarsals, padded toes and a counterweight tail.
 `geometry(...)` returns deterministic closed source parts without Blender.
@@ -1739,19 +1739,19 @@ anatomy dictionaries without these fields retain the original proportions.
 The ratios describe chain length; rounded tip radii do not scale. Source parts
 outside the digits remain unchanged, but fused/decimated body topology and fitted
 clothes can change: inspect the final export and animation before adoption.
-`python tests/sprout_digit_proportions.py` checks pre-change default samples,
+`python tests/digitigrade_digit_proportions.py` checks pre-change default samples,
 both sides/ages, independent controls, tip alignment and source-region weights.
-`npx vitest run tests/sprout-digits-blender.test.ts` exercises actual fusion,
+`npx vitest run tests/digitigrade-digits-blender.test.ts` exercises actual fusion,
 decimation, fitted bone endpoints and normalized skin weights for both ages.
 
 `build_anatomy(height=..., age=..., skin=..., crest=..., clay=False)` returns
 `(objects, anatomy)` in Blender. It fuses the skin into one closed component and
 keeps eyes, tympana and fronds editable. Geometry generation is parameterized by
-height to the crest tip, before voxel smoothing. Run `python tests/sprout_kin.py`
+height to the crest tip, before voxel smoothing. Run `python tests/digitigrade_anatomy.py`
 for the anatomical contract. This is a static foundation: eye sockets/lids,
 facial animation, gait and garments are not provided by this helper.
 
-`agent_meshes_sprout_rig.rig_anatomy(objects, anatomy, diagnostics=True)` binds
+`agent_meshes_digitigrade_rig.rig_anatomy(objects, anatomy, diagnostics=True)` binds
 that anatomy and returns `(objects_including_armature, report)`. The adult has
 50 bones and the child 46: separate spine and neck joints, fingers/thumbs,
 hocks/metatarsals/toes, a two-joint tail, eye bones and two bones per frond.
@@ -1769,10 +1769,10 @@ six two-second diagnostic clips: `check-arms`, `check-legs`, `check-legs-right`,
 `check-spine`, `check-neck-tail`, and `check-hands-crest`. These isolate joint
 deformation; they do not enforce foot contact, balance or locomotion. Pass
 `diagnostics=False` to bind without adding clips. Run
-`python tests/sprout_kin_rig.py` for hierarchy, weight isolation and joint
+`python tests/digitigrade_rig.py` for hierarchy, weight isolation and joint
 continuity checks; inspect rendered sequences as well as the exported skeleton.
 
-`agent_meshes_sprout_gait.bake_gaits(objects, anatomy, kaiju_reference_glb)` adds
+`agent_meshes_digitigrade_gait.bake_gaits(objects, anatomy, kaiju_reference_glb)` adds
 `walk` and `jog` to the bound rig. It samples Mesh2Motion's CC0 kaiju `Walk`,
 smooths its periodic pelvis/hock curves, and solves the fitted leg lengths toward
 explicit toe trajectories. Stride follows leg length; lift follows body height.
@@ -1793,10 +1793,10 @@ The bake uses 60 fps and retimes existing NLA strips to preserve their duration.
 Natural hand orientation is shared by source geometry and joint positions:
 thumbs point forward and palms curl inward. The gait analyzer recognizes the
 raised-hock `metatarsal_l/r` bones and samples their skinned toe descendants.
-Run `python tests/sprout_kin_gait.py` and `mesh gait model.glb --clip walk
+Run `python tests/digitigrade_gait.py` and `mesh gait model.glb --clip walk
 --gait walk` (also `jog`). Passing movement ranges does not prove reference-curve
 correlation, collision clearance, visual approval or completed facial/clothing work.
-`npx vitest run tests/sprout-swing-blender.test.ts` checks both adult and child
+`npx vitest run tests/digitigrade-swing-blender.test.ts` checks both adult and child
 rigs against captured reference rhythm, including interpolated poses.
 
 For reference-informed body timing, pass `body_references={'walk': walk_report,
@@ -1815,8 +1815,8 @@ pelvis roll retains the antisymmetric component. A five-harmonic fit closes the
 seam. Height has unit peak-to-peak range and angle curves have range two; the
 recipe supplies physical amplitudes. One phase shift applies to all four curves.
 This is a body timing fit, not a fit of lower-limb curves or a full P5 pass.
-Run `python -B tests/sprout_body_timing.py` and
-`npx vitest run tests/sprout-body-timing-blender.test.ts` for pure phase/rejection
+Run `python -B tests/digitigrade_body_timing.py` and
+`npx vitest run tests/digitigrade-body-timing-blender.test.ts` for pure phase/rejection
 checks and actual adult/child exports with four-body-curve correlation plus all
 movement limits. Check dressed characters independently: rebuilding a garment
 that was fitted against animation poses can change its rest shape. Applying
@@ -2025,8 +2025,8 @@ for the Blender regression fixtures and `python tests/garment_cuts.py` for cuts.
 
 ## Selecting anatomical skin sources
 
-`agent_meshes_sprout_rig.skin_regions(anatomy, include=None)` returns the shared
-sprout-kin skin source surfaces. A nonempty collection of exact names restricts
+`agent_meshes_digitigrade_rig.skin_regions(anatomy, include=None)` returns the shared
+digitigrade plant-kin skin source surfaces. A nonempty collection of exact names restricts
 that set; unknown names, eyes and crest surfaces are rejected. `None` selects
 all skin regions used by the body rig. Coordinates use the anatomy's height
 and age; returned surfaces remain in rest-space Blender Z-up coordinates.
@@ -2051,7 +2051,7 @@ the short pelvis/spine blend over the deep pear torso, preventing the local
 fold exposed by the spine diagnostic. Adjacent limbs and skin outside the band
 keep their weights; rest geometry and motion are unchanged. The flag requires
 the trunk source, reports `waistSeamVertices`, and is enabled by `rig_anatomy`.
-`npx vitest run tests/sprout-waist-blender.test.ts` checks child and adult bodies
+`npx vitest run tests/digitigrade-waist-blender.test.ts` checks child and adult bodies
 at 65 phases of each of eight clips, combining local signed-area diagnostics
 with actual nonadjacent waist contacts and preservation checks. These sampled
 checks do not establish continuous collision freedom or costume acceptance.
@@ -2070,7 +2070,7 @@ both APIs default to false. Do not enable it merely because digits are shorter:
 inspect the deformation and test the actual character first. Later garment cuts
 can add interpolated body vertices on triangles incident to the edited patch.
 
-`npx vitest run tests/sprout-thumb-blender.test.ts` exercises actual fused adult
+`npx vitest run tests/digitigrade-thumb-blender.test.ts` exercises actual fused adult
 and child bodies with .70 fingers/.85 thumbs, exact outside-patch preservation,
 explicit-false compatibility, normalized exported weights, and both hands at
 65 phases of curl, walk and jog. The original child contacts must reproduce as
@@ -2082,9 +2082,9 @@ neck and tail cannot donate weights. Bind the returned rows to the existing
 armature with `bind_skin`. Garment geometry must also exclude unwanted source
 surfaces; restricting weights cannot repair a cloth envelope that already
 incorporates a neighboring arm. Body/cloth clearance and deformation still
-need independent posed checks. Run `python tests/sprout_region_skin.py` and
-`python tests/sprout_kin_rig.py`; exercise the Blender adapter with a real build.
-`npx vitest run tests/sprout-hip-blender.test.ts` checks the actual adult and child
+need independent posed checks. Run `python tests/digitigrade_region_skin.py` and
+`python tests/digitigrade_rig.py`; exercise the Blender adapter with a real build.
+`npx vitest run tests/digitigrade-hip-blender.test.ts` checks the actual adult and child
 body surfaces through both leg diagnostic clips when Blender is available.
 The hip repair does not resolve calf/thigh contact from deeply folded jog poses
 or the separately observed neck folds.

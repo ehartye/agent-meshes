@@ -7,12 +7,12 @@ import {findBlender} from '../src/refine.ts';
 import {loadGait,analyzeGait,evaluateGait} from '../src/gait-analysis.ts';
 
 (findBlender()?it:it.skip)('coordinates reference body timing on adult and child without losing contact or knee limits',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'mesh-sprout-body-timing-'));
- const references=JSON.parse(await readFile('tests/fixtures/sprout-body-reference.json','utf8'));
+ const dir=await mkdtemp(join(tmpdir(),'mesh-digitigrade-body-timing-'));
+ const references=JSON.parse(await readFile('tests/fixtures/digitigrade-body-reference.json','utf8'));
  try{
  for(const age of ['child','adult']){
   const output=join(dir,`${age}.glb`),script=join(dir,`${age}.py`);
-  await writeFile(script,`import runpy,json\nEXPORT_ANIMATION_MODE='NLA_TRACKS'\ndef build():\n with open(${JSON.stringify(resolve('tests/fixtures/sprout-body-reference.json'))}) as f:refs=json.load(f)\n return runpy.run_path(${JSON.stringify(resolve('tests/blender_sprout_swing_fixture.py'))})['build']('${age}',body_references=refs)\n`);
+  await writeFile(script,`import runpy,json\nEXPORT_ANIMATION_MODE='NLA_TRACKS'\ndef build():\n with open(${JSON.stringify(resolve('tests/fixtures/digitigrade-body-reference.json'))}) as f:refs=json.load(f)\n return runpy.run_path(${JSON.stringify(resolve('tests/blender_digitigrade_swing_fixture.py'))})['build']('${age}',body_references=refs)\n`);
   await authorGLB(script,output);
   const source=await loadGait(await readFile(output));
   for(const clip of ['walk','jog'] as const){
@@ -26,7 +26,7 @@ import {loadGait,analyzeGait,evaluateGait} from '../src/gait-analysis.ts';
  }
  }finally{
   // mkdtemp owns this exact directory; never widen a recursive cleanup target.
-  if(dirname(resolve(dir))!==resolve(tmpdir())||!basename(dir).startsWith('mesh-sprout-body-timing-'))throw new Error('Unexpected fixture cleanup path');
+  if(dirname(resolve(dir))!==resolve(tmpdir())||!basename(dir).startsWith('mesh-digitigrade-body-timing-'))throw new Error('Unexpected fixture cleanup path');
   await rm(dir,{recursive:true,force:true});
  }
 },120000);

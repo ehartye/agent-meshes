@@ -6,10 +6,10 @@ import {authorGLB} from '../src/author.ts';
 import {findBlender} from '../src/refine.ts';
 
 (findBlender()?it:it.skip)('keeps the adult and child neck continuous beneath the rigid head',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'mesh-sprout-neck-'));
+ const dir=await mkdtemp(join(tmpdir(),'mesh-digitigrade-neck-'));
  try{
   const output=join(dir,'model.glb');
-  await authorGLB(resolve('tests/blender_sprout_neck_fixture.py'),output);
+  await authorGLB(resolve('tests/blender_digitigrade_neck_fixture.py'),output);
   expect((await readFile(output)).length).toBeGreaterThan(1000);
  }finally{await rm(dir,{recursive:true,force:true});}
 },120000);

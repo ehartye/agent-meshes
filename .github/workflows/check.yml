@@ -181,15 +181,15 @@ jobs:
       - if: matrix.suite == 'geometry'
         run: python tests/sculpted_jaw.py
       - if: matrix.suite == 'geometry'
-        run: python tests/sprout_kin.py
+        run: python tests/digitigrade_anatomy.py
       - if: matrix.suite == 'geometry'
-        run: python tests/sprout_digit_proportions.py
+        run: python tests/digitigrade_digit_proportions.py
       - if: matrix.suite == 'geometry'
-        run: python tests/sprout_kin_rig.py
+        run: python tests/digitigrade_rig.py
       - if: matrix.suite == 'geometry'
-        run: python tests/sprout_region_skin.py
+        run: python tests/digitigrade_region_skin.py
       - if: matrix.suite == 'geometry'
-        run: python tests/sprout_kin_gait.py
+        run: python tests/digitigrade_gait.py
       - if: matrix.suite == 'geometry'
         run: python tests/retarget.py
       - if: matrix.suite == 'geometry'

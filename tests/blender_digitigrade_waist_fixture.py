@@ -3,21 +3,21 @@ import bpy,json
 import numpy as np
 from pathlib import Path
 from mathutils.bvhtree import BVHTree
-from agent_meshes_sprout_kin import build_anatomy
-from agent_meshes_sprout_rig import rig_anatomy,anatomy_weights,skin_regions
-import agent_meshes_sprout_gait as gait
+from agent_meshes_digitigrade_anatomy import build_anatomy
+from agent_meshes_digitigrade_rig import rig_anatomy,anatomy_weights,skin_regions
+import agent_meshes_digitigrade_gait as gait
 
 EXPORT_ANIMATION_MODE='NLA_TRACKS'
 
 def build():
-    reference=json.loads((Path(__file__).parent/'fixtures/sprout-reference-rhythm.json').read_text())
+    reference=json.loads((Path(__file__).parent/'fixtures/digitigrade-reference-rhythm.json').read_text())
     curves={n:gait.periodic_curve(v) for n,v in reference['samples'].items()}
     gait._reference=lambda path:(lambda name,p:curves[name](p),dict(reference['provenance']))
     objects=[]
     for age,height in [('child',1.12),('adult',1.7)]:
         for obj in objects:bpy.data.objects.remove(obj,do_unlink=True)
         objects,a=build_anatomy(height=height,age=age,clay=True)
-        body=next(o for o in objects if o.name=='sprout-body')
+        body=next(o for o in objects if o.name=='digitigrade-body')
         rest=np.array([v.co[:] for v in body.data.vertices])
         original,_=anatomy_weights(body,a,hip_seams=True,neck_seam=True)
         for args in [{'regions':['neck'],'waist_seam':True},{'waist_seam':'yes'}]:

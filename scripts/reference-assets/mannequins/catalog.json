@@ -240,7 +240,7 @@
       "id": "plant-kin-adult",
       "label": "Adult plant-kin",
       "path": "plant-kin-adult.glb",
-      "sha256": "15aa1157a25da46279bb7854cfcc86dc13a72aa6ec3fbe3472f100685987ca84",
+      "sha256": "bb519845a8c9ae479c4d5c05f4e8b0e23abb3e65714dd9b24beed560510469b0",
       "bones": 50,
       "clipCount": 8,
       "clips": {
@@ -277,7 +277,7 @@
       "limitations": "Placeholder eyes, no face controls; diagnostic walk/jog not full game-gait acceptance",
       "recipeSnapshot": {
         "path": "source/plant-kin-adult-character.py.txt",
-        "sha256": "1bd2970dd239daced24a6eab9879b36c01c9f599ed8b098b0d4f717327fd159b",
+        "sha256": "722c780801cae0e20be593fca454ac3006f739684b923116f838074ba2611a43",
         "use": "Original wrapper text for inspection; copy into an owned project and configure inputs before execution"
       }
     },
@@ -285,7 +285,7 @@
       "id": "plant-kin-child",
       "label": "Child plant-kin",
       "path": "plant-kin-child.glb",
-      "sha256": "b6f4c77cd600514cf478852c4467a75fa602eaec33442cb9bd9806db93bceab2",
+      "sha256": "87d0585f0f18aa48309612c568c79c1e8071dd2f39c391d0063eddabf1270cc5",
       "bones": 46,
       "clipCount": 8,
       "clips": {
@@ -322,7 +322,7 @@
       "limitations": "Placeholder eyes, no face controls; diagnostic walk/jog not full game-gait acceptance",
       "recipeSnapshot": {
         "path": "source/plant-kin-child-character.py.txt",
-        "sha256": "040fc0da9758864d13653b5dce21f2310710d6910d71b35d5b055dabe0a25df7",
+        "sha256": "e1ea8f67e41e91a9c5f7d46ea1db101931628e3da4fc2737d8c4dc360a928fc6",
         "use": "Original wrapper text for inspection; copy into an owned project and configure inputs before execution"
       }
     }

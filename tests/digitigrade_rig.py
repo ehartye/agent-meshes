@@ -4,11 +4,11 @@ from pathlib import Path
 import unittest
 import numpy as np
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts/blender_lib'))
-from agent_meshes_sprout_kin import anatomy, geometry
-from agent_meshes_sprout_rig import skeleton, region_weights
+from agent_meshes_digitigrade_anatomy import anatomy, geometry
+from agent_meshes_digitigrade_rig import skeleton, region_weights
 
 
-class SproutRig(unittest.TestCase):
+class DigitigradeRig(unittest.TestCase):
     def test_hierarchy_and_species_joints(self):
         for age in ['adult','child']:
             a=anatomy(age=age);bones=skeleton(a);seen=set()

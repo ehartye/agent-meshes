@@ -1,6 +1,6 @@
 {
   "name": "agent-meshes",
-  "version": "0.29.1",
+  "version": "0.30.0",
   "private": true,
   "type": "module",
   "description": "Named-part 3D authoring, rigging and animation for coding agents",

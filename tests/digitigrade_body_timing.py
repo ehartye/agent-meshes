@@ -5,7 +5,7 @@ import unittest
 import copy
 import numpy as np
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts/blender_lib'))
-import agent_meshes_sprout_gait as gait
+import agent_meshes_digitigrade_gait as gait
 
 class BodyTiming(unittest.TestCase):
     def report(self):

@@ -8,7 +8,7 @@ import hashlib
 from pathlib import Path
 from collections.abc import Mapping
 import numpy as np
-from agent_meshes_sprout_kin import anatomy
+from agent_meshes_digitigrade_anatomy import anatomy
 
 
 def foot_path(phase, stance, stride, lift):
