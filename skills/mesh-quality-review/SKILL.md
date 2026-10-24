@@ -1,6 +1,6 @@
 ---
 name: mesh-quality-review
-description: Review a 3D model for reference fidelity, anatomy, construction and deformation. Use for a 360-degree or head-to-toe quality check, repeated visual defects, clothing intersections, or a deliberate pre-delivery art review.
+description: Review a finished 3D model for reference fidelity, anatomy, construction and deformation. Use after building, to compare renders against a reference or brief, for a 360-degree or head-to-toe quality check, repeated visual defects, clothing intersections, when the anatomy looks wrong in the renders, or for a deliberate pre-delivery art review ("go over this model before I hand it off"). Fixing the form while modeling is mesh-believable.
 ---
 
 # Inspect the whole model against its intent

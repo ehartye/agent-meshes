@@ -1,7 +1,7 @@
 ---
 name: mesh-build
 description: Export, verify, render and deliver GLBs with agent-meshes. Use for repeatable Blender builds, slow unchanged builds or cache misses, shared configs and batches, generated mesh arrays and vertex colours, configured Unreal static-prop, collision or character import checks, model previews and web viewers.
-when_to_use: Use when asked to set up build.json, avoid repeated Blender launches or hashing, reuse a rollback, share pins or defaults, keep scripts beside assets with a shared library, diagnose environment-driven rebuilds, consume audit receipts, preserve UV/RGBA arrays or wear masks, match project import settings, check Unreal size, axes, collision, Nanite, UV precision, morphs or bones, render or screenshot a model, preview bpy sources quickly, produce an offline preview or multi-model stage, count pixels per part, embed MeshViewer, refine a model, compare GLB budgets or import into Unity. Choose mesh-tool-selection first only when the authoring or engine route is unsettled.
+when_to_use: Use when asked to set up build.json, avoid repeated Blender launches or hashing, reuse a rollback, share pins or defaults, keep scripts beside assets with a shared library, diagnose environment-driven rebuilds, consume audit receipts, commit or ignore build output or fix line-ending rebuilds, preserve UV/RGBA arrays or wear masks, match project import settings, check a built GLB against an engine's import contract (size, axes, collision, Nanite, UV precision, morphs, bones), render or screenshot a model, preview bpy sources quickly, produce an offline preview or multi-model stage, count pixels per part, embed MeshViewer, refine a model, compare GLB budgets. Performing the import into Unity, Godot or Unreal is agent-engine:engine-asset-import or agent-unreal:unreal-import. Choose mesh-tool-selection first only when the authoring or engine route is unsettled.
 ---
 
 # Mesh build and delivery
@@ -39,6 +39,7 @@ Blender task, read the matching reference before changing its build contract:
 | Nested asset configs need a shared library | [Explicit project root and path rules](references/native-build-identity.md#share-inputs-under-an-explicit-project-root-0240-and-later) |
 | Undeclared-read warning or strict-audit failure | [Read-audit coverage and limits](references/native-build-identity.md#observe-project-reads-0220-and-later) |
 | Commit or parse an authoring receipt | [Portable schema-2 receipts versus full local diagnostics](references/native-build-identity.md#keep-audit-receipts-portable-0240-and-later) |
+| Commit or ignore build output, a plain build says "Missing owned build file", or the same script behaves differently on another machine's line endings | [Committing build output](references/native-build-identity.md#committing-build-output) |
 | Preserve RGB/alpha masks or omit unused vertex colours | [Vertex-colour export controls](../../scripts/blender_lib/README.md#vertex-colors-in-glb-exports) |
 | Build geometry from vertices/faces, corner UVs and colour masks | [Mesh-from-arrays helper and V-origin contract](../../scripts/blender_lib/README.md#meshes-from-arrays) |
 | Unreal static prop has wrong size/axes, collision or Nanite/UV settings; match project import options | [Static-prop measurements, import options and axis calibration](references/unreal-static-props.md) |

@@ -12,6 +12,7 @@
   - [Declare Blender's environment](#declare-blenders-environment-0240-and-later)
   - [Share inputs under an explicit project root](#share-inputs-under-an-explicit-project-root-0240-and-later)
   - [Keep audit receipts portable](#keep-audit-receipts-portable-0240-and-later)
+  - [Committing build output](#committing-build-output)
 
 Keep authored Python, imported project modules, donor data and design parameters
 under project ownership. Run builds through the version-matched managed launcher
@@ -430,3 +431,78 @@ The full local cache is machine-specific and should not be used as a portable
 committed receipt. Saved project inputs are unchanged; receipt consumers must
 branch on the nested audit schema instead of assuming `externalReads` is always
 an array. Neither schema proves complete native dependencies or external freshness.
+
+### Committing build output
+
+[general] Labels: [tested] ran on this repository; [documented] read in the named
+source of 0.31.0 (line numbers are from that release); [general] neither.
+
+- [documented] The marker `.agent-meshes-build.json` lists every file a build wrote.
+  An incremental native build adds `.agent-meshes-blender-cache.json`,
+  `.agent-meshes-blender-cache.bin` and up to three rollback history files
+  `.agent-meshes-blender-<key>.bin` (four entries with the current one, 256 MiB), so
+  the pattern `.agent-meshes-blender-*` covers them (`src/build-native-cache.ts`:
+  `nativeCacheFiles` 14, `nativeCacheLimits` 15, `historyFile` 32, `write` 200-211).
+- [documented] and [tested] A plain build refuses an owned directory whose marker
+  lists a missing file, whichever file it is (GLB, report, preview, cache or
+  history): `Missing owned build file: <name>`, with no error code and no hint, and
+  before anything is replaced (`src/build.ts`: `checkTree` 107, `allowMissing` false).
+- [documented] and [tested] `--if-changed` and `--force` pass `allowMissing`
+  (`src/build.ts` 169, 194, 312). On a native build the lookup then misses, Blender
+  runs once and the cache is rewritten: reason `cache-record-missing` for a missing
+  `.agent-meshes-blender-cache.json`, `cache-output-missing` for a missing `.bin`
+  (`src/build-native-cache.ts` 170 and 183).
+- [tested] The flags exist only for native `blender.script` configs. A project or
+  operations build rejects both with `Incremental Blender flags require a native
+  blender.script build` (`src/build.ts` 170), so it cannot tolerate a missing listed
+  file: commit all of its output directory or none of it.
+- [documented] and [tested] A plain build of a native config replaces the directory
+  and writes no cache or history files (they join `files` only in the
+  `prepared.cache` branch, `src/build.ts` 234 and 263), so the next `--if-changed`
+  build runs Blender once, with reason `cache-record-missing`.
+- [documented] and [tested] Previews are part of that list. An operations or project build writes `front.png`,
+  `side.png`, `perspective.png`, `<clip>-contact.png` (one per clip) and `preview.html`; a native `blender.script`
+  build writes `preview.html` only and no PNGs (0.32.0: `src/cli.ts` 418-426, `src/capture.ts` 49 and 56-67). In real
+  builds an operations config wrote all of them, `--no-preview-page` removed `preview.html` and `--no-preview` removed
+  all four, and a native config wrote `preview.html` only and `--no-preview` removed it.
+- [documented] and [tested] A preview restored beside the marker is an unlisted file. `checkOwnership` runs when the
+  build starts and again before the swap (`src/build.ts` 194 and 312), and `checkTree` throws on the first
+  unlisted file or folder it meets, naming it (91-106). In a real run the build exited 1 with
+  `BUILD_OUTPUT_UNOWNED_FILE` for a restored `front.png` and replaced nothing; deleting that file and rebuilding
+  with previews wrote the previews again.
+- [general] Pick one policy. A: ignore the whole output directory; a clean clone has
+  no marker, so the build creates it. B: commit the output (GLB, reports, previews),
+  ignore the cache and history files, build native assets only with `--if-changed`
+  (`--force` to refresh) and never with a plain build, because the committed marker
+  still lists the ignored files. The first build after a clone runs Blender once.
+
+```gitignore
+# Policy A: the "output" directory named in the build config
+generated/
+# Policy B: only the cache and history files
+.agent-meshes-blender-*
+```
+
+- [documented] and [tested] Declared inputs, the build config and the entry script
+  are hashed as raw bytes (`src/build-provenance.ts` 54, `src/build-config.ts` 44), so
+  a CRLF copy of identical text is a different input: a `--if-changed` build misses
+  with reason `cache-key-changed` and changed component `inputs`, a `sha256` pin on a
+  declared input fails with `SHA-256 pin mismatch for build input: <path>`
+  (`src/build-provenance.ts` 158), and `loadBuildConfig` returns a different
+  `leafSha256` for an LF and a CRLF copy of one config with an equal parsed value.
+- [general] Pin line endings in `.gitattributes` for the config and each declared
+  input and tree file type (one `text eol=lf` line per type), and mark binary files:
+
+```gitattributes
+build.json text eol=lf
+*.py text eol=lf
+*.glb binary
+*.png binary
+*.bin binary
+```
+
+- [tested] In a throwaway repository with `core.autocrlf=true`, a fresh checkout
+  gives `git ls-files --eol` = `i/lf w/crlf` for `build.json` and `make.py`; with
+  `text eol=lf` it gives `w/lf`. A built GLB shows `-text` even without attributes,
+  and `git check-attr binary` reports `set` once `*.glb binary` is present, so that
+  line makes the detection explicit instead of changing it.

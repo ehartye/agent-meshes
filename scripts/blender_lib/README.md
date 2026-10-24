@@ -1812,7 +1812,9 @@ scale because body timing changes leg reach; this is recorded in clip metadata.
 `body_timing(report, phase_shift=0)` exposes the pure periodic sampler and a
 source receipt. Sagittal curves retain their left/right symmetric component;
 pelvis roll retains the antisymmetric component. A five-harmonic fit closes the
-seam. Height has unit peak-to-peak range and angle curves have range two; the
+seam, and `periodic_curve` keeps the Nyquist harmonic of an even sample count at
+its true weight and rejects input too large to transform with `ValueError`.
+Height has unit peak-to-peak range and angle curves have range two; the
 recipe supplies physical amplitudes. One phase shift applies to all four curves.
 This is a body timing fit, not a fit of lower-limb curves or a full P5 pass.
 Run `python -B tests/digitigrade_body_timing.py` and
