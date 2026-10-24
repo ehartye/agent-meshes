@@ -1,7 +1,7 @@
 ---
 name: mesh-believable
-description: Build believable 3D forms and diagnose character anatomy, proportions, topology and deformation. Use for character modeling craft, blob-like bodies, weak facial depth, tubular fingers, collapsing joints, or blocky, lumpy and disconnected objects.
-when_to_use: Use when a model looks blocky, boxy, lumpy, robotic or like floating pieces, when feet hover or sink, when asked to make a model look real, organic, smooth, or "like an actual bird/horse/animal", or before presenting any model to a person.
+description: Build believable 3D forms while modeling, and fix character anatomy, proportions and topology as you build. Use for character modeling craft, blob-like bodies, weak facial depth, tubular fingers, collapsing joints, or blocky, lumpy and disconnected objects. Judging a finished model against a reference or brief is mesh-quality-review.
+when_to_use: Use when a model looks blocky, boxy, lumpy, robotic or like floating pieces, when feet hover or sink, when asked to make a model look real, organic, smooth, or "like an actual bird/horse/animal". Use it while building; a review of finished renders before delivery is mesh-quality-review.
 ---
 
 # Believable shapes

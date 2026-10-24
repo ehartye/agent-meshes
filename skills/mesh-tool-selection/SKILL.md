@@ -1,6 +1,6 @@
 ---
 name: mesh-tool-selection
-description: "Choose mesh authoring and engine integration tools before a new asset or pipeline: agent-meshes, Blender scripts or bpy, Unreal, R3F, Godot or Unity mesh APIs, or code CAD. Use when asked which tool to use, how to engage an existing asset pipeline, or why an importer drops geometry, ignores colliders or rejects Nanite. Skip routine rendering, rig edits and runtime setup when the route is already settled."
+description: "Choose mesh authoring and engine integration tools before a new asset or pipeline: agent-meshes, Blender scripts or bpy, Unreal, R3F, Godot or Unity mesh APIs, code CAD, or whether a 2D engine such as Phaser needs a mesh at all. Use when asked which tool to use, how to engage an existing asset pipeline, whether a pixel game should model its characters, or which route to take when an importer drops geometry, ignores colliders or rejects Nanite (checking a built GLB against the import contract is mesh-build). Skip routine rendering, rig edits and runtime setup when the route is already settled."
 ---
 
 # Choosing a mesh authoring tool
@@ -42,6 +42,7 @@ These checks complement the real-project acceptance below; they do not establish
 | Unreal C++ procedural meshes | Geometry that depends on game state at run time | `unreal-procedural` skill, agent-unreal |
 | R3F/three.js, Godot or Unity mesh APIs | The project needs native generation or live vertex/topology updates | engine-specific responsibilities in the references above; outside this plugin's authoring runtime |
 | Code-driven CAD (build123d, CadQuery, OpenSCAD) | Exact dimensions, robust Booleans, mechanical parts, analytic measurements | export a GLB, then `mesh verify` here (importing a CAD GLB for rigging is not built yet) |
+| 2D engine (Phaser, Canvas, Pixi) | The target draws sprites, tiles or UI on a 2D canvas | A GLB is not a runtime asset in Phaser, so author no GLB for it. Use the agent-sprites `character` and `creature` recipes (`sprite-character`, `sprite-editing`, `game-integration`) for casts and `sprite-verification` for the atlas. Pre-rendering a rigged model to frames suits many facings of a rigid object or a cast too large to draw; no shipped command exports sprite frames (capture paths such as `mesh preview --clip` and `scripts/review-model.mjs` are review tools), so it is a custom script. Evidence: [2D engines](references/two-d-engines.md) |
 
 ## Decision questions (check every applicable constraint)
 
@@ -58,6 +59,7 @@ These checks complement the real-project acceptance below; they do not establish
    `UStaticMesh` for ISM/HISM and authored LODs. Instances may be placed during play. A `UDynamicMeshComponent`
    does not gain those features merely by being procedural. Check the installed engine's Nanite asset types,
    materials and renderer: UE 5.8 documents skeletal support too, but forward rendering and MSAA are unsupported.
+   A 2D engine does not draw 3D models; see the 2D row.
 5. **Can an agent verify the result without a person?** Prefer the route with an exit code, a validator, budgets,
    an engine import check and a render of the exported file. Separate format validity, import facts, visual
    acceptance, collision/playback in a packaged build, and measured performance. Report missing proof precisely.
@@ -93,7 +95,8 @@ Python limits are in agent-unreal.
 - Code-CAD output reaches an engine only through tessellation. Set tolerances on purpose, check watertightness
   and size, and run an execute-measure-retry loop rather than trusting a first script.
 - Validation proves format, not behaviour. Run `mesh verify`, a glTF validator and, for Unreal, `mesh verify-unreal`;
-  then look at it in the engine and report which of those you did.
+  then look at it in the engine and report which of those you did. A GLB validator or a render of an exported GLB
+  proves nothing about a sprite atlas; verify atlases with `sprite-verification` (agent-sprites).
 
 ## Never
 

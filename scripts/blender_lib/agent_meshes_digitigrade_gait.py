@@ -86,14 +86,26 @@ def fit_swing_lift(hips, hocks, lifts, upper, lower, minimum_angle=60, attenuati
 
 
 def periodic_curve(values,harmonics=5):
-    """Smooth uniformly sampled closed reference curves without a derivative seam."""
+    """Smooth uniformly sampled closed reference curves without a derivative seam.
+
+    The last sample repeats the first and is not transformed. Every kept harmonic
+    has its true weight: each appears twice in the inverse transform except the
+    Nyquist harmonic of an even sample count, which is real and appears once, so
+    an alternating curve samples back as itself whenever that harmonic is kept.
+    Input too large to transform, where the peak times one plus twice the kept
+    harmonic count passes the largest float, raises ValueError, never NaN.
+    """
     values=np.asarray(values,float)
     if values.ndim!=1 or len(values)<4 or not np.isfinite(values).all():
         raise ValueError('Reference curve needs at least four finite scalar samples')
-    coefficients=np.fft.rfft(values[:-1])/len(values[:-1])
-    count=min(harmonics,len(coefficients)-1)
+    data=values[:-1];n=len(data);peak=float(np.max(np.abs(data)))
+    if peak==0:return lambda phase:0.
+    count=max(0,min(harmonics,n//2))
+    if not math.isfinite(peak*(1+2*count)):raise ValueError('Reference curve is too large to fit')
+    # An exact power-of-two scale keeps the transform finite without changing its rounding.
+    shift=int(np.frexp(peak)[1]);coefficients=np.fft.rfft(np.ldexp(data,-shift))/n
     def sample(phase):
-        return float(coefficients[0].real+2*sum((coefficients[k]*np.exp(2j*np.pi*k*phase)).real for k in range(1,count+1)))
+        return math.ldexp(float(coefficients[0].real+sum((1 if 2*k==n else 2)*(coefficients[k]*np.exp(2j*np.pi*k*phase)).real for k in range(1,count+1))),shift)
     return sample
 
 

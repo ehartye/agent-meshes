@@ -4,16 +4,19 @@ Entry: [mesh-build](../SKILL.md).
 
 ## Fast Blender previews while iterating
 
-`mesh preview <build.json|source.py>` runs a Blender-authored source's `build()` headlessly and
-renders Workbench PNGs from fixed cameras in the same run. It exports no GLB and starts no browser,
-so use it for every look while you shape a model, and keep the full build for final checks.
+`mesh preview <build.json|source.py|model.glb|model.gltf>` renders Workbench PNGs from fixed cameras in one
+headless Blender run. A Blender-authored source (a `build.json` with `blender.script`, or a `.py` file) has its
+`build()` run first; a built `.glb` or `.gltf` is imported as it is (see [Preview a built GLB without
+rebuilding](#preview-a-built-glb-without-rebuilding)). It writes no GLB of its own and starts no browser, so use it
+for every look while you shape a model, and keep the full build for final checks.
 
 ```bash
 mesh preview asset-src/head/build.json --views head --shading matcap,wire,cavity   --pose rest --pose blink:eyeBlinkLeft=1,eyeBlinkRight=1 --pose jaw:jawOpen=1 --sheet
 ```
 
 - **Views.** `front`, `q34`, `side`, `below`, `above`, `close` (eyes to mouth), `eyes`, `mouth`, `mouth-q34`
-  and `back` frame the head, which is the mesh with face shape keys, or `--target <pattern>`. `body-front`, `body-q34`,
+  and `back` frame the head, which is the mesh with face shape keys, the mesh `--target <pattern>` matches, or else the top
+  seventh of the body. `body-front`, `body-q34`,
   `body-side` and `body-back` frame everything. `head` and `body` are aliases for those sets.
 - **Shadings.**
   - `matcap` shows lumps and ripples.
@@ -28,7 +31,8 @@ mesh preview asset-src/head/build.json --views head --shading matcap,wire,cavity
 - **Other options.** `--hide 'hair*'` leaves meshes out. `--size` sets the square size in pixels.
   `--sheet` adds `sheet.png`, with one row per pose.
 - **Output.** Files are named `<pose>-<view>-<shading>.png`, plus a `preview.json` manifest, in
-  `--out` (default `preview/` beside the source).
+  `--out` (default `preview/` beside the source; pass `--out` yourself when the source sits in a build's `output`
+  directory).
 
 For paint inspection, use `--shading color,vertex --sheet`. Workbench vertex mode uses
 `mesh.color_attributes.active_color_index`; `ACTIVE` GLB export uses `render_color_index`.
@@ -42,6 +46,39 @@ Store launcher, and edited helper modules are re-read for each job. `--no-worker
 Blender run, and `mesh preview --stop-worker` stops the worker after its current job. Without a
 worker, every preview runs a one-shot Blender. The build time of the source itself is not saved: a
 character's face construction still takes its minute.
+
+## Preview a built GLB without rebuilding
+
+`mesh preview` also takes a built `.glb` or `.gltf`. Use it for views and a contact sheet of a model that already
+exists (from a build, an import or a download) when you do not want to rebuild it. `mesh view` is not that
+command: it renders the workspace project and takes no GLB path.
+
+```text
+mesh preview model.glb --views body --sheet --out review/
+mesh preview model.glb --views body-side --clip Walk --phases 8 --sheet --out review-walk/
+```
+
+Labels: [tested] ran on `scripts/reference-assets/rigs/fox.glb` in the 0.32.0 cycle; [documented] read in the named
+file of the 0.32.0 source; [general] neither.
+
+- [documented] `.glb` and `.gltf` are accepted beside a Blender `build.json` and a `.py` source
+  (`src/preview.ts`: `resolvePreviewSource` 96-105), and Blender imports the file with its glTF importer
+  (`scripts/blender-preview.py`: `build_objects` 58-62). The run needs Blender and no Chromium.
+- [tested] `mesh preview` of that GLB with `--sheet --out <dir>` exited 0 and wrote one PNG per view, `sheet.png` and
+  `preview.json` into the directory.
+- [tested] The default views `front,q34,side` framed the head and upper body of a whole animal and cut off its legs
+  and tail; `--views body` (`body-front`, `body-q34`, `body-side`, `body-back`) framed all of it. [documented] The
+  head is the mesh with an `eyeBlinkLeft` shape key, the mesh `--target` matches, or else the top seventh of the
+  body (`scripts/blender-preview.py`: `framing` 89-113).
+- [tested] `--clip Walk --phases 4 --views body-side --sheet` wrote `Walk-p0` to `Walk-p3` PNGs and a `sheet.png` with
+  one posed row per phase. `--clip` with a name the file does not have exits 1 and lists the clips it has.
+- [tested] Always pass `--out`. The default is `preview/` beside the input, so previewing `dist/model.glb` wrote
+  `dist/preview/`, and the next `mesh build` failed with `BUILD_OUTPUT_UNOWNED_FILE` (`Unexpected directory
+  "preview"`). Deleting the folder let the build pass again, and with `--out` outside `dist` the next build passed.
+- [documented] `view` renders `currentProject()`, the workspace project (`src/cli.ts`: `currentProject` 70-73, `view`
+  406-413). [tested] `mesh view` run where no workspace or server exists failed with `fetch failed`.
+- [general] This is Blender's Workbench shading of an imported glTF, not the three.js viewer's look. For the viewer's
+  look, or a set compared from one camera, use the build previews or `recipes/set-sheet.mjs`.
 
 ## Optional Blender refine
 
