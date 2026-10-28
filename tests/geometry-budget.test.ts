@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { auditGeometryBudget } from '../src/geometry-budget.ts';
 import { verifyGLB } from '../src/export.ts';
 
-import { budgetFixture } from './fixtures/budget-glb.ts';
+import { budgetFixture, skinnedColourFixture } from './fixtures/budget-glb.ts';
 
 describe('exported geometry budget', () => {
   it('separates used render records, distinct positions, triangles and unknown authoring vertices', () => {
@@ -65,5 +65,18 @@ describe('exported geometry budget', () => {
 
   it('keeps target reporting opt-in for existing generic GLB verification', async () => {
     expect(await verifyGLB(budgetFixture())).not.toHaveProperty('geometryBudget');
+  });
+
+  it('warns VERTEX_COLOUR_ONLY for a skinned model whose colour lives only in vertex colours', () => {
+    const warnings = auditGeometryBudget(skinnedColourFixture('vertex'), { target: 'uefn' }).warnings;
+    expect(warnings).toEqual([expect.objectContaining({ code: 'VERTEX_COLOUR_ONLY', mesh: 0, message: expect.stringMatching(/per-material colours or a baked/) })]);
+  });
+
+  it('does not warn VERTEX_COLOUR_ONLY when colour comes from per-material colours', () => {
+    expect(auditGeometryBudget(skinnedColourFixture('material'), { target: 'uefn' }).warnings).toEqual([]);
+  });
+
+  it('does not warn VERTEX_COLOUR_ONLY when the material has a base-colour texture', () => {
+    expect(auditGeometryBudget(skinnedColourFixture('texture'), { target: 'uefn' }).warnings).toEqual([]);
   });
 });

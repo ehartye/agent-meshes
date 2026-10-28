@@ -23,6 +23,7 @@ it('build CLI previews authored GLBs through the asset decorator', async () => {
   await main(['node', 'agent-meshes', 'build', 'build.json']);
   const options = buildAsset.mock.calls[0][1];
   expect(typeof options.decorateAsset).toBe('function');
+  expect(typeof options.renderAsset).toBe('function');
   expect(await options.decorateAsset({ name: 'Bird' }, stage)).toEqual(['preview.html']);
   expect(previewHTML).toHaveBeenCalledWith('Bird', bytes);
   expect(await readFile(join(stage, 'preview.html'), 'utf8')).toContain('actual GLB preview');
@@ -30,9 +31,10 @@ it('build CLI previews authored GLBs through the asset decorator', async () => {
 
 it('build CLI omits authored preview for both suppression flags and all decorators for no-preview', async () => {
   await main(['node', 'agent-meshes', 'build', 'build.json', '--no-preview']);
-  expect(buildAsset.mock.calls[0][1]).toMatchObject({ decorate: undefined, decorateAsset: undefined });
+  expect(buildAsset.mock.calls[0][1]).toMatchObject({ decorate: undefined, renderAsset: undefined, decorateAsset: undefined });
   await main(['node', 'agent-meshes', 'build', 'build.json', '--no-preview-page']);
   expect(buildAsset.mock.calls[1][1].decorateAsset).toBeUndefined();
+  expect(typeof buildAsset.mock.calls[1][1].renderAsset).toBe('function');
   expect(typeof buildAsset.mock.calls[1][1].decorate).toBe('function');
   expect(previewHTML).not.toHaveBeenCalled();
 });

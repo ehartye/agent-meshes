@@ -160,9 +160,11 @@ export interface BuildOptions {
   ifChanged?: boolean;
   force?: boolean;
   decorate?: (project: Project, stage: string) => Promise<string[]>;
+  /** Renders of a Blender-authored GLB (stills and contact sheets), written into the stage before `decorateAsset`. */
+  renderAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[] | { files: string[]; warnings?: { code: string; message: string }[] }>;
   decorateAsset?: (asset: AuthoredAsset, stage: string) => Promise<string[]>;
 }
-export async function buildAsset(configPath: string, options: BuildOptions = {}, session?: NativeBuildSession): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding | { code: 'BLENDER_READ_AUDIT'; message: string })[]; readAudit?: ReadAudit; incremental?: { blender: 'built' | 'reused'; reason: string; changedComponents?: string[] } }> {
+export async function buildAsset(configPath: string, options: BuildOptions = {}, session?: NativeBuildSession): Promise<{ output: string; files: string[]; warnings?: (ProjectWarning | DetachedFinding | { code: string; message: string })[]; readAudit?: ReadAudit; incremental?: { blender: 'built' | 'reused'; reason: string; changedComponents?: string[] } }> {
   const configFile = await realpath(resolve(configPath));
   const loadedConfig = await loadBuildConfig(resolve(configPath));
   const config = configSchema.parse(loadedConfig.value);
@@ -197,7 +199,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
     let finishAuthoring: (() => Promise<void>) | undefined;
     let incrementalResult: { blender: 'built' | 'reused'; reason: string; changedComponents?: string[] } | undefined;
     let readAudit: ReadAudit | undefined;
-    const warnings: (ProjectWarning | DetachedFinding | { code: 'BLENDER_READ_AUDIT'; message: string })[] = [];
+    const warnings: (ProjectWarning | DetachedFinding | { code: string; message: string })[] = [];
     /** The detached-part lint on the final GLB: always recorded; a failing verify.maxGap budget has already stopped the build. */
     const lintDetached = (bytes: Uint8Array, limits: { detached?: DetachedReport } | null): DetachedReport => {
       const report = limits?.detached ?? checkDetached(bytes, { allow: config.verify?.allowDetached });
@@ -263,7 +265,14 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
           if (cacheable) files.push(...await prepared.cache.write(stage!, bytes, { ...result, readAudit: readAudit! }));
         } else if (session) await session.assertUnchanged();
       };
-      if (options.decorateAsset) files.push(...await options.decorateAsset({ name: config.name ?? basename(input).replace(/\.[^.]+$/, '') }, stage));
+      const asset = { name: config.name ?? basename(input).replace(/\.[^.]+$/, '') };
+      if (options.renderAsset) {
+        // Renders are part of the owned output and run on the built GLB, so a cache hit renders the same bytes again.
+        const rendered = await options.renderAsset(asset, stage);
+        if (Array.isArray(rendered)) files.push(...rendered);
+        else { files.push(...rendered.files); if (rendered.warnings) warnings.push(...rendered.warnings); }
+      }
+      if (options.decorateAsset) files.push(...await options.decorateAsset(asset, stage));
     } else {
       const source: unknown = JSON.parse(await readFile(input, 'utf8'));
       let project: Project;

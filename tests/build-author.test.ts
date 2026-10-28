@@ -49,18 +49,28 @@ it('accepts declared trees through build JSON and protects the prior output from
   expect(await readFile(join(output, 'model.glb'))).toEqual(before);
 });
 
-it('builds verified authored assets without inventing an editable primitive project', async () => {
+it('builds verified authored assets, renders them from the built GLB and owns every render', async () => {
   const { config, output, directory, source } = await fixture();
+  // A Blender build has no editable project, so the project decorator is never offered one; its renders come from renderAsset.
   const decorate = vi.fn();
+  const renderAsset = vi.fn(async (asset: { name: string }, stage: string) => {
+    expect(asset.name).toBe('Bird'); expect((await readFile(join(stage, 'model.glb'))).length).toBeGreaterThan(0);
+    const names = ['front.png', 'side.png', 'perspective.png', 'Walk-contact.png'];
+    for (const name of names) await writeFile(join(stage, name), name);
+    return { files: names, warnings: [{ code: 'CLIP_CONTACT_SKIPPED', message: 'odd clip' }] };
+  });
   const decorateAsset = vi.fn(async (asset: { name: string }, stage: string) => {
     expect(asset.name).toBe('Bird'); expect((await readFile(join(stage, 'model.glb'))).length).toBeGreaterThan(0);
     expect(JSON.parse(await readFile(join(stage, 'authoring.json'), 'utf8')).source.script).toBe('bird.py');
+    expect(await readFile(join(stage, 'front.png'), 'utf8')).toBe('front.png');
     await writeFile(join(stage, 'preview.html'), '<html>authored</html>'); return ['preview.html'];
   });
-  const result = await buildAsset(config, { decorate, decorateAsset });
-  expect(result.files).toEqual(['model.glb', 'verification.json', 'authoring.json', 'preview.html']);
+  const result = await buildAsset(config, { decorate, renderAsset, decorateAsset });
+  expect(result.files).toEqual(['model.glb', 'verification.json', 'authoring.json', 'front.png', 'side.png', 'perspective.png', 'Walk-contact.png', 'preview.html']);
+  expect(result.warnings).toContainEqual({ code: 'CLIP_CONTACT_SKIPPED', message: 'odd clip' });
+  expect((await readdir(output)).sort()).toEqual([...result.files, '.agent-meshes-build.json'].sort());
   expect(authorGLB.mock.calls[0][0]).toBe(await realpath(join(directory, 'bird.py'))); expect(decorate).not.toHaveBeenCalled();
-  expect(decorateAsset).toHaveBeenCalledOnce();
+  expect(renderAsset).toHaveBeenCalledOnce(); expect(decorateAsset).toHaveBeenCalledOnce();
   expect(JSON.parse(await readFile(join(output, 'verification.json'), 'utf8')).ok).toBe(true);
   expect(JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'))).toMatchObject({ version: 1, blender: '5.0.1', source: { script: 'bird.py', sha256: createHash('sha256').update(source).digest('hex') } });
   const receipt = JSON.parse(await readFile(join(output, 'authoring.json'), 'utf8'));
@@ -69,7 +79,13 @@ it('builds verified authored assets without inventing an editable primitive proj
   expect(receipt.provenance.output).toEqual({ path: 'model.glb', sha256: createHash('sha256').update(await readFile(join(output, 'model.glb'))).digest('hex') });
   expect(await readdir(output)).not.toContain('project.mesh.json');
   await buildAsset(config);
-  expect(await readdir(output)).not.toContain('preview.html');
+  expect((await readdir(output)).filter(name => /\.png$|preview\.html$/.test(name))).toEqual([]);
+});
+
+it('refuses a render the build did not list, so a stray PNG cannot be published as owned output', async () => {
+  const { config, output } = await fixture();
+  await expect(buildAsset(config, { renderAsset: async (_asset, stage) => { await writeFile(join(stage, 'front.png'), 'x'); return []; } })).rejects.toThrow(/BUILD_OUTPUT_UNOWNED_FILE|unowned/i);
+  expect(await readdir(join(output, '..')).then(names => names.includes('generated'))).toBe(false);
 });
 
 it('rejects missing or stale declared imports and wrong toolchain before invoking the author', async () => {

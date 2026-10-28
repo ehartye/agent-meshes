@@ -84,3 +84,10 @@ rig check with the node names and the fix, on 5.7 from the missing vertices and 
 StaticMeshes Unreal made; without a rig check, 5.8 only warns. Bind the eyeballs to the skin, 100% to
 `eye_L`/`eye_R`. Eye bones must be children of `head` (a flat armature fails the hierarchy check),
 and a GLB with two skins that Unreal happened to merge only warns.
+
+## UEFN skeletal import and vertex colours
+
+- [tested] On 2026-10-28 a skinned model whose colour lived only in vertex colours arrived in UEFN
+  without them, while the same model coloured per material kept its colours. `verify --target uefn`
+  warns `VERTEX_COLOUR_ONLY` for that shape (a skinned primitive with `COLOR_0`, no base-colour
+  texture and a white base-colour factor); use per-material colours or a baked texture instead.

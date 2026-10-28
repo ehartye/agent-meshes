@@ -39,3 +39,35 @@ export function budgetFixture(options: { primitives?: number[][]; mode?: number;
   for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.length; }
   return bytes;
 }
+
+/**
+ * The budget fixture rewritten as a skinned mesh with a COLOR_0 attribute. `colour` picks where the
+ * colour lives: only in vertex colours, in a per-material base-colour factor, or in a base-colour texture.
+ */
+export function skinnedColourFixture(colour: 'vertex' | 'material' | 'texture'): Uint8Array {
+  const source = budgetFixture();
+  const view = new DataView(source.buffer, source.byteOffset, source.byteLength);
+  const jsonLength = view.getUint32(12, true);
+  const json = JSON.parse(new TextDecoder().decode(source.subarray(20, 20 + jsonLength)));
+  const bin = source.subarray(28 + jsonLength);
+  const primitive = json.meshes[0].primitives[0];
+  primitive.attributes.COLOR_0 = primitive.attributes.NORMAL; // presence is what the check reads
+  primitive.material = 0;
+  json.nodes = [{ name: 'joint' }, { name: 'skinned', mesh: 0, skin: 0 }];
+  json.scenes = [{ nodes: [0, 1] }];
+  json.skins = [{ joints: [0] }];
+  json.materials = [{ name: 'colour', pbrMetallicRoughness:
+    colour === 'material' ? { baseColorFactor: [0.8, 0.2, 0.1, 1] }
+      : colour === 'texture' ? { baseColorTexture: { index: 0 } } : {} }];
+  if (colour === 'texture') { json.textures = [{ source: 0 }]; json.images = [{ uri: 'colour.png' }]; }
+  const jsonBytes = new TextEncoder().encode(JSON.stringify(json));
+  const padded = (jsonBytes.length + 3) & ~3;
+  const bytes = new Uint8Array(28 + padded + bin.length);
+  const out = new DataView(bytes.buffer);
+  out.setUint32(0, 0x46546c67, true); out.setUint32(4, 2, true); out.setUint32(8, bytes.length, true);
+  out.setUint32(12, padded, true); out.setUint32(16, 0x4e4f534a, true);
+  bytes.fill(32, 20, 20 + padded); bytes.set(jsonBytes, 20);
+  out.setUint32(20 + padded, bin.length, true); out.setUint32(24 + padded, 0x004e4942, true);
+  bytes.set(bin, 28 + padded);
+  return bytes;
+}
