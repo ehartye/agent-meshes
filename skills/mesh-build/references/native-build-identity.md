@@ -461,10 +461,15 @@ source of 0.31.0 (line numbers are from that release); [general] neither.
   `prepared.cache` branch, `src/build.ts` 234 and 263), so the next `--if-changed`
   build runs Blender once, with reason `cache-record-missing`.
 - [documented] and [tested] Previews are part of that list. An operations or project build writes `front.png`,
-  `side.png`, `perspective.png`, `<clip>-contact.png` (one per clip) and `preview.html`; a native `blender.script`
-  build writes `preview.html` only and no PNGs (0.32.0: `src/cli.ts` 418-426, `src/capture.ts` 49 and 56-67). In real
-  builds an operations config wrote all of them, `--no-preview-page` removed `preview.html` and `--no-preview` removed
-  all four, and a native config wrote `preview.html` only and `--no-preview` removed it.
+  `side.png`, `perspective.png`, `<clip>-contact.png` (one per clip) and `preview.html`. A native `blender.script`
+  build writes the same PNGs (0.33.0: `renderBuiltAsset` in `src/preview.ts`, wired by `src/cli.ts`
+  `buildOptionsFor` and called by `src/build.ts` before `decorateAsset`) plus `preview.html`: Blender renders the
+  built GLB through the `mesh preview` path, one run for the three views and one per clip, so the renders add build
+  time and output files, and they need no Chromium. They are listed in the marker, so they are owned. A cache hit
+  reuses the GLB but renders again (the cache stores no PNGs), and `--no-preview` removes the renders and the page,
+  `--no-preview-page` only the page. In a real run a native config with two clips wrote five PNGs and
+  `preview.html`, a second `--if-changed` build reported `matching-native-cache` and left no unowned file, and
+  calling the library `buildAsset` without the render callback wrote no PNGs.
 - [documented] and [tested] A preview restored beside the marker is an unlisted file. `checkOwnership` runs when the
   build starts and again before the swap (`src/build.ts` 194 and 312), and `checkTree` throws on the first
   unlisted file or folder it meets, naming it (91-106). In a real run the build exited 1 with

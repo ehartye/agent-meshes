@@ -5,7 +5,7 @@ One job:  blender -b --python scripts/blender-preview.py -- job.json
 Worker:   blender -b --python scripts/blender-preview.py -- --worker <queue directory>
 
 A job is JSON: {"source", "outDir", "views", "shadings", "poses": [{"name", "shapes": {key: weight}}], "size",
-"sheet", "rest", "hide", "target"}. The one-shot run writes `<job>.done` ({ok, error?}); the worker takes each
+"sheet", "rest", "hide", "target", and optionally "columns" for the sheet}. The one-shot run writes `<job>.done` ({ok, error?}); the worker takes each
 `<id>.job.json` dropped in its queue, writes `<id>.done.json`, and keeps a heartbeat in `worker.json` until a `stop`
 file appears. Every job writes its PNGs and a `preview.json` manifest into outDir.
 Blender coordinates: Z up, the face looks down -Y, the character's left is +X.
@@ -279,7 +279,7 @@ def run_job(job):
     sheet = None
     if job.get('sheet') and files:
         sheet = 'sheet.png'
-        contact_sheet([str(out / f) for f in files], len(views) * len(shadings), size, str(out / sheet))
+        contact_sheet([str(out / f) for f in files], int(job.get('columns') or len(views) * len(shadings)), size, str(out / sheet))
     manifest = {'version': 1, 'source': str(source), 'blender': bpy.app.version_string, 'views': views, 'shadings': shadings,
                 'poses': poses, 'size': size, 'files': files, 'sheet': sheet, 'seconds': round(time.time() - started, 2)}
     report(out / 'preview.json', manifest)

@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findBlender } from './refine.ts';
+import { readGLB } from './gltf-read.ts';
 
 /**
  * `agent-meshes preview`: Workbench renders of a Blender-authored source from fixed cameras, inside one Blender run
@@ -23,10 +24,10 @@ const HEARTBEAT_SECONDS = 10;
 
 export interface PreviewPose { name: string; shapes: Record<string, number>; phase?: number }
 export interface PreviewSettings {
-  views: string[]; shadings: string[]; poses: PreviewPose[]; size: number; sheet: boolean; rest: boolean; hide: string[]; target: string | null; clip: string | null;
+  views: string[]; shadings: string[]; poses: PreviewPose[]; size: number; sheet: boolean; rest: boolean; hide: string[]; target: string | null; clip: string | null; columns?: number;
 }
 export interface PreviewRawOptions {
-  views?: string; shading?: string; shape?: string; pose?: string[]; size?: string | number; sheet?: boolean; rest?: boolean; hide?: string; target?: string; clip?: string; phases?: string | number;
+  views?: string; shading?: string; shape?: string; pose?: string[]; size?: string | number; sheet?: boolean; rest?: boolean; hide?: string; target?: string; clip?: string; phases?: string | number; columns?: number;
 }
 export interface PreviewManifest { files: string[]; sheet?: string | null; seconds?: number; blender?: string; worker: boolean; outDir: string; [key: string]: unknown }
 
@@ -68,7 +69,7 @@ export function parsePreviewOptions(raw: PreviewRawOptions): PreviewSettings {
     const size = raw.size === undefined ? 512 : Number(raw.size);
     if (!Number.isInteger(size) || size < 64 || size > 4096) fail(`Preview size must be an integer from 64 to 4096 pixels, got ${raw.size}`);
     const clipPoses = Array.from({ length: phases }, (_, k) => ({ name: `${raw.clip}-p${k}`, shapes: { ...common }, phase: k / phases }));
-    return { views, shadings, poses: clipPoses, size, sheet: Boolean(raw.sheet), rest: false, hide: raw.hide ? list(raw.hide) : [], target: raw.target ?? null, clip: raw.clip };
+    return { views, shadings, poses: clipPoses, size, sheet: Boolean(raw.sheet), rest: false, hide: raw.hide ? list(raw.hide) : [], target: raw.target ?? null, clip: raw.clip, ...(raw.columns ? { columns: raw.columns } : {}) };
   }
   const poses = (raw.pose?.length ? raw.pose : ['rest']).map(spec => {
     const colon = spec.indexOf(':');
@@ -89,7 +90,7 @@ export function previewFiles(settings: PreviewSettings): string[] {
 }
 
 export function previewJob(source: string, outDir: string, settings: PreviewSettings) {
-  return { source, outDir, views: settings.views, shadings: settings.shadings, poses: settings.poses, size: settings.size, sheet: settings.sheet, rest: settings.rest, hide: settings.hide, target: settings.target, clip: settings.clip };
+  return { source, outDir, views: settings.views, shadings: settings.shadings, poses: settings.poses, size: settings.size, sheet: settings.sheet, rest: settings.rest, hide: settings.hide, target: settings.target, clip: settings.clip, ...(settings.columns ? { columns: settings.columns } : {}) };
 }
 
 /** A Blender build.json's script, or a .py source itself. */
@@ -205,4 +206,40 @@ export async function stopPreviewWorker(queue = DEFAULT_PREVIEW_QUEUE): Promise<
   if (!await workerAlive(queue)) return { queue, stopping: false };
   await writeFile(join(queue, 'stop'), '');
   return { queue, stopping: true };
+}
+
+/** The stills a build writes beside the GLB, as preview views of the whole model. `perspective` is the three-quarter view. */
+const BUILD_STILLS: readonly (readonly [view: string, file: string])[] = [['body-front', 'front.png'], ['body-side', 'side.png'], ['body-q34', 'perspective.png']];
+const CLIP_PHASES = 8, CLIP_FRAME_SIZE = 320, CLIP_SHEET_COLUMNS = 4;
+
+/**
+ * The renders of a built Blender GLB: `front.png`, `side.png` and `perspective.png`, plus one `<clip>-contact.png`
+ * (an eight-phase sheet) per animation clip, all written into `stage`. They come from the same Blender path as
+ * `mesh preview`, one Blender run for the stills and one per clip, so they add build time. A clip whose name
+ * cannot be a file name is skipped and reported.
+ */
+export async function renderBuiltAsset(stage: string, options: RunPreviewOptions = {}): Promise<{ files: string[]; warnings: { code: 'CLIP_CONTACT_SKIPPED'; message: string }[] }> {
+  const glb = join(stage, 'model.glb');
+  const names = ((readGLB(new Uint8Array(await readFile(glb))).json as { animations?: { name?: string }[] }).animations ?? []).map((animation, index) => animation.name ?? `clip${index}`);
+  const clips = [...new Set(names)];
+  const files: string[] = [], warnings: { code: 'CLIP_CONTACT_SKIPPED'; message: string }[] = [];
+  const work = await mkdtemp(join(tmpdir(), 'agent-meshes-build-render-'));
+  try {
+    const stills = await runPreview(glb, parsePreviewOptions({ views: BUILD_STILLS.map(([view]) => view).join(',') }), { ...options, outDir: join(work, 'stills') });
+    for (const [view, file] of BUILD_STILLS) {
+      const rendered = stills.files.find(name => name === `rest-${view}-matcap.png`);
+      if (!rendered) throw new Error(`The build render did not write the ${view} view`);
+      await copyFile(join(work, 'stills', rendered), join(stage, file)); files.push(file);
+    }
+    for (const clip of clips) {
+      if (!/^[A-Za-z0-9_.-]+$/.test(clip)) { warnings.push({ code: 'CLIP_CONTACT_SKIPPED', message: `No contact sheet for clip ${JSON.stringify(clip)}: use letters, digits, _, . or - in clip names to get one.` }); continue; }
+      const directory = join(work, `clip-${files.length}`);
+      const settings = parsePreviewOptions({ views: 'body-q34', clip, phases: CLIP_PHASES, size: CLIP_FRAME_SIZE, sheet: true, columns: CLIP_SHEET_COLUMNS });
+      const result = await runPreview(glb, settings, { ...options, outDir: directory });
+      if (!result.sheet) throw new Error(`The build render did not write a contact sheet for clip ${clip}`);
+      const file = `${clip}-contact.png`;
+      await copyFile(join(directory, result.sheet), join(stage, file)); files.push(file);
+    }
+    return { files, warnings };
+  } finally { await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 }

@@ -151,6 +151,8 @@ it('renders a clip at evenly spaced phases, posed, one pose per phase', () => {
   expect(previewFiles(settings)).toEqual(['walk-p0-body-side-matcap.png', 'walk-p1-body-side-matcap.png', 'walk-p2-body-side-matcap.png', 'walk-p3-body-side-matcap.png']);
   expect(parsePreviewOptions({ clip: 'jog' }).poses).toHaveLength(8);
   expect(previewJob('a.py', 'out', settings)).toMatchObject({ clip: 'walk', rest: false });
+  expect(previewJob('a.py', 'out', settings)).not.toHaveProperty('columns');
+  expect(previewJob('a.py', 'out', parsePreviewOptions({ clip: 'walk', sheet: true, columns: 4 }))).toMatchObject({ sheet: true, columns: 4 });
   expect(() => parsePreviewOptions({ clip: 'walk', phases: '0' })).toThrow(/phases/);
   expect(() => parsePreviewOptions({ clip: 'walk', pose: ['smile:mouthSmileLeft=1'] })).toThrow(/clip/);
 });

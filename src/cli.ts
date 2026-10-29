@@ -423,7 +423,8 @@ export async function main(args = process.argv): Promise<void> {
       await writeFile(resolve(stage, 'preview.html'), await previewHTML(asset.name, await readFile(resolve(stage, 'model.glb'))));
       return ['preview.html'];
     } : undefined;
-    return { decorate, decorateAsset, ifChanged: options.ifChanged, force: options.force };
+    const renderAsset = preview ? async (_asset: { name: string }, stage: string) => (await import('./preview.ts')).renderBuiltAsset(stage) : undefined;
+    return { decorate, renderAsset, decorateAsset, ifChanged: options.ifChanged, force: options.force };
   };
   program.command('build <config>').description('Build an isolated, verified project or Blender-authored asset')
     .option('--if-changed', 'Reuse native Blender output when declared inputs and tracked tools match (declare every dependency)')

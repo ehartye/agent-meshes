@@ -12,7 +12,7 @@ export interface MeshGeometryCounts {
   triangles: number | null;
 }
 export interface GeometryBudgetWarning {
-  code: 'RENDER_VERTEX_BUDGET_EXCEEDED' | 'GEOMETRY_COUNT_UNKNOWN';
+  code: 'RENDER_VERTEX_BUDGET_EXCEEDED' | 'GEOMETRY_COUNT_UNKNOWN' | 'VERTEX_COLOUR_ONLY';
   mesh: number; message: string;
 }
 export interface GeometryBudgetReport {
@@ -47,6 +47,21 @@ function meshCounts(doc: GLTFDocument, mesh: GLTFMesh): Pick<MeshGeometryCounts,
 }
 
 /**
+ * True when a skinned primitive carries its colour only in COLOR_0: the material has no
+ * base-colour texture and a white (default) base-colour factor. Reads the GLB JSON only.
+ */
+function vertexColourOnly(doc: GLTFDocument, mesh: GLTFMesh, skinned: boolean): boolean {
+  if (!skinned) return false;
+  return mesh.primitives.some(primitive => {
+    if (primitive.attributes.COLOR_0 === undefined) return false;
+    const pbr = (primitive.material === undefined ? undefined : doc.json.materials?.[primitive.material])?.pbrMetallicRoughness;
+    if (pbr?.baseColorTexture !== undefined) return false;
+    const factor = pbr?.baseColorFactor ?? [1, 1, 1, 1];
+    return factor.slice(0, 3).every(value => value === 1);
+  });
+}
+
+/**
  * Optional exported-geometry preflight, independent of structural GLB validity.
  * Counts each mesh asset once; nodes sharing it are instances, not larger assets.
  * The default is a workflow warning budget, not a universal UEFN validation limit.
@@ -71,6 +86,10 @@ export function auditGeometryBudget(bytes: Uint8Array, options: GeometryBudgetOp
     if (counts.renderVertices !== null && counts.renderVertices > budget) {
       warnings.push({ code: 'RENDER_VERTEX_BUDGET_EXCEEDED', mesh: index,
         message: `${name}: ${counts.renderVertices} exported render vertices exceed the ${budget} UEFN warning budget; inspect native LODs and simplify or add LODs` });
+    }
+    if (vertexColourOnly(doc, mesh, (doc.json.nodes ?? []).some(node => node.mesh === index && node.skin !== undefined))) {
+      warnings.push({ code: 'VERTEX_COLOUR_ONLY', mesh: index,
+        message: `${name}: skinned model colour is carried only by vertex colours, which UEFN's skeletal import drops; use per-material colours or a baked base-colour texture` });
     }
     return { mesh: index, name, instances: (doc.json.nodes ?? []).filter(node => node.mesh === index).length,
       sourceVertices: null, ...counts };
