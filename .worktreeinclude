@@ -1,0 +1,4 @@
+# Carry the project-level plugin selection into working copies the platform creates.
+# Only files that match a pattern and are also excluded from sharing are copied.
+# The leading **/ is the documented form for a file inside a folder that is excluded as a whole.
+**/.claude/settings.local.json
