@@ -174,7 +174,10 @@ workspace, no `batch` and no undo history. Skip everything above `Operations` th
 
 1. Write the operations in code, one function per piece, and emit `ops.json` plus a `build.json` per output.
 2. `mesh build <dir>/build.json --no-preview` (about a second per piece) writes `dist/model.glb` and
-   `verification.json`. Add `--preview` only for a final look.
+   `verification.json`. Add `--preview` only for a final look. A build replaces its whole output folder, so
+   `--no-preview` deletes the PNGs and `preview.html` an earlier build left there; if it did, the result carries the
+   warning `BUILD_PREVIEWS_REMOVED` naming them (no warning does not prove none were removed). Details in
+   [mesh-build](../mesh-build/SKILL.md).
 3. Check the whole set at once with `recipes/set-stats.mjs` and `recipes/set-sheet.mjs` (see
    [mesh-build](../mesh-build/SKILL.md)); never judge a set from per-model auto-framed renders.
 

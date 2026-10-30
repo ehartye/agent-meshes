@@ -192,3 +192,71 @@ it('rejects invalid artifact paths and unlisted decoration output before replaci
   } })).rejects.toThrow(/unexpected|unowned/i);
   expect(await readFile(join(output, 'model.glb'))).toEqual(before);
 });
+
+// BUILD_PREVIEWS_REMOVED: a warning keyed on earlier previews the swap actually removes, not on a flag.
+const writing = (...names: string[]) => async (_project: unknown, stage: string): Promise<string[]> => {
+  for (const name of names) await writeFile(join(stage, name), name);
+  return names;
+};
+const removedWarning = (result: Awaited<ReturnType<typeof buildAsset>>) => result.warnings?.find(warning => warning.code === 'BUILD_PREVIEWS_REMOVED');
+
+it('warns, after the swap, naming every earlier preview a rebuild no longer writes, in marker order', async () => {
+  const { config, output } = await fixture();
+  await buildAsset(config, { decorate: writing('front.png', 'side.png', 'preview.html') });
+  const result = await buildAsset(config, { decorate: writing('front.png') });
+  const warning = removedWarning(result);
+  expect(warning?.message).toMatch(/^Removed 2 preview files of the earlier build from /);
+  expect(warning?.message).toContain(': side.png, preview.html.');
+  expect(warning?.message).not.toContain('front.png');
+  expect(result.files).toContain('front.png');
+  expect(await readdir(output)).not.toContain('side.png');
+  const singular = await buildAsset(config);
+  expect(removedWarning(singular)?.message).toMatch(/^Removed 1 preview file of the earlier build .*: front\.png\./);
+});
+
+it('does not warn when nothing earlier is removed, with or without previews', async () => {
+  const { config } = await fixture();
+  expect(removedWarning(await buildAsset(config))).toBeUndefined();
+  expect(removedWarning(await buildAsset(config))).toBeUndefined();
+  await buildAsset(config, { decorate: writing('front.png') });
+  expect(removedWarning(await buildAsset(config, { decorate: writing('front.png') }))).toBeUndefined();
+  expect(removedWarning(await buildAsset(config, { decorate: writing('front.png', 'side.png') }))).toBeUndefined();
+});
+
+it('counts a .png in any case and exactly preview.html as previews, and nothing else', async () => {
+  const { config } = await fixture();
+  await buildAsset(config, { decorate: writing('Front.PNG', 'preview.html', 'preview.htm', 'notes.txt', 'png.json') });
+  const message = removedWarning(await buildAsset(config))?.message ?? '';
+  expect(message).toContain('Removed 2 preview files');
+  expect(message).toContain(': Front.PNG, preview.html.');
+  expect(message).not.toMatch(/preview\.htm[^l]|notes\.txt|png\.json/);
+  await buildAsset(config, { decorate: writing('preview.htm', 'notes.txt') });
+  expect(removedWarning(await buildAsset(config))).toBeUndefined();
+});
+
+it('says nothing when the folder was adopted empty, and refuses a missing or unreadable marker before swapping', async () => {
+  const { config, output } = await fixture();
+  await mkdir(output);
+  expect(removedWarning(await buildAsset(config, { decorate: writing('front.png') }))).toBeUndefined();
+  // An unreadable or missing marker is refused before anything is swapped, so no removal and no warning happen.
+  await writeFile(join(output, '.agent-meshes-build.json'), '{not json');
+  await expect(buildAsset(config)).rejects.toMatchObject({ code: 'BUILD_OUTPUT_NOT_OWNED' });
+  await rm(join(output, '.agent-meshes-build.json'));
+  await expect(buildAsset(config)).rejects.toMatchObject({ code: 'BUILD_OUTPUT_NOT_OWNED' });
+  expect(await readdir(output)).toContain('front.png');
+});
+
+it('does not warn when the marker lists a preview that is missing from the folder', async () => {
+  const { config, output } = await fixture();
+  await buildAsset(config, { decorate: writing('front.png') });
+  await rm(join(output, 'front.png'));
+  // A plain build refuses a missing listed file, so the warning cannot claim to have removed it.
+  await expect(buildAsset(config)).rejects.toMatchObject({ code: 'BUILD_OUTPUT_FILE_MISSING' });
+});
+
+it('does not warn when the build fails before the swap, because nothing was removed', async () => {
+  const { config, output } = await fixture();
+  await buildAsset(config, { decorate: writing('front.png') });
+  await expect(buildAsset(config, { decorate: async () => { throw new Error('render failed'); } })).rejects.toThrow('render failed');
+  expect(await readdir(output)).toContain('front.png');
+});

@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -171,5 +171,58 @@ describe('the claims the section labels tested', () => {
     // The digest is over the raw bytes of the file as stored.
     expect(first.leafSha256).toBe(createHash('sha256').update(text).digest('hex'));
     expect(second.leafSha256).toBe(createHash('sha256').update(text.replace(/\n/g, '\r\n')).digest('hex'));
+  });
+});
+
+describe('the preview guidance for a build that removes earlier previews', () => {
+  const read = (path: string) => readFileSync(join(ROOT, path), 'utf8').replace(/\r\n/g, '\n').replace(/\s+/g, ' ');
+  const build = read('skills/mesh-build/SKILL.md');
+
+  it('the unowned-file refusal carries a preview-specific recovery hint', async () => {
+    const { config, output } = await fixture();
+    await buildAsset(config);
+    await writeFile(join(output, 'front.png'), 'restored');
+    const error = await buildAsset(config).then(() => undefined, (failure: unknown) => failure as Error & { code?: string; hint?: string });
+    expect(error?.code).toBe('BUILD_OUTPUT_UNOWNED_FILE');
+    expect(error?.hint).toMatch(/move the file out of it/);
+    expect(error?.hint).toMatch(/preview \(a \.png or preview\.html\) that mesh preview wrote into the build folder, or one restored from version control, delete it/);
+    expect(error?.hint).toMatch(/--out outside the build folder/);
+    expect(error?.hint).toMatch(/rebuild with previews on \(omit --no-preview\)/);
+    expect(error?.hint).toMatch(/--if-changed and --force apply to native blender\.script builds only/);
+    expect(error?.message).toContain(error?.hint ?? '');
+    await unlink(join(output, 'front.png'));
+    // A directory a preview command made beside the marker gets the same hint.
+    await mkdir(join(output, 'preview'));
+    await writeFile(join(output, 'preview', 'front.png'), 'x');
+    await expect(buildAsset(config)).rejects.toMatchObject({ code: 'BUILD_OUTPUT_UNOWNED_FILE', hint: expect.stringContaining('mesh preview wrote into the build folder') });
+  });
+
+  it('mesh-build says the warning is keyed on removal, the preview rule, the order and what silence means', () => {
+    expect(build).toContain('BUILD_PREVIEWS_REMOVED');
+    expect(build).toMatch(/keyed on the removal, not on the flag/);
+    expect(build).toMatch(/`--no-preview`, `--no-preview-page`, or a model with fewer clips/);
+    expect(build).toMatch(/ends `\.png` in any case, or exactly `preview\.html`/);
+    expect(build).toMatch(/in the order the earlier `\.agent-meshes-build\.json` listed them/);
+    expect(build).toMatch(/no marker, an unreadable marker or an adopted empty folder gets no warning, and no warning does not prove nothing was removed/);
+    expect(build).toMatch(/Do not restore removed previews from version control/);
+    expect(build).toMatch(/`--if-changed` and `--force` apply to native `blender\.script` builds only/);
+  });
+
+  it('mesh-build routes looking at an existing GLB to mesh preview and its reference before the build guidance', () => {
+    const route = build.indexOf('run `mesh preview model.glb --out <folder>`');
+    expect(route).toBeGreaterThan(0);
+    expect(route).toBeLessThan(build.indexOf('## Find the relevant build guidance'));
+    expect(build).toContain('`mesh view` takes no GLB');
+    expect(build).toContain('(references/previews-and-refine.md#preview-a-built-glb-without-rebuilding)');
+    expect(build).toContain('| Look at an existing GLB without rebuilding it');
+  });
+
+  it('the authoring skill, setup reference, README and CLI help point at the same behaviour', () => {
+    expect(read('skills/mesh-authoring/SKILL.md')).toMatch(/`--no-preview` deletes the PNGs and `preview\.html` an earlier build left there.*BUILD_PREVIEWS_REMOVED.*no warning does not prove none were removed/);
+    expect(read('skills/mesh-authoring/references/cli-setup.md')).toMatch(/--no-preview.*deletes the previews an earlier build left in the output folder.*BUILD_PREVIEWS_REMOVED/);
+    const readme = read('README.md');
+    expect(readme).toMatch(/`--no-preview-page`, or fewer clips\) removes the earlier ones.*BUILD_PREVIEWS_REMOVED.*keyed on the removal, not on the flag.*no warning does not prove nothing was removed.*`--if-changed` and `--force` apply to native `blender\.script` builds only/);
+    expect(readme).toMatch(/Either flag removes the matching files an earlier build left in the folder, with the `BUILD_PREVIEWS_REMOVED` warning/);
+    expect(read('src/cli.ts').match(/BUILD_PREVIEWS_REMOVED/g)?.length).toBe(4);
   });
 });
