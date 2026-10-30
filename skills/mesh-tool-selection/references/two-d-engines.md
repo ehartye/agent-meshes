@@ -33,9 +33,9 @@ named file at the named version; [general] neither. Re-read a file if your versi
   an 85 mm lens (`LENS`, lines 39, 122) and never selects an orthographic camera. `scripts/review-model.mjs` writes
   one image per azimuth for each pose and region, from a viewer with `floor:false` and a solid background (`defaults`
   there), so an opaque canvas unless a config sets `background: null`, and a `THREE.PerspectiveCamera`
-  (`src/web/viewer.ts`). Both give perspective images, opaque by default.
+  (`createCamera` in `src/web/room.ts`). Both give perspective images, opaque by default.
 - [tested] `tests/mesh-tool-selection-skill.test.ts` fails if `src/cli.ts` registers a `bake` command or if those
-  scripts or `src/web/viewer.ts` change those settings, so the "no shipped command" wording in the skill cannot go
+  scripts or the web viewer change those settings, so the "no shipped command" wording in the skill cannot go
   stale silently. The bake check sees only that name, so re-read the command list whenever this file is edited.
 - [general] Pre-rendering a rigged model to frames pays off for a rigid object that must show many facings, or a
   cast whose directions times animations times variants is too many to draw. For a small cast with a few facings,

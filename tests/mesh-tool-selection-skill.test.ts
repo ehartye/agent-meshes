@@ -161,7 +161,7 @@ describe('mesh-tool-selection 2D reference evidence', () => {
     expect(preview[0]).toContain('85 mm');
     expect(preview[0]).toContain('orthographic');
     expect(preview[0]).toContain('`scripts/review-model.mjs`');
-    expect(preview[0]).toContain('`src/web/viewer.ts`');
+    expect(preview[0]).toContain('`src/web/room.ts`');
     expect(preview[0]).toContain('PerspectiveCamera');
     expect(preview[0]).toMatch(/review tools/);
     // The image counts follow the loops in the two scripts (pinned by the tripwires below): the preview script draws

@@ -2,6 +2,9 @@
 
     python scripts/hm08-stylize.py [--cache <folder>] [--blender <executable>]
 
+It launches Blender from `--blender` or `AGENT_MESHES_BLENDER` without checking the Blender version (the plugin otherwise
+requires the 5.2 LTS series).
+
 The stylized head comes from the Human Base Meshes bundle v1.4.1 (Blender Studio, CC0), pinned by SHA-256. The first
 run extracts its head and eyeballs with Blender (`blender -b --python scripts/hm08-stylize.py -- --dump <bundle>
 <out.npz>`); later runs reuse the extraction.
