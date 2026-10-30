@@ -72,11 +72,14 @@ file of the 0.32.0 source; [general] neither.
   body (`scripts/blender-preview.py`: `framing` 89-113).
 - [tested] `--clip Walk --phases 4 --views body-side --sheet` wrote `Walk-p0` to `Walk-p3` PNGs and a `sheet.png` with
   one posed row per phase. `--clip` with a name the file does not have exits 1 and lists the clips it has.
-- [tested] Always pass `--out`. The default is `preview/` beside the input, so previewing `dist/model.glb` wrote
-  `dist/preview/`, and the next `mesh build` failed with `BUILD_OUTPUT_UNOWNED_FILE` (`Unexpected directory
-  "preview"`). Deleting the folder let the build pass again, and with `--out` outside `dist` the next build passed.
+- [documented] With no `--out` the default is `preview/` beside the input, except when the input sits in a folder a build
+  owns (it holds `.agent-meshes-build.json`, as `dist/` does): then the default is a sibling, so `dist/model.glb`
+  previews into `dist-preview/` and the next `mesh build` still passes. Earlier versions wrote `dist/preview/`, which
+  failed the next build with `BUILD_OUTPUT_UNOWNED_FILE` (`Unexpected directory "preview"`). `--out` always wins; pass it
+  to choose the place yourself.
 - [documented] `view` renders `currentProject()`, the workspace project (`src/cli.ts`: `currentProject` 70-73, `view`
-  406-413). [tested] `mesh view` run where no workspace or server exists failed with `fetch failed`.
+  406-413). [tested] `mesh view` run where no workspace or server exists failed with `fetch failed`. With no workspace,
+  `view` needs `--workspace` or a running workbench; to look at a built model, use `mesh preview <model.glb>`.
 - [general] This is Blender's Workbench shading of an imported glTF, not the three.js viewer's look. For the viewer's
   look, or a set compared from one camera, use the build previews or `recipes/set-sheet.mjs`.
 

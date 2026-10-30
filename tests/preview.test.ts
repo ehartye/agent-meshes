@@ -1,9 +1,11 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { applyOperation, createProject } from '../src/core/model.ts';
+import { buildAsset } from '../src/build.ts';
 import { findBlender } from '../src/refine.ts';
-import { PREVIEW_SHADINGS, PREVIEW_VIEWS, parsePreviewOptions, previewFiles, previewJob, resolvePreviewSource, runPreview, workerAlive } from '../src/preview.ts';
+import { BUILD_MARKER_NAME, PREVIEW_SHADINGS, PREVIEW_VIEWS, defaultPreviewOut, parsePreviewOptions, previewFiles, previewJob, resolvePreviewSource, runPreview, workerAlive } from '../src/preview.ts';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -113,6 +115,62 @@ it.each(['direct', 'junction'])('hands a %s source path to a live worker and ret
   // runPreview canonicalizes the source, including Windows 8.3 paths and junctions.
   expect(body.source).toBe(await realpath(join(dir, 'head.py')));
   expect(manifest).toMatchObject({ files: ['rest-front-matcap.png'], worker: true });
+});
+
+/** Run runPreview against a stand-in worker that answers at once, and return the output folder the job asked for. */
+async function previewOutDir(input: string, outDir?: string) {
+  const queue = await scratch();
+  await writeFile(join(queue, 'worker.json'), JSON.stringify({ pid: 1, time: Date.now() / 1000 }));
+  const answer = (async () => {
+    for (let i = 0; i < 200; i++) {
+      const job = (await readdir(queue)).find(name => name.endsWith('.job.json'));
+      if (job) {
+        const body = JSON.parse(await readFile(join(queue, job), 'utf8'));
+        await writeFile(join(queue, job.replace('.job.json', '.done.json')), JSON.stringify({ ok: true, manifest: { files: [] } }));
+        return body.outDir as string;
+      }
+      await new Promise(done => setTimeout(done, 20));
+    }
+    throw new Error('Stand-in preview worker did not receive a job');
+  })();
+  const [, jobOut] = await Promise.all([runPreview(input, parsePreviewOptions({ views: 'front' }), { queue, outDir, timeoutMs: 3000 }), answer]);
+  return jobOut;
+}
+
+it('keeps the build marker name in step with src/build.ts', async () => {
+  expect(await readFile(new URL('../src/build.ts', import.meta.url), 'utf8')).toContain(`const markerName = '${BUILD_MARKER_NAME}';`);
+});
+
+it('defaults the preview to a sibling of a marked build folder, so the next build still passes', async () => {
+  const root = await realpath(await scratch());
+  await writeFile(join(root, 'source.json'), JSON.stringify(applyOperation(createProject('asset'), { op: 'add', part: { name: 'body' } })));
+  const config = join(root, 'build.json');
+  await writeFile(config, JSON.stringify({ version: 1, project: 'source.json', output: 'dist' }));
+  await buildAsset(config);
+  const glb = join(root, 'dist', 'model.glb');
+  expect(await previewOutDir(glb)).toBe(join(root, 'dist-preview'));
+  expect((await readdir(join(root, 'dist'))).includes('preview')).toBe(false);
+  // The regression: the old default wrote dist/preview and this build then failed with BUILD_OUTPUT_UNOWNED_FILE.
+  await expect(buildAsset(config)).resolves.toMatchObject({ files: expect.arrayContaining(['model.glb']) });
+});
+
+it('keeps preview/ beside the source when the folder holds no build marker, and lets --out win either way', async () => {
+  const root = await realpath(await scratch());
+  await mkdir(join(root, 'plain'));
+  await writeFile(join(root, 'plain', 'model.glb'), Buffer.from('glTF   '));
+  expect(await previewOutDir(join(root, 'plain', 'model.glb'))).toBe(join(root, 'plain', 'preview'));
+  await mkdir(join(root, 'dist'));
+  await writeFile(join(root, 'dist', BUILD_MARKER_NAME), '{}');
+  await writeFile(join(root, 'dist', 'model.glb'), Buffer.from('glTF   '));
+  expect(await previewOutDir(join(root, 'dist', 'model.glb'), join(root, 'chosen'))).toBe(join(root, 'chosen'));
+});
+
+it('finds the build marker in an ancestor folder', async () => {
+  const root = await realpath(await scratch());
+  await mkdir(join(root, 'dist', 'parts'), { recursive: true });
+  await writeFile(join(root, 'dist', BUILD_MARKER_NAME), '{}');
+  expect(await defaultPreviewOut(join(root, 'dist', 'parts', 'arm.glb'))).toBe(join(root, 'dist-preview'));
+  expect(await defaultPreviewOut(join(root, 'elsewhere', 'arm.glb'))).toBe(join(root, 'elsewhere', 'preview'));
 });
 
 const blender = findBlender();
