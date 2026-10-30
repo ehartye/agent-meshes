@@ -1,6 +1,7 @@
 import type { AssemblyCopyOperation } from './assembly.ts';
 import type { PoseTargetOperation } from './pose-target.ts';
 import type { ClipOperation } from './clip-ops.ts';
+import type { ControlOperation } from './subsystems.ts';
 export type Vec3 = [number, number, number];
 export type Quat = [number, number, number, number];
 export type GeometryKind = 'box' | 'sphere' | 'cylinder' | 'cone' | 'capsule' | 'lathe' | 'prism' | 'group';
@@ -58,7 +59,11 @@ export interface Part {
   pattern?: Pattern;
 }
 export interface Keyframe { time: number; value: Vec3 | Quat }
-export interface Track { bone: string; property: 'rotation' | 'position'; keys: Keyframe[] }
+/**
+ * rotation is an offset quaternion from the bone's rest rotation and position an offset from its rest position;
+ * scale is a positive multiplier of the bone's rest scale, which is [1, 1, 1] (an untracked bone keeps scale 1).
+ */
+export interface Track { bone: string; property: 'rotation' | 'position' | 'scale'; keys: Keyframe[] }
 export interface Clip { name: string; duration: number; tracks: Track[] }
 /** A smooth surface blended from several parts; it replaces them when rendered or exported. */
 export interface Shell { name: string; parts: string[]; cut?: string[]; blend: number; colorBlend?: number; resolution: number; material?: Material; pattern?: Pattern; /** false omits the baked COLOR_0/COLOR_1 (member tint times occlusion); the material carries the single member colour. Default true. */ vertexColors?: boolean }
@@ -81,6 +86,7 @@ export type Operation =
   | { op: 'clip.set'; clip: Clip }
   | { op: 'clip.remove'; name: string }
   | ClipOperation
+  | ControlOperation
   | { op: 'shell.set'; shell: Omit<Shell, 'material'> & { material?: Partial<Material> } }
   | { op: 'shell.remove'; name: string };
 export type RigOperation =

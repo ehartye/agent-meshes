@@ -163,3 +163,34 @@ it('shares one glTF skin between parts that bind the same skeleton identically',
   // The second part still deforms with the elbow through the shared skin.
   expect(forearm.applyBoneTransform(0, vertex.clone()).distanceTo(vertex)).toBeGreaterThan(0.5);
 });
+
+it('exports a scale track as a glTF scale channel that a fresh loader plays, deforming skinned vertices', async () => {
+  const project = animatedProject();
+  project.clips = [{ name: 'squash', duration: 1, tracks: [{ bone: 'elbow', property: 'scale' as const, keys: [{ time: 0, value: [1, 1, 1] }, { time: 0.5, value: [2, 0.5, 3] }, { time: 1, value: [1, 1, 1] }] }] }];
+  const bytes = await exportGLB(project);
+  const report = await verifyGLB(bytes);
+  expect(report.errors).toBe(0); expect(report.warnings).toBe(0);
+  const gltf = await new GLTFLoader().parseAsync(bytes.slice().buffer as ArrayBuffer, '');
+  expect(gltf.animations[0].tracks.map(track => track.name)).toEqual(['elbow.scale']);
+  const built = buildScene(project);
+  try {
+    const expected = built.root.getObjectByName('arm') as SkinnedMesh, actual = gltf.scene.getObjectByName('arm') as SkinnedMesh;
+    const wanted = new AnimationMixer(built.root), received = new AnimationMixer(gltf.scene);
+    wanted.clipAction(built.clips[0]).play(); received.clipAction(gltf.animations[0]).play();
+    let moved = 0;
+    for (const time of [0, 0.25, 0.5, 0.75]) {
+      wanted.setTime(time); received.setTime(time);
+      built.root.updateMatrixWorld(true); gltf.scene.updateMatrixWorld(true);
+      expect(gltf.scene.getObjectByName('elbow')!.position.toArray()).toEqual([0, 1, 0]);
+      for (let index = 0; index < expected.geometry.getAttribute('position').count; index++) {
+        const rest = new Vector3().fromBufferAttribute(expected.geometry.getAttribute('position'), index);
+        const a = expected.applyBoneTransform(index, rest.clone()).applyMatrix4(expected.matrixWorld);
+        const b = actual.applyBoneTransform(index, new Vector3().fromBufferAttribute(actual.geometry.getAttribute('position'), index)).applyMatrix4(actual.matrixWorld);
+        expect(b.distanceTo(a)).toBeLessThan(2e-6);
+        moved = Math.max(moved, a.distanceTo(rest));
+      }
+    }
+    expect(moved).toBeGreaterThan(0.2);
+    expect(gltf.scene.getObjectByName('elbow')!.scale.x).toBeCloseTo(1.5);
+  } finally { built.dispose(); }
+});

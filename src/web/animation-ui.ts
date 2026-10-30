@@ -23,7 +23,7 @@ export function installAnimationUI(context: Context) {
     const clip = context.built().clips.find(clip => clip.name === selected);
     if (!clip || !mixer) { action = null; return; }
     mixer.stopAllAction();
-    for (const def of context.project().bones) { const bone = context.built().bones.get(def.name)!; bone.position.fromArray(def.position); bone.quaternion.fromArray(def.rotation); }
+    for (const def of context.project().bones) { const bone = context.built().bones.get(def.name)!; bone.position.fromArray(def.position); bone.quaternion.fromArray(def.rotation); bone.scale.set(1, 1, 1); }
     action = mixer.clipAction(clip); action.setLoop(LoopRepeat, Infinity).play();
     el<HTMLSelectElement>('clip-select').value = selected;
     el<HTMLInputElement>('time-scrub').max = String(clip.duration);
@@ -60,6 +60,8 @@ export function installAnimationUI(context: Context) {
         bone: def.name,
         rotation: new Quaternion().fromArray(def.rotation).invert().multiply(bone.quaternion).normalize().toArray() as Quat,
         position: bone.position.clone().sub(new Vector3().fromArray(def.position)).toArray() as Vec3,
+        // Scale is keyed only where it matters, so a clip without scale animation does not gain a track of ones per bone.
+        ...(bone.scale.toArray().some(v => Math.abs(v - 1) > 1e-9) || clip.tracks.some(track => track.bone === def.name && track.property === 'scale') ? { scale: bone.scale.toArray() as Vec3 } : {}),
       };
     });
     const keyTime = time >= clip.duration ? clip.duration : Math.min(clip.duration, Math.round(time * 1000) / 1000);

@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { nameSchema, vec3Schema } from './rig.ts';
+import { scaleSchema } from './animation.ts';
 import type { Clip, Project, Quat, Track, Vec3 } from './types.ts';
 
 /** Targeted clip authoring: create, clone, rename and retime clips, and set, remove or record single keys without resending the clip. */
 const duration = z.number().finite().min(0.05).max(120);
 const time = z.number().finite().nonnegative();
-const property = z.enum(['rotation', 'position']);
+const property = z.enum(['rotation', 'position', 'scale']);
+type Property = z.infer<typeof property>;
 /** Any non-zero quaternion; key operations store it normalized. */
 const looseQuat = z.tuple([z.number().finite(), z.number().finite(), z.number().finite(), z.number().finite()])
   .refine(q => Math.hypot(...q) > 1e-6, 'Rotation must not be the zero quaternion');
@@ -21,11 +23,13 @@ export const clipKeySetSchema = z.object({
   value: z.union([looseQuat, vec3Schema]), endpoints,
 }).strict().superRefine((operation, context) => {
   const length = operation.property === 'rotation' ? 4 : 3;
-  if (operation.value.length !== length) context.addIssue({ code: 'custom', path: ['value'], message: operation.property === 'rotation' ? 'A rotation key needs a quaternion [x, y, z, w]' : 'A position key needs an offset [x, y, z]' });
+  const need = { rotation: 'A rotation key needs a quaternion [x, y, z, w]', position: 'A position key needs an offset [x, y, z]', scale: 'A scale key needs three positive multipliers [x, y, z] (rest is [1, 1, 1])' }[operation.property];
+  if (operation.value.length !== length) context.addIssue({ code: 'custom', path: ['value'], message: need });
+  else if (operation.property === 'scale') for (const issue of scaleSchema.safeParse(operation.value).error?.issues ?? []) context.addIssue({ code: 'custom', path: ['value'], message: issue.message });
 });
 export const clipKeyRemoveSchema = z.object({ op: z.literal('clip.key.remove'), name: nameSchema, bone: nameSchema, property, time }).strict();
-const poseSchema = z.object({ bone: nameSchema, rotation: looseQuat.optional(), position: vec3Schema.optional() }).strict()
-  .refine(pose => pose.rotation !== undefined || pose.position !== undefined, 'A pose needs a rotation, a position or both');
+const poseSchema = z.object({ bone: nameSchema, rotation: looseQuat.optional(), position: vec3Schema.optional(), scale: scaleSchema.optional() }).strict()
+  .refine(pose => pose.rotation !== undefined || pose.position !== undefined || pose.scale !== undefined, 'A pose needs a rotation, a position, a scale or any combination');
 export const clipKeyRecordSchema = z.object({
   op: z.literal('clip.key.record'), name: nameSchema, time,
   bones: z.array(nameSchema).min(1).max(256).optional(), poses: z.array(poseSchema).min(1).max(256).optional(), endpoints,
@@ -58,7 +62,7 @@ function keyTime(clip: Clip, value: number): number {
 }
 /** Unit length, leaving a quaternion that is already unit to within rounding exactly as given. */
 const normalized = (q: readonly number[]): Quat => { const length = Math.hypot(...q); return (Math.abs(length - 1) < 1e-12 ? [...q] : q.map(v => v / length)) as Quat; };
-const neutral = (name: 'rotation' | 'position'): Quat | Vec3 => name === 'rotation' ? [0, 0, 0, 1] : [0, 0, 0];
+const neutral = (name: Property): Quat | Vec3 => name === 'rotation' ? [0, 0, 0, 1] : name === 'scale' ? [1, 1, 1] : [0, 0, 0];
 const trackOf = (clip: Clip, bone: string, name: string) => clip.tracks.find(track => track.bone === bone && track.property === name);
 
 /** Insert a key keeping times strictly increasing, or replace the one already at that time. */
@@ -69,7 +73,7 @@ function putKey(track: Track, at: number, value: Quat | Vec3): void {
   const after = track.keys.findIndex(key => key.time > at);
   track.keys.splice(after < 0 ? track.keys.length : after, 0, { time: at, value: copy });
 }
-function writeKey(project: Project, clip: Clip, bone: string, name: 'rotation' | 'position', at: number, value: Quat | Vec3, policy: 'free' | 'loop'): void {
+function writeKey(project: Project, clip: Clip, bone: string, name: Property, at: number, value: Quat | Vec3, policy: 'free' | 'loop'): void {
   requireBone(project, bone);
   let track = trackOf(clip, bone, name);
   if (!track) {
@@ -129,7 +133,7 @@ function removeKey(project: Project, operation: z.infer<typeof clipKeyRemoveSche
 function recordKeys(project: Project, operation: z.infer<typeof clipKeyRecordSchema>): void {
   const clip = findClip(project, operation.name);
   const at = keyTime(clip, operation.time);
-  const targets = new Map<string, { rotation?: readonly number[]; position?: Vec3 }>();
+  const targets = new Map<string, { rotation?: readonly number[]; position?: Vec3; scale?: Vec3 }>();
   const selected = operation.bones ?? (operation.poses ? [] : project.bones.map(bone => bone.name));
   if (new Set(selected).size !== selected.length) throw new Error('Recorded bones must be distinct');
   for (const name of selected) targets.set(name, { rotation: requireBone(project, name).pose });
@@ -141,12 +145,14 @@ function recordKeys(project: Project, operation: z.infer<typeof clipKeyRecordSch
     const target = targets.get(pose.bone) ?? {};
     if (pose.rotation) target.rotation = pose.rotation;
     if (pose.position) target.position = pose.position;
+    if (pose.scale) target.scale = pose.scale;
     targets.set(pose.bone, target);
   }
   if (!targets.size) throw new Error('Add a bone before recording a pose');
   for (const [bone, pose] of targets) {
     if (pose.rotation) writeKey(project, clip, bone, 'rotation', at, normalized(pose.rotation), operation.endpoints ?? 'free');
     if (pose.position) writeKey(project, clip, bone, 'position', at, pose.position, operation.endpoints ?? 'free');
+    if (pose.scale) writeKey(project, clip, bone, 'scale', at, pose.scale, operation.endpoints ?? 'free');
   }
 }
 

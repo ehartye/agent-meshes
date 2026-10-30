@@ -12,8 +12,15 @@ export function createClips(project: Project, bones: Map<string, Bone>): Animati
         const values = track.keys.flatMap(key => new Quaternion().fromArray(def.rotation).multiply(new Quaternion().fromArray(key.value as Quat)).normalize().toArray());
         return new QuaternionKeyframeTrack(`${target.uuid}.quaternion`, times, values);
       }
-      const values = track.keys.flatMap(key => new Vector3().fromArray(def.position).add(new Vector3().fromArray(key.value as Vec3)).toArray());
-      return new VectorKeyframeTrack(`${target.uuid}.position`, times, values);
+      if (track.property === 'position') {
+        const values = track.keys.flatMap(key => new Vector3().fromArray(def.position).add(new Vector3().fromArray(key.value as Vec3)).toArray());
+        return new VectorKeyframeTrack(`${target.uuid}.position`, times, values);
+      }
+      if (track.property === 'scale') {
+        // Bones rest at scale 1, so a scale key is the bone's absolute local scale.
+        return new VectorKeyframeTrack(`${target.uuid}.scale`, times, track.keys.flatMap(key => [...(key.value as Vec3)]));
+      }
+      throw new Error(`Unsupported animation property: ${(track as { property: string }).property}`);
     });
     return new AnimationClip(clip.name, clip.duration, tracks);
   });
