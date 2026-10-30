@@ -24,20 +24,18 @@ named file at the named version; [general] neither. Re-read a file if your versi
 
 ## Pre-rendering
 
-- [documented] `src/cli.ts` registers capabilities, inspect, serve, new, recipe, state, op, batch, save, open, undo,
-  redo, export, verify, silhouette, stats, diff, verify-unreal, gait, check-garments, refine, preview, viewer,
-  mobile-physics, view, assemble, build and build-batch, and no `bake`.
-- [documented] Capture paths such as `mesh preview --clip <name> --phases <count>` and `scripts/review-model.mjs` are
-  review tools, not sprite exporters. `src/preview.ts` lines 62-71 set evenly spaced phases;
+- [documented] `src/cli.ts` registers `bake`: `agent-meshes bake <glb> --clip <name>` writes a sprite sheet, an Aseprite
+  atlas and a manifest. The mesh-build skill's sprite-bake reference holds the usage detail.
+- [documented] `mesh preview --clip <name> --phases <count>` and `scripts/review-model.mjs` are review tools,
+  not sprite exporters. `src/preview.ts` lines 62-71 set evenly spaced phases;
   `scripts/blender-preview.py` renders each selected view at every phase, sets `film_transparent = False` (line 237) and
   an 85 mm lens (`LENS`, lines 39, 122) and never selects an orthographic camera. `scripts/review-model.mjs` writes
   one image per azimuth for each pose and region, from a viewer with `floor:false` and a solid background (`defaults`
   there), so an opaque canvas unless a config sets `background: null`, and a `THREE.PerspectiveCamera`
   (`createCamera` in `src/web/room.ts`). Both give perspective images, opaque by default.
-- [tested] `tests/mesh-tool-selection-skill.test.ts` fails if `src/cli.ts` registers a `bake` command or if those
-  scripts or the web viewer change those settings, so the "no shipped command" wording in the skill cannot go
-  stale silently. The bake check sees only that name, so re-read the command list whenever this file is edited.
+- [tested] `tests/sprite-bake.test.ts` bakes an asymmetric rigged fixture: a 384 by 384 sheet with alpha 0 or 255 only,
+  64 frames, tags `dir-0` to `dir-7`, and the same bytes on a second run.
 - [general] Pre-rendering a rigged model to frames pays off for a rigid object that must show many facings, or a
   cast whose directions times animations times variants is too many to draw. For a small cast with a few facings,
-  drawing it with agent-sprites is cheaper. A custom script must hold one orthographic camera, a transparent
-  background and one scale for every frame, then be checked with `sprite-verification`.
+  drawing it with agent-sprites is cheaper. `bake` holds one orthographic camera, a transparent background and one
+  scale for every frame; check its atlas with `sprite-verification`.

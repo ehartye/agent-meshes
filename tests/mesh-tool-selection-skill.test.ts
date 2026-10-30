@@ -83,7 +83,7 @@ describe('mesh-tool-selection description', () => {
 });
 
 describe('mesh-tool-selection 2D route', () => {
-  it('has exactly one 2D row that sends sprite work to agent-sprites and says what is not shipped', () => {
+  it('has exactly one 2D row that sends sprite work to agent-sprites and points at the bake command', () => {
     const { rows } = routeTable();
     expect(rows.length).toBeGreaterThanOrEqual(10);
     const twoD = rows.filter(row => /2D/.test(firstCell(row)));
@@ -93,7 +93,8 @@ describe('mesh-tool-selection 2D route', () => {
     expect(row).toContain('agent-sprites');
     expect(row).toMatch(/recipes/);
     expect(row).toContain('GLB is not a runtime asset in Phaser');
-    expect(row).toContain('no shipped command exports sprite frames');
+    expect(row).toContain('agent-meshes bake');
+    expect(row, 'the bake command ships: the row must not say no command exports sprite frames').not.toMatch(/no shipped command/i);
     // Two shipped capture paths are named as examples of review tools. Naming only one would make it look like the
     // only one, and ranking either as "nearest" is a claim nothing in the repository supports.
     expect(row).toContain('mesh preview --clip');
@@ -183,9 +184,11 @@ describe('mesh-tool-selection 2D reference evidence', () => {
 });
 
 describe('mesh-tool-selection pre-render tripwires', () => {
-  it('fails when src/cli.ts registers a bake command, so the "no shipped command" text cannot go stale silently', () => {
+  it('fails when src/cli.ts stops registering a bake command, so the 2D route cannot point at a command that is gone', () => {
     const registered = /\.command\(\s*['"`]bake\b/.test(read(CLI));
-    expect(registered, 'src/cli.ts now registers a bake command: update the 2D engine row in skills/mesh-tool-selection/SKILL.md and references/two-d-engines.md, which say no shipped command exports sprite frames, then remove this tripwire. This check sees only a command named bake: a sprite-frame export under another name is not caught, so re-read the registered commands whenever either file is edited').toBe(false);
+    expect(registered, 'src/cli.ts no longer registers a bake command: update the 2D engine row in skills/mesh-tool-selection/SKILL.md and references/two-d-engines.md, which point at `agent-meshes bake`').toBe(true);
+    expect(read(SKILL), 'the 2D engine row in skills/mesh-tool-selection/SKILL.md must name `agent-meshes bake`').toContain('`agent-meshes bake');
+    expect(read(REFERENCE), 'references/two-d-engines.md must say that src/cli.ts registers `bake`').toMatch(/`src\/cli\.ts` registers `bake`/);
   });
 
   it('fails when the shipped preview render stops being an opaque, perspective review image', () => {
@@ -227,7 +230,6 @@ describe('mesh-tool-selection absence claims are paired with evidence', () => {
   const hasEvidence = (label: string, ...needles: RegExp[]) => bullets().some(bullet => bullet.startsWith(`- [${label}]`) && needles.every(needle => needle.test(bullet)));
   // Each claim lists the bullets that support it: a label and what the bullet must name.
   const CLAIMS: { say: RegExp; evidence: [label: string, ...needles: RegExp[]][] }[] = [
-    { say: /no shipped command exports sprite frames/, evidence: [['documented', /`src\/cli\.ts` registers/, /and no `bake`/], ['tested', /`tests\/mesh-tool-selection-skill\.test\.ts`/, /`bake` command/]] },
     { say: /A GLB is not a runtime asset in Phaser/, evidence: [['documented', /phaser \d+\.\d+\.\d+ \(`package\.json`\) has no glTF code/, /`src\/loader\/filetypes\/index\.js`/]] },
   ];
 
