@@ -6,11 +6,13 @@ file, not the term.
 
     python scripts/check_private_terms.py [--root DIR] [--paths-file LIST] [--terms-file FILE]
 
---paths-file names a file with one path per line (relative to the root, or absolute). Without it every file under the
+--paths-file names a file holding a JSON array of paths or one path per line (relative to the root, or absolute); a listed
+path that does not exist is skipped. Without it every file under the
 root is scanned, untracked ones included. The term file defaults to AGENT_MESHES_PRIVATE_TERMS_FILE, the root to
 AGENT_MESHES_TEST_ROOT, else the checkout holding this script. Exit 0 when clean, 1 on findings, 2 on a usage error.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import re
@@ -105,6 +107,27 @@ def scan(root, rules, paths):
     return hits, len(files)
 
 
+PATHS_FILE_FORMATS = 'paths file must be a JSON array of paths or one path per line'
+
+
+def read_paths_file(file):
+    """Return the listed paths from a JSON array or a one-path-per-line file; raise ValueError if it is neither."""
+    try:
+        text = Path(file).read_text(encoding='utf-8-sig')
+    except (OSError, ValueError) as error:  # UnicodeDecodeError is a ValueError.
+        raise ValueError(f'{PATHS_FILE_FORMATS} (could not read {file}: {" ".join(str(error).split())})')
+    stripped = text.strip()
+    if stripped[:1] in ('[', '{'):
+        try:
+            paths = json.loads(stripped)
+        except ValueError:
+            paths = None
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            raise ValueError(PATHS_FILE_FORMATS)
+        return paths
+    return [line.strip() for line in re.split(r'\r?\n', text) if line.strip()]
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--root', default=os.environ.get('AGENT_MESHES_TEST_ROOT') or str(Path(__file__).resolve().parent.parent))
@@ -114,8 +137,11 @@ def main(argv=None):
     root = Path(args.root).resolve()
     paths = None
     if args.paths_file:
-        text = Path(args.paths_file).read_text(encoding='utf-8')
-        paths = [line.strip() for line in re.split(r'\r?\n', text) if line.strip()]
+        try:
+            paths = read_paths_file(args.paths_file)
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
     hits, count = scan(root, RULES + private_rules(args.terms_file), paths)
     for hit in hits:
         print(hit)

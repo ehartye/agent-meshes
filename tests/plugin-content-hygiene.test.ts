@@ -49,6 +49,33 @@ it('the helper and scripts/check_private_terms.py report the same findings on on
     expect(run.stdout + run.stderr).not.toContain(literal);
     expect(run.stdout + run.stderr).not.toContain(pattern);
   }
+
+  // --paths-file takes a JSON array as well as one path per line, and scans the same files either way. A file that is
+  // neither fails with one line that names both formats, not a traceback or a silent zero.
+  const listed = ['docs/literal.md', 'docs/regex.md', 'docs/home.md', 'docs/clean.md', 'docs/gone.md', 'docs/skipped.png'];
+  const scanned = (listFile: string) => {
+    const run = spawnSync(python, ['-I', join(CHECKOUT_ROOT, 'scripts', 'check_private_terms.py'), '--root', root, '--terms-file', terms, '--paths-file', listFile], { encoding: 'utf8', env: { ...process.env, AGENT_MESHES_TEST_ROOT: '', AGENT_MESHES_PRIVATE_TERMS_FILE: '' } });
+    return { run, count: Number(/in (\d+) file\(s\) scanned/.exec(run.stderr)?.[1]) };
+  };
+  const array = join(outside, 'list.json');
+  writeFileSync(array, JSON.stringify(listed));
+  const fromArray = scanned(array), fromList = scanned(list);
+  expect(fromList.count).toBe(4); // gone.md does not exist and skipped.png is not text
+  expect(fromArray.count).toBe(fromList.count);
+  expect(fromArray.run.status).toBe(1);
+  expect(fromArray.run.stdout).toBe(fromList.run.stdout);
+
+  for (const content of ['{"a":1}', '[1, 2]', '["docs/clean.md"', '[']) {
+    const invalid = join(outside, 'invalid.json');
+    writeFileSync(invalid, content);
+    const { run } = scanned(invalid);
+    expect(run.status, content).toBe(2);
+    expect(run.stdout, content).toBe('');
+    expect(run.stderr.trim().split(/\r?\n/), content).toHaveLength(1);
+    expect(run.stderr, content).toContain('JSON array');
+    expect(run.stderr, content).toContain('one path per line');
+    expect(run.stderr, content).not.toContain('Traceback');
+  }
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
