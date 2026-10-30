@@ -39,7 +39,7 @@ Blender task, read the matching reference before changing its build contract:
 | Nested asset configs need a shared library | [Explicit project root and path rules](references/native-build-identity.md#share-inputs-under-an-explicit-project-root-0240-and-later) |
 | Undeclared-read warning or strict-audit failure | [Read-audit coverage and limits](references/native-build-identity.md#observe-project-reads-0220-and-later) |
 | Commit or parse an authoring receipt | [Portable schema-2 receipts versus full local diagnostics](references/native-build-identity.md#keep-audit-receipts-portable-0240-and-later) |
-| Commit or ignore build output, a plain build says "Missing owned build file", or the same script behaves differently on another machine's line endings | [Committing build output](references/native-build-identity.md#committing-build-output) |
+| Commit or ignore build output, a plain build fails with `BUILD_OUTPUT_FILE_MISSING` ("Missing owned build file"), or the same script behaves differently on another machine's line endings | [Committing build output](references/native-build-identity.md#committing-build-output) |
 | Preserve RGB/alpha masks or omit unused vertex colours | [Vertex-colour export controls](../../scripts/blender_lib/README.md#vertex-colors-in-glb-exports) |
 | Build geometry from vertices/faces, corner UVs and colour masks | [Mesh-from-arrays helper and V-origin contract](../../scripts/blender_lib/README.md#meshes-from-arrays) |
 | Unreal static prop has wrong size/axes, collision or Nanite/UV settings; match project import options | [Static-prop measurements, import options and axis calibration](references/unreal-static-props.md) |

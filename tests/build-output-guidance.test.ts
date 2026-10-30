@@ -120,12 +120,15 @@ describe('the claims the section labels tested', () => {
     await buildAsset(config);
     await unlink(join(output, 'verification.json'));
     await expect(buildAsset(config)).rejects.toThrow(/Missing owned build file: verification\.json/);
-    // The refusal leaves the rest of the directory alone, and the message carries neither a code nor a hint.
+    // The refusal leaves the rest of the directory alone and carries a stable code and a three-part hint.
     expect((await readFile(join(output, 'model.glb'))).length).toBeGreaterThan(0);
     const error = await buildAsset(config).then(() => undefined, (failure: unknown) => failure as Error & { code?: string; hint?: string });
-    expect(error?.message).toBe('Missing owned build file: verification.json');
-    expect(error?.code).toBeUndefined();
-    expect(error?.hint).toBeUndefined();
+    expect(error?.message).toMatch(/^Missing owned build file: verification\.json\. Hint: /);
+    expect(error?.code).toBe('BUILD_OUTPUT_FILE_MISSING');
+    expect(error?.hint).toContain('verification.json');
+    expect(error?.hint).toMatch(/--if-changed and --force apply to native blender\.script builds only/);
+    expect(error?.hint).toMatch(/Restore verification\.json, or delete the output directory/);
+    expect(error?.message).toContain(error?.hint ?? '');
   });
 
   it('the refusal covers every listed file, including one a decorator such as the preview step adds', async () => {
