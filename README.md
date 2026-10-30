@@ -304,6 +304,15 @@ Development: run the API with `npm start`, then `npm run dev` for Vite's live re
 Verification currently runs locally on Windows. Run the focused tests appropriate
 to the change, including actual Blender fixture/export checks for native mesh or
 rigging work; use the commands above for affected TypeScript and workbench code.
+
+`npm test` runs vitest, which includes only `tests/**/*.test.ts`. The `.mjs` tests
+(`tests/ci-plan.test.mjs`, `tests/release-candidate.test.mjs`,
+`tests/botanical-kit.test.mjs`) run with `node --test tests/*.test.mjs`. To have the
+planner choose the checks for your diff, run
+`node scripts/ci-plan.mjs local-gate --base <sha>`; it prints the commands and a final
+`LOCAL-GATE-DONE` line (`--run` runs them). A change that touches only skill Markdown
+selects a short skills-only lane. See [.github/README.md](.github/README.md).
+
 Independent review and normal pull-request merges still apply.
 
 GitHub's `Check` workflow runs on pull requests and manual dispatch, with Windows

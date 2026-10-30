@@ -73,11 +73,32 @@ receipts are optional evidence, separate from the identity-only tag check.
 
 ```powershell
 python -m pip install -r .github/requirements-ci.txt
-node --test tests/ci-plan.test.mjs tests/release-candidate.test.mjs
+node --test tests/ci-plan.test.mjs tests/release-candidate.test.mjs  # the .mjs tests; vitest does not run them
 python tests/ci_docs.py
 python tests/geometry_scope.py
 python scripts/check_docs.py --paths-file <JSON-array-of-repo-relative-paths>
 ```
+
+## Local gate
+
+In the dev phase a pull request runs only the quick observer, so the runtime checks
+fall to the local run. `node scripts/ci-plan.mjs local-gate --base <sha>` reads
+`git diff --name-only <sha>...HEAD` plus uncommitted and untracked files, ignores the
+phase, and prints the commands to run for that diff (add `--run` to run them and stop
+at the first failure). It selects:
+
+| Diff | Lane |
+| --- | --- |
+| Only `skills/*/SKILL.md` and `skills/*/references/*.md` | `skills-only`: typecheck, `ci_docs.py`, `check_docs.py` and the skill vitest files |
+| Docs and named root documents | `docs-only`: `ci_docs.py` and `check_docs.py` |
+| TypeScript, helper modules, recipes or Python tests | `affected`: typecheck, build, the `.mjs` tests, vitest, and the Python scripts that read the changed helper (read from `check.yml`) |
+| A version file, dependency, fixture, CI file or unknown path | `full`: every script of the workflow |
+
+A change to `agent_meshes_digitigrade_gait.py` selects `digitigrade_gait.py` and
+`digitigrade_body_timing.py`. The last line is always
+`LOCAL-GATE-DONE lane=<lane> status=<planned|pass|fail> commands=<n>`, so one monitor
+can wait for it. The `.mjs` tests run with `node --test`; `npm test` (vitest) only
+includes `tests/**/*.test.ts`.
 
 The [audit](../docs/validation/ci-efficiency/audit.md) and
 [trim plan](../docs/superpowers/plans/2026-10-18-trim-geometry-tests.md) retain prior
