@@ -224,7 +224,7 @@ describe('Blender setup guidance', () => {
   });
   test('reports which discovery rule found Blender', () => {
     const previous = process.env.AGENT_MESHES_BLENDER; process.env.AGENT_MESHES_BLENDER = join(sandbox, 'blender-explicit');
-    try { expect(findBlenderDetailsFrom(process.cwd())).toEqual({ command: join(sandbox, 'blender-explicit'), source: 'AGENT_MESHES_BLENDER' }); }
+    try { expect(findBlenderDetailsFrom(process.cwd())).toMatchObject({ command: join(sandbox, 'blender-explicit'), source: 'AGENT_MESHES_BLENDER', version: null, supported: false }); }
     finally { if (previous === undefined) delete process.env.AGENT_MESHES_BLENDER; else process.env.AGENT_MESHES_BLENDER = previous; }
   });
 });

@@ -4,10 +4,11 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { accessSync, constants, lstatSync, readdirSync } from 'node:fs';
+import { BlenderVersionError, blenderVersionMessage, isSupportedBlenderVersion, readBlenderVersion, type RejectedBlender } from './blender-version.ts';
 
 /**
  * Optional Blender stage: subdivide, smooth and displace a GLB while keeping its skeleton and
- * clips. Blender is never required; `findBlender` says whether the stage is available.
+ * clips. Blender is never required, but when it is used it must be the 5.2 LTS series; `findBlender` says whether the stage is available.
  */
 export type BlenderSource = 'AGENT_MESHES_BLENDER' | 'agent-meshes-home' | 'tools-blender' | 'program-files' | 'windows-store' | 'applications' | 'path';
 export interface BlenderLocation {
@@ -17,7 +18,7 @@ export interface BlenderLocation {
   /** Which discovery rule found it, so `setup --check` can say where Blender came from. */
   source: BlenderSource;
 }
-export interface FindBlenderOptions { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; home?: string }
+export interface FindBlenderOptions { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; home?: string; /** Replaces `blender --version`, for tests. */ readVersion?: (command: string) => string | null }
 
 /** Version-like directory names sort newest first (`blender-5.2.2-...` before `blender-4.5.0-...`). */
 function newestFirst(names: string[]): string[] {
@@ -38,30 +39,72 @@ function portableCandidates(root: string, platform: NodeJS.Platform, source: Ble
 }
 
 /**
- * Find Blender. Order: AGENT_MESHES_BLENDER, a portable copy under `<managed home>/blender/*` (default `~/.agent-meshes/blender`),
- * a portable copy under `~/tools/blender/*`, the usual system installs, then PATH. Portable folders are searched
- * before system installs because putting one there is a deliberate choice (the installers can be blocked by a bot challenge).
+ * Every Blender install that exists on this machine, in discovery order: a portable copy under `<managed home>/blender/*`
+ * (default `~/.agent-meshes/blender`), a portable copy under `~/tools/blender/*`, the usual system installs, then PATH. Portable
+ * folders come before system installs because putting one there is a deliberate choice (the installers can be blocked by a bot
+ * challenge). Folders are newest version first.
  */
-export function findBlender(options: FindBlenderOptions = {}): BlenderLocation | null {
-  const env = options.env ?? process.env, platform = options.platform ?? process.platform, home = options.home ?? homedir();
-  const explicit = env.AGENT_MESHES_BLENDER;
-  if (explicit) return { command: explicit, detached: /blender-launcher/i.test(explicit), source: 'AGENT_MESHES_BLENDER' };
+function installedCandidates(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): BlenderLocation[] {
   const candidates: BlenderLocation[] = [];
   candidates.push(...portableCandidates(join(env.AGENT_MESHES_HOME ? resolve(env.AGENT_MESHES_HOME) : join(home, '.agent-meshes'), 'blender'), platform, 'agent-meshes-home'));
   candidates.push(...portableCandidates(join(home, 'tools', 'blender'), platform, 'tools-blender'));
   if (platform === 'win32') {
     for (const root of ['C:/Program Files/Blender Foundation', 'C:/Program Files (x86)/Blender Foundation']) {
-      try { for (const dir of readdirSync(root)) candidates.push({ command: join(root, dir, 'blender.exe'), detached: false, source: 'program-files' }); } catch { /* not installed there */ }
+      try { for (const dir of newestFirst(readdirSync(root))) candidates.push({ command: join(root, dir, 'blender.exe'), detached: false, source: 'program-files' }); } catch { /* not installed there */ }
     }
     const apps = join(home, 'AppData/Local/Microsoft/WindowsApps');
     try { for (const dir of readdirSync(apps)) if (/^BlenderFoundation\.Blender/i.test(dir)) candidates.push({ command: join(apps, dir, 'blender-launcher.exe'), detached: true, source: 'windows-store' }); } catch { /* no store apps */ }
   } else if (platform === 'darwin') candidates.push({ command: '/Applications/Blender.app/Contents/MacOS/Blender', detached: false, source: 'applications' });
   for (const dir of (env.PATH ?? '').split(platform === 'win32' ? ';' : ':')) if (dir) candidates.push({ command: join(dir, platform === 'win32' ? 'blender.exe' : 'blender'), detached: false, source: 'path' });
   // A Store app's launcher is an execution alias: stat refuses it, lstat calls it a link, access allows it.
-  for (const candidate of candidates) {
-    try { if (lstatSync(candidate.command).isDirectory()) continue; accessSync(candidate.command, constants.X_OK); return candidate; } catch { /* keep looking */ }
+  return candidates.filter(candidate => {
+    try { if (lstatSync(candidate.command).isDirectory()) return false; accessSync(candidate.command, constants.X_OK); return true; } catch { return false; }
+  });
+}
+
+export interface BlenderInspection {
+  /** The supported Blender; or, when none qualifies, the first rejected one (so a check can name it); null when nothing is installed. */
+  location: BlenderLocation | null;
+  version: string | null;
+  supported: boolean;
+  rejected: RejectedBlender[];
+  /** The one error to show when `location` exists but is not the supported series. */
+  message?: string;
+}
+
+/** Find Blender and say whether it is the supported series, without throwing. `findBlender` is the throwing form. */
+export function inspectBlender(options: FindBlenderOptions = {}): BlenderInspection {
+  const env = options.env ?? process.env, platform = options.platform ?? process.platform, home = options.home ?? homedir();
+  const read = options.readVersion ?? ((command: string) => readBlenderVersion(command));
+  const reject = (found: BlenderLocation[], explicit: boolean): BlenderInspection => {
+    const rejected = found.map(location => ({ command: location.command, version: read(location.command) }));
+    return { location: found[0], version: rejected[0].version, supported: false, rejected, message: blenderVersionMessage(rejected, explicit) };
+  };
+  const explicit = env.AGENT_MESHES_BLENDER;
+  if (explicit) {
+    // An explicit choice is never swapped for another install.
+    const location: BlenderLocation = { command: explicit, detached: /blender-launcher/i.test(explicit), source: 'AGENT_MESHES_BLENDER' };
+    const version = read(explicit);
+    return isSupportedBlenderVersion(version) ? { location, version, supported: true, rejected: [] } : reject([location], true);
   }
-  return null;
+  const candidates = installedCandidates(env, platform, home);
+  const rejected: BlenderLocation[] = [];
+  for (const candidate of candidates) {
+    const version = read(candidate.command);
+    if (isSupportedBlenderVersion(version)) return { location: candidate, version, supported: true, rejected: rejected.map(item => ({ command: item.command, version: read(item.command) })) };
+    rejected.push(candidate);
+  }
+  return rejected.length ? reject(rejected, false) : { location: null, version: null, supported: false, rejected: [] };
+}
+
+/**
+ * Find a Blender in the supported series (5.2 LTS), or null when none is installed. Throws a BlenderVersionError when Blender is
+ * installed but no copy qualifies, or when AGENT_MESHES_BLENDER names one that does not; it never substitutes another install.
+ */
+export function findBlender(options: FindBlenderOptions = {}): BlenderLocation | null {
+  const found = inspectBlender(options);
+  if (found.message) throw new BlenderVersionError(found.message);
+  return found.location;
 }
 
 export interface RefineOptions { subdivide?: number; noise?: number; noiseScale?: number; only?: string[]; timeoutMs?: number }
@@ -70,7 +113,7 @@ export interface RefineResult { output: string; bytes: number; meshes: number; b
 /** Run scripts/blender-refine.py on a GLB. Throws if Blender is not installed or the stage fails. */
 export async function refineGLB(input: string, output: string, options: RefineOptions = {}): Promise<RefineResult> {
   const blender = findBlender();
-  if (!blender) throw new Error('Blender is not installed; the refine stage is optional and was skipped. Set AGENT_MESHES_BLENDER to the executable to enable it.');
+  if (!blender) throw new Error('Blender is not installed; the refine stage is optional and was skipped. Install Blender 5.2 LTS from https://www.blender.org/download/ or set AGENT_MESHES_BLENDER to its executable to enable it.');
   const script = fileURLToPath(new URL('../scripts/blender-refine.py', import.meta.url));
   const out = resolve(output), sentinel = `${out}.done`;
   await rm(sentinel, { force: true }); await rm(out, { force: true });

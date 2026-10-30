@@ -15,9 +15,18 @@ try {
   const blender = findBlenderDetailsFrom(report.dependencies ? report.runtimeRoot : source);
   report.blender = blender?.command ?? null;
   report.blenderSource = blender?.source ?? null;
+  report.blenderVersion = blender?.version ?? null;
+  report.blenderRequired = '5.2 LTS';
+  report.blenderSupported = blender?.supported ?? null;
   if (!blender) report.blenderHint = blenderInstallHint();
+  // Only Blender 5.2 LTS is supported. A check that finds any other Blender (or one whose version cannot be read) fails.
+  const blenderRejected = blender && !blender.supported;
+  if (blenderRejected) report.blenderError = blender.message;
   // `--check` exits 1 whenever ok is false, including the expected "not installed yet" first run.
-  if (!report.ok) report.nextStep = 'Not ready: run `node scripts/setup.js` without --check (exit 1 from --check on a first run means "not yet installed", not a fault).';
+  const steps = [];
+  if (!report.ok) steps.push('Not ready: run `node scripts/setup.js` without --check (exit 1 from --check on a first run means "not yet installed", not a fault).');
+  if (blenderRejected && args.includes('--check')) { report.ok = false; steps.push(blender.message); }
+  if (steps.length) report.nextStep = steps.join(' ');
   console.log(JSON.stringify(report, null, args.includes('--json') ? undefined : 2));
   if (!report.ok) process.exitCode = 1;
 } catch (error) {
