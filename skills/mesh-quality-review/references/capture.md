@@ -42,7 +42,8 @@ or per region. Zero faces +Z; 90 faces +X. Positive `elevation` looks down; nega
 Use a world-space glTF Y-up `center: [x,y,z]` for static assemblies, or `node` to follow a
 bone/object in each pose. `offset` is a world-space displacement from that point; `radius`
 controls the framing. Check the resulting images: a node origin is not necessarily the center
-of its geometry. A region name must be unique and cannot be `body`, which is captured always.
+of its geometry. A region name must be unique and cannot be `body`, which is captured unless
+`bodyCapture` is `false`.
 
 An optional rest pose must come first; skins are restored from their inverse bind matrices.
 Later poses require a clip. `phase` is a normalized time in [0,1], not a source frame number.
@@ -54,3 +55,29 @@ The output contains individual PNGs, contact sheets, an HTML index, copied refer
 manifest with asset SHA-256, camera and animation time. `findings.json` starts **unreviewed**.
 Open the images and record observations; the helper cannot decide fidelity or visual quality.
 Missing or occluded coverage must remain explicit until it is actually inspected.
+
+## Capture size, background and body views
+
+Three optional top-level keys change the capture itself. A review that sets none of them
+produces the same files and manifest as before.
+
+| Key | Value | Default |
+| --- | --- | --- |
+| `size` | whole pixels, 1 to 4096; every capture is a square of this size | `720` |
+| `background` | a colour (`#rgb`, `#rrggbb`, `rgb(r,g,b)`, `hsl(h,s%,l%)` or a CSS colour name), or `null` for a transparent capture | `"#e1e6e8"` |
+| `bodyCapture` | `false` skips the auto-framed `body` view of every pose | `true` |
+
+```json
+{"size": 256, "background": null, "bodyCapture": false,
+ "regions": [{"name": "full", "center": [0, 0.9, 0], "radius": 1.1, "elevation": 0}]}
+```
+
+- Invalid values are refused before anything is written, with a message naming the key.
+- `bodyCapture: false` needs at least one region, and no pose may drop all of them with
+  `regions: false` or an empty list; otherwise the review would capture nothing and is refused.
+- `background: null` makes the individual PNGs transparent. The contact sheets and
+  `index.html` still show those frames on white, so judge edges and silhouettes on the PNGs.
+- A key is written to `manifest.json` only when the review JSON sets it, with its effective
+  value (`background` is `null` when transparent). An absent key means the default above.
+- The fixed camera of a region (`center`, `radius`, `elevation`) with `size` and
+  `background: null` gives a repeatable cell-sized capture for compositing or source frames.
