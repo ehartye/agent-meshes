@@ -539,19 +539,17 @@ def material(name, color, metalness=0, roughness=0.4, emission=None, emission_st
     shader.inputs['Metallic'].default_value = metalness
     shader.inputs['Roughness'].default_value = roughness
     if glow is not None:
-        socket = shader.inputs.get('Emission Color') or shader.inputs.get('Emission')
-        socket.default_value = (*glow, 1)
+        # Blender 5.2 LTS only (see src/blender-version.ts): the socket is Emission Color.
+        shader.inputs['Emission Color'].default_value = (*glow, 1)
         shader.inputs['Emission Strength'].default_value = strength
     if glass:
         shader.inputs['Alpha'].default_value = opacity
-        socket = shader.inputs.get('Transmission Weight') or shader.inputs.get('Transmission')
-        socket.default_value = transmission
+        # Blender 5.2 LTS only (see src/blender-version.ts): the socket is Transmission Weight.
+        shader.inputs['Transmission Weight'].default_value = transmission
         if ior is not None: shader.inputs['IOR'].default_value = ior
-        # Blender 4.2+ names the blended path surface_render_method; older releases use blend_method.
-        if hasattr(mat, 'surface_render_method'): mat.surface_render_method = 'BLENDED'
-        if hasattr(mat, 'blend_method'): mat.blend_method = 'BLEND'
-        if hasattr(mat, 'use_transparency_overlap'): mat.use_transparency_overlap = True
-        if hasattr(mat, 'shadow_method'): mat.shadow_method = 'NONE'
+        # Blender 5.2 LTS only (see src/blender-version.ts): surface_render_method replaces blend_method (which mirrors it) and shadow_method is gone.
+        mat.surface_render_method = 'BLENDED'
+        mat.use_transparency_overlap = True
     elif ior is not None:
         shader.inputs['IOR'].default_value = ior
     if double_sided is not None: mat.use_backface_culling = not double_sided
@@ -669,16 +667,12 @@ def export_glb(path, objects, animation_mode='ACTIONS', *, vertex_color=None, al
     if vertex_color is not None:
         if not isinstance(vertex_color, str) or vertex_color not in ('MATERIAL', 'ACTIVE', 'NONE'):
             raise ValueError('vertex_color must be None, MATERIAL, ACTIVE or NONE')
-        prop = bpy.ops.export_scene.gltf.get_rna_type().properties.get('export_vertex_color')
-        if prop is None or vertex_color not in {item.identifier for item in prop.enum_items}:
-            raise ValueError(f'This Blender glTF exporter does not support vertex_color={vertex_color!r}')
+        # Blender 5.2 LTS only (see src/blender-version.ts): the exporter always has export_vertex_color with these modes.
         export_options['export_vertex_color'] = vertex_color
     if all_vertex_colors is not None:
         if not isinstance(all_vertex_colors, bool):
             raise ValueError('all_vertex_colors must be None or a bool')
-        prop = bpy.ops.export_scene.gltf.get_rna_type().properties.get('export_all_vertex_colors')
-        if prop is None or prop.type != 'BOOLEAN':
-            raise ValueError('This Blender glTF exporter does not support all_vertex_colors')
+        # Blender 5.2 LTS only (see src/blender-version.ts): the exporter always has export_all_vertex_colors.
         export_options['export_all_vertex_colors'] = all_vertex_colors
     objects = list(objects)
     if not objects: raise ValueError('At least one object must be exported')
