@@ -1,3 +1,6 @@
+// KNOWN RED: the mouth-skin test in this file fails with 29 mouth-skin intersections.
+// Owner: the face programme (wiki item stylized-character-face-contract).
+// Expiry: 2026-12-31. Fix it or re-justify it by then; do not loosen the assertion.
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
