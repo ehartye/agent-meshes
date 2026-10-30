@@ -449,6 +449,15 @@ ${clipReportThresholds()}`)
       const files = await captureProject(project, output, String(options.views).split(',').map(v => v.trim()).filter(Boolean));
       process.stdout.write(`${JSON.stringify({ output, files })}\n`);
     });
+  program.command('bake <glb>').description(`Bake one clip of a rigged GLB into a sprite sheet for a 2D engine: sheet.png, an Aseprite-format atlas.json with one frame tag per direction (dir-0 to dir-N), and manifest.json. Rows are directions (direction k looks from azimuth k * 360 / directions degrees, 0 from +Z) and columns are clip phases. The orthographic camera is fitted once to the rest pose, each cell is rendered at 8 times its size with no antialiasing and reduced by the centre pixel of each 8 by 8 block, and alpha is snapped to 0 or 255. Errors: CLIP_NOT_FOUND, NO_CLIPS, BAKE_CLIP_EMPTY, BAKE_CELL_CLIPPED (a cell touches its border; nothing is written) and CLI_ARGUMENT_ERROR. Needs Chromium; no Blender.`)
+    .requiredOption('--clip <name>', 'The animation clip to bake')
+    .option('--directions <count>', 'Camera directions around the model, an integer from 1 to 32', '8')
+    .option('--phases <count>', 'Evenly spaced clip phases per direction, an integer from 1 to 64 (the end of the clip is not rendered)', '8')
+    .option('--cell <pixels>', 'Cell edge in pixels, an integer from 8 to 256', '48')
+    .option('--out <directory>', 'Output folder, created if missing; the three files are overwritten (default: <glb name>-sprites beside the GLB)').action(async (glb, options) => {
+    const { bakeSprites } = await import('./sprite-bake.ts');
+    print(await bakeSprites(glb, { clip: options.clip, directions: options.directions, phases: options.phases, cell: options.cell, out: options.out }));
+  });
   program.command('assemble <manifest> <directory>').description('Assemble local LDraw parts into a verified GLB and physical robot.json').action(async (manifest, directory) => {
     const { buildAssembly } = await import('./physical/assembly.ts');
     print(await buildAssembly(manifest, directory));
