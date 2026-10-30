@@ -42,6 +42,9 @@ Every command prints one JSON line. On failure it exits nonzero and prints
   earlier build left in the output folder (the warning `BUILD_PREVIEWS_REMOVED` names them; see
   [mesh-build](../../mesh-build/SKILL.md)).
 - The Blender refine stage needs Blender on PATH, in a usual install folder, in the Microsoft
-  Store app alias, or at `AGENT_MESHES_BLENDER`. Setup reports the path it found as `blender`.
+  Store app alias, or at `AGENT_MESHES_BLENDER`. Setup reports the path it found as `blender`. It must be a 5.2.x
+  copy: any other version stops with `BLENDER_UNSUPPORTED_VERSION`, and `setup --check` reports
+  `blenderSupported: false` with the message in `blenderError`. A Windows Store launcher counts as unsupported because
+  its version cannot be read, so set `AGENT_MESHES_BLENDER` to a portable 5.2.x copy.
 - `serve` starts the loopback workbench on port 3388 for a human to look at; skills do not need
   it. Do not stop a server you did not start.

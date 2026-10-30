@@ -27,7 +27,7 @@ for that convention author as (x, -z, y), that is glTF z = -Blender y (`P(x, y, 
 For a uniform-material prop with no semantic vertex channels, one named material such as
 `static_material('PieceWhite', '#e9ddc2', .55)` is sufficient. `finish_static` strips colour attributes and
 `export_static_glb(path, objects)` omits them; use these only when those channels are intentionally absent.
-For direct exports, that is `export_vertex_color='NONE'` (before Blender 4.2, `export_colors=False`).
+For direct exports, that is `export_vertex_color='NONE'`, as `export_static_glb` passes it.
 Disable cameras/lights, and omit texture coordinates only when the consumer does not need them.
 Unwanted `COLOR_0` can multiply base colour in viewers; intentional masks must be preserved instead.
 
