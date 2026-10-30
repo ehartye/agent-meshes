@@ -72,6 +72,6 @@ recheck the same angles/phases plus adjacent regions for regressions. Preserve b
 evidence and the model hash. Do not change camera, lighting or clip coverage to hide a defect.
 
 Finish with a coverage ledger: inspected regions and motion, repaired findings, remaining
-defects, unknowns and review links. File durable findings in the project's designated wiki.
+defects, unknowns and review links. File durable findings in the project's own notes or records.
 Keep technical validation, visual inspection and owner approval distinct. Do not expand
 into unrelated redesigns, or count captured-but-uninspected images as reviewed.

@@ -1067,7 +1067,7 @@ Each spider leg has **coxa → trochanter → femur → patella → tibia → me
 
 `check:creatures` validates all five GLBs and every clip, reloads them independently, checks actual animated skin vertices and loops, and opens every standalone preview in Chromium. Tests also check minimum supporting-foot counts and sub-frame ground contact. The examples use authored procedural rigs; automatic rigging of arbitrary imported meshes and destination-engine integration are outside this release.
 
-Project design and delivery evidence are maintained in the owner's wiki.
+Project design and delivery evidence are maintained in the project's own notes and records.
 
 ### Ideal planar belt drives
 

@@ -1,7 +1,7 @@
 # Engine integration evidence
 
-Primary documentation selected on 2026-10-18 to extend mesh-tool selection beyond Unreal. The wiki already
-contained import and general R3F guidance; the new discovery targeted live geometry, reuse/instancing,
+Primary documentation selected on 2026-10-18 to extend mesh-tool selection beyond Unreal. The project's notes
+already contained import and general R3F guidance; the new discovery targeted live geometry, reuse/instancing,
 collision and engine-specific verification gaps. Recommendations in the companion engine reference are
 synthesis; none of these pages establishes an authoring-tool performance ranking.
 
