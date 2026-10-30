@@ -115,6 +115,13 @@ class PeriodicCurve(unittest.TestCase):
         for magnitude in (1.7e308,1.79e308):
             for n in (8,10,64):
                 self.assertIsNone(self.attempt(n,magnitude),f'n={n} magnitude={magnitude} must raise ValueError')
+    def test_constant_at_the_float_maximum_raises_value_error_at_every_sample_count(self):
+        # Rounding in the mean pushes the rescaled constant to exactly one at n=199, which used to leak OverflowError.
+        for n in (3,4,100,198,199,200,201):
+            with self.subTest(n=n):
+                try:wave=gait.periodic_curve(np.full(n+1,np.finfo(float).max),0);got=wave(.3)
+                except ValueError:continue
+                self.assertTrue(np.isfinite(got),f'n={n} returned {got}')
     def test_large_input_keeps_its_exact_samples_at_any_sample_count(self):
         for magnitude in (1e300,1e307):
             for n in (8,10,64):
