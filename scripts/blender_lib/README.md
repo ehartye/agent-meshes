@@ -433,9 +433,12 @@ adds matched cross-section rings to the fit. The imported reference is explicitl
 to rest before fitting: Blender's initially selected animation must not become the bind pose.
 
 Pose and frame postcondition: `rig_from_reference`, `retarget` and `ground_clip` sample the scene
-frame by frame, then restore what the caller had, also when a step fails. The scene frame
-(with subframe), every pose bone's `matrix_basis` on the armatures they touch, and those
-armatures' active actions are as they were before the call. The pose is not forced to rest:
+frame by frame, then restore what the caller had, also when a step fails; a restore that
+itself fails never replaces the failure already propagating (it is attached as a note). The
+scene frame (with subframe), every pose bone's `matrix_basis` on the armatures they touch
+(for `rig_from_reference`, every armature already in the scene, since stepping frames
+re-evaluates an animated one), and those armatures' active actions are as they were before
+the call. The pose is not forced to rest:
 `retarget` and `ground_clip` hand back the caller's own pose, and `rig_from_reference`
 returns the fitted armature in the pose it was created in, its rest, so neutral attachment
 matrices captured straight after the call are bind-pose matrices. The baked clips are

@@ -14,6 +14,7 @@ chosen clips:
 
 Blender frame throughout (Z up). Correspondence points are world positions.
 """
+import contextlib
 import math
 
 import numpy as np
@@ -367,19 +368,54 @@ def _track_armature(state, arm):
 def _restore_state(state):
     """Hand back what `_capture_state` recorded: active actions first, then the frame (evaluating them), then the
     raw pose channels, since evaluating a restored action overwrites the pose it drives. Baked actions, bone
-    rest transforms and the armatures themselves are untouched; an empty animation_data may remain."""
+    rest transforms and the armatures themselves are untouched; an empty animation_data may remain.
+
+    Every step is tried even when an earlier one fails, so one bad armature does not strand the rest; the first
+    failure is raised at the end."""
     import bpy
-    for arm, _, action, slot in state['arms']:
+    errors = []
+
+    def attempt(step, *args):
+        try:
+            step(*args)
+        except Exception as error:
+            errors.append(error)
+
+    def put_action(arm, action, slot):
         if arm.animation_data:
             arm.animation_data.action = action
             if slot is not None:
                 arm.animation_data.action_slot = slot
-    frame, subframe = state['frame']
-    state['scene'].frame_set(frame, subframe=subframe)
-    for arm, basis, _, _ in state['arms']:
+
+    def put_basis(arm, basis):
         for name, matrix in basis.items():
             arm.pose.bones[name].matrix_basis = matrix
-    bpy.context.view_layer.update()
+
+    for arm, _, action, slot in state['arms']:
+        attempt(put_action, arm, action, slot)
+    frame, subframe = state['frame']
+    attempt(lambda: state['scene'].frame_set(frame, subframe=subframe))
+    for arm, basis, _, _ in state['arms']:
+        attempt(put_basis, arm, basis)
+    attempt(bpy.context.view_layer.update)
+    if errors:
+        raise errors[0]
+
+
+@contextlib.contextmanager
+def _restoring(state):
+    """Restore `state` when the block ends. A restore that fails never replaces an exception already propagating
+    from the block: that one is raised, with the restore failure attached as a note. With no exception in flight, the
+    restore failure is raised."""
+    try:
+        yield
+    except BaseException as original:
+        try:
+            _restore_state(state)
+        except Exception as failure:
+            original.add_note(f'the caller state could not be restored either: {failure!r}')
+        raise
+    _restore_state(state)
 
 
 def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, neutral=None):
@@ -392,12 +428,12 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
     A body shaped unlike the reference keeps its own relaxed arm hang without erasing the clip's finger grip.
 
     Postcondition: the caller's scene frame, every pose bone's `matrix_basis` on both armatures and both armatures'
-    active actions are restored, also when the bake fails. The baked clip is returned unassigned; the pose is not
-    forced to rest."""
+    active actions are restored, also when the bake fails (a restore failure never masks that failure). The baked
+    clip is returned unassigned; the pose is not forced to rest."""
     import bpy
     scene = bpy.context.scene
     state = _capture_state(ref_arm, arm)
-    try:
+    with _restoring(state):
         ref_arm.animation_data_create()
         ref_arm.animation_data.action = action
         start, end = (int(round(v)) for v in action.frame_range)
@@ -436,8 +472,6 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
                     pb.keyframe_insert('location', frame=frame - start)
             bpy.context.view_layer.update()
         return out
-    finally:
-        _restore_state(state)
 
 
 def rig_from_reference(body, reference, correspondence, clips, directions=None, root='pelvis', leg=('thigh_l', 'foot_l'),
@@ -460,13 +494,14 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
     region isolation and before rigid overrides. Use anatomical constraints where transferred weights are unreliable.
     Returns (armature, {clip: action}).
 
-    Postcondition: the scene frame is the caller's, and the returned armature stands in the pose fit_skeleton gave it
+    Postcondition: the scene frame is the caller's, every armature already in the scene keeps its pose bones and active
+    action (sampling frames would otherwise re-evaluate an animated one), and the returned armature stands in the pose fit_skeleton gave it
     (its fitted rest): neither the neutral calibration, the bake nor grounding leaves a sampled clip pose behind, also
     when a step fails. No clip is assigned to the armature; the baked clips are returned.
     """
     import bpy
-    state = _capture_state()
-    try:
+    state = _capture_state(*(o for o in bpy.context.scene.objects if o.type == 'ARMATURE'))
+    with _restoring(state):
         ref_arm, ref_meshes, actions = import_reference(reference)
         if directions:
             pose_to_directions(ref_arm, directions)
@@ -555,8 +590,6 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
         for action in actions.values():                         # the reference's clips must not ride into the export
             bpy.data.actions.remove(action)
         return arm, baked
-    finally:
-        _restore_state(state)
 
 
 def ring_points(vertices, head, tail, t=0.5, band=0.012, radius=None):
@@ -824,7 +857,7 @@ def ground_clip(arm, body, action, root='pelvis', mode='always', floor=0.0):
     import bpy
     scene = bpy.context.scene
     state = _capture_state(arm)
-    try:
+    with _restoring(state):
         arm.animation_data.action = action
         start, end = (int(round(v)) for v in action.frame_range)
         deps = bpy.context.evaluated_depsgraph_get
@@ -844,5 +877,3 @@ def ground_clip(arm, body, action, root='pelvis', mode='always', floor=0.0):
             world.translation.z += dz
             pb.matrix = arm.matrix_world.inverted() @ world
             pb.keyframe_insert('location', frame=frame)
-    finally:
-        _restore_state(state)
