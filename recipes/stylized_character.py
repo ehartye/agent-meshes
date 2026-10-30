@@ -5,6 +5,7 @@ build_character(parameters) adapts those meshes to the agent-meshes Blender runn
 This is a static authoring recipe, not an animation-ready human topology generator.
 """
 import bisect
+import functools
 import json
 import math
 import re
@@ -631,8 +632,20 @@ def merge_parts(m,start,name):
         offset=len(verts); verts+=part['vertices']; faces+=[tuple(i+offset for i in f) for f in part['faces']]
     m.mesh(name,verts,faces,pieces[0]['color'],pieces[0]['roughness'],pieces[0]['metalness'])
 
+PROFILE_SUBDIVISIONS=8
+INTERPOLATION_MEMO_SIZE=128  # distinct control-point tables kept; the oldest-used table is dropped first
+
+@functools.lru_cache(maxsize=INTERPOLATION_MEMO_SIZE)
+def _interpolation_table(points,subdivisions):
+    # Keyed on every control-point value and the sample count; the result is an immutable tuple of tuples.
+    return tuple(interpolate(points,subdivisions))
+
+def interpolated(points,subdivisions=PROFILE_SUBDIVISIONS):
+    """interpolate(points, subdivisions) from the bounded memo, as a fresh list the caller may change."""
+    return list(_interpolation_table(tuple(map(tuple,points)),subdivisions))
+
 def _profile(points,z):
-    rows=interpolate(points,8)
+    rows=_interpolation_table(tuple(map(tuple,points)),PROFILE_SUBDIVISIONS)
     if z<=rows[0][0]: return rows[0][1]
     for a,b in zip(rows,rows[1:]):
         if z<=b[0]: return mix(a[1],b[1],(z-a[0])/(b[0]-a[0]))
