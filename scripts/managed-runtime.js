@@ -135,10 +135,13 @@ export function findBlenderFrom(root) {
   return findBlenderDetailsFrom(root)?.command ?? null;
 }
 
-/** Like findBlenderFrom, with the discovery rule that found it: `{ command, source }` or null. */
+/**
+ * Like findBlenderFrom, with the discovery rule and the pin: `{ command, source, version, supported, message? }` or null when no
+ * Blender is installed. A Blender that is not the supported series is reported (supported false, with the one error message).
+ */
 export function findBlenderDetailsFrom(root) {
   try {
-    const found = JSON.parse(node(root, "const { findBlender } = await import('./src/refine.ts'); const b = findBlender(); console.log(JSON.stringify(b ? { command: b.command, source: b.source } : null));"));
+    const found = JSON.parse(node(root, "const { inspectBlender } = await import('./src/refine.ts'); const r = inspectBlender(); console.log(JSON.stringify(r.location ? { command: r.location.command, source: r.location.source, version: r.version, supported: r.supported, ...(r.message ? { message: r.message } : {}) } : null));"));
     return found ?? null;
   } catch { return null; }
 }
@@ -148,12 +151,12 @@ export function blenderInstallHint(platform = process.platform) {
   const folder = '~/tools/blender';
   const archive = platform === 'win32' ? 'blender-<ver>-windows-x64.zip' : platform === 'darwin' ? 'blender-<ver>-macos-arm64.dmg (or macos-x64)' : 'blender-<ver>-linux-x64.tar.xz';
   return [
-    'Blender is optional (refine stage, Blender-authored sources, mesh preview). To enable it, either install it normally or unpack a portable copy:',
+    'Blender is optional (refine stage, Blender-authored sources, mesh preview), but only Blender 5.2 LTS (any 5.2.x) is supported and every other version is rejected. To enable it, either install it normally or unpack a portable copy:',
     `1. Download ${archive} from the official mirror https://mirrors.ocf.berkeley.edu/blender/release/Blender<major.minor>/ (for example Blender5.2/blender-5.2.2-windows-x64.zip).`,
     '   download.blender.org sits behind a bot challenge that returns 403 to curl and winget, and `winget install` can return 403 too; the mirror serves the same files.',
     `2. Unzip it into ${folder} so the executable is ${folder}/blender-<ver>-<platform>/${platform === 'win32' ? 'blender.exe' : platform === 'darwin' ? 'Blender.app/Contents/MacOS/Blender' : 'blender'}. ` +
       'Folders under ~/tools/blender/* and ~/.agent-meshes/blender/* are discovered automatically, newest version first.',
-    '3. Or point AGENT_MESHES_BLENDER at the executable (it always wins). Then rerun setup --check.',
+    '3. Or point AGENT_MESHES_BLENDER at the executable (it always wins, and is rejected if it is not 5.2.x). Then rerun setup --check.',
   ].join('\n');
 }
 

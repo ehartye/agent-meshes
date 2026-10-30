@@ -169,7 +169,7 @@ export async function runPreview(input: string, settings: PreviewSettings, optio
     } finally { await rm(done, { force: true }); }
   }
   const blender = findBlender();
-  if (!blender) throw new Error('Blender is not installed. Set AGENT_MESHES_BLENDER to its executable for previews.');
+  if (!blender) throw new Error('Blender is not installed. Install Blender 5.2 LTS from https://www.blender.org/download/ or set AGENT_MESHES_BLENDER to its executable for previews.');
   const jobFile = join(outDir, '.preview-job.json'), done = `${jobFile}.done`;
   await Promise.all([done, `${jobFile}.pid`].map(path => rm(path, { force: true })));
   await writeFile(jobFile, JSON.stringify(job));
@@ -208,7 +208,7 @@ export async function startPreviewWorker(queue = DEFAULT_PREVIEW_QUEUE, timeoutM
   const read = async () => JSON.parse(await readFile(join(queue, 'worker.json'), 'utf8')) as { pid: number };
   if (await workerAlive(queue)) return { queue, pid: (await read()).pid, started: false };
   const blender = findBlender();
-  if (!blender) throw new Error('Blender is not installed. Set AGENT_MESHES_BLENDER to its executable for previews.');
+  if (!blender) throw new Error('Blender is not installed. Install Blender 5.2 LTS from https://www.blender.org/download/ or set AGENT_MESHES_BLENDER to its executable for previews.');
   await rm(join(queue, 'stop'), { force: true });
   const child = spawn(blender.command, ['-b', '--python', script(), '--', '--worker', queue], { stdio: 'ignore', windowsHide: true, detached: true });
   child.unref();

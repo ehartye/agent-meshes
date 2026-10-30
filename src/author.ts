@@ -11,7 +11,7 @@ interface Report { ok: boolean; meshes?: number; blender?: string; error?: strin
 /** Run a trusted Blender Python source's build() through the morph-preserving export wrapper. */
 export async function authorGLB(input: string, output: string, options: AuthorOptions = {}): Promise<AuthorResult> {
   const blender = options.blender ?? findBlender(options.env ? { env: options.env } : {});
-  if (!blender) throw new Error('Blender is not installed. Set AGENT_MESHES_BLENDER to its executable for authored builds.');
+  if (!blender) throw new Error('Blender is not installed. Install Blender 5.2 LTS from https://www.blender.org/download/ or set AGENT_MESHES_BLENDER to its executable for authored builds.');
   const timeout = options.timeoutMs ?? 600000;
   if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('Blender authoring timeout must be positive and finite');
   const source = await realpath(resolve(input)), out = resolve(output);
