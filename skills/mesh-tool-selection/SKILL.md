@@ -41,7 +41,7 @@ These checks complement the real-project acceptance below; they do not establish
 | Unreal Geometry Script | Editor-time procedural assets that must become real StaticMeshes, or runtime variation | `unreal-procedural` skill, agent-unreal |
 | Unreal C++ procedural meshes | Geometry that depends on game state at run time | `unreal-procedural` skill, agent-unreal |
 | R3F/three.js, Godot or Unity mesh APIs | The project needs native generation or live vertex/topology updates | engine-specific responsibilities in the references above; outside this plugin's authoring runtime |
-| Code-driven CAD (build123d, CadQuery, OpenSCAD) | Exact dimensions, robust Booleans, mechanical parts, analytic measurements | export a GLB, then `mesh verify` here (importing a CAD GLB for rigging is not built yet) |
+| Code-driven CAD (build123d, CadQuery, OpenSCAD) | Exact dimensions, robust Booleans, mechanical parts, analytic measurements | export a GLB, then `mesh verify` here |
 | 2D engine (Phaser, Canvas, Pixi) | The target draws sprites, tiles or UI on a 2D canvas | A GLB is not a runtime asset in Phaser, so author no GLB for it. Use the agent-sprites `character` and `creature` recipes (`sprite-character`, `sprite-editing`, `game-integration`) for casts and `sprite-verification` for the atlas. Pre-rendering a rigged model to frames suits many facings of a rigid object or a cast too large to draw; no shipped command exports sprite frames (capture paths such as `mesh preview --clip` and `scripts/review-model.mjs` are review tools), so it is a custom script. Evidence: [2D engines](references/two-d-engines.md) |
 
 ## Decision questions (check every applicable constraint)
