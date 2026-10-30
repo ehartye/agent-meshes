@@ -9,6 +9,7 @@ import { exportGLB } from '../src/export.ts';
 import { buildAsset } from '../src/build.ts';
 import { checkLimits, measureBounds } from '../src/glb-limits.ts';
 import type { Project } from '../src/core/types.ts';
+import { wagClip, wagProject } from './helpers/clip-glb.ts';
 
 const run = promisify(execFile), directories: string[] = [];
 afterEach(async () => { for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true }); });
@@ -84,3 +85,50 @@ it('applies a build.json verify section to the final GLB, writes it to verificat
   const warned = JSON.parse(await readFile(join((await buildAsset(config)).output, 'verification.json'), 'utf8'));
   expect(warned.limits).toMatchObject({ ok: false, warnOnly: true });
 }, 30000);
+
+const threeClips = () => exportGLB(wagProject([wagClip('idle', { tailOnly: true }), wagClip('walk'), wagClip('run')]));
+
+it('fails maxClips with the counts and clip names, and passes at the exact count', async () => {
+  const bytes = await threeClips();
+  const bad = checkLimits(bytes, { maxClips: 2 });
+  expect(bad.ok).toBe(false);
+  expect(bad.checks).toEqual([expect.objectContaining({ name: 'maxClips', ok: false, expected: 2, actual: 3 })]);
+  expect(bad.failures).toEqual(['3 animation clips exceed the budget of 2 (idle, walk, run)']);
+  expect(bad.clips!.map(clip => clip.name)).toEqual(['idle', 'walk', 'run']);
+  expect(checkLimits(bytes, { maxClips: 3 })).toMatchObject({ ok: true, failures: [] });
+  expect(checkLimits(bytes, { maxClips: 3 }).checks[0].message).toBe('3 animation clips within the budget of 3');
+});
+
+it('names the clip over maxTracks and the clip and track over maxKeys', async () => {
+  const bytes = await threeClips();
+  // idle has one track; walk and run have two.
+  expect(checkLimits(bytes, { maxTracks: 1 }).failures).toEqual([
+    'clip "walk" has 2 tracks; the budget is 1 per clip', 'clip "run" has 2 tracks; the budget is 1 per clip']);
+  expect(checkLimits(bytes, { maxTracks: 2 }).ok).toBe(true);
+  const keys = checkLimits(bytes, { maxKeys: 20 });
+  expect(keys.ok).toBe(false);
+  expect(keys.failures).toContain('clip "idle" track tail.rotation has 21 keys; the budget is 20 per track');
+  expect(keys.failures).toContain('clip "run" track root.translation has 21 keys; the budget is 20 per track');
+  expect(keys.failures).toHaveLength(5);
+  expect(checkLimits(bytes, { maxKeys: 21 }).ok).toBe(true);
+});
+
+it('verify --max-clips, --max-tracks and --max-keys name the offender on stderr and exit 1', async () => {
+  const file = join(await temp(), 'clips.glb'); await writeFile(file, await threeClips());
+  await expect(cli('verify', file, '--max-clips', '2')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('FAIL 3 animation clips exceed the budget of 2 (idle, walk, run)') });
+  await expect(cli('verify', file, '--max-tracks', '1')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('FAIL clip "walk" has 2 tracks; the budget is 1 per clip') });
+  await expect(cli('verify', file, '--max-keys', '5')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('FAIL clip "walk" track tail.rotation has 21 keys; the budget is 5 per track') });
+  const pass = await cli('verify', file, '--max-clips', '3', '--max-tracks', '2', '--max-keys', '21');
+  expect(JSON.parse(pass.stdout)).toMatchObject({ ok: true, limits: { ok: true, clips: [{ name: 'idle', tracks: 1 }, { name: 'walk', tracks: 2 }, { name: 'run', tracks: 2 }] } });
+  await expect(cli('verify', file, '--max-clips', '0')).rejects.toMatchObject({ stderr: expect.stringContaining('--max-clips') });
+  const warned = await cli('verify', file, '--max-clips', '1', '--warn-only');
+  expect(JSON.parse(warned.stdout).limits).toMatchObject({ ok: false, warnOnly: true });
+}, 60000);
+
+it('leaves the verify output without a limits object, and without clip statistics, when no budget is given', async () => {
+  const file = join(await temp(), 'clips.glb'); await writeFile(file, await threeClips());
+  const plain = JSON.parse((await cli('verify', file)).stdout);
+  expect(plain).not.toHaveProperty('limits');
+  const sized = JSON.parse((await cli('verify', file, '--max-triangles', '100000')).stdout);
+  expect(sized.limits).not.toHaveProperty('clips');
+}, 60000);
