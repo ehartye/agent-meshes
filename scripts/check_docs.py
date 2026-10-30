@@ -69,19 +69,46 @@ def check_docs(root, paths):
     return errors
 
 
+PATHS_FILE_FORMATS = 'paths file must be a JSON array of repo-relative paths or one path per line'
+
+
+def read_paths_file(file):
+    """Return the changed paths from a JSON array or a one-path-per-line file; raise ValueError if it is neither."""
+    try:
+        text = Path(file).read_text(encoding='utf-8-sig')
+    except (OSError, ValueError) as error:  # UnicodeDecodeError is a ValueError.
+        raise ValueError(f'{PATHS_FILE_FORMATS} (could not read {file}: {" ".join(str(error).split())})')
+    stripped = text.strip()
+    if stripped[:1] in ('[', '{'):
+        try:
+            paths = json.loads(stripped)
+        except ValueError:
+            paths = None
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            raise ValueError(PATHS_FILE_FORMATS)
+        return paths
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', default='.')
-    parser.add_argument('--paths-file', required=True)
+    parser.add_argument(
+        '--paths-file',
+        required=True,
+        help='changed repo-relative paths, as a JSON array (["README.md", "docs/a.md"]) or a plain list with one path per line',
+    )
     args = parser.parse_args()
-    paths = json.loads(Path(args.paths_file).read_text(encoding='utf-8'))
-    if not isinstance(paths, list):
-        raise ValueError('Changed paths must be a JSON list')
+    try:
+        paths = read_paths_file(args.paths_file)
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
     errors = check_docs(args.root, paths)
     for error in errors:
         print(error, file=sys.stderr)
     print(f'Documentation/metadata checks: {len(paths)} changed paths, {len(errors)} errors.')
-    return bool(errors)
+    return 1 if errors else 0
 
 
 if __name__ == '__main__':
