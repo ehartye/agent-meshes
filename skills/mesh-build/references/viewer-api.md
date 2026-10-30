@@ -11,9 +11,10 @@ Fills the container and follows its size. Options:
 | --- | --- |
 | `glb` | GLB bytes (`ArrayBuffer`/`Uint8Array`) or a base64 string (works from `file://`) |
 | `autoplay` | Start the first clip; default follows `prefers-reduced-motion` |
-| `background` | CSS color, or `null` for transparent |
+| `background` | CSS color (default `#dce7eb`), or `null` for transparent; the default applies only when the option is omitted |
 | `orbit` | Mouse/touch orbit controls (default true) |
-| `floor` | Draw a ground disc with the shadow |
+| `floor` | Draw the ground plane (default true; see "Floor, background and camera defaults") |
+| `projection` | `perspective` (default) or `orthographic`; see "Projection" |
 | `view` | `front`, `back`, `left`, `right` (`side` is its alias), `top`, `bottom`, `perspective`, or `{position:[x,y,z], target:[x,y,z]}` |
 | `outline`, `outlineColor` | Ink outline thickness in meters behind every opaque part (glass gets none: its hull would show through), and its color |
 | `quality` | `'high'` (default), `'fast'`, or `{preset?, antialias?, pixelRatio?, shadows?, environment?}` |
@@ -29,6 +30,51 @@ at creation), `pixelRatio` (0.25 to 4), `shadows` (`true`, `false` or a power-of
 to 8192) and `environment`. Under headless software GL at 1280×720, three 12.5k-vertex skinned
 heads with 25 morphs render at a ~17 ms median with `fast` and ~100 ms with `high`
 (`node scripts/check-stage-perf-browser.mjs`).
+
+## Floor, background and camera defaults
+
+Labels: [tested] ran in Chromium with `node scripts/check-viewer-browser.mjs`; [documented] read in
+the 0.34.0 source (`src/web/room.ts`, `viewer.ts`, `stage.ts`), not run.
+
+- [tested] `floor` is on unless `floor: false`, and `background` is `#dce7eb` unless it is given.
+  A transparent capture needs an explicit `background: null`; an omitted `background` is not transparent.
+- [tested] The floor is a plane, not a disc: a 200 by 200 m `PlaneGeometry` laid flat at y = -0.012,
+  receiving the model's shadow. With a background color it is a `MeshStandardMaterial` of that same
+  color (roughness 1). With `background: null` it is a `ShadowMaterial` at opacity 0.18, so it draws
+  only the shadow.
+- [tested] A transparent capture with the defaults except `background: null` therefore carries a
+  grey shadow under the model; `floor: false` removes the plane and that shadow.
+- [documented] `quality: {shadows: false}` (and the `fast` preset) also removes the shadow, because the
+  key light stops casting; the transparent plane then draws nothing visible.
+- [documented] The camera is a `PerspectiveCamera` with a 38 degree vertical field of view, near 0.01
+  and far 200 or more. `orbit` is on and the viewer's `view` defaults to `perspective`
+  (`mountStage` defaults to `front`).
+
+## Projection
+
+`projection` takes `perspective` (default) or `orthographic` on `mount` and `mountStage`.
+
+- [tested] Omitting it and passing `'perspective'` give the same camera (type, position, projection
+  matrix equal to a 38 degree `PerspectiveCamera`) and the same screenshot and ID-render pixels. A
+  one-off comparison against the 0.34.0 runtime (default, transparent, outlined and top views) gave
+  identical screenshots; that comparison is not part of the script.
+- [tested] `orthographic` makes `camera` a `THREE.OrthographicCamera` (no `fov`; the frame is set by
+  `left`, `right`, `top`, `bottom` and `zoom`). The typed handle is
+  `THREE.PerspectiveCamera | THREE.OrthographicCamera`.
+- [tested] Parallel projection: the model's pixel size is identical whatever the camera distance
+  (perspective changes it). `view(name)` and `frame()` size the frustum so every corner of the bounds
+  fits with the same `padding`, and reset `zoom` to 1; the camera distance only has to clear the
+  model. `view({position, target})` keeps the current size, and sizes an orthographic camera that
+  has never been fitted from that direction. A container resize keeps the half-height and changes
+  the width. `idRender` uses the same projection and restores the camera.
+- [documented] three's `OrbitControls` zooms an orthographic camera through `zoom`, so the mouse wheel
+  changes the scale rather than the distance.
+- [tested] Any other value (`'isometric'`, `'Orthographic'`, `null`, a number) throws
+  `Unknown projection "isometric"; use one of perspective, orthographic` before a canvas or WebGL
+  context is created.
+
+For a flat, fixed-camera capture of one model, use `{projection: 'orthographic', background: null,
+floor: false, view: 'front'}`.
 
 ## Puppet API
 
@@ -56,7 +102,7 @@ Names are the part, bone and clip names from the project.
 | `idRender(options)` | Exact flat-color render for pixel checks; see below |
 | `onFrame(fn)` | Per-frame callback before the render, returns an unsubscribe function; drive faces here |
 | `resize()`, `dispose()` | Handle a container resize by hand; release the WebGL context (`forceContextLoss`) and remove the canvas |
-| `renderer`, `scene`, `camera`, `controls` | The underlying three.js objects |
+| `renderer`, `scene`, `camera`, `controls` | The underlying three.js objects; `camera` is perspective unless `projection: 'orthographic'` |
 
 ## Driving a face every frame
 
@@ -144,7 +190,9 @@ stage.frame();                                   // fit all models; stage.frame(
 
 Stage options: `models` (`{name: {glb, position?, rotation?, scale?, autoplay?}}`; names are a
 letter then up to 63 letters, digits, `_` or `-`), `autoplay`, `background`, `orbit`, `floor`,
-`view` (default `front`), `outline`, `outlineColor`, `quality` (as for `mount`). Placement `rotation` is XYZ Euler degrees and
+`view` (default `front`), `projection`, `outline`, `outlineColor`, `quality` (as for `mount`). The
+`background` (`#dce7eb`) and `floor` (on) defaults and the floor plane are the ones described above,
+and `projection` behaves as for `mount` with a stage fit (padding default 1.1). Placement `rotation` is XYZ Euler degrees and
 `scale` is a positive number or triple. Unknown option names, invalid placements and duplicate
 names are rejected with a message before any WebGL context is created.
 

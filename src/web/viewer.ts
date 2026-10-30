@@ -10,9 +10,12 @@ import { fitBoxDistance } from '../render/stage.ts';
 import type { QualityInput } from '../render/quality.ts';
 import type { IdImage, IdRenderOptions } from '../render/id-render.ts';
 import type { GlbInput } from './room.ts';
-import { addFloor, addOutlines, addRoomLights, bytesOf, captureId, createRenderer, idImageURL } from './room.ts';
+import { addFloor, addOutlines, addRoomLights, bytesOf, captureId, createCamera, createRenderer, fitOrthographic, idImageURL, parseProjection, setCameraAspect } from './room.ts';
+import type { Projection, ViewerCamera } from './room.ts';
 
 export const version = '1';
+export { projectionNames } from './room.ts';
+export type { Projection, ViewerCamera } from './room.ts';
 export { viewDirection, viewNames } from './views.ts';
 export type { ViewName, ViewSpec } from './views.ts';
 import { viewDirection } from './views.ts';
@@ -54,6 +57,8 @@ export interface MountOptions {
   floor?: boolean;
   /** Initial camera view. Default 'perspective'. */
   view?: ViewName | ViewSpec;
+  /** Camera projection: `perspective` (default) or `orthographic` (parallel rays; size does not change with distance). Anything else throws. */
+  projection?: Projection;
   /** Ink outline thickness in meters (an inverted hull behind every part). Default none. */
   outline?: number;
   /** Outline color. Default near-black. */
@@ -63,14 +68,14 @@ export interface MountOptions {
 }
 /** Mount a rendered puppet inside a container element. The container decides the size. */
 export async function mount(container: HTMLElement, options: MountOptions) {
-  const quality = parseQuality(options.quality, devicePixelRatio);
+  const projection = parseProjection(options.projection), quality = parseQuality(options.quality, devicePixelRatio);
   const gltf = await new GLTFLoader().parseAsync(bytesOf(options.glb), '');
   const puppet = createPuppet(gltf);
   const scene = new THREE.Scene();
   const background = options.background === undefined ? '#dce7eb' : options.background;
   if (background) scene.background = new THREE.Color(background);
   const renderer = createRenderer(container, !background, quality);
-  const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 200);
+  const camera = createCamera(projection);
   const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.enabled = options.orbit ?? true;
   scene.add(gltf.scene); gltf.scene.traverse(object => { object.castShadow = true; object.receiveShadow = true; }); prepareGlass(gltf.scene);
   addRoomLights(renderer, scene, quality);
@@ -79,14 +84,17 @@ export async function mount(container: HTMLElement, options: MountOptions) {
 
   function resize(): void {
     const width = Math.max(1, container.clientWidth), height = Math.max(1, container.clientHeight);
-    renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix();
+    renderer.setSize(width, height, false); setCameraAspect(camera, width / height);
   }
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize);
   observer?.observe(container); resize();
 
+  let fitted = false;
   function fitView(direction: THREE.Vector3, padding: number): void {
     const box = puppet.bounds(), center = box.getCenter(new THREE.Vector3());
-    const distance = Math.max(fitBoxDistance(box.min.toArray(), box.max.toArray(), direction.toArray(), camera.fov, camera.aspect, padding), 3);
+    const distance = camera instanceof THREE.OrthographicCamera ? Math.max(fitOrthographic(camera, box, direction, padding), 3)
+      : Math.max(fitBoxDistance(box.min.toArray(), box.max.toArray(), direction.toArray(), camera.fov, camera.aspect, padding), 3);
+    fitted = true;
     camera.far = Math.max(200, distance * 10); camera.updateProjectionMatrix();
     controls.target.copy(center); camera.position.copy(center).add(direction.normalize().multiplyScalar(distance)); controls.update();
   }
@@ -95,7 +103,12 @@ export async function mount(container: HTMLElement, options: MountOptions) {
   function view(spec: ViewName | ViewSpec = 'perspective', padding = 1.8): void {
     if (typeof spec === 'string') {
       fitView(viewDirection(spec), padding);
-    } else { camera.position.fromArray(spec.position); controls.target.copy(spec.target ? new THREE.Vector3().fromArray(spec.target) : puppet.bounds().getCenter(new THREE.Vector3())); }
+    } else {
+      const target = spec.target ? new THREE.Vector3().fromArray(spec.target) : puppet.bounds().getCenter(new THREE.Vector3());
+      // An explicit position keeps the camera's size; an orthographic camera never fitted has only its placeholder size, so size it from this direction.
+      if (camera instanceof THREE.OrthographicCamera && !fitted) { const back = new THREE.Vector3().fromArray(spec.position).sub(target); if (back.lengthSq() > 0) { fitOrthographic(camera, puppet.bounds(), back, padding); fitted = true; } }
+      camera.position.fromArray(spec.position); controls.target.copy(target);
+    }
     controls.update();
   }
   view(options.view);
@@ -143,7 +156,7 @@ export async function mount(container: HTMLElement, options: MountOptions) {
   return viewer;
 }
 export interface ViewerExtras {
-  renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls; animations: THREE.AnimationClip[];
+  renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: ViewerCamera; controls: OrbitControls; animations: THREE.AnimationClip[];
   view(spec?: ViewName | ViewSpec, padding?: number): void;
   frame(padding?: number): void;
   setBackground(color: string | null): void;

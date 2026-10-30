@@ -6,6 +6,56 @@ import { applyIdMaterials, idColor, resolveIdColors } from '../render/id-render.
 import { isGlassObject } from '../render/glass.ts';
 import type { IdImage, IdRenderColors, IdTarget } from '../render/id-render.ts';
 
+/** How the camera projects: `perspective` (the default, a 38 degree lens) or `orthographic` (parallel rays, so size does not change with distance). */
+export type Projection = 'perspective' | 'orthographic';
+export const projectionNames: readonly Projection[] = ['perspective', 'orthographic'];
+/** The viewer camera: a perspective camera by default, an orthographic one when `projection: 'orthographic'`. */
+export type ViewerCamera = THREE.PerspectiveCamera | THREE.OrthographicCamera;
+
+/** Resolve a `projection` option. Omitted means `perspective`; anything else must be a listed name, and nothing is created before it is checked. */
+export function parseProjection(value: unknown): Projection {
+  if (value === undefined) return 'perspective';
+  if (typeof value === 'string' && (projectionNames as readonly string[]).includes(value)) return value as Projection;
+  throw new Error(`Unknown projection ${JSON.stringify(value)}; use one of ${projectionNames.join(', ')}`);
+}
+
+/** The camera the viewer has always used for `perspective`; `orthographic` gets a unit half-height that the first fit replaces. */
+export function createCamera(projection: Projection): ViewerCamera {
+  return projection === 'orthographic' ? new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 200) : new THREE.PerspectiveCamera(38, 1, 0.01, 200);
+}
+
+/** Width over height of the camera's view. */
+export function cameraAspect(camera: ViewerCamera): number {
+  return camera instanceof THREE.OrthographicCamera ? (camera.right - camera.left) / (camera.top - camera.bottom) : camera.aspect;
+}
+
+/** Set the aspect and rebuild the projection. An orthographic camera keeps its half-height and widens or narrows. */
+export function setCameraAspect(camera: ViewerCamera, aspect: number): void {
+  if (camera instanceof THREE.OrthographicCamera) { const half = camera.top; camera.left = -half * aspect; camera.right = half * aspect; camera.bottom = -half; }
+  else camera.aspect = aspect;
+  camera.updateProjectionMatrix();
+}
+
+/**
+ * Size an orthographic camera so every corner of `box`, seen along `direction`, fits the frame with `padding` (> 1 leaves a
+ * margin), and return the distance to stand back from the center. Distance does not change the image, so it only has to
+ * clear the model: twice its half-diagonal. The zoom resets to 1 because a fit replaces any wheel zoom.
+ */
+export function fitOrthographic(camera: THREE.OrthographicCamera, box: THREE.Box3, direction: THREE.Vector3, padding: number): number {
+  if (!(padding > 0) || !Number.isFinite(padding)) throw new Error(`padding must be a positive number: ${padding}`);
+  const back = direction.clone().normalize(), right = new THREE.Vector3(0, 1, 0).cross(back).normalize(), up = back.clone().cross(right);
+  const center = box.getCenter(new THREE.Vector3()), aspect = cameraAspect(camera), corner = new THREE.Vector3();
+  let half = 0;
+  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+    corner.set(x, y, z).sub(center);
+    half = Math.max(half, Math.abs(corner.dot(up)), Math.abs(corner.dot(right)) / aspect);
+  }
+  half = Math.max(half * padding, 1e-4);
+  camera.zoom = 1; camera.top = half; camera.bottom = -half; camera.left = -half * aspect; camera.right = half * aspect;
+  camera.updateProjectionMatrix();
+  return Math.max(box.min.distanceTo(box.max), 1e-3);
+}
+
 /** GLB bytes, or the GLB as a base64 string (works from file:// where fetch does not). */
 export type GlbInput = ArrayBuffer | Uint8Array | string;
 export function bytesOf(glb: GlbInput): ArrayBuffer {
@@ -87,25 +137,25 @@ function pixelSize(value: unknown, fallback: number, label: string): number {
  * conversion, no fog or environment, into a single-sampled target so no edge blends two colors.
  * Morphs and skinning are the live ones. Everything is restored before returning, even on error.
  */
-export function captureId(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, targets: readonly IdTarget[], options: IdRenderColors & { width?: number; height?: number }, alsoHide: readonly THREE.Object3D[]): IdImage {
+export function captureId(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: ViewerCamera, targets: readonly IdTarget[], options: IdRenderColors & { width?: number; height?: number }, alsoHide: readonly THREE.Object3D[]): IdImage {
   const size = renderer.getSize(new THREE.Vector2());
   const width = pixelSize(options.width, Math.max(1, Math.round(size.x)), 'width'), height = pixelSize(options.height, Math.max(1, Math.round(size.y)), 'height');
   const { width: _w, height: _h, ...colorOptions } = options;
   const colors = resolveIdColors(targets, colorOptions);
   const background = idColor(options.background ?? '#000000');
-  const saved = { background: scene.background, environment: scene.environment, fog: scene.fog, aspect: camera.aspect, target: renderer.getRenderTarget() };
+  const saved = { background: scene.background, environment: scene.environment, fog: scene.fog, aspect: cameraAspect(camera), target: renderer.getRenderTarget() };
   const target = new THREE.WebGLRenderTarget(width, height, { samples: 0, depthBuffer: true, type: THREE.UnsignedByteType, format: THREE.RGBAFormat, colorSpace: THREE.NoColorSpace });
   const restore = applyIdMaterials(targets, colors, alsoHide);
   const pixels = new Uint8Array(width * height * 4);
   try {
     scene.background = background; scene.environment = null; scene.fog = null;
-    camera.aspect = width / height; camera.updateProjectionMatrix();
+    setCameraAspect(camera, width / height);
     renderer.setRenderTarget(target); renderer.render(scene, camera);
     renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
   } finally {
     renderer.setRenderTarget(saved.target);
     scene.background = saved.background; scene.environment = saved.environment; scene.fog = saved.fog;
-    camera.aspect = saved.aspect; camera.updateProjectionMatrix();
+    setCameraAspect(camera, saved.aspect);
     restore(); target.dispose();
   }
   // WebGL reads bottom row first; images are top row first.
