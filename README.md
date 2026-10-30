@@ -182,8 +182,8 @@ natural movement or foot contact.
 Use the [Blender CLI reference](scripts/blender_lib/references/blender-cli.md) for
 process launch, flags and completion, and the [Blender Python API reference](scripts/blender_lib/references/blender-api.md)
 for `bpy`, native modifiers, weights, actions and Meshes helper selection. The
-CLI launches Blender; Python performs the work inside it. Native behavior was
-checked against Blender 5.2.2 and must be checked against other selected versions.
+CLI launches Blender; Python performs the work inside it. Blender 5.2 LTS (5.2.x) is the supported series, verified on 5.2.2; any other version is rejected before work starts with a message naming the version found.
+See [Optional Blender stage](#optional-blender-stage).
 
 ## Agent workspace
 
@@ -508,6 +508,8 @@ also requires identical bytes).
 `node scripts/check-animated-build.mjs` exercises rendered builds and offline exported playback. `node scripts/check-animation-browser.mjs` then verifies scrubbing, key recording and pose editing in the workbench. These write ignored evidence under `artifacts/`.
 
 ## Optional Blender stage
+
+Blender 5.2 LTS (5.2.x) is the supported series, verified on 5.2.2; any other version is rejected before work starts with a message naming the version found. Discovery tries `AGENT_MESHES_BLENDER`, then a portable copy under `~/.agent-meshes/blender/*` or `~/tools/blender/*`, then the usual system installs, then `PATH`, and reads each candidate's `--version` before using it. Without `AGENT_MESHES_BLENDER`, an unsupported candidate is skipped and the next one is tried; if no candidate qualifies, the command stops with the error code `BLENDER_UNSUPPORTED_VERSION`, a message that names the version found, the series required and https://www.blender.org/download/. There is no override variable. `AGENT_MESHES_BLENDER` naming an unsupported or unreadable executable is an error and never falls back to another install. A Windows Store alias counts as unsupported because its version cannot be read; set `AGENT_MESHES_BLENDER` to a portable 5.2.x copy instead. `node scripts/setup.js --check` reports `blender`, `blenderSource`, `blenderVersion`, `blenderRequired` (`5.2 LTS`) and `blenderSupported`, and fails when the Blender it finds is unsupported.
 
 [Reusable concept recipes](recipes/README.md) provide parameterized stylized
 characters, shared skeletal walk and light jog studies and a deterministic botanical kit.

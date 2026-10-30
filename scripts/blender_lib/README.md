@@ -5,6 +5,8 @@ and completion; use the [Blender Python API reference](references/blender-api.md
 for native `bpy`, helpers and export boundaries. Find additional body plans,
 animation banks and rigging tools in the [organized rig library](references/rig-library.md).
 
+Blender 5.2 LTS (5.2.x) is the supported series, verified on 5.2.2; any other version is rejected before work starts with a message naming the version found.
+
 Before constructing or repairing a character, read the
 [character construction checklist](references/character-construction.md) for
 landmarks, skin ownership, hands, connected clothing, hair and evidence checks.
@@ -51,7 +53,7 @@ These controls select exported color data; they do not select preview shading,
 change material alpha modes or establish the appearance in a target engine.
 
 Omit either option, or pass `None`, to retain that native exporter default and
-existing callers' behavior. Blender 5.2.2 LTS defaults to `MATERIAL` (export color
+existing callers' behavior. Blender 5.2 LTS (checked on 5.2.2) defaults to `MATERIAL` (export color
 when used by the material). In a real texture × named `CraftColor` multiply graph,
 that default exported white `COLOR_0` despite nonwhite native POINT/FLOAT_COLOR
 values. With one color layer, explicit `ACTIVE` retained the authored values.
@@ -62,7 +64,7 @@ intended active render layer as nonwhite `COLOR_0` in the two-layer fixture.
 `NONE` omitted colors. Set `mesh.color_attributes.render_color_index` to the
 intended layer before export; the exporter uses the render layer, not merely the
 paint/UI active selection. Explicit `vertex_color='MATERIAL'` is also supported
-and agrees with the omitted option on Blender 5.2.2. `NAME` is not exposed; it
+and agrees with the omitted option on Blender 5.2.2 (5.2 LTS). `NAME` is not exposed; it
 would need a separate named-layer argument. `all_vertex_colors` accepts only
 `None` or a bool.
 
@@ -476,7 +478,7 @@ channels (including delta transforms and rotation mode), including on failure.
 Other animated RNA, such as constraint parameters and custom properties, is not
 snapshotted; audit an isolated armature copy for actions that animate those properties.
 Untracked bone channels start from rest; constraints remain active. This sampler
-is checked with Blender 5.2.2; it is not a
+is checked with Blender 5.2.2 (5.2 LTS, the only supported series); it is not a
 JSON operation or a guarantee about other Blender APIs.
 
 ```python
@@ -2213,7 +2215,7 @@ ap.export_static_glb('piece.glb', [piece])                                      
 | `finish_static`, `static_material` | Outward normals, smooth-by-angle, one named material, colour attributes removed |
 | `new_metaball`, `meta_ellipsoid`, `meta_capsule`, `metaball_to_mesh` | Metaballs with the 0.558 unit and axis-swap traps handled |
 | `count_tris`, `bounds_gltf`, `read_glb_summary` | Real triangle count, glTF-axis bounds, a stdlib GLB summary |
-| `export_static_glb(path, objects)` | `export_vertex_color='NONE'` (or `export_colors=False` on older Blender), `export_yup`, modifiers applied |
+| `export_static_glb(path, objects)` | `export_vertex_color='NONE'`, `export_yup`, modifiers applied |
 
 Self-test, run in Blender (it prints one `AGENT_MESHES_PROPS_SELFTEST {json}` line and exits 1 on failure):
 
@@ -2221,4 +2223,4 @@ Self-test, run in Blender (it prints one `AGENT_MESHES_PROPS_SELFTEST {json}` li
 blender -b --python scripts/blender_lib/agent_meshes_props.py -- --self-test
 ```
 
-`tests/props-blender.test.ts` runs it when Blender is found and skips otherwise. Checked on Blender 4.2.3 and 5.2.2.
+`tests/props-blender.test.ts` runs it when Blender is found and skips otherwise. Checked on Blender 5.2.2 (5.2 LTS, the supported series).

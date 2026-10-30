@@ -41,17 +41,26 @@ install", not as a failure, and read the JSON on stdout rather than the exit cod
 Which tool a given asset needs (and whether Blender, Unreal or a CAD kernel is the right one) is covered by
 [mesh-tool-selection](../mesh-tool-selection/SKILL.md).
 
-Only the refine stage, Blender-authored sources, `mesh preview` and the `recipes/` that drive Blender need it. Discovery
-order, first hit wins, and `--check` reports it as `blenderSource`:
+Only the refine stage, Blender-authored sources, `mesh preview` and the `recipes/` that drive Blender need it.
+Blender 5.2 LTS (5.2.x) is the supported series, verified on 5.2.2; any other version is rejected before work starts with a message naming the version found. Discovery runs `--version` on each candidate and takes the first supported one, in this order; `--check` reports
+the winner as `blenderSource`:
 
-1. The `AGENT_MESHES_BLENDER` environment variable (source `AGENT_MESHES_BLENDER`): always first, trusted without checking.
+1. The `AGENT_MESHES_BLENDER` environment variable (source `AGENT_MESHES_BLENDER`): always tried first and never skipped.
+   If it names an unsupported or unreadable executable, discovery stops with an error and does not fall back to another install.
 2. A portable copy under `~/.agent-meshes/blender/*/` (or `$AGENT_MESHES_HOME/blender/*/`), newest version first
    (`agent-meshes-home`).
 3. A portable copy under `~/tools/blender/*/` (`tools-blender`): `blender.exe` on Windows, `blender` on Linux,
    `Blender.app/Contents/MacOS/Blender` on macOS.
 4. The system install: Windows `C:/Program Files/Blender Foundation/*` (`program-files`) or the Store launcher
-   (`windows-store`), macOS `/Applications/Blender.app` (`applications`).
+   (`windows-store`, always unsupported: its version cannot be read), macOS `/Applications/Blender.app` (`applications`).
 5. `blender` on PATH (`path`).
+
+An unsupported candidate found by discovery (without `AGENT_MESHES_BLENDER`) is skipped. If none qualifies, the command
+fails with `BLENDER_UNSUPPORTED_VERSION`; the message names the version found, the series required and
+https://www.blender.org/download/. There is no override variable. A Windows Store alias counts as unsupported because
+its version cannot be read: set `AGENT_MESHES_BLENDER` to a portable 5.2.x copy. `--check` reports `blenderVersion`,
+`blenderRequired` (`5.2 LTS`) and `blenderSupported`, and exits 1 with `blenderError` and `nextStep` when the Blender it
+found is unsupported.
 
 When Blender is absent `--check --json` carries `blenderHint`; read it to the person. To install a portable copy:
 1. Download the zip from the official mirror, whose layout is
@@ -60,7 +69,7 @@ When Blender is absent `--check --json` carries `blenderHint`; read it to the pe
    `download.blender.org` sits behind a bot challenge that returns 403 to curl and winget, and `winget install` also
    returned 403 on the machine this was written against; the mirror serves the same files.
 2. Unzip it into `~/tools/blender`, so the executable is `~/tools/blender/blender-<ver>-windows-x64/blender.exe`.
-3. Optionally set `AGENT_MESHES_BLENDER` to that path (it overrides discovery), then rerun `setup --check`.
+3. Optionally set `AGENT_MESHES_BLENDER` to that path (it is tried first, and it must be 5.2.x), then rerun `setup --check`.
 
 A repeated setup reuses a complete matching release and repairs its npm link. A changed plugin
 version or content produces a new release directory; older releases are kept. `AGENT_MESHES_HOME`

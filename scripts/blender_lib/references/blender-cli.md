@@ -14,7 +14,10 @@ separate interfaces; a Meshes operation name is not a `bpy` operator or Blender 
 | Interactive edits to an existing scene | Blender UI; record/save the source before export |
 
 Run mesh-setup's read-only check first. Resolve the executable from its `blender`
-field or an intentional `AGENT_MESHES_BLENDER` override; record `blenderSource`.
+field or an intentional `AGENT_MESHES_BLENDER` choice; record `blenderSource` and `blenderVersion`.
+Blender 5.2 LTS (5.2.x) is the supported series, verified on 5.2.2; any other version is rejected before work starts with a message naming the version found. Commands that need Blender stop with `BLENDER_UNSUPPORTED_VERSION`; `setup --check` reports `blenderSupported: false` with the message in `blenderError`.
+`AGENT_MESHES_BLENDER` naming an unsupported executable errors rather than falling back. A Windows Store alias counts as
+unsupported because its version cannot be read; use a portable 5.2.x copy.
 Do not guess a PATH executable, install into plugin cache or silently switch versions.
 The managed build wrapper owns export, validation and output replacement; a direct
 script owns those responsibilities itself.
@@ -89,8 +92,8 @@ clips, deformed contact and rendered motion at actual playback speed. A native
 completion marker proves the declared job completed, not visual quality.
 
 Implementation owners: `src/author.ts`, `scripts/blender-author.py`, `src/preview.ts`
-and `src/refine.ts`. The source build was inspected with Blender 5.2.2 LTS; flags
-and behavior outside that version/platform require their own checks.
+and `src/refine.ts`. The source build was inspected with Blender 5.2.2 LTS, the
+supported series; flags and behavior outside that version/platform require their own checks.
 
 Official references: [command-line arguments](https://docs.blender.org/manual/en/latest/advanced/command_line/arguments.html)
 and [argument ordering](https://docs.blender.org/manual/en/latest/advanced/command_line/arguments.html#argument-order).

@@ -47,7 +47,7 @@ mistake raw mesh vertices for a posed surface.
 
 ## Useful native capabilities, with delivery limits
 
-Native RNA inspection on Blender 5.2.2 LTS confirmed these interfaces exist. That
+Native RNA inspection on Blender 5.2.2 (the 5.2 LTS series) confirmed these interfaces exist. That
 probe establishes availability, not effectiveness on a particular character.
 
 | Capability | Appropriate investigation | What must still be checked |
@@ -85,5 +85,5 @@ Official navigation: [Blender Python API](https://docs.blender.org/api/current/)
 Source inspection used Blender tag `v5.2.2`, commit
 `d13f752e3b9c4f8c261cda552b1021f8bcc0382c`: `MOD_armature.cc`,
 `MOD_correctivesmooth.cc`, and glTF export `skins.py`. Future-version API links
-require checking against the selected runtime; this reference claims no general
+require checking against the 5.2 LTS runtime; this reference claims no general
 modifier-to-glTF parity.
