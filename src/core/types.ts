@@ -1,5 +1,6 @@
 import type { AssemblyCopyOperation } from './assembly.ts';
 import type { PoseTargetOperation } from './pose-target.ts';
+import type { ClipOperation } from './clip-ops.ts';
 export type Vec3 = [number, number, number];
 export type Quat = [number, number, number, number];
 export type GeometryKind = 'box' | 'sphere' | 'cylinder' | 'cone' | 'capsule' | 'lathe' | 'prism' | 'group';
@@ -79,6 +80,7 @@ export type Operation =
   | PoseTargetOperation
   | { op: 'clip.set'; clip: Clip }
   | { op: 'clip.remove'; name: string }
+  | ClipOperation
   | { op: 'shell.set'; shell: Omit<Shell, 'material'> & { material?: Partial<Material> } }
   | { op: 'shell.remove'; name: string };
 export type RigOperation =

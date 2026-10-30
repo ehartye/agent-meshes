@@ -6,13 +6,19 @@ const server = await createServer({ port: 0 }); const browser = await chromium.l
 try {
   const project = JSON.parse(await readFile('artifacts/animated-check/source.json', 'utf8'));
   await fetch(`${server.url}/api/project`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(project) });
-  const page = await browser.newPage(); await page.goto(server.url, { waitUntil: 'domcontentloaded' });
+  const page = await browser.newPage();
+  const sent = []; page.on('request', request => { if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/op') sent.push(JSON.parse(request.postData())); });
+  await page.goto(server.url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.meshWorkbench?.project.clips.length === 1);
   await page.locator('#time-scrub').fill('0.25');
   const visible = await page.evaluate(() => window.meshWorkbench.root.getObjectByName('bend_joint').quaternion.z);
   assert.ok(visible > 0.2);
+  const sentBefore = sent.length;
   await page.locator('#record-key').click();
   await page.waitForFunction(() => window.meshWorkbench.project.clips[0].tracks[0].keys.some(key => key.time === 0.25));
+  const recorded = sent.slice(sentBefore);
+  assert.deepEqual(recorded.map(operation => operation.op), ['clip.key.record'], `Record key must send only clip.key.record, sent ${JSON.stringify(recorded.map(operation => operation.op))}`);
+  assert.equal(recorded[0].name, 'sway'); assert.equal(recorded[0].time, 0.25);
   const saved = await page.evaluate(() => window.meshWorkbench.project.clips[0].tracks[0].keys.find(key => key.time === 0.25).value[2]);
   assert.ok(Math.abs(saved - visible) < 0.00001, `Visible ${visible}, recorded ${saved}`);
   const afterKey = await page.evaluate(() => window.meshWorkbench.root.getObjectByName('bend_joint').quaternion.z);
@@ -28,8 +34,10 @@ try {
   });
   await page.waitForFunction(() => window.meshWorkbench.project.clips.length === 2);
   await page.evaluate(() => window.meshWorkbench.animation.seek(0.0505, 'short'));
+  const shortBefore = sent.length;
   await page.locator('#record-key').click();
   await page.waitForFunction(() => window.meshWorkbench.project.clips.find(c => c.name === 'short').tracks.length > 1);
+  assert.deepEqual(sent.slice(shortBefore).map(operation => operation.op), ['clip.key.record']);
   assert.ok(await page.evaluate(() => window.meshWorkbench.project.clips.find(c => c.name === 'short').tracks.every(t => t.keys.at(-1).time === 0.0505)));
-  console.log('PASS: key visible scrubbed pose, retain other joints during pose edit');
+  console.log('PASS: key visible scrubbed pose through clip.key.record, retain other joints during pose edit');
 } finally { await browser.close(); await server.close(); }

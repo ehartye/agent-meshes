@@ -5,6 +5,7 @@ import { clipSchema } from './core/animation.ts';
 import { shellSchema } from './core/model.ts';
 import { assemblyCopySchema } from './core/assembly.ts';
 import { poseTargetSchema } from './core/pose-target.ts';
+import { clipOperationSchemas } from './core/clip-ops.ts';
 import { ModelError } from './errors.ts';
 import { lintProject } from './project-lint.ts';
 import type { BoneDef, Clip, GeometryKind, Operation, Part, Project } from './core/types.ts';
@@ -30,6 +31,7 @@ export const operationSchemas = {
   unbind: z.object({ op: z.literal('unbind'), ...named }).strict(),
   'clip.set': z.object({ op: z.literal('clip.set'), clip: clipSchema }).strict(),
   'clip.remove': z.object({ op: z.literal('clip.remove'), ...named }).strict(),
+  ...clipOperationSchemas,
   'shell.set': z.object({ op: z.literal('shell.set'), shell: shellSchema }).strict(),
   'shell.remove': z.object({ op: z.literal('shell.remove'), ...named }).strict(),
 } satisfies Record<Operation['op'], z.ZodType>;
@@ -59,6 +61,13 @@ const examples: Record<Operation['op'], Operation[]> = {
   unbind: [{ op: 'unbind', name: 'body' }],
   'clip.set': [{ op: 'clip.set', clip: { name: 'idle', duration: 1, tracks: [{ bone: 'root', property: 'rotation', keys: [{ time: 0, value: [0, 0, 0, 1] }, { time: 1, value: [0, 0, 0, 1] }] }] } }],
   'clip.remove': [{ op: 'clip.remove', name: 'idle' }],
+  'clip.create': [{ op: 'clip.create', name: 'wave', duration: 2, bones: ['root'] }],
+  'clip.clone': [{ op: 'clip.clone', from: 'idle', name: 'idle_copy' }],
+  'clip.rename': [{ op: 'clip.rename', name: 'idle_copy', to: 'sway' }],
+  'clip.retime': [{ op: 'clip.retime', name: 'sway', duration: 1.5 }],
+  'clip.key.set': [{ op: 'clip.key.set', name: 'idle', bone: 'root', property: 'rotation', time: 0.5, value: [0, 0, 0.258819, 0.965926], endpoints: 'free' }],
+  'clip.key.remove': [{ op: 'clip.key.remove', name: 'idle', bone: 'root', property: 'rotation', time: 0.5 }],
+  'clip.key.record': [{ op: 'clip.key.record', name: 'idle', time: 0.5, bones: ['root'] }, { op: 'clip.key.record', name: 'idle', time: 0, poses: [{ bone: 'root', rotation: [0, 0, 0.258819, 0.965926], position: [0, 0.05, 0] }], endpoints: 'loop' }],
   'shell.set': [
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, resolution: 48 } },
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], cut: ['hole'], blend: 0.12, resolution: 48 } },
@@ -82,6 +91,13 @@ const descriptions: Record<Operation['op'], string> = {
   unbind: 'Remove an existing part binding.',
   'clip.set': 'Create or replace an entire named clip. Every track must span zero through duration with strictly increasing key times.',
   'clip.remove': 'Remove an existing named clip.',
+  'clip.create': 'Create a new clip of the given duration (0.05 to 120 s) with a rotation track on each listed bone (default every bone) holding its current pose at both ends.',
+  'clip.clone': 'Copy clip "from" under the new name; the new name must be free.',
+  'clip.rename': 'Rename clip "name" to "to", keeping its tracks; "to" must be free.',
+  'clip.retime': 'Scale every key time of the clip so it lasts duration seconds (0.05 to 120).',
+  'clip.key.set': 'Insert or replace one key on a bone/property track at a time within 0 through the clip duration, creating the track if absent without touching other tracks. A rotation is normalized (any non-zero quaternion). endpoints "loop" copies a key at time 0 or the duration to the other end.',
+  'clip.key.remove': 'Remove one interior key. Refuses to leave fewer than 2 keys or to remove the start or end key, which every track needs.',
+  'clip.key.record': 'Write the current pose of bones at a time into their tracks, creating tracks if absent, without resending other tracks. bones (default all) record the stored pose rotation of each bone; poses give explicit rotation and position values (normalized) and override it. endpoints "loop" copies a key at time 0 or the duration to the other end.',
   'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point. Optional colorBlend (meters, min 0) is the width of the band where member colors mix: default half of blend, 0 gives hard-edged patches by ownership; bone weights are unaffected. Optional cut lists parts subtracted from the surface (holes and hollows) with the same blend; cutters are hidden like members, contribute no color or weight, and cannot also be members. An optional material (metalness, roughness, 0 to 1, plus the glass fields opacity, transmission, ior and doubleSided) sets the finish of the whole shell. An optional pattern (dots, stripes or checks) is painted over the blended colors in world space, before ambient occlusion. By default the shell bakes member colors and ambient occlusion into vertex colors (COLOR_0, COLOR_1) that multiply the material color, so it looks darker or tinted next to a plain part of the same color; vertexColors false exports none, takes the single member color from the material like a plain part, and requires all members to share one color and no pattern.',
   'shell.remove': 'Remove a shell; its member parts render individually again.',
   'assembly.copy': 'Copy a bone subtree with its bound parts and clip tracks under a prefix, optionally mirrored and offset in the root parent frame.',

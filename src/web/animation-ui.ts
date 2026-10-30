@@ -48,30 +48,23 @@ export function installAnimationUI(context: Context) {
     const project = context.project(); if (!project.bones.length) throw new Error('Add a skeleton before creating a clip');
     const name = prompt('Clip name', 'motion'); if (!name) return;
     if (project.clips.some(clip => clip.name === name)) throw new Error('A clip with that name already exists');
-    await context.op({ op: 'clip.set', clip: { name, duration: 2, tracks: project.bones.map(bone => ({ bone: bone.name, property: 'rotation', keys: [{ time: 0, value: [...bone.pose] as Quat }, { time: 2, value: [...bone.pose] as Quat }] })) } });
+    await context.op({ op: 'clip.create', name, duration: 2 });
     activate(name); seek(0); context.status(`Created ${name} · 2 seconds`);
   });
   el('record-key').onclick = report(async () => {
-    const project = context.project(); const clip = structuredClone(project.clips.find(clip => clip.name === selected));
+    const project = context.project(); const clip = project.clips.find(clip => clip.name === selected);
     if (!clip) throw new Error('Create or select a clip first');
-    for (const def of project.bones) {
+    const poses = project.bones.map(def => {
       const bone = context.built().bones.get(def.name)!;
-      const rotation = new Quaternion().fromArray(def.rotation).invert().multiply(bone.quaternion).normalize().toArray() as Quat;
-      const position = bone.position.clone().sub(new Vector3().fromArray(def.position)).toArray() as Vec3;
-      for (const property of ['rotation', 'position'] as const) {
-        const value = property === 'rotation' ? rotation : position;
-        const neutral: Quat | Vec3 = property === 'rotation' ? [0, 0, 0, 1] : [0, 0, 0];
-        let track = clip.tracks.find(track => track.bone === def.name && track.property === property);
-        if (!track) { track = { bone: def.name, property, keys: [{ time: 0, value: [...neutral] }, { time: clip.duration, value: [...neutral] }] }; clip.tracks.push(track); }
-        const keyTime = time >= clip.duration ? clip.duration : Math.min(clip.duration, Math.round(time * 1000) / 1000);
-        track.keys = track.keys.filter(key => Math.abs(key.time - keyTime) > 1e-6);
-        track.keys.push({ time: keyTime, value }); track.keys.sort((a, b) => a.time - b.time);
-        if (keyTime === 0) track.keys.at(-1)!.value = [...value];
-        if (keyTime === clip.duration) track.keys[0].value = [...value];
-      }
-    }
+      return {
+        bone: def.name,
+        rotation: new Quaternion().fromArray(def.rotation).invert().multiply(bone.quaternion).normalize().toArray() as Quat,
+        position: bone.position.clone().sub(new Vector3().fromArray(def.position)).toArray() as Vec3,
+      };
+    });
+    const keyTime = time >= clip.duration ? clip.duration : Math.min(clip.duration, Math.round(time * 1000) / 1000);
     const recordedTime = time;
-    await context.op({ op: 'clip.set', clip }); seek(recordedTime, clip.name); context.status(`Keyed pose at ${time.toFixed(2)} s`);
+    await context.op({ op: 'clip.key.record', name: clip.name, time: keyTime, poses, endpoints: 'loop' }); seek(recordedTime, clip.name); context.status(`Keyed pose at ${time.toFixed(2)} s`);
   });
   return {
     seek, play,
