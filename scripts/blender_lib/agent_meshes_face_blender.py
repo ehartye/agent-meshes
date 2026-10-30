@@ -595,7 +595,6 @@ def _set_area_normals(obj, sharp):
     vertices = [tuple(v.co) for v in mesh.vertices]
     faces = [tuple(p.vertices) for p in mesh.polygons]
     normals = _area_loop_normals(vertices, faces, sharp)
-    if hasattr(mesh, 'use_auto_smooth'): mesh.use_auto_smooth = True   # Blender before 4.1 needs it for custom normals
     mesh.normals_split_custom_set(normals)
     mesh.update()
 

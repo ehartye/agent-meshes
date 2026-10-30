@@ -64,10 +64,8 @@ def main():
             move_before_armature(obj, mod)
         refined += 1
     export = dict(filepath=args.output, export_format='GLB', export_apply=True, export_animations=True, export_skins=True, export_yup=True)
-    try:
-        bpy.ops.export_scene.gltf(**export, export_vertex_color='ACTIVE')
-    except TypeError:
-        bpy.ops.export_scene.gltf(**export)
+    # Blender 5.2 LTS only (see src/blender-version.ts): the exporter always takes export_vertex_color.
+    bpy.ops.export_scene.gltf(**export, export_vertex_color='ACTIVE')
     print(f'REFINED {refined} meshes -> {args.output}')
     return refined
 

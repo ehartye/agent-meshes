@@ -325,12 +325,8 @@ def finish_static(obj, material, smooth_angle_deg=55):
     bpy.ops.mesh.select_all(action='SELECT')
     bpy.ops.mesh.normals_make_consistent(inside=False)
     bpy.ops.object.mode_set(mode='OBJECT')
-    if hasattr(bpy.ops.object, 'shade_smooth_by_angle'):
-        bpy.ops.object.shade_smooth_by_angle(angle=math.radians(smooth_angle_deg))
-    else:  # Blender before 4.1
-        bpy.ops.object.shade_smooth()
-        obj.data.use_auto_smooth = True
-        obj.data.auto_smooth_angle = math.radians(smooth_angle_deg)
+    # Blender 5.2 LTS only (see src/blender-version.ts): shade_smooth_by_angle always exists.
+    bpy.ops.object.shade_smooth_by_angle(angle=math.radians(smooth_angle_deg))
     obj.data.materials.clear()
     obj.data.materials.append(material)
     while obj.data.color_attributes:
@@ -397,7 +393,7 @@ def metaball_to_mesh(mb, name='body'):
 
 def export_static_glb(path, objects, texcoords=False):
     """Export `objects` as a Y-up GLB with the flags a static prop needs: modifiers applied, no vertex colours
-    (`export_vertex_color='NONE'`, spelled `export_colors=False` before Blender 4.2), no cameras or lights, and UVs only if
+    (`export_vertex_color='NONE'`), no cameras or lights, and UVs only if
     asked. Y-up is explicit, so Blender -Y (forward) lands on glTF +Z. Returns the path."""
     objects = list(objects)
     bpy.ops.object.select_all(action='DESELECT')
@@ -406,10 +402,8 @@ def export_static_glb(path, objects, texcoords=False):
     bpy.context.view_layer.objects.active = objects[0]
     kw = dict(filepath=str(path), export_format='GLB', use_selection=True, export_apply=True, export_yup=True,
               export_cameras=False, export_lights=False, export_texcoords=texcoords, export_normals=True)
-    try:
-        bpy.ops.export_scene.gltf(export_vertex_color='NONE', **kw)
-    except TypeError:
-        bpy.ops.export_scene.gltf(export_colors=False, **kw)
+    # Blender 5.2 LTS only (see src/blender-version.ts): the exporter always takes export_vertex_color.
+    bpy.ops.export_scene.gltf(export_vertex_color='NONE', **kw)
     return path
 
 
