@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { findBlender } from '../src/refine.ts';
+import { blender, blenderGate } from './helpers/blender.ts';
 import { parsePreviewOptions, previewJob } from '../src/preview.ts';
 
 it('passes explicit vertex shading through preview settings and worker jobs', () => {
@@ -13,8 +13,7 @@ it('passes explicit vertex shading through preview settings and worker jobs', ()
   expect(parsePreviewOptions({ shading: 'all' }).shadings).toContain('vertex');
 });
 
-const blender = findBlender();
-(blender && !blender.detached ? it : it.skip)('renders active POINT/CORNER RGB and exported colors without altering material or layer selection', async () => {
+blenderGate(!blender?.detached)('renders active POINT/CORNER RGB and exported colors without altering material or layer selection', async () => {
   const parent = process.env.AGENT_MESHES_VERTEX_PREVIEW_PROOF || tmpdir();
   await mkdir(parent, { recursive: true });
   const out = await mkdtemp(join(parent, 'mesh-vertex-preview-'));

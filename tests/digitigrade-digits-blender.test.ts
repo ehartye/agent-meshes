@@ -3,10 +3,10 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {readGLB} from '../src/gltf-read.ts';
 
-(findBlender()?it:it.skip)('exports shortened adult and child digits with fitted joints and normalized skin',async()=>{
+blenderIt('exports shortened adult and child digits with fitted joints and normalized skin',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-digitigrade-digits-'));
  try{
   for(const age of ['adult','child']){

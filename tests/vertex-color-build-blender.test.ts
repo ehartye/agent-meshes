@@ -5,13 +5,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildAsset } from '../src/build.ts';
 import { readAccessor, readGLB } from '../src/gltf-read.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderIt } from './helpers/blender.ts';
 
-const native = findBlender();
 const colors = [[.13, .24, .35, .25], [.41, .52, .63, .5], [.69, .71, .83, .75], [.21, .37, .59, 1]];
 const sha256 = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
-(native ? it : it.skip)('normal authored builds preserve selected CORNER RGBA, omit colors with NONE and reject invalid controls safely', async () => {
+blenderIt('normal authored builds preserve selected CORNER RGBA, omit colors with NONE and reject invalid controls safely', async () => {
   const parent = process.env.AGENT_MESHES_VERTEX_PROOF || tmpdir();
   await mkdir(parent, { recursive: true });
   const directory = await mkdtemp(join(parent, 'mesh-vertex-build-'));

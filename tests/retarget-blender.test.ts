@@ -5,9 +5,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { authorGLB } from '../src/author.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderIt } from './helpers/blender.ts';
 
-const realBlender = findBlender() ? it : it.skip;
+const realBlender = blenderIt;
 for (const [fixture, description] of [
   ['import_rest', 'reference import resets an animated GLB to rest while retaining playable clips'],
   ['regions', 'limb isolation excludes remote spine weights and keeps normalized skin weights'],

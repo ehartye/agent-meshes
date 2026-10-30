@@ -3,11 +3,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { authorGLB } from '../src/author.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderIt } from './helpers/blender.ts';
 import { verifyFaceContract } from '../src/face-contract.ts';
 import { readGLB, readAccessor } from '../src/gltf-read.ts';
 
-(findBlender() ? it : it.skip)('exports explicit partial gaze limits and preserves unrelated author extras', async () => {
+blenderIt('exports explicit partial gaze limits and preserves unrelated author extras', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mesh-partial-gaze-'));
   try {
     const output = join(dir, 'partial.glb');
@@ -21,7 +21,7 @@ import { readGLB, readAccessor } from '../src/gltf-read.ts';
   } finally { await rm(dir, { recursive: true, force: true }); }
 }, 120_000);
 
-(findBlender() ? it : it.skip)('rigs embedded sculpt eyes and decorations while preserving the body and its animation', async () => {
+blenderIt('rigs embedded sculpt eyes and decorations while preserving the body and its animation', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mesh-sculpt-eyes-'));
   try {
     const output = join(dir, 'eyes.glb');

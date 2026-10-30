@@ -3,11 +3,11 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {readGLB} from '../src/gltf-read.ts';
 import {verifyGLB} from '../src/export.ts';
 
-(findBlender()?it:it.skip)('attaches explicit dental motion after pocket construction while retaining the frozen body jaw',async()=>{
+blenderIt('attaches explicit dental motion after pocket construction while retaining the frozen body jaw',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-frozen-dentals-'));
  try{
   const output=join(dir,'mouth.glb');await authorGLB(resolve('tests/blender_frozen_dentals_fixture.py'),output);

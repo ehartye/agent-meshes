@@ -3,9 +3,9 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 
-(findBlender()?it:it.skip)('samples isolated scaled NLA clips and restores animation state after success and errors',async()=>{
+blenderIt('samples isolated scaled NLA clips and restores animation state after success and errors',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-skin-samples-'));
  try{
   const output=join(dir,'model.glb');

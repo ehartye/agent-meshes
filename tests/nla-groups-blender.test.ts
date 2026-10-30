@@ -3,10 +3,10 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {readGLB} from '../src/gltf-read.ts';
 
-(findBlender()?it:it.skip)('exports object and facial NLA tracks as one playable clip',async()=>{
+blenderIt('exports object and facial NLA tracks as one playable clip',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-nla-groups-'));
  try {
   const path=join(dir,'model.glb');

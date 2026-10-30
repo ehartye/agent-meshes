@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildAsset } from '../src/build.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderGate, blenderIt } from './helpers/blender.ts';
 import { auditGlass } from '../src/gltf-materials.ts';
 import { unrealAvailable, verifyUnreal } from '../src/unreal.ts';
 
@@ -19,7 +19,7 @@ async function built() {
 }
 
 // Real Blender only: CI skips this, like the refine stage.
-const maybe = findBlender() ? it : it.skip;
+const maybe = blenderIt;
 maybe('material(opacity=..., transmission=..., ior=...) exports glTF glass that validates with no warnings', async () => {
   const { output, glb } = await built();
   const verification = JSON.parse(await readFile(join(output, 'verification.json'), 'utf8'));
@@ -38,7 +38,7 @@ maybe('material(opacity=..., transmission=..., ior=...) exports glTF glass that 
   expect(verification.enclosures.enclosures[0].closest.clearance).toBeLessThan(0.06);
 }, 240000);
 
-const both = findBlender() && unrealAvailable() && !process.env.AGENT_MESHES_SKIP_UNREAL ? it : it.skip;
+const both = blenderGate(unrealAvailable() && !process.env.AGENT_MESHES_SKIP_UNREAL);
 both('Blender glass imports into Unreal translucent (verify-unreal)', async () => {
   const { glb } = await built();
   const report = await verifyUnreal(glb, { morphs: [], bones: ['head'], requireSkeletalMesh: true, quiet: true });
