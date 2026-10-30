@@ -5,6 +5,18 @@ import { fileURLToPath } from 'node:url';
 import type { Project } from './core/types.ts';
 import { capabilities, capabilitiesFor, inspectProject, techniqueGuidance } from './agent-contract.ts';
 import { errorDetails } from './errors.ts';
+import { CLIP_REPORT_DEFAULTS, CLIP_REPORT_MIN_SLIDE_MPS } from './clip-report.ts';
+
+const clipReportSummary = 'Report on every animation clip of a GLB, on any rig: loop discontinuity and joint velocity spikes, each failure naming clip, bone, time and check; foot penetration, stance sliding and support count run only for --foot bones and report not-evaluated otherwise; exits 1 when an evaluated check fails';
+
+/** The clip-report detection thresholds, written from the constants the checks use, so the help cannot drift from the code. */
+const clipReportThresholds = () => {
+  const d = CLIP_REPORT_DEFAULTS;
+  return `Detection thresholds: loop discontinuity fails a bone whose last pose differs from its first by more than ${d.loopRotationDeg} deg rotation, ${d.loopPositionM * 1000} mm position or ${d.loopScale} scale. `
+    + `A velocity spike is a segment speed above ${d.spikeRatio}x that joint's own median and above ${d.spikeMinDegPerSec} deg/s (rotation) or ${d.spikeMinMetersPerSec} m/s (position). `
+    + `With --foot, penetration is a sole more than ${d.penetrationM * 1000} mm below the floor (y = 0), a sole is planted within ${d.contactM * 1000} mm of the floor, and a planted sole must move within ${Math.round(d.slideFraction * 100)}% of --speed (at least ${CLIP_REPORT_MIN_SLIDE_MPS} m/s). `
+    + `--min-support defaults to ${d.minSupport}. No option changes the other values.`;
+};
 
 export async function main(args = process.argv): Promise<void> {
   const program = new Command();
@@ -341,7 +353,9 @@ export async function main(args = process.argv): Promise<void> {
     } else print({ ...report, ...(evaluation ? { evaluation } : {}) });
     if (evaluation && !evaluation.ok) process.exitCode = 1;
   });
-  program.command('clip-report <file>').description('Report on every animation clip of a GLB, on any rig: loop discontinuity and joint velocity spikes, each failure naming clip, bone, time and check; foot penetration, stance sliding and support count run only for --foot bones and report not-evaluated otherwise; exits 1 when an evaluated check fails')
+  program.command('clip-report <file>').summary(clipReportSummary).description(`${clipReportSummary}
+
+${clipReportThresholds()}`)
     .option('--clip <name>', 'Report only this clip (default: every clip)')
     .option('--foot <bone>', 'A bone that touches the ground; repeatable. Enables foot penetration, stance sliding (with --speed) and support count (two or more feet)', (value: string, list: string[]) => [...list, value], [] as string[])
     .option('--speed <mps>', 'Travel speed the in-place clip is played at; enables stance sliding for the --foot bones')

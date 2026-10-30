@@ -2,9 +2,10 @@ import { afterEach, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { clipReport, formatClipReport, type ClipReport } from '../src/clip-report.ts';
+import { CLIP_REPORT_DEFAULTS, CLIP_REPORT_MIN_SLIDE_MPS, clipReport, formatClipReport, type ClipReport } from '../src/clip-report.ts';
 import { applyOperation } from '../src/core/model.ts';
 import { exportGLB } from '../src/export.ts';
 import { wagGLB, wagProject } from './helpers/clip-glb.ts';
@@ -138,3 +139,24 @@ it('clip-report takes repeatable --foot and --speed on a walker GLB', async () =
   expect(out.stdout).toMatch(/PASS stance-sliding/);
   expect(out.stdout).toMatch(/PASS support-count/);
 }, 120000);
+
+// The CLI help and the README state the detection thresholds. Each phrase is built from the exported constants, so a
+// changed constant fails here until the help (generated from the constants) and the README (written by hand) agree.
+const thresholdPhrases = () => {
+  const d = CLIP_REPORT_DEFAULTS;
+  return [`${d.loopRotationDeg} deg rotation`, `${d.loopPositionM * 1000} mm position`, `${d.loopScale} scale`, `above ${d.spikeRatio}x`,
+    `above ${d.spikeMinDegPerSec} deg/s`, `or ${d.spikeMinMetersPerSec} m/s`, `${d.penetrationM * 1000} mm below the floor`, `within ${d.contactM * 1000} mm of the floor`,
+    `within ${Math.round(d.slideFraction * 100)}% of`, `at least ${CLIP_REPORT_MIN_SLIDE_MPS} m/s`, `defaults to ${d.minSupport}.`];
+};
+
+it('states every detection threshold in clip-report --help', async () => {
+  const { stdout } = await cli('clip-report', '--help');
+  const help = stdout.replace(/\s+/g, ' ');
+  for (const phrase of thresholdPhrases()) expect(help, phrase).toContain(phrase);
+});
+
+it('states every detection threshold in the README and says no flag overrides them', () => {
+  const readme = readFileSync(resolve('README.md'), 'utf8').replace(/\s+/g, ' ');
+  for (const phrase of thresholdPhrases()) expect(readme, phrase).toContain(phrase);
+  expect(readme).toContain('no flag overrides them');
+});
