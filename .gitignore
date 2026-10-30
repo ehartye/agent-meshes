@@ -7,3 +7,4 @@ artifacts/
 .worktrees/
 .claude/worktrees/
 __pycache__/
+.cache/
