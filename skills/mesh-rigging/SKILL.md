@@ -71,6 +71,13 @@ to the floor. `_L` parts sit at -X, which is the character's anatomical right.
 keys at strictly increasing times from 0 through the duration. First and last keys equal make a
 seamless loop. Tracks are offsets from rest, so an untracked bone stays put.
 
+To change an existing clip, edit it in place instead of resending it: `clip.create`, `clip.clone`,
+`clip.rename` and `clip.retime` handle whole clips, and `clip.key.set`, `clip.key.remove` and
+`clip.key.record` touch single keys and leave every other track unchanged. Rotations are normalized;
+a time must fall within 0 through the duration; add `"endpoints":"loop"` to copy a key at either
+end to the other. Put the edits in one `batch`: it is atomic and one `undo` reverts it all. Shapes
+are in [operations](../mesh-authoring/references/operations.md#clips).
+
 ## Locomotion that reads right
 
 - Clips are in place: stance feet move backward at a uniform speed while lifted feet return

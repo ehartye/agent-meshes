@@ -5,6 +5,7 @@ import { nameSchema, vec3Schema, quatSchema, boneSchema, bindingSchema, validate
 import { clipSchema, validateAnimation } from './animation.ts';
 import { applyAssemblyCopy } from './assembly.ts';
 import { applyPoseTarget } from './pose-target.ts';
+import { applyClipOperation } from './clip-ops.ts';
 import { ModelError } from '../errors.ts';
 export { nameSchema, vec3Schema, quatSchema } from './rig.ts';
 
@@ -259,6 +260,9 @@ export function applyOperation(project: Project, operation: Operation): Project 
       if (index < 0) next.clips.push(clip); else next.clips[index] = clip;
       break;
     }
+    case 'clip.create': case 'clip.clone': case 'clip.rename': case 'clip.retime':
+    case 'clip.key.set': case 'clip.key.remove': case 'clip.key.record':
+      applyClipOperation(next, operation); break;
     case 'clip.remove':
       if (!next.clips.some(c => c.name === operation.name)) throw new Error(`Unknown clip: ${operation.name}`);
       next.clips = next.clips.filter(c => c.name !== operation.name); break;

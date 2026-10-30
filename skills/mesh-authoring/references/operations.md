@@ -133,3 +133,35 @@ mirrored and offset in the root parent's frame. Model one leg, then copy it.
 `property` is `rotation` (quaternion offset from rest) or `position` (meters offset from rest).
 Key times strictly increase from 0 through `duration` (0.05 to 120 s). Matching first and last
 keys make a seamless loop. Bones without a track stay at rest during playback.
+
+### Targeted clip edits
+
+```json
+{"op":"clip.create","name":"wave","duration":2,"bones":["arm_R"]}
+{"op":"clip.clone","from":"wave","name":"wave_slow"}
+{"op":"clip.rename","name":"wave_slow","to":"wave_big"}
+{"op":"clip.retime","name":"wave_big","duration":3}
+{"op":"clip.key.set","name":"wave","bone":"arm_R","property":"rotation","time":0.5,"value":[0,0,0.258819,0.965926]}
+{"op":"clip.key.remove","name":"wave","bone":"arm_R","property":"rotation","time":0.5}
+{"op":"clip.key.record","name":"wave","time":1,"bones":["arm_R"]}
+{"op":"clip.key.record","name":"wave","time":0,"endpoints":"loop","poses":[{"bone":"arm_R","rotation":[0,0,0.258819,0.965926],"position":[0,0.05,0]}]}
+```
+
+- `clip.create` makes a clip of `duration` seconds with a rotation track on each listed bone
+  (default every bone) holding that bone's current `pose` at both ends. `clip.clone` copies the
+  tracks of `from` under a new `name`; `clip.rename` keeps them under `to`. Both need a free name.
+- `clip.retime` scales every key time by `duration` over the old duration, so motion keeps its
+  shape and only the speed changes.
+- `clip.key.set` inserts a key, or replaces the one already at that time, and creates the track
+  (neutral at both ends) if the bone has none. `value` is a quaternion for `rotation`, normalized
+  for you, and an offset for `position`.
+- `clip.key.remove` drops one interior key. It refuses to leave a track with fewer than 2 keys or
+  to remove the key at 0 or at the duration, which every track needs; replace an end with `clip.key.set`.
+- `clip.key.record` writes a pose at `time` into the tracks of the listed `bones` (default all),
+  creating tracks as needed. Without `poses` it records each bone's stored `pose` rotation, so
+  `pose` then `clip.key.record` keys a pose. `poses` give explicit rotation and position values.
+- `endpoints` is `free` (default: write only the key given) or `loop` (a key at time 0 or at the
+  duration is copied to the other end). A `time` outside 0 through `duration` fails; so does a
+  name that is taken or an unknown clip or bone, each reported with its operation index.
+- Only the tracks an operation names change; the rest stay identical. A batch of these is atomic
+  and one `undo` restores the project from before it.

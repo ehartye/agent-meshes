@@ -33,3 +33,16 @@ it('rejects malformed clips and protects referenced bones', () => {
   p = applyOperation(p, { op: 'clip.remove', name: 'swing' });
   expect(applyOperation(p, { op: 'bone.remove', name: 'joint' }).bones).toHaveLength(0);
 });
+it('plays a key written by clip.key.set and a pose recorded by clip.key.record on the actual bone', () => {
+  let p = applyOperation(createProject('animated'), { op: 'bone.add', bone: { name: 'joint', position: [0, 1, 0] } });
+  p = applyOperation(p, { op: 'clip.create', name: 'nod', duration: 2 });
+  p = applyOperation(p, { op: 'clip.key.set', name: 'nod', bone: 'joint', property: 'rotation', time: 1, value: [0, 0, 1, 1] });
+  p = applyOperation(p, { op: 'clip.key.record', name: 'nod', time: 1.5, poses: [{ bone: 'joint', position: [0, 0.2, 0] }] });
+  const built = buildScene(p), mixer = new AnimationMixer(built.root);
+  mixer.clipAction(built.clips[0]).play(); mixer.setTime(1);
+  expect(built.bones.get('joint')!.quaternion.z).toBeCloseTo(Math.SQRT1_2);
+  mixer.setTime(1.5);
+  expect(built.bones.get('joint')!.position.distanceTo(new Vector3(0, 1.2, 0))).toBeLessThan(1e-6);
+  expect(validateProject(JSON.parse(JSON.stringify(p))).clips).toEqual(p.clips);
+  built.dispose();
+});
