@@ -31,9 +31,9 @@ named file at the named version; [general] neither. Re-read a file if your versi
   review tools, not sprite exporters. `src/preview.ts` lines 62-71 set evenly spaced phases;
   `scripts/blender-preview.py` renders each selected view at every phase, sets `film_transparent = False` (line 237) and
   an 85 mm lens (`LENS`, lines 39, 122) and never selects an orthographic camera. `scripts/review-model.mjs` writes
-  one image per azimuth for each pose and region, from a viewer with `floor:false` and a solid background (line 37), so
-  an opaque canvas, and a `THREE.PerspectiveCamera` (`src/web/viewer.ts` lines 72-73). Both give opaque, perspective
-  images.
+  one image per azimuth for each pose and region, from a viewer with `floor:false` and a solid background (`defaults`
+  there), so an opaque canvas unless a config sets `background: null`, and a `THREE.PerspectiveCamera`
+  (`src/web/viewer.ts`). Both give perspective images, opaque by default.
 - [tested] `tests/mesh-tool-selection-skill.test.ts` fails if `src/cli.ts` registers a `bake` command or if those
   scripts or `src/web/viewer.ts` change those settings, so the "no shipped command" wording in the skill cannot go
   stale silently. The bake check sees only that name, so re-read the command list whenever this file is edited.
