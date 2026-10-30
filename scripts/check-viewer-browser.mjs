@@ -103,6 +103,153 @@ try {
       assert.equal(outlined.hullMetalness, undefined, 'setMaterial does not write metalness onto the hull');
       await page.screenshot({ path: join(evidence, 'outline.png') });
     }
+    if (label === 'default') {
+      // Projection and floor defaults, each in a fresh container so nothing carries over from the mounts above.
+      const projection = await page.evaluate(async () => {
+        const glbText = document.getElementById('glb').textContent;
+        const make = (width = 400, height = 300) => { const el = document.createElement('div'); el.style.cssText = `width:${width}px;height:${height}px`; document.body.append(el); return el; };
+        const base = { glb: glbText, background: '#f4efe6', autoplay: false };
+        const matrix = camera => camera.projectionMatrix.elements.map(v => Math.round(v * 1e6) / 1e6);
+        // The box of nonblack pixels in an ID render: where the model's silhouette sits in the frame.
+        const silhouette = image => {
+          let minX = image.width, maxX = -1, minY = image.height, maxY = -1;
+          for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+            const i = (y * image.width + x) * 4;
+            if (image.data[i] || image.data[i + 1] || image.data[i + 2]) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+          }
+          return { width: maxX - minX + 1, height: maxY - minY + 1, minX, maxX, minY, maxY };
+        };
+        const ink = { other: '#ff0000', width: 400, height: 300 };
+        const alphaPixels = async url => {
+          const image = new Image(); image.src = url; await image.decode();
+          const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+          const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+          const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          let seen = 0; for (let i = 3; i < data.length; i += 4) if (data[i] > 0) seen++;
+          return seen;
+        };
+        const out = {};
+
+        // Omitted projection and an explicit 'perspective' are the same camera and the same pixels, and both match the camera built before the option existed.
+        const omitted = await MeshViewer.mount(make(), { ...base, view: 'front' });
+        const explicit = await MeshViewer.mount(make(), { ...base, view: 'front', projection: 'perspective' });
+        const Perspective = omitted.camera.constructor;
+        const legacy = new Perspective(38, 400 / 300, 0.01, omitted.camera.far);
+        out.omitted = { type: omitted.camera.type, fov: omitted.camera.fov, near: omitted.camera.near, far: omitted.camera.far, aspect: omitted.camera.aspect, position: omitted.camera.position.toArray(), matrix: matrix(omitted.camera) };
+        out.legacyMatrix = matrix(legacy);
+        out.explicit = { type: explicit.camera.type, far: explicit.camera.far, position: explicit.camera.position.toArray(), matrix: matrix(explicit.camera) };
+        out.samePixels = omitted.screenshot() === explicit.screenshot();
+        out.sameIdPixels = omitted.idRender(ink).data.join() === explicit.idRender(ink).data.join();
+        const perspectiveWidths = [];
+        for (const distance of [3, 6]) {
+          const center = explicit.bounds().getCenter(new explicit.camera.position.constructor());
+          explicit.view({ position: [center.x, center.y, center.z + distance], target: center.toArray() });
+          perspectiveWidths.push(silhouette(explicit.idRender(ink)).width);
+        }
+        out.perspectiveWidths = perspectiveWidths;
+        omitted.dispose(); explicit.dispose();
+
+        // Orthographic: an OrthographicCamera, fitted into the frame, and the model keeps its size however far the camera stands.
+        const ortho = await MeshViewer.mount(make(), { ...base, view: 'front', projection: 'orthographic' });
+        out.ortho = { type: ortho.camera.type, isOrthographic: ortho.camera.isOrthographicCamera, hasFov: 'fov' in ortho.camera };
+        out.orthoFit = silhouette(ortho.idRender(ink));
+        const before = matrix(ortho.camera);
+        const orthoWidths = [];
+        for (const distance of [3, 6, 12]) {
+          const center = ortho.bounds().getCenter(new ortho.camera.position.constructor());
+          ortho.view({ position: [center.x, center.y, center.z + distance], target: center.toArray() });
+          orthoWidths.push(silhouette(ortho.idRender(ink)).width);
+        }
+        out.orthoWidths = orthoWidths;
+        out.orthoMatrixAfterIdRender = matrix(ortho.camera).join() === before.join();
+        ortho.view('front'); ortho.frame();
+        out.orthoRefit = silhouette(ortho.idRender(ink)).width;
+        // A container resize keeps the half-height and changes the width.
+        const halfBefore = ortho.camera.top;
+        ortho.renderer.domElement.parentElement.style.width = '200px'; ortho.resize();
+        out.orthoResize = { halfBefore, halfAfter: ortho.camera.top, aspectAfter: (ortho.camera.right - ortho.camera.left) / (ortho.camera.top - ortho.camera.bottom) };
+        ortho.dispose();
+        // An explicit position at mount time still gets a sized frustum.
+        const explicitOrtho = await MeshViewer.mount(make(), { ...base, projection: 'orthographic', view: { position: [0, 1, 5] } });
+        out.explicitOrthoWidth = silhouette(explicitOrtho.idRender(ink)).width;
+        explicitOrtho.dispose();
+
+        // The stage takes the same option.
+        const stageOptions = { models: { fox: { glb: glbText } }, background: '#f4efe6', autoplay: false };
+        const stagePerspective = await MeshViewer.mountStage(make(), stageOptions);
+        const stageOrtho = await MeshViewer.mountStage(make(), { ...stageOptions, projection: 'orthographic' });
+        stageOrtho.frame();
+        out.stage = { perspective: stagePerspective.camera.type, orthographic: stageOrtho.camera.type, orthoFit: silhouette(stageOrtho.idRender({ ...ink, models: ['fox'] })), perspectiveMatrix: matrix(stagePerspective.camera) };
+        out.stageLegacyMatrix = matrix(new Perspective(38, 400 / 300, stagePerspective.camera.near, stagePerspective.camera.far));
+        stagePerspective.dispose(); stageOrtho.dispose();
+
+        // An invalid value is rejected before any canvas or WebGL context exists, with the allowed values listed.
+        out.rejected = {};
+        for (const [name, value] of [['isometric', 'isometric'], ['uppercase', 'Orthographic'], ['null', null], ['number', 1]]) {
+          for (const kind of ['mount', 'mountStage']) {
+            const el = make();
+            try { await (kind === 'mount' ? MeshViewer.mount(el, { ...base, projection: value }) : MeshViewer.mountStage(el, { ...stageOptions, projection: value })); out.rejected[`${kind} ${name}`] = { message: 'accepted', canvases: 0 }; }
+            catch (error) { out.rejected[`${kind} ${name}`] = { message: error.message, canvases: el.querySelectorAll('canvas').length }; }
+          }
+        }
+
+        // Floor defaults: a 200 x 200 plane just under the origin, a shadow-only plane when the background is transparent.
+        const floorOf = viewer => viewer.scene.children.find(o => o.isMesh && o.geometry.type === 'PlaneGeometry');
+        const withFloor = await MeshViewer.mount(make(), { glb: glbText, autoplay: false, background: null, view: 'front' });
+        const plane = floorOf(withFloor);
+        out.floor = { geometry: plane.geometry.type, size: [plane.geometry.parameters.width, plane.geometry.parameters.height], y: plane.position.y, rotationX: plane.rotation.x, material: plane.material.type, opacity: plane.material.opacity, receivesShadow: plane.receiveShadow, discs: withFloor.scene.children.filter(o => o.isMesh && o.geometry.type === 'CircleGeometry').length };
+        out.shadowPixels = await alphaPixels(withFloor.screenshot());
+        withFloor.dispose();
+        const noFloor = await MeshViewer.mount(make(), { glb: glbText, autoplay: false, background: null, view: 'front', floor: false });
+        out.noFloorPlane = !!floorOf(noFloor);
+        out.noFloorPixels = await alphaPixels(noFloor.screenshot());
+        noFloor.dispose();
+        const colored = await MeshViewer.mount(make(), { glb: glbText, autoplay: false });
+        const coloredPlane = floorOf(colored);
+        out.defaults = { background: '#' + colored.scene.background.getHexString(), floorMaterial: coloredPlane.material.type, floorColor: '#' + coloredPlane.material.color.getHexString(), orbit: colored.controls.enabled };
+        colored.dispose();
+        return out;
+      });
+      const same = (a, b, message) => assert.equal(JSON.stringify(a), JSON.stringify(b), message);
+      // Default output must not change.
+      assert.equal(projection.omitted.type, 'PerspectiveCamera', 'an omitted projection is a perspective camera');
+      assert.deepEqual([projection.omitted.fov, projection.omitted.near, projection.omitted.aspect], [38, 0.01, 400 / 300], 'the omitted-projection camera keeps the 38 degree lens');
+      same(projection.omitted.matrix, projection.legacyMatrix, 'the omitted-projection matrix equals a PerspectiveCamera(38, aspect, 0.01, far)');
+      same(projection.explicit, { type: 'PerspectiveCamera', far: projection.omitted.far, position: projection.omitted.position, matrix: projection.omitted.matrix }, "projection: 'perspective' is the omitted camera, matrix and position included");
+      assert.equal(projection.samePixels, true, "projection: 'perspective' renders the same pixels as an omitted projection");
+      assert.equal(projection.sameIdPixels, true, "projection: 'perspective' renders the same ID pixels as an omitted projection");
+      assert.notEqual(projection.perspectiveWidths[0], projection.perspectiveWidths[1], `perspective size changes with distance: ${projection.perspectiveWidths}`);
+      assert.equal(projection.stage.perspective, 'PerspectiveCamera', 'the stage defaults to perspective');
+      same(projection.stage.perspectiveMatrix, projection.stageLegacyMatrix, 'the stage default matrix equals a PerspectiveCamera(38, aspect, near, far) with the stage fitted near and far');
+      // Orthographic.
+      assert.deepEqual(projection.ortho, { type: 'OrthographicCamera', isOrthographic: true, hasFov: false });
+      assert.ok(projection.orthoFit.minX > 0 && projection.orthoFit.maxX < 399 && projection.orthoFit.minY > 0 && projection.orthoFit.maxY < 299, `the orthographic fit keeps the model inside the frame: ${JSON.stringify(projection.orthoFit)}`);
+      assert.ok(projection.orthoFit.width > 100 || projection.orthoFit.height > 100, `the orthographic fit fills a good part of the frame: ${JSON.stringify(projection.orthoFit)}`);
+      assert.equal(new Set(projection.orthoWidths).size, 1, `orthographic size is identical at every camera distance: ${projection.orthoWidths}`);
+      assert.equal(projection.orthoMatrixAfterIdRender, true, 'an ID render restores the orthographic camera');
+      assert.ok(Math.abs(projection.orthoRefit - projection.orthoFit.width) <= 1, `frame() refits an orthographic view to the same size: ${projection.orthoRefit} vs ${projection.orthoFit.width}`);
+      assert.equal(projection.orthoResize.halfAfter, projection.orthoResize.halfBefore, 'a container resize keeps the orthographic half-height');
+      assert.ok(Math.abs(projection.orthoResize.aspectAfter - 200 / 300) < 1e-9, `the orthographic aspect follows the container: ${projection.orthoResize.aspectAfter}`);
+      assert.ok(projection.explicitOrthoWidth > 20, `an explicit {position} view of an orthographic viewer is sized to the model: ${projection.explicitOrthoWidth}`);
+      assert.equal(projection.stage.orthographic, 'OrthographicCamera', 'mountStage takes projection');
+      assert.ok(projection.stage.orthoFit.width > 50 && projection.stage.orthoFit.minX > 0 && projection.stage.orthoFit.maxX < 399, `the orthographic stage frames its model: ${JSON.stringify(projection.stage.orthoFit)}`);
+      // Invalid values.
+      for (const kind of ['mount', 'mountStage']) {
+        for (const name of ['isometric', 'uppercase', 'null', 'number']) {
+          const rejected = projection.rejected[`${kind} ${name}`];
+          assert.match(rejected.message, /^Unknown projection .*; use one of perspective, orthographic$/, `${kind} ${name} is rejected with the allowed values: ${rejected.message}`);
+          assert.equal(rejected.canvases, 0, `${kind} ${name}: nothing was created`);
+        }
+      }
+      assert.equal(projection.rejected['mount isometric'].message, 'Unknown projection "isometric"; use one of perspective, orthographic');
+      // Floor and background defaults, stated in viewer-api.md.
+      assert.deepEqual(projection.floor, { geometry: 'PlaneGeometry', size: [200, 200], y: -0.012, rotationX: -Math.PI / 2, material: 'ShadowMaterial', opacity: 0.18, receivesShadow: true, discs: 0 }, 'the default floor with background null is a 200 x 200 shadow plane, not a disc');
+      assert.ok(projection.shadowPixels > projection.noFloorPixels + 100, `a transparent capture with the default floor adds shadow pixels beyond the model (${projection.shadowPixels} vs ${projection.noFloorPixels})`);
+      assert.equal(projection.noFloorPlane, false, 'floor: false draws no plane');
+      assert.deepEqual(projection.defaults, { background: '#dce7eb', floorMaterial: 'MeshStandardMaterial', floorColor: '#dce7eb', orbit: true }, 'the defaults are background #dce7eb, a floor of the same color, orbit on');
+      console.log(`Projection: omitted == perspective (matrix and pixels); orthographic widths ${projection.orthoWidths} at three distances vs perspective ${projection.perspectiveWidths}; invalid value -> ${projection.rejected['mount isometric'].message}`);
+      console.log(`Floor: ${JSON.stringify(projection.floor)}; opaque pixels with the default floor ${projection.shadowPixels}, with floor:false ${projection.noFloorPixels}`);
+    }
     await page.screenshot({ path: join(evidence, `${label}.png`) });
     assert.deepEqual(errors, [], `${label}: console errors`);
     await context.close();

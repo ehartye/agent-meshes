@@ -8,8 +8,8 @@ import { parseQuality } from '../render/quality.ts';
 import type { QualityInput } from '../render/quality.ts';
 import type { IdImage, IdRenderOptions } from '../render/id-render.ts';
 import { prepareGlass } from '../render/glass.ts';
-import { addFloor, addOutlines, addRoomLights, bytesOf, captureId, createRenderer, idImageURL } from './room.ts';
-import type { GlbInput } from './room.ts';
+import { addFloor, addOutlines, addRoomLights, bytesOf, captureId, createCamera, createRenderer, fitOrthographic, idImageURL, parseProjection, setCameraAspect } from './room.ts';
+import type { GlbInput, Projection, ViewerCamera } from './room.ts';
 import { viewDirection } from './views.ts';
 import type { ViewName, ViewSpec } from './views.ts';
 
@@ -30,6 +30,8 @@ export interface StageOptions {
   floor?: boolean;
   /** Initial camera view of the whole stage. Default `front`. */
   view?: ViewName | ViewSpec;
+  /** Camera projection: `perspective` (default) or `orthographic` (parallel rays; size does not change with distance). Anything else throws before a WebGL context exists. */
+  projection?: Projection;
   outline?: number;
   outlineColor?: string;
   /** Renderer quality: `high` (default), `fast` (no MSAA, pixel ratio 1, no shadows) or `{preset?, antialias?, pixelRatio?, shadows?}`. */
@@ -39,7 +41,7 @@ export interface StageOptions {
 export type StageTarget = string | readonly string[];
 export interface FrameOptions { model?: StageTarget; padding?: number }
 
-const stageOptionKeys = ['models', 'autoplay', 'background', 'orbit', 'floor', 'view', 'outline', 'outlineColor', 'quality'];
+const stageOptionKeys = ['models', 'autoplay', 'background', 'orbit', 'floor', 'view', 'projection', 'outline', 'outlineColor', 'quality'];
 const modelOptionKeys = ['glb', 'autoplay', 'position', 'rotation', 'scale'];
 function checkKeys(value: object, allowed: string[], label: string): void {
   for (const key of Object.keys(value)) if (!allowed.includes(key)) throw new Error(`Unknown ${label} option "${key}"; use ${allowed.join(', ')}`);
@@ -53,14 +55,14 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
   checkKeys(options, stageOptionKeys, 'mountStage');
   const initial = Object.entries(options.models ?? {});
   const content = createStageScene();
-  const quality = parseQuality(options.quality, devicePixelRatio);
+  const projection = parseProjection(options.projection), quality = parseQuality(options.quality, devicePixelRatio);
   // Validate every name and placement before creating a WebGL context.
   for (const [name, model] of initial) { content.check(name); checkKeys(model, modelOptionKeys, `model "${name}"`); parsePlacement({ position: model.position, rotation: model.rotation, scale: model.scale }); }
   const scene = new THREE.Scene();
   const background = options.background === undefined ? '#dce7eb' : options.background;
   if (background) scene.background = new THREE.Color(background);
   const renderer = createRenderer(container, !background, quality);
-  const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 200);
+  const camera = createCamera(projection);
   const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.enabled = options.orbit ?? true;
   scene.add(content.root);
   addRoomLights(renderer, scene, quality);
@@ -72,7 +74,7 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
 
   function resize(): void {
     const width = Math.max(1, container.clientWidth), height = Math.max(1, container.clientHeight);
-    renderer.setSize(width, height, false); camera.aspect = width / height; camera.updateProjectionMatrix();
+    renderer.setSize(width, height, false); setCameraAspect(camera, width / height);
   }
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize);
   observer?.observe(container); resize();
@@ -82,9 +84,11 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
     if (box.isEmpty()) throw new Error(target === undefined ? 'The stage has no visible models to frame' : `Nothing visible to frame in ${JSON.stringify(target)}`);
     return box;
   };
+  let fitted = false;
   function place(direction: THREE.Vector3, box: THREE.Box3, padding: number): void {
     const center = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3()).length();
-    const distance = Math.max(fitBoxDistance(box.min.toArray(), box.max.toArray(), direction.toArray(), camera.fov, camera.aspect, padding), size * 0.05, 1e-3);
+    const distance = Math.max(camera instanceof THREE.OrthographicCamera ? fitOrthographic(camera, box, direction, padding) : fitBoxDistance(box.min.toArray(), box.max.toArray(), direction.toArray(), camera.fov, camera.aspect, padding), size * 0.05, 1e-3);
+    fitted = true;
     camera.near = Math.max(0.001, distance / 1000); camera.far = Math.max(200, distance * 10); camera.updateProjectionMatrix();
     controls.target.copy(center); camera.position.copy(center).add(direction.normalize().multiplyScalar(distance)); controls.update();
   }
@@ -157,8 +161,11 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
       const padding = paddingOf(frame);
       if (typeof spec === 'string') { const direction = viewDirection(spec); place(direction, boxOf(frame?.model), padding); return; }
       const box = content.bounds(frame?.model);
+      const target = spec.target ? new THREE.Vector3().fromArray(spec.target) : box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3());
+      // An explicit position keeps the camera's size; an orthographic camera never fitted has only its placeholder size, so size it from this direction.
+      if (camera instanceof THREE.OrthographicCamera && !fitted && !box.isEmpty()) { const back = new THREE.Vector3().fromArray(spec.position).sub(target); if (back.lengthSq() > 0) { fitOrthographic(camera, box, back, padding); fitted = true; } }
       camera.position.fromArray(spec.position);
-      controls.target.copy(spec.target ? new THREE.Vector3().fromArray(spec.target) : box.isEmpty() ? new THREE.Vector3() : box.getCenter(new THREE.Vector3()));
+      controls.target.copy(target);
       controls.update();
     },
     /** Fit the whole stage, or `model`, from the current direction. `padding` > 1 leaves a margin (default 1.1). */
@@ -192,7 +199,7 @@ export async function mountStage(container: HTMLElement, options: StageOptions =
   return stage;
 }
 export interface Stage {
-  renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; controls: OrbitControls;
+  renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: ViewerCamera; controls: OrbitControls;
   readonly models: string[];
   model(name: string): StageModel;
   add(name: string, model: StageModelOptions): Promise<StageModel>;

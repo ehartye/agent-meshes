@@ -201,12 +201,20 @@ describe('mesh-tool-selection pre-render tripwires', () => {
   it('fails when the review capture script or its viewer stops being an opaque, perspective render', () => {
     const capture = read(join(ROOT, 'scripts/review-model.mjs'));
     const viewer = read(join(ROOT, 'src/web/viewer.ts'));
-    const message = 'scripts/review-model.mjs or src/web/viewer.ts changed what the review capture renders: re-read them and update the capture bullet in references/two-d-engines.md, which says it renders opaque, perspective images, and check the 2D row in SKILL.md, which calls it a review tool';
+    const room = read(join(ROOT, 'src/web/room.ts'));
+    const message = 'scripts/review-model.mjs, src/web/viewer.ts or src/web/room.ts changed what the review capture renders: re-read them and update the capture bullet in references/two-d-engines.md, which says it renders opaque, perspective images, and check the 2D row in SKILL.md, which calls it a review tool';
     expect(capture, message).toMatch(/floor:\s*false/);
     expect(capture, message).toMatch(/background:\s*'#[0-9a-f]{6}'/i);
     expect(capture, message).toMatch(/for\(const pose of poses\)[\s\S]*?for\(const region of \[\{name:'body'\},\.\.\.selected\]\)[\s\S]*?for\(const azimuth of ring\)/);
-    expect(viewer, message).toMatch(/new THREE\.PerspectiveCamera\(/);
-    expect(viewer, message).not.toMatch(/OrthographicCamera/);
+    // The camera is built in room.ts: the perspective lens is the fallback branch of createCamera, and an omitted
+    // projection option resolves to 'perspective'. viewer.ts must feed that parsed option straight to createCamera,
+    // and the review capture must neither request a projection nor stop reading the perspective lens (`.fov`).
+    expect(room, message).toMatch(/export function createCamera\([^)]*\)[^{]*\{[^}]*:\s*new THREE\.PerspectiveCamera\(/);
+    expect(room, message).toMatch(/export function parseProjection\([^)]*\)[^{]*\{\s*if \(value === undefined\) return 'perspective';/);
+    expect(viewer, message).toMatch(/const projection = parseProjection\(options\.projection\)/);
+    expect(viewer, message).toMatch(/createCamera\(projection\)/);
+    expect(capture, message).not.toMatch(/projection|orthographic/i);
+    expect(capture, message).toMatch(/viewer\.camera\.fov/);
   });
 });
 
