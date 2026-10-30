@@ -191,6 +191,8 @@ jobs:
       - if: matrix.suite == 'geometry'
         run: python tests/digitigrade_gait.py
       - if: matrix.suite == 'geometry'
+        run: python tests/digitigrade_body_timing.py
+      - if: matrix.suite == 'geometry'
         run: python tests/retarget.py
       - if: matrix.suite == 'geometry'
         run: python tests/motion_style.py

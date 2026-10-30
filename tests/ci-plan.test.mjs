@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { planChanges, gateFailures, pullRequestPaths, readTestingPhase } from '../scripts/ci-plan.mjs';
+import { planChanges, gateFailures, pullRequestPaths, readTestingPhase, localGate, localGateMain, workflowPythonScripts, DONE_MARKER } from '../scripts/ci-plan.mjs';
 
 test('dev PRs use only quick checks even for versions, policy or unknown inputs', () => {
   const quick = { javascript: false, python: false, geometrySweeps: false, recipeExamples: false };
@@ -132,4 +132,72 @@ test('shared helper contracts gate merges independently of recipe examples', () 
     assert.ok(gateFailures(plan, { quick: 'success', node: 'success', python: 'success', browser: 'success', examples }).length, String(examples));
   }
   assert.ok(gateFailures({ ...plan, recipeExamples: false, geometrySweeps: true }, {}).includes('invalid plan'));
+});
+
+test('local-gate for a skills-only diff selects the skills lane, even in the dev phase', () => {
+  const gate = localGate(['skills/mesh-build/SKILL.md', 'skills/mesh-build/references/native-build-identity.md']);
+  assert.equal(gate.lane, 'skills-only');
+  const commands = gate.commands.map(entry => entry.command);
+  assert.deepEqual(commands.filter(command => !command.includes('check_docs')), [
+    'npm run typecheck', 'python tests/ci_docs.py',
+    'npx vitest run tests/build-output-guidance.test.ts tests/mesh-tool-selection-skill.test.ts',
+  ]);
+  assert.ok(!commands.some(command => /face-rig|npm test|build$/.test(command)));
+  // Dev still silences the PR observer; the local gate does not read the phase.
+  assert.deepEqual(planChanges(['skills/mesh-build/SKILL.md'], { phase: 'dev' }), { javascript: false, python: false, geometrySweeps: false, recipeExamples: false });
+  // A skill file outside SKILL.md and references/ is not trusted to be skills-only.
+  assert.notEqual(localGate(['skills/mesh-build/scripts/helper.py']).lane, 'skills-only');
+});
+
+test('local-gate maps a digitigrade gait change to its body-timing test and runs merge-lane Python', () => {
+  const gate = localGate(['scripts/blender_lib/agent_meshes_digitigrade_gait.py']);
+  const commands = gate.commands.map(entry => entry.command);
+  assert.equal(gate.lane, 'affected');
+  assert.equal(gate.testLane, 'merge');
+  assert.ok(commands.includes('python tests/digitigrade_gait.py'));
+  assert.ok(commands.includes('python tests/digitigrade_body_timing.py'));
+  assert.ok(commands.includes('npm run typecheck'));
+  assert.ok(!commands.includes('python tests/face_components.py'), 'an unrelated face script is not selected');
+  assert.ok(commands.length < workflowPythonScripts().python.length, 'narrower than the whole python job');
+  // The workflow itself runs the body-timing file, so CI and the local plan agree.
+  assert.ok(workflowPythonScripts().python.includes('tests/digitigrade_body_timing.py'));
+  assert.ok(workflowPythonScripts().python.includes('tests/digitigrade_gait.py'));
+});
+
+test('local-gate for a version bump runs the full plan with every script', () => {
+  const gate = localGate(['package.json', 'skills/mesh-build/SKILL.md']);
+  const commands = gate.commands.map(entry => entry.command);
+  const { python, examples } = workflowPythonScripts();
+  assert.equal(gate.lane, 'full');
+  assert.equal(gate.testLane, 'full');
+  assert.deepEqual(gate.plan, { javascript: true, python: true, geometrySweeps: true, recipeExamples: true });
+  for (const script of [...python, ...examples]) assert.ok(commands.includes(`python ${script}`), script);
+  assert.ok(commands.some(command => command.startsWith('node --test ') && command.includes('tests/ci-plan.test.mjs')));
+  assert.ok(commands.includes('npm run build'));
+});
+
+
+test('local-gate reads committed, edited and untracked paths from Git and ends with the done marker', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-local-gate-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('config', 'user.name', 'CI routing test');
+  git('config', 'user.email', 'ci-test@example.invalid');
+  mkdirSync(join(root, 'skills/x/references'), { recursive: true });
+  writeFileSync(join(root, 'skills/x/SKILL.md'), 'start\n');
+  git('add', '.');
+  git('commit', '-qm', 'start');
+  const base = git('rev-parse', 'HEAD');
+  writeFileSync(join(root, 'skills/x/SKILL.md'), 'committed edit\n');
+  git('commit', '-qam', 'edit skill');
+  writeFileSync(join(root, 'skills/x/references/note.md'), 'untracked reference\n');
+  const lines = [];
+  assert.equal(localGateMain(['--base', base], root, line => lines.push(line)), 0);
+  assert.match(lines[0], /^local-gate: base=[0-9a-f]{40}; 2 changed paths; lane=skills-only; AGENT_MESHES_TEST_LANE=merge$/);
+  assert.match(lines.at(-1), new RegExp(`^${DONE_MARKER} lane=skills-only status=planned commands=4$`));
+  const cli = args => spawnSync(process.execPath, [resolve('scripts/ci-plan.mjs'), 'local-gate', ...args], { cwd: root, encoding: 'utf8' });
+  assert.equal(cli([]).status, 1);
+  assert.equal(cli(['--base', '--run']).status, 1);
+  assert.equal(cli(['--base', base]).status, 0);
 });
