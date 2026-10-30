@@ -44,8 +44,11 @@ export interface ClipReportOptions {
   /** Planted-sole speed may differ from the declared travel by this fraction (default 0.1, at least 0.02 m/s). */
   slideFraction?: number;
 }
-const DEFAULTS = { fps: 60, floor: 0, minSupport: 1, loopRotationDeg: 1, loopPositionM: 0.002, loopScale: 0.01,
+/** The detection thresholds and sampling defaults; the CLI help and README state these numbers, and a test keeps them in step. */
+export const CLIP_REPORT_DEFAULTS = { fps: 60, floor: 0, minSupport: 1, loopRotationDeg: 1, loopPositionM: 0.002, loopScale: 0.01,
   spikeRatio: 6, spikeMinDegPerSec: 180, spikeMinMetersPerSec: 1, penetrationM: 0.005, contactM: 0.002, slideFraction: 0.1 };
+/** Floor (m/s) on the stance-sliding allowance, so a very slow declared travel speed does not demand an exactly still foot. */
+export const CLIP_REPORT_MIN_SLIDE_MPS = 0.02;
 
 /** One precise failure: which clip, which bone, when, and which check. */
 export interface ClipFinding {
@@ -142,7 +145,7 @@ function verdict(id: ClipCheckId, label: string, value: unknown, limit: string, 
 
 function analyzeClip(source: GaitSource, name: string, options: ClipReportOptions, feetNames: string[]): ClipSummary {
   const clip = source.clips.find(candidate => candidate.name === name)!;
-  const o = { ...DEFAULTS, ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) } as typeof DEFAULTS & ClipReportOptions;
+  const o = { ...CLIP_REPORT_DEFAULTS, ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) } as typeof CLIP_REPORT_DEFAULTS & ClipReportOptions;
   const bound: Bound[] = bindClip(source, clip);
   const keys = clip.tracks.reduce((sum, track) => sum + track.times.length, 0);
   const { times, key: isKey } = sampleTimes(clip.duration, o.fps, clip.tracks.flatMap(track => Array.from(track.times)));
@@ -226,7 +229,7 @@ function analyzeClip(source: GaitSource, name: string, options: ClipReportOption
 
   // Foot checks, only for declared feet.
   const penetrationLimit = `sole no lower than ${o.penetrationM} m below the floor`;
-  const slidingLimit = `planted sole within ${Math.round(o.slideFraction * 100)}% (at least 0.02 m/s) of the travel speed`;
+  const slidingLimit = `planted sole within ${Math.round(o.slideFraction * 100)}% (at least ${CLIP_REPORT_MIN_SLIDE_MPS} m/s) of the travel speed`;
   const supportLimit = `at least ${o.minSupport} planted foot at every sample`;
   const missing = feet.filter(foot => !foot.sole.length).map(foot => foot.name);
   const reason = !feet.length ? 'no foot declared; pass --foot <bone> for each foot' : missing.length ? `no skinned vertices follow foot bone ${missing.join(', ')}, so there is no sole to measure` : '';
@@ -252,7 +255,7 @@ function analyzeClip(source: GaitSource, name: string, options: ClipReportOption
     // Stance sliding
     if (o.speed === undefined) checks.push(notEvaluated('stance-sliding', 'Stance sliding', slidingLimit, 'no travel speed declared; pass --speed <m/s>'));
     else {
-      const allowed = Math.max(o.slideFraction * o.speed, 0.02);
+      const allowed = Math.max(o.slideFraction * o.speed, CLIP_REPORT_MIN_SLIDE_MPS);
       let worstSlide = 0, plantedSegments = 0;
       feet.forEach((foot, f) => {
         const samples = footSamples[f], velocity: ([number, number] | null)[] = times.slice(1).map((time, i) => {

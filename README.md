@@ -475,6 +475,14 @@ naming the clip, bone, time and check id. Foot penetration, stance sliding (need
 (needs two feet) run only for `--foot` bones and otherwise print `NOT-EVALUATED`, which is not a pass. It exits 1
 when an evaluated check fails.
 
+The detection thresholds are fixed defaults, and no flag overrides them (`--min-support` is the one adjustable
+value). Loop discontinuity fails a bone whose last pose differs from its first by more than 1 deg rotation, 2 mm
+position or 0.01 scale. A velocity spike is a segment speed above 6x that joint's own median and above 180 deg/s
+(rotation) or 1 m/s (position). With `--foot`, penetration is a sole more than 5 mm below the floor (y = 0), a sole
+is planted within 2 mm of the floor, and a planted sole must move within 10% of `--speed` (at least 0.02 m/s).
+`--min-support` defaults to 1. `clip-report --help` prints the same numbers from the code, and a test keeps both in
+step.
+
 ### Detached parts
 
 ```text
