@@ -24,6 +24,12 @@ export const pivotSchema = z.enum(['bottom-center', 'bottom-centre', 'center', '
 export const limitsSchema = z.object({
   maxTriangles: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   maxMaterials: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  /** Animation clips the GLB may hold. */
+  maxClips: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  /** Tracks (animation channels) any one clip may hold. */
+  maxTracks: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  /** Keys any one track may hold. */
+  maxKeys: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   expectPivot: pivotSchema.optional(),
   expectHeight: z.number().positive().finite().optional(),
   /** Metres allowed on the pivot and height checks (default 0.001). */
@@ -37,7 +43,7 @@ export const limitsSchema = z.object({
 }).strict();
 export type LimitOptions = z.input<typeof limitsSchema>;
 
-export interface LimitCheck { name: 'maxTriangles' | 'maxMaterials' | 'expectPivot' | 'expectHeight' | 'maxGap'; ok: boolean; expected: number | string; actual: number | Vec3; message: string }
+export interface LimitCheck { name: 'maxTriangles' | 'maxMaterials' | 'maxClips' | 'maxTracks' | 'maxKeys' | 'expectPivot' | 'expectHeight' | 'maxGap'; ok: boolean; expected: number | string; actual: number | Vec3; message: string }
 export interface LimitsReport {
   ok: boolean; warnOnly: boolean;
   /** Triangles drawn by the default scene, counting every node instance. */
@@ -49,6 +55,24 @@ export interface LimitsReport {
   failures: string[];
   /** The detached-part lint, present when maxGap is set. */
   detached?: DetachedReport;
+  /** Per clip, with its tracks and the key count of each; present when maxClips, maxTracks or maxKeys is set. */
+  clips?: ClipStat[];
+}
+export interface ClipStat { name: string; tracks: number; trackKeys: { track: string; keys: number }[] }
+
+interface GLTFAnimation { name?: string; channels?: { sampler: number; target: { node?: number; path: string } }[]; samplers?: { input: number }[] }
+
+/** Clips, tracks and keys as stored: one track per animation channel, one key per entry of its sampler's input times. */
+export function clipStats(doc: GLTFDocument): ClipStat[] {
+  const animations = (doc.json as { animations?: GLTFAnimation[] }).animations ?? [];
+  return animations.map((animation, index) => {
+    const trackKeys = (animation.channels ?? []).map(channel => {
+      const node = channel.target.node === undefined ? undefined : doc.json.nodes?.[channel.target.node];
+      const input = animation.samplers?.[channel.sampler]?.input;
+      return { track: `${node?.name ?? `node ${channel.target.node}`}.${channel.target.path}`, keys: input === undefined ? 0 : doc.json.accessors?.[input]?.count ?? 0 };
+    });
+    return { name: animation.name || `animation ${index}`, tracks: trackKeys.length, trackKeys };
+  });
 }
 
 const m = (value: number) => Number(value.toFixed(5));
@@ -84,6 +108,22 @@ export function checkLimits(bytes: Uint8Array, options: LimitOptions): LimitsRep
     message: `${triangles} triangles ${triangles <= limits.maxTriangles ? 'within' : 'exceed'} the budget of ${limits.maxTriangles}` });
   if (limits.maxMaterials !== undefined) checks.push({ name: 'maxMaterials', ok: materials <= limits.maxMaterials, expected: limits.maxMaterials, actual: materials,
     message: `${materials} materials ${materials <= limits.maxMaterials ? 'within' : 'exceed'} the budget of ${limits.maxMaterials}` });
+  const clips = limits.maxClips !== undefined || limits.maxTracks !== undefined || limits.maxKeys !== undefined ? clipStats(doc) : undefined;
+  if (clips && limits.maxClips !== undefined) {
+    const ok = clips.length <= limits.maxClips;
+    checks.push({ name: 'maxClips', ok, expected: limits.maxClips, actual: clips.length,
+      message: `${clips.length} animation clip${clips.length === 1 ? '' : 's'} ${ok ? 'within' : 'exceed'} the budget of ${limits.maxClips}${ok || !clips.length ? '' : ` (${clips.map(clip => clip.name).join(', ')})`}` });
+  }
+  if (clips && limits.maxTracks !== undefined) {
+    const over = clips.filter(clip => clip.tracks > limits.maxTracks!);
+    checks.push({ name: 'maxTracks', ok: !over.length, expected: limits.maxTracks, actual: Math.max(0, ...clips.map(clip => clip.tracks)),
+      message: over.length ? over.map(clip => `clip "${clip.name}" has ${clip.tracks} tracks; the budget is ${limits.maxTracks} per clip`).join('\n') : `every clip has at most ${limits.maxTracks} tracks` });
+  }
+  if (clips && limits.maxKeys !== undefined) {
+    const over = clips.flatMap(clip => clip.trackKeys.filter(track => track.keys > limits.maxKeys!).map(track => `clip "${clip.name}" track ${track.track} has ${track.keys} keys; the budget is ${limits.maxKeys} per track`));
+    checks.push({ name: 'maxKeys', ok: !over.length, expected: limits.maxKeys, actual: Math.max(0, ...clips.flatMap(clip => clip.trackKeys.map(track => track.keys))),
+      message: over.length ? over.join('\n') : `every track has at most ${limits.maxKeys} keys` });
+  }
   if (limits.expectPivot !== undefined) {
     const at: Vec3 = limits.expectPivot === 'center' ? bounds.center : bounds.baseCenter;
     const off = Math.max(...at.map(Math.abs)), ok = off <= tolerance;
@@ -102,7 +142,7 @@ export function checkLimits(bytes: Uint8Array, options: LimitOptions): LimitsRep
     checks.push({ name: 'maxGap', ok: detached.ok, expected: limits.maxGap, actual: worst,
       message: detached.ok ? `every mesh part is within ${limits.maxGap} m of another${detached.skipped ? ` (skipped: ${detached.skipped})` : ''}` : detached.findings.map(finding => finding.message).join('\n') });
   }
-  // One failure line per floating group, so each prints as its own FAIL line.
-  const failures = checks.filter(check => !check.ok).flatMap(check => check.name === 'maxGap' ? check.message.split('\n') : [check.message]);
-  return { ok: failures.length === 0, warnOnly: limits.warnOnly ?? false, triangles, materials, bounds, checks, failures, ...(detached ? { detached } : {}) };
+  // One failure line per floating group or over-budget clip, so each prints as its own FAIL line.
+  const failures = checks.filter(check => !check.ok).flatMap(check => ['maxGap', 'maxTracks', 'maxKeys'].includes(check.name) ? check.message.split('\n') : [check.message]);
+  return { ok: failures.length === 0, warnOnly: limits.warnOnly ?? false, triangles, materials, bounds, checks, failures, ...(detached ? { detached } : {}), ...(clips ? { clips } : {}) };
 }

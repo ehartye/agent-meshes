@@ -282,8 +282,8 @@ export function kneeInterior(hip: Vec3, knee: Vec3, ankle: Vec3, forward: Vec3):
   return offset.dot(f) >= 0 ? 180 - flexion : 180 + flexion;
 }
 
-interface Bound { target: Object3D; property: 'position' | 'quaternion' | 'scale'; interpolant: Interpolant }
-function bindClip(source: GaitSource, clip: AnimationClip): Bound[] {
+export interface Bound { target: Object3D; property: 'position' | 'quaternion' | 'scale'; interpolant: Interpolant }
+export function bindClip(source: GaitSource, clip: AnimationClip): Bound[] {
   const bound: Bound[] = [];
   for (const track of clip.tracks) {
     const { nodeName, propertyName } = PropertyBinding.parseTrackName(track.name);
@@ -295,11 +295,11 @@ function bindClip(source: GaitSource, clip: AnimationClip): Bound[] {
   }
   return bound;
 }
-function restore(source: GaitSource) {
+export function restore(source: GaitSource) {
   for (const [object, rest] of source.rest) { object.position.copy(rest.position); object.quaternion.copy(rest.quaternion); object.scale.copy(rest.scale); }
   source.scene.updateMatrixWorld(true);
 }
-function pose(source: GaitSource, bound: Bound[], time: number) {
+export function pose(source: GaitSource, bound: Bound[], time: number) {
   for (const { target, property, interpolant } of bound) {
     const value = interpolant.evaluate(time) as unknown as number[];
     if (property === 'quaternion') target.quaternion.fromArray(value).normalize();

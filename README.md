@@ -442,7 +442,10 @@ node scripts/agent-meshes.mjs verify model.glb --expect-pivot bottom-center --ex
 ```
 
 Options: `--max-triangles N` (triangles drawn by the default scene, every node instance counted),
-`--max-materials N` (distinct materials the drawn meshes reference), `--expect-pivot bottom-center|center`
+`--max-materials N` (distinct materials the drawn meshes reference), `--max-clips N` (animation clips in the GLB),
+`--max-tracks N` (tracks per clip) and `--max-keys N` (keys per track), the last two naming the clip and track that
+break them (all three are unset by default, and the JSON gains `limits.clips` only when one is given),
+`--expect-pivot bottom-center|center`
 (the base centre `[centre x, lowest y, centre z]`, or the bounds centre, must sit at the origin),
 `--expect-height H` (world y extent), `--tolerance m` (default 0.001), `--warn-only`. The JSON gains a
 `limits` object with `ok`, `triangles`, `materials`, `checks`, `failures` and `bounds` (`min`, `max`,
@@ -461,6 +464,12 @@ written to `verification.json` under `limits`:
 ```
 
 A violation fails the build with error code `VERIFY_LIMITS_FAILED` unless `"warnOnly":true`.
+
+`clip-report <glb> [--clip NAME] [--foot BONE]... [--speed MPS] [--min-support N] [--json]` reports on every
+clip of any rig: loop discontinuity (first pose against last, per bone) and joint velocity spikes, each failure
+naming the clip, bone, time and check id. Foot penetration, stance sliding (needs `--speed`) and support count
+(needs two feet) run only for `--foot` bones and otherwise print `NOT-EVALUATED`, which is not a pass. It exits 1
+when an evaluated check fails.
 
 ### Detached parts
 

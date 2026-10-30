@@ -131,6 +131,9 @@ export async function main(args = process.argv): Promise<void> {
     .option('--render-vertex-budget <count>', 'Per-mesh warning budget for --target uefn (default 30000)')
     .option('--max-triangles <count>', 'Fail when the drawn scene (every node instance) has more triangles')
     .option('--max-materials <count>', 'Fail when the drawn meshes reference more distinct materials')
+    .option('--max-clips <count>', 'Fail when the GLB holds more animation clips')
+    .option('--max-tracks <count>', 'Fail when a clip has more tracks (animation channels); names the clip')
+    .option('--max-keys <count>', 'Fail when a track has more keys; names the clip and track')
     .option('--expect-pivot <name>', 'Fail unless the world bounds put this at the origin: bottom-center (base centre) or center')
     .option('--expect-height <meters>', 'Fail unless the world-space height (y extent) is this many metres')
     .option('--tolerance <meters>', 'Slack for --expect-pivot and --expect-height (default 0.001)')
@@ -152,6 +155,7 @@ export async function main(args = process.argv): Promise<void> {
     if (maxGap !== undefined && (!Number.isFinite(maxGap) || maxGap < 0)) throw Object.assign(new Error('--max-gap must be a non-negative number of metres'), { code: 'CLI_ARGUMENT_ERROR' });
     const allowDetached = options.allowDetached === undefined ? undefined : String(options.allowDetached).split(',').map(name => name.trim()).filter(Boolean);
     const limitOptions = limitsSchema.parse({ maxTriangles: number(options.maxTriangles, '--max-triangles', true), maxMaterials: number(options.maxMaterials, '--max-materials', true),
+      maxClips: number(options.maxClips, '--max-clips', true), maxTracks: number(options.maxTracks, '--max-tracks', true), maxKeys: number(options.maxKeys, '--max-keys', true),
       expectPivot: options.expectPivot, expectHeight: number(options.expectHeight, '--expect-height'), tolerance, warnOnly: options.warnOnly ? true : undefined, maxGap, allowDetached });
     const hasLimits = Object.entries(limitOptions).some(([key, value]) => value !== undefined && !['warnOnly', 'tolerance', 'allowDetached'].includes(key));
     const reportLimits = (bytes: Uint8Array) => {
@@ -336,6 +340,21 @@ export async function main(args = process.argv): Promise<void> {
       print({ output, clip: report.clip, metrics: report.metrics, ...(report.comparisons ? { comparisons: report.comparisons } : {}), ...(evaluation ? { evaluation } : {}) });
     } else print({ ...report, ...(evaluation ? { evaluation } : {}) });
     if (evaluation && !evaluation.ok) process.exitCode = 1;
+  });
+  program.command('clip-report <file>').description('Report on every animation clip of a GLB, on any rig: loop discontinuity and joint velocity spikes, each failure naming clip, bone, time and check; foot penetration, stance sliding and support count run only for --foot bones and report not-evaluated otherwise; exits 1 when an evaluated check fails')
+    .option('--clip <name>', 'Report only this clip (default: every clip)')
+    .option('--foot <bone>', 'A bone that touches the ground; repeatable. Enables foot penetration, stance sliding (with --speed) and support count (two or more feet)', (value: string, list: string[]) => [...list, value], [] as string[])
+    .option('--speed <mps>', 'Travel speed the in-place clip is played at; enables stance sliding for the --foot bones')
+    .option('--min-support <count>', 'Fewest planted feet at any sample for the support count (default 1; use 0 for a run or hop)')
+    .option('--json', 'Print the machine-readable report as one JSON document instead of text').action(async (file, options) => {
+    const { clipReport, formatClipReport } = await import('./clip-report.ts');
+    const speed = options.speed === undefined ? undefined : Number(options.speed);
+    if (speed !== undefined && (!Number.isFinite(speed) || speed < 0)) throw Object.assign(new Error('--speed must be a non-negative number of metres per second'), { code: 'CLI_ARGUMENT_ERROR' });
+    const minSupport = options.minSupport === undefined ? undefined : Number(options.minSupport);
+    if (minSupport !== undefined && (!Number.isSafeInteger(minSupport) || minSupport < 0)) throw Object.assign(new Error('--min-support must be a non-negative integer'), { code: 'CLI_ARGUMENT_ERROR' });
+    const report = await clipReport(await readFile(file), { clip: options.clip, feet: options.foot as string[], speed, minSupport });
+    process.stdout.write(`${options.json ? JSON.stringify(report, null, 2) : formatClipReport(report)}\n`);
+    if (!report.ok) process.exitCode = 1;
   });
   program.command('check-garments <file>').description('Sample every clip of a skinned GLB and report garment-vs-body, garment-vs-garment and self-fold penetration per part and phase, and garments that already cross at rest')
     .option('--clips <list>', 'Comma-separated clips to sample (default: all)')
