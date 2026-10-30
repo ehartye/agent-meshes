@@ -167,12 +167,13 @@ looked malformed. Composing the matrix rotation flipped the measured toe/side ax
 and restored forward hunching without rebuilding the trousers. Check rotation mode
 and posed anatomy before prescribing geometry or weight changes for that symptom.
 
-Capture neutral attachment matrices only after explicitly restoring the fitted
-bind pose and updating the scene. The current reference retargeter clears the
-active action after baking, but leaves the sampled pose transforms/frame; clearing
-an action alone does not reset bone matrices. The consuming game's first native checkpoint
-caught grip offsets captured in that final pose. Preserve the caller's declared
-pose ownership instead of assuming any helper returned the model to rest.
+Capture neutral attachment matrices after the retargeting call returns. `rig_from_reference`,
+`retarget` and `ground_clip` restore the scene frame, each touched armature's pose bones and its
+active action to what the caller had before the call, also on failure. They do not force the rest
+pose: the armature `rig_from_reference` returns stands in the fitted rest it was created in, while
+`retarget` and `ground_clip` give back the caller's own pose. The first native checkpoint of the
+consuming game caught grip offsets captured in the old residual pose; if the caller needs a
+different calibration pose, set it explicitly and update the scene before capturing.
 
 Nearby surfaces can belong to different anatomy. A bent hand beside the chest
 must not lend its weights to the shirt; constrain transfer to declared anatomical

@@ -13,6 +13,7 @@ for (const [fixture, description] of [
   ['regions', 'limb isolation excludes remote spine weights and keeps normalized skin weights'],
   ['neutral', 'neutral calibration preserves the reference articulation of unconfigured descendants'],
   ['weight_limits', 'an anatomical weight limit keeps collarbone motion out of the chin with a blended boundary'],
+  ['post_bake_pose', 'baking hands the caller back their scene frame, pose bones and actions, with the baked clips unchanged'],
 ]) realBlender(description, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'mesh-retarget-'));
   try {

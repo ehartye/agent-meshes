@@ -345,6 +345,43 @@ def audit_clip_motion(arm, action, markers=('ball_l', 'ball_r'), root='pelvis', 
             arm.animation_data_clear()
 
 
+def _capture_state(*arms):
+    """The caller's scene frame (with subframe) and, per armature, every pose bone's `matrix_basis` and the active
+    action with its slot. `_restore_state` puts them back."""
+    import bpy
+    scene = bpy.context.scene
+    state = {'scene': scene, 'frame': (scene.frame_current, scene.frame_subframe), 'arms': []}
+    for arm in arms:
+        _track_armature(state, arm)
+    return state
+
+
+def _track_armature(state, arm):
+    """Add `arm`, as it is now, to a captured state."""
+    data = arm.animation_data
+    action = data.action if data else None
+    state['arms'].append((arm, {pb.name: pb.matrix_basis.copy() for pb in arm.pose.bones}, action,
+                          data.action_slot if action is not None else None))
+
+
+def _restore_state(state):
+    """Hand back what `_capture_state` recorded: active actions first, then the frame (evaluating them), then the
+    raw pose channels, since evaluating a restored action overwrites the pose it drives. Baked actions, bone
+    rest transforms and the armatures themselves are untouched; an empty animation_data may remain."""
+    import bpy
+    for arm, _, action, slot in state['arms']:
+        if arm.animation_data:
+            arm.animation_data.action = action
+            if slot is not None:
+                arm.animation_data.action_slot = slot
+    frame, subframe = state['frame']
+    state['scene'].frame_set(frame, subframe=subframe)
+    for arm, basis, _, _ in state['arms']:
+        for name, matrix in basis.items():
+            arm.pose.bones[name].matrix_basis = matrix
+    bpy.context.view_layer.update()
+
+
 def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, neutral=None):
     """Bake `action` (on ref_arm) onto `arm` by copying every shared bone's world orientation each frame; the root
     bone's travel from its rest is scaled by `travel_scale`. Returns the new action.
@@ -352,49 +389,55 @@ def retarget(ref_arm, arm, action, root='pelvis', travel_scale=1.0, fps=None, ne
     neutral: {'source': {bone: world 3x3}, 'target': {bone: world 3x3}} for bones whose motion, not absolute
     angle, should carry over: each frame applies the reference's world-space motion delta to the target neutral.
     Unconfigured descendants inherit their parent's correction and keep their relative animated articulation.
-    A body shaped unlike the reference keeps its own relaxed arm hang without erasing the clip's finger grip."""
+    A body shaped unlike the reference keeps its own relaxed arm hang without erasing the clip's finger grip.
+
+    Postcondition: the caller's scene frame, every pose bone's `matrix_basis` on both armatures and both armatures'
+    active actions are restored, also when the bake fails. The baked clip is returned unassigned; the pose is not
+    forced to rest."""
     import bpy
     scene = bpy.context.scene
-    ref_arm.animation_data_create()
-    ref_arm.animation_data.action = action
-    start, end = (int(round(v)) for v in action.frame_range)
-    shared = [b.name for b in arm.data.bones if b.name in ref_arm.pose.bones]
-    arm.animation_data_create()
-    out = bpy.data.actions.new(action.name)
-    arm.animation_data.action = out
-    ref_root_rest = ref_arm.matrix_world @ ref_arm.data.bones[root].head_local
-    tgt_root_rest = arm.matrix_world @ arm.data.bones[root].head_local
-    for frame in range(start, end + 1):
-        scene.frame_set(frame)
-        worlds = {n: ref_arm.matrix_world @ ref_arm.pose.bones[n].matrix for n in shared}
-        corrected = {}
-        for n in shared:                                    # bones order: parents before children
-            pb = arm.pose.bones[n]
-            if neutral and n in neutral['target']:
-                R = (worlds[n].to_3x3().normalized() @ neutral['source'][n].inverted() @ neutral['target'][n]).to_4x4()
-                corrected[n] = R.to_3x3()
-            elif pb.parent and pb.parent.name in corrected:
-                parent = pb.parent.name
-                # Carry the calibrated parent's change through its descendants;
-                # retain their animated relative articulation (especially grips).
-                R = (corrected[parent] @ worlds[parent].to_3x3().normalized().inverted()
-                     @ worlds[n].to_3x3().normalized()).to_4x4()
-                corrected[n] = R.to_3x3()
-            else:
-                R = worlds[n].to_3x3().normalized().to_4x4()
-            if n == root:
-                R.translation = tgt_root_rest + (worlds[n].translation - ref_root_rest) * travel_scale
-            else:
-                bpy.context.view_layer.update()
-                R.translation = (arm.matrix_world @ pb.matrix).translation   # keep the fitted bone lengths
-            pb.matrix = arm.matrix_world.inverted() @ R
-            pb.keyframe_insert('rotation_quaternion', frame=frame - start)
-            if n == root:
-                pb.keyframe_insert('location', frame=frame - start)
-        bpy.context.view_layer.update()
-    arm.animation_data.action = None
-    ref_arm.animation_data.action = None
-    return out
+    state = _capture_state(ref_arm, arm)
+    try:
+        ref_arm.animation_data_create()
+        ref_arm.animation_data.action = action
+        start, end = (int(round(v)) for v in action.frame_range)
+        shared = [b.name for b in arm.data.bones if b.name in ref_arm.pose.bones]
+        arm.animation_data_create()
+        out = bpy.data.actions.new(action.name)
+        arm.animation_data.action = out
+        ref_root_rest = ref_arm.matrix_world @ ref_arm.data.bones[root].head_local
+        tgt_root_rest = arm.matrix_world @ arm.data.bones[root].head_local
+        for frame in range(start, end + 1):
+            scene.frame_set(frame)
+            worlds = {n: ref_arm.matrix_world @ ref_arm.pose.bones[n].matrix for n in shared}
+            corrected = {}
+            for n in shared:                                    # bones order: parents before children
+                pb = arm.pose.bones[n]
+                if neutral and n in neutral['target']:
+                    R = (worlds[n].to_3x3().normalized() @ neutral['source'][n].inverted() @ neutral['target'][n]).to_4x4()
+                    corrected[n] = R.to_3x3()
+                elif pb.parent and pb.parent.name in corrected:
+                    parent = pb.parent.name
+                    # Carry the calibrated parent's change through its descendants;
+                    # retain their animated relative articulation (especially grips).
+                    R = (corrected[parent] @ worlds[parent].to_3x3().normalized().inverted()
+                         @ worlds[n].to_3x3().normalized()).to_4x4()
+                    corrected[n] = R.to_3x3()
+                else:
+                    R = worlds[n].to_3x3().normalized().to_4x4()
+                if n == root:
+                    R.translation = tgt_root_rest + (worlds[n].translation - ref_root_rest) * travel_scale
+                else:
+                    bpy.context.view_layer.update()
+                    R.translation = (arm.matrix_world @ pb.matrix).translation   # keep the fitted bone lengths
+                pb.matrix = arm.matrix_world.inverted() @ R
+                pb.keyframe_insert('rotation_quaternion', frame=frame - start)
+                if n == root:
+                    pb.keyframe_insert('location', frame=frame - start)
+            bpy.context.view_layer.update()
+        return out
+    finally:
+        _restore_state(state)
 
 
 def rig_from_reference(body, reference, correspondence, clips, directions=None, root='pelvis', leg=('thigh_l', 'foot_l'),
@@ -416,95 +459,104 @@ def rig_from_reference(body, reference, correspondence, clips, directions=None, 
     weight_limits: optional restrict_weights keyword dicts (bones, fallback, point, normal, band), applied after
     region isolation and before rigid overrides. Use anatomical constraints where transferred weights are unreliable.
     Returns (armature, {clip: action}).
+
+    Postcondition: the scene frame is the caller's, and the returned armature stands in the pose fit_skeleton gave it
+    (its fitted rest): neither the neutral calibration, the bake nor grounding leaves a sampled clip pose behind, also
+    when a step fails. No clip is assigned to the armature; the baked clips are returned.
     """
     import bpy
-    ref_arm, ref_meshes, actions = import_reference(reference)
-    if directions:
-        pose_to_directions(ref_arm, directions)
-    joints, verts, frames = posed_positions(ref_arm, ref_meshes)
-    point = lambda key: joints[key.split(':')[0]][1 if key.endswith(':tail') else 0]
-    src = np.array([point(k) for k in correspondence])
-    dst = np.array([correspondence[k] for k in correspondence], float)
-    if limbs:
-        # Wrap the reference's limbs onto the body's: cross-section rings along each segment, matched.
-        body_V = np.array([tuple(body.matrix_world @ v.co) for v in body.data.vertices])
-        ref_J = {k.split(':')[0]: point(k) for k in correspondence}
-        body_J = {k.split(':')[0]: np.asarray(correspondence[k], float) for k in correspondence}
-        rs, rd = limb_rings(np.vstack(verts), body_V, ref_J, body_J, limbs)
-        if len(rs):
-            src, dst = np.vstack([src, rs]), np.vstack([dst, rd])
-    heads = np.array([joints[n][0] for n in joints]); tails = np.array([joints[n][1] for n in joints])
-    wh, wt = warp_points(src, dst, heads), warp_points(src, dst, tails)
-    fitted = {n: (wh[i], wt[i]) for i, n in enumerate(joints)}
-    arm = fit_skeleton(ref_arm, joints, fitted, frames=frames)
-    # The reference mesh, posed and warped onto the body, lends its weights.
-    donors = []
-    for m, V in zip(ref_meshes, verts):
-        W = warp_points(src, dst, V)
-        donor = bpy.data.objects.new(m.name + '-donor', m.data.copy())
-        bpy.context.scene.collection.objects.link(donor)
-        donor.matrix_world.identity()
-        for v, p in zip(donor.data.vertices, W):
-            v.co = p
-        for g in m.vertex_groups:
-            donor.vertex_groups.new(name=g.name)
-        for v in m.data.vertices:
-            for g in v.groups:
-                donor.vertex_groups[m.vertex_groups[g.group].name].add([v.index], g.weight, 'REPLACE')
-        donors.append(donor)
-    donor = donors[0]
-    transfer_weights(donor, body, smooth)
-    for d in donors:
-        bpy.data.objects.remove(d, do_unlink=True)
-    if regions:
-        exclusive_regions(body, arm, regions)
-    for limit in weight_limits or []:
-        for name in limit['bones']:
-            if name not in arm.data.bones:
-                raise ValueError(f'Unknown weight-limit bone: {name}')
-        restrict_weights(body, **limit)
-    for bone, (point, normal) in (rigid or {}).items():
-        make_rigid(body, bone, point, normal)
-    body.parent = arm
-    mod = body.modifiers.new('armature', 'ARMATURE')
-    mod.object = arm
-    # Travel scales by leg length (thigh head to foot head).
-    ref_bones = ref_arm.data.bones
-    ref_leg = (ref_bones[leg[0]].head_local - ref_bones[leg[1]].head_local).length
-    tgt_leg = (arm.data.bones[leg[0]].head_local - arm.data.bones[leg[1]].head_local).length
-    for pb in ref_arm.pose.bones:                           # clips start from the reference's own rest
-        pb.matrix_basis.identity()
-    calibration = None
-    if neutral:
-        names = [n for r in neutral['bones'] for n in _subtree(arm, r)]
-        # The reference's neutral: its chosen clip at the chosen frame.
-        src_action, src_frame = neutral['source']
-        ref_arm.animation_data_create(); ref_arm.animation_data.action = actions[src_action]
-        bpy.context.scene.frame_set(int(src_frame))
-        source = world_frames(ref_arm, names)
-        ref_arm.animation_data.action = None
-        for pb in ref_arm.pose.bones:
+    state = _capture_state()
+    try:
+        ref_arm, ref_meshes, actions = import_reference(reference)
+        if directions:
+            pose_to_directions(ref_arm, directions)
+        joints, verts, frames = posed_positions(ref_arm, ref_meshes)
+        point = lambda key: joints[key.split(':')[0]][1 if key.endswith(':tail') else 0]
+        src = np.array([point(k) for k in correspondence])
+        dst = np.array([correspondence[k] for k in correspondence], float)
+        if limbs:
+            # Wrap the reference's limbs onto the body's: cross-section rings along each segment, matched.
+            body_V = np.array([tuple(body.matrix_world @ v.co) for v in body.data.vertices])
+            ref_J = {k.split(':')[0]: point(k) for k in correspondence}
+            body_J = {k.split(':')[0]: np.asarray(correspondence[k], float) for k in correspondence}
+            rs, rd = limb_rings(np.vstack(verts), body_V, ref_J, body_J, limbs)
+            if len(rs):
+                src, dst = np.vstack([src, rs]), np.vstack([dst, rd])
+        heads = np.array([joints[n][0] for n in joints]); tails = np.array([joints[n][1] for n in joints])
+        wh, wt = warp_points(src, dst, heads), warp_points(src, dst, tails)
+        fitted = {n: (wh[i], wt[i]) for i, n in enumerate(joints)}
+        arm = fit_skeleton(ref_arm, joints, fitted, frames=frames)
+        _track_armature(state, arm)
+        # The reference mesh, posed and warped onto the body, lends its weights.
+        donors = []
+        for m, V in zip(ref_meshes, verts):
+            W = warp_points(src, dst, V)
+            donor = bpy.data.objects.new(m.name + '-donor', m.data.copy())
+            bpy.context.scene.collection.objects.link(donor)
+            donor.matrix_world.identity()
+            for v, p in zip(donor.data.vertices, W):
+                v.co = p
+            for g in m.vertex_groups:
+                donor.vertex_groups.new(name=g.name)
+            for v in m.data.vertices:
+                for g in v.groups:
+                    donor.vertex_groups[m.vertex_groups[g.group].name].add([v.index], g.weight, 'REPLACE')
+            donors.append(donor)
+        donor = donors[0]
+        transfer_weights(donor, body, smooth)
+        for d in donors:
+            bpy.data.objects.remove(d, do_unlink=True)
+        if regions:
+            exclusive_regions(body, arm, regions)
+        for limit in weight_limits or []:
+            for name in limit['bones']:
+                if name not in arm.data.bones:
+                    raise ValueError(f'Unknown weight-limit bone: {name}')
+            restrict_weights(body, **limit)
+        for bone, (point, normal) in (rigid or {}).items():
+            make_rigid(body, bone, point, normal)
+        body.parent = arm
+        mod = body.modifiers.new('armature', 'ARMATURE')
+        mod.object = arm
+        # Travel scales by leg length (thigh head to foot head).
+        ref_bones = ref_arm.data.bones
+        ref_leg = (ref_bones[leg[0]].head_local - ref_bones[leg[1]].head_local).length
+        tgt_leg = (arm.data.bones[leg[0]].head_local - arm.data.bones[leg[1]].head_local).length
+        for pb in ref_arm.pose.bones:                           # clips start from the reference's own rest
             pb.matrix_basis.identity()
-        # The body's neutral: its limbs turned to the relaxed directions (children follow), then back to rest.
-        pose_to_directions(arm, neutral['target'])
-        # Only explicitly requested joints get their own neutral correction. The
-        # remaining descendants inherit it; resetting each finger to its rest
-        # would erase the reference idle's grip from every retargeted clip.
-        target = world_frames(arm, [n for n in names if n in neutral['target']])
-        for pb in arm.pose.bones:
-            pb.matrix_basis.identity()
-        calibration = {'source': source, 'target': target}
-    baked = {name: retarget(ref_arm, arm, actions[name], root, tgt_leg / ref_leg, neutral=calibration) for name in clips}
-    for name, action in baked.items():                      # ground each clip on the body's own feet
-        mode = (ground or {}).get(name)
-        if mode:
-            ground_clip(arm, body, action, root, mode)
-    for m in ref_meshes:
-        bpy.data.objects.remove(m, do_unlink=True)
-    bpy.data.objects.remove(ref_arm, do_unlink=True)
-    for action in actions.values():                         # the reference's clips must not ride into the export
-        bpy.data.actions.remove(action)
-    return arm, baked
+        calibration = None
+        if neutral:
+            names = [n for r in neutral['bones'] for n in _subtree(arm, r)]
+            # The reference's neutral: its chosen clip at the chosen frame.
+            src_action, src_frame = neutral['source']
+            ref_arm.animation_data_create(); ref_arm.animation_data.action = actions[src_action]
+            bpy.context.scene.frame_set(int(src_frame))
+            source = world_frames(ref_arm, names)
+            ref_arm.animation_data.action = None
+            for pb in ref_arm.pose.bones:
+                pb.matrix_basis.identity()
+            # The body's neutral: its limbs turned to the relaxed directions (children follow), then back to rest.
+            pose_to_directions(arm, neutral['target'])
+            # Only explicitly requested joints get their own neutral correction. The
+            # remaining descendants inherit it; resetting each finger to its rest
+            # would erase the reference idle's grip from every retargeted clip.
+            target = world_frames(arm, [n for n in names if n in neutral['target']])
+            for pb in arm.pose.bones:
+                pb.matrix_basis.identity()
+            calibration = {'source': source, 'target': target}
+        baked = {name: retarget(ref_arm, arm, actions[name], root, tgt_leg / ref_leg, neutral=calibration) for name in clips}
+        for name, action in baked.items():                      # ground each clip on the body's own feet
+            mode = (ground or {}).get(name)
+            if mode:
+                ground_clip(arm, body, action, root, mode)
+        for m in ref_meshes:
+            bpy.data.objects.remove(m, do_unlink=True)
+        bpy.data.objects.remove(ref_arm, do_unlink=True)
+        for action in actions.values():                         # the reference's clips must not ride into the export
+            bpy.data.actions.remove(action)
+        return arm, baked
+    finally:
+        _restore_state(state)
 
 
 def ring_points(vertices, head, tail, t=0.5, band=0.012, radius=None):
@@ -766,26 +818,31 @@ def ground_clip(arm, body, action, root='pelvis', mode='always', floor=0.0):
     """Lift or lower the root each frame so the body's lowest point meets the floor.
 
     mode 'always' grounds every frame (a walk: some foot is always down); 'lowest' applies one offset so the clip's
-    lowest frame meets the floor (a jog keeps its flight)."""
+    lowest frame meets the floor (a jog keeps its flight).
+
+    Postcondition: the caller's scene frame, `arm`'s pose bones and its active action are restored, also on failure."""
     import bpy
     scene = bpy.context.scene
-    arm.animation_data.action = action
-    start, end = (int(round(v)) for v in action.frame_range)
-    deps = bpy.context.evaluated_depsgraph_get
-    lows = {}
-    for frame in range(start, end + 1):
-        scene.frame_set(frame)
-        ev = body.evaluated_get(deps())
-        mesh = ev.to_mesh()
-        lows[frame] = min((body.matrix_world @ v.co).z for v in mesh.vertices)
-        ev.to_mesh_clear()
-    lowest = min(lows.values())
-    pb = arm.pose.bones[root]
-    for frame in range(start, end + 1):
-        scene.frame_set(frame)
-        dz = floor - (lows[frame] if mode == 'always' else lowest)
-        world = arm.matrix_world @ pb.matrix
-        world.translation.z += dz
-        pb.matrix = arm.matrix_world.inverted() @ world
-        pb.keyframe_insert('location', frame=frame)
-    arm.animation_data.action = None
+    state = _capture_state(arm)
+    try:
+        arm.animation_data.action = action
+        start, end = (int(round(v)) for v in action.frame_range)
+        deps = bpy.context.evaluated_depsgraph_get
+        lows = {}
+        for frame in range(start, end + 1):
+            scene.frame_set(frame)
+            ev = body.evaluated_get(deps())
+            mesh = ev.to_mesh()
+            lows[frame] = min((body.matrix_world @ v.co).z for v in mesh.vertices)
+            ev.to_mesh_clear()
+        lowest = min(lows.values())
+        pb = arm.pose.bones[root]
+        for frame in range(start, end + 1):
+            scene.frame_set(frame)
+            dz = floor - (lows[frame] if mode == 'always' else lowest)
+            world = arm.matrix_world @ pb.matrix
+            world.translation.z += dz
+            pb.matrix = arm.matrix_world.inverted() @ world
+            pb.keyframe_insert('location', frame=frame)
+    finally:
+        _restore_state(state)
