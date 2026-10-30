@@ -105,7 +105,10 @@ def periodic_curve(values,harmonics=5):
     # An exact power-of-two scale keeps the transform finite without changing its rounding.
     shift=int(np.frexp(peak)[1]);coefficients=np.fft.rfft(np.ldexp(data,-shift))/n
     def sample(phase):
-        return math.ldexp(float(coefficients[0].real+sum((1 if 2*k==n else 2)*(coefficients[k]*np.exp(2j*np.pi*k*phase)).real for k in range(1,count+1))),shift)
+        scaled=float(coefficients[0].real+sum((1 if 2*k==n else 2)*(coefficients[k]*np.exp(2j*np.pi*k*phase)).real for k in range(1,count+1)))
+        # Rounding in the mean can lift a peak at the float maximum to exactly one, which scales past it.
+        try:return math.ldexp(scaled,shift)
+        except OverflowError:raise ValueError('Reference curve is too large to fit') from None
     return sample
 
 
