@@ -221,6 +221,52 @@ class VacuumHelmetContract(unittest.TestCase):
         clothed = {p['name'] for p in self.recipe().geometry(dict(CAST['adult_f'], vacuum=False))}
         self.assertFalse(any(n.startswith('helmet') or 'pouch' in n or n == 'backpack' for n in clothed))
 
+class InterpolationMemo(unittest.TestCase):
+    """The boot profile tables are memoized on their control points: same answers, no shared state, bounded size."""
+    recipe = CharacterContract.recipe
+    TABLE = [(-.1, .05), (0, .06), (.1, .07), (.2, .05), (.3, .04)]
+
+    def test_a_changed_control_point_or_sample_count_gives_a_different_table(self):
+        recipe = self.recipe()
+        base = recipe.interpolated(self.TABLE)
+        self.assertEqual(base, recipe.interpolate(self.TABLE, 8))
+        moved = [(.1, .09) if i == 2 else p for i, p in enumerate(self.TABLE)]
+        self.assertNotEqual(recipe.interpolated(moved), base)
+        self.assertEqual(recipe.interpolated(moved), recipe.interpolate(moved, 8))
+        self.assertNotEqual(recipe._profile(moved, .1), recipe._profile(self.TABLE, .1))
+        coarse = recipe.interpolated(self.TABLE, 4)
+        self.assertNotEqual(coarse, base)
+        self.assertEqual(coarse, recipe.interpolate(self.TABLE, 4))
+        self.assertEqual(recipe.interpolated(self.TABLE), base, 'the original table still answers as before')
+
+    def test_changing_a_returned_table_or_the_caller_table_does_not_change_later_calls(self):
+        recipe = self.recipe()
+        expected = recipe.interpolate(self.TABLE, 8)
+        first = recipe.interpolated(self.TABLE)
+        first[0] = (9., 9.); first.append((8., 8.)); del first[1:3]
+        self.assertEqual(recipe.interpolated(self.TABLE), expected)
+        self.assertEqual(recipe._profile(self.TABLE, .05), recipe._profile(list(self.TABLE), .05))
+        mine = list(self.TABLE)
+        self.assertEqual(recipe.interpolated(mine), expected)
+        mine[1] = (0, .5)
+        self.assertNotEqual(recipe.interpolated(mine), expected, 'a table changed in place is a new key')
+        self.assertEqual(recipe.interpolated(self.TABLE), expected)
+        self.assertIsNot(recipe.interpolated(self.TABLE), recipe.interpolated(self.TABLE))
+
+    def test_the_memo_keeps_at_most_its_bound_and_drops_the_oldest(self):
+        recipe = self.recipe(); info = recipe._interpolation_table
+        size = recipe.INTERPOLATION_MEMO_SIZE
+        self.assertEqual(info.cache_info().maxsize, size)
+        tables = [[(0, .05 + k * 1e-4), (1, .06), (2, .05)] for k in range(size + 10)]
+        for t in tables: recipe.interpolated(t)
+        self.assertEqual(info.cache_info().currsize, size)
+        misses = info.cache_info().misses
+        self.assertEqual(recipe.interpolated(tables[-1]), recipe.interpolate(tables[-1], 8))
+        self.assertEqual(info.cache_info().misses, misses, 'the newest table is still held')
+        self.assertEqual(recipe.interpolated(tables[0]), recipe.interpolate(tables[0], 8))
+        self.assertEqual(info.cache_info().misses, misses + 1, 'the oldest table was evicted and is recomputed')
+        self.assertEqual(info.cache_info().currsize, size)
+
 def load_tests(loader, tests, pattern):
     return scoped_tests(__file__, tests)
 
