@@ -4,10 +4,10 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {AnimationMixer,SkinnedMesh,Vector3} from 'three';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {loadGait} from '../src/gait-analysis.ts';
 
-(findBlender()?it:it.skip)('keeps exported donor and cut vertices coincident throughout a bend',async()=>{
+blenderIt('keeps exported donor and cut vertices coincident throughout a bend',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-garment-partition-'));
  try{
   const path=join(dir,'model.glb');

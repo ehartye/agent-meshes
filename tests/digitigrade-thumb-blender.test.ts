@@ -3,10 +3,10 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {readGLB,readAccessor} from '../src/gltf-read.ts';
 
-(findBlender()?it:it.skip)('repairs shortened digitigrade thumb roots with bounded opt-in weights',async()=>{
+blenderIt('repairs shortened digitigrade thumb roots with bounded opt-in weights',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-digitigrade-thumb-'));
  try{
   for(const age of ['child','adult']){

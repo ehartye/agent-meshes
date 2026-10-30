@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildAsset } from '../src/build.ts';
 import { authorGLB } from '../src/author.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderGate, blenderIt } from './helpers/blender.ts';
 import { verifyFaceContract } from '../src/face-contract.ts';
 import { readAccessor, readGLB } from '../src/gltf-read.ts';
 import { ARKIT_FACE_REQUIRED_MORPHS, contractExpectations } from '../src/arkit-face.ts';
@@ -46,7 +46,7 @@ function mouthBandTurn(bytes: Uint8Array, mouthY: number, halfWidth: number): nu
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
 // Real Blender only: CI skips this, like the refine stage. Run it locally with Blender installed.
-const maybe = findBlender() ? it : it.skip;
+const maybe = blenderIt;
 
 maybe('a coarse mouth slit reaches both authored corners without splitting them or folding under jaw motion', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-mouth-corners-')); directories.push(directory);
@@ -203,7 +203,7 @@ maybe('the face-rig wrappers validate, join and export inside real Blender', asy
 }, 600000);
 
 // Blender and Unreal both: export_glb stores morphs sparse (prune_glb_morphs), and Unreal must import every vertex.
-const both = findBlender() && unrealAvailable() && !process.env.AGENT_MESHES_SKIP_UNREAL ? it : it.skip;
+const both = blenderGate(unrealAvailable() && !process.env.AGENT_MESHES_SKIP_UNREAL);
 both('a helper-authored head with pruned, sparse morphs and skin paint imports into Unreal intact', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-face-unreal-')); directories.push(directory);
   const config = join(directory, 'build.json');

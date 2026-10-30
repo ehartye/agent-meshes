@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Mesh } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { buildAsset } from '../src/build.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderInstalled, blenderIt } from './helpers/blender.ts';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -16,7 +16,7 @@ const operations = [
   { op: 'shell.set', shell: { name: 'bird', parts: ['body', 'head'], blend: 0.08, resolution: 32 } },
 ];
 
-const maybe = findBlender() ? it : it.skip;
+const maybe = blenderIt;
 
 maybe('build runs the Blender refine stage when the config asks for it, and verifies the result', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-build-refine-')); directories.push(directory);
@@ -33,7 +33,7 @@ maybe('build runs the Blender refine stage when the config asks for it, and veri
 }, 300000);
 
 it('rejects a refine config when Blender is absent instead of building silently without it', async () => {
-  if (findBlender()) return;
+  if (blenderInstalled) return;
   const directory = await mkdtemp(join(tmpdir(), 'mesh-build-refine-')); directories.push(directory);
   await writeFile(join(directory, 'ops.json'), JSON.stringify(operations));
   await writeFile(join(directory, 'refined.json'), JSON.stringify({ version: 1, name: 'refined', operations: 'ops.json', output: 'refined', refine: { subdivide: 1 } }));

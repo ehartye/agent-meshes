@@ -3,11 +3,11 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {readGLB,readAccessor,sceneGraph,triangles} from '../src/gltf-read.ts';
 import {Vector3} from 'three';
 
-(findBlender()?it:it.skip)('keeps donor and shell triangles stable through offset fitting',async()=>{
+blenderIt('keeps donor and shell triangles stable through offset fitting',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-surface-triangles-'));
  try{
   const output=join(dir,'model.glb');

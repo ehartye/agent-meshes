@@ -3,12 +3,12 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { authorGLB } from '../src/author.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderIt } from './helpers/blender.ts';
 import { Vector3, type Mesh, type SkinnedMesh } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createPuppet } from '../src/render/puppet.ts';
 
-const maybe = findBlender() ? it : it.skip;
+const maybe = blenderIt;
 maybe('build_eye aligns its eyeball and skin targets with a side-set hole', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-oriented-eyes-'));
   try {

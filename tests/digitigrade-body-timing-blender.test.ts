@@ -3,10 +3,10 @@ import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve,dirname,basename} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {loadGait,analyzeGait,evaluateGait} from '../src/gait-analysis.ts';
 
-(findBlender()?it:it.skip)('coordinates reference body timing on adult and child without losing contact or knee limits',async()=>{
+blenderIt('coordinates reference body timing on adult and child without losing contact or knee limits',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-digitigrade-body-timing-'));
  const references=JSON.parse(await readFile('tests/fixtures/digitigrade-body-reference.json','utf8'));
  try{

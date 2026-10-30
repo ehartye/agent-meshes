@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildAsset } from '../src/build.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderIt } from './helpers/blender.ts';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -20,7 +20,7 @@ async function build(encloses: unknown, textured = true) {
 }
 
 // Real Blender only: CI skips this, like the glass and refine stages.
-const maybe = findBlender() ? it : it.skip;
+const maybe = blenderIt;
 
 maybe('a Blender-authored textured GLB with no enclosure declaration completes the managed build', async () => {
   const { config, output } = await build(undefined);

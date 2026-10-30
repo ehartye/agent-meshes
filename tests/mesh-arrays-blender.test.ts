@@ -4,16 +4,15 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { authorGLB } from '../src/author.ts';
 import { readAccessor, readGLB } from '../src/gltf-read.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderIt } from './helpers/blender.ts';
 
-const native = findBlender();
 const vertices = [[0, 0, 0], [2, 0, 0], [0, 3, 0], [2, 3, 0]];
 const corners = [0, 1, 2, 1, 3, 2];
 const uvs = [[.1, .2], [.9, .2], [.1, .8], [.3, .4], [.7, .8], [.2, .9]];
 const colors = [[.1, .2, .3, .25], [.3, .4, .5, .5], [.6, .7, .8, .75],
   [.8, .2, .1, 1], [.5, .2, .4, .4], [.2, .8, .6, .6]];
 
-(native ? it : it.skip)('mesh arrays retain native FLOAT_COLOR, UV/color corner seams and opaque RGBA in a normal GLB export', async () => {
+blenderIt('mesh arrays retain native FLOAT_COLOR, UV/color corner seams and opaque RGBA in a normal GLB export', async () => {
   const parent = process.env.AGENT_MESHES_ARRAYS_PROOF || tmpdir();
   await mkdir(parent, { recursive: true });
   const directory = await mkdtemp(join(parent, 'mesh-arrays-'));

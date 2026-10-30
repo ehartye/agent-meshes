@@ -3,10 +3,10 @@ import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {loadGait,analyzeGait,evaluateGait} from '../src/gait-analysis.ts';
 
-(findBlender()?it:it.skip)('fits adult and child swing clearance without moving planted toes',async()=>{
+blenderIt('fits adult and child swing clearance without moving planted toes',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'mesh-digitigrade-swing-'));
  try{
   for(const age of ['child','adult']){

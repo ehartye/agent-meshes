@@ -3,11 +3,11 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {readGLB} from '../src/gltf-read.ts';
 import {verifyGLB} from '../src/export.ts';
 
-(findBlender()?it:it.skip)('replaces a curved mouth pocket while retaining old skin, UV, expression and NLA',async()=>{
+blenderIt('replaces a curved mouth pocket while retaining old skin, UV, expression and NLA',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'mesh-curved-pocket-'));
   try{
     const output=join(dir,'pocket.glb');await authorGLB(resolve('tests/blender_curved_pocket_fixture.py'),output);

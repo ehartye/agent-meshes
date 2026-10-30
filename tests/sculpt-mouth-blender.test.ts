@@ -3,11 +3,11 @@ import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {authorGLB} from '../src/author.ts';
-import {findBlender} from '../src/refine.ts';
+import {blenderIt} from './helpers/blender.ts';
 import {readGLB} from '../src/gltf-read.ts';
 import {verifyGLB} from '../src/export.ts';
 
-(findBlender()?it:it.skip)('assembles a jaw into an existing body without discarding its old skin, UV, morph or NLA',async()=>{
+blenderIt('assembles a jaw into an existing body without discarding its old skin, UV, morph or NLA',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'mesh-sculpt-mouth-'));
   try{
     const output=join(dir,'mouth.glb');await authorGLB(resolve('tests/blender_sculpt_mouth_fixture.py'),output);

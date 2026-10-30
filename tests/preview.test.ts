@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyOperation, createProject } from '../src/core/model.ts';
 import { buildAsset } from '../src/build.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderIt } from './helpers/blender.ts';
 import { BUILD_MARKER_NAME, PREVIEW_SHADINGS, PREVIEW_VIEWS, defaultPreviewOut, parsePreviewOptions, previewFiles, previewJob, resolvePreviewSource, runPreview, workerAlive } from '../src/preview.ts';
 
 const directories: string[] = [];
@@ -173,8 +173,7 @@ it('finds the build marker in an ancestor folder', async () => {
   expect(await defaultPreviewOut(join(root, 'elsewhere', 'arm.glb'))).toBe(join(root, 'elsewhere', 'preview'));
 });
 
-const blender = findBlender();
-const maybe = blender ? it : it.skip;
+const maybe = blenderIt;
 
 maybe('renders matcap, wire and posed shape-key previews of an authored source in one Blender run', async () => {
   const dir = await scratch();

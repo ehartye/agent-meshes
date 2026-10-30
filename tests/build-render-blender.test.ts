@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { buildAsset } from '../src/build.ts';
 import { renderBuiltAsset } from '../src/preview.ts';
-import { findBlender } from '../src/refine.ts';
+import { blenderIt } from './helpers/blender.ts';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -15,7 +15,7 @@ const png = async (path: string) => {
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 };
 
-(findBlender() ? it : it.skip)('a Blender-authored build renders owned views and one contact sheet per clip, and a second build reuses the cache', async () => {
+blenderIt('a Blender-authored build renders owned views and one contact sheet per clip, and a second build reuses the cache', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'mesh-build-render-')); directories.push(directory);
   await copyFile(resolve('tests/fixtures/build_render_asset.py'), join(directory, 'asset.py'));
   const config = join(directory, 'build.json'), output = join(directory, 'generated');
