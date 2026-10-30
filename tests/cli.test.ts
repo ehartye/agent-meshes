@@ -115,6 +115,21 @@ it('edits and saves a project through the executable CLI', async () => {
   await expect(invoke('op', '{"op":"remove","name":"missing"}')).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining('"ok":false') });
 }, 30000); // Ten fresh Node processes can exceed five seconds on hosted Windows runners.
 
+it('explains that view needs a workspace or a running workbench and points to mesh preview', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'mesh-view-none-'));
+  cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  // Port 9 (discard) has no listener, so the connection is refused without a workbench.
+  let failure: { code?: number; stderr: string } | undefined;
+  try { await cli('--url', 'http://127.0.0.1:9', 'view', join(directory, 'views')); } catch (error) { failure = error as { code?: number; stderr: string }; }
+  expect(failure?.code).toBe(1);
+  const { error } = JSON.parse(failure!.stderr);
+  expect(error.code).toBe('WORKBENCH_UNREACHABLE');
+  expect(error.message).toContain('--workspace');
+  expect(error.message).toContain('running workbench');
+  expect(error.message).toContain('mesh preview <model.glb>');
+  expect(failure!.stderr).not.toContain('fetch failed');
+});
+
 it('refuses to edit a server that is not agent-meshes', async () => {
   let writes = 0;
   const server = createHttpServer((request, response) => {

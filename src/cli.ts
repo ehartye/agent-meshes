@@ -33,7 +33,9 @@ export async function main(args = process.argv): Promise<void> {
   let serverRevision: number | undefined;
   const requestRaw = async (path: string, body?: unknown) => {
     const base = String(program.opts().url).replace(/\/$/, '');
-    const health = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(5000) });
+    const health = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(5000) }).catch((cause: unknown) => {
+      throw Object.assign(new Error(`No agent-meshes workbench is running at ${base}. Pass --workspace <directory> to use a durable workspace, or start a workbench with serve.`, { cause }), { code: 'WORKBENCH_UNREACHABLE' });
+    });
     const identity = await health.json() as { service?: string; version?: string };
     if (!health.ok || identity.service !== 'agent-meshes' || identity.version !== '0.1.0') {
       throw Object.assign(new Error('Endpoint is not an agent-meshes server with protocol version 0.1.0'), { code: 'SERVICE_MISMATCH' });
@@ -406,7 +408,10 @@ export async function main(args = process.argv): Promise<void> {
   program.command('view <directory>').description('Render fixed views and animation contact sheets')
     .option('--views <list>', 'Comma-separated views: front, side, top, perspective', 'front,side,perspective')
     .action(async (directory, options) => {
-      const project = await currentProject();
+      const project = await currentProject().catch((error: unknown) => {
+        if ((error as { code?: string }).code !== 'WORKBENCH_UNREACHABLE') throw error;
+        throw Object.assign(new Error('view renders the workspace project and needs --workspace <directory> or a running workbench. To look at a GLB file, run mesh preview <model.glb>.', { cause: error }), { code: 'WORKBENCH_UNREACHABLE' });
+      });
       const { captureProject } = await import('./capture.ts'); const output = resolve(directory);
       const files = await captureProject(project, output, String(options.views).split(',').map(v => v.trim()).filter(Boolean));
       process.stdout.write(`${JSON.stringify({ output, files })}\n`);
