@@ -1,6 +1,6 @@
 ---
 name: mesh-authoring
-description: Author 3D models with agent-meshes as named parts through JSON operations in a durable workspace, including primitives, lathe and prism shapes, bone-anchored placement, organic shells, and the creature recipes.
+description: Author 3D models with agent-meshes as named parts through JSON operations in a durable workspace, covering primitives, lathe and prism shapes, organic shells, bone-anchored placement and the creature recipes that supply a body and its parts. Animation clips, walk cycles and gaits belong to mesh-rigging.
 when_to_use: Use when asked to make, model, or edit a 3D object, character, creature, prop, sculpture or machine as a GLB, to load a biped, equine, vulpine, insectoid, arachnid or strandbeest recipe, or when an agent-meshes operation fails validation.
 ---
 

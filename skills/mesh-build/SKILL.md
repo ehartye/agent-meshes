@@ -163,4 +163,5 @@ sheets and compare them with the intent. If something looks blocky, floating or 
 | Look at an existing GLB without rebuilding it, preview a bpy source quickly, refine a model or check garment penetration | [Blender previews, refine and the garment check](references/previews-and-refine.md) |
 | Check an import into Unity or Unreal | [Engine import checks: Unity and Unreal](references/engine-import-checks.md) |
 | Embed a model or a stage in a page | [Embedding a model in a page](references/embedding-in-a-page.md) |
+| Look up MeshViewer mount options, the puppet API or `bounds()` | [Viewer API](references/viewer-api.md) |
 | Verify a face rig against its contract | [Face-rig contract check](references/face-rig-contract-check.md) |
