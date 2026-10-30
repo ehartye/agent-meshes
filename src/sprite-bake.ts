@@ -118,7 +118,8 @@ interface ViewerLike {
   screenshot(): string;
 }
 
-const harness = (render: number) => `<!doctype html><html lang="en"><meta charset="utf-8"><style>body{margin:0}#stage{width:${render}px;height:${render}px}</style>
+/** The page the bake renders in; exported so a test can pin the mount options without launching Chromium. */
+export const harness = (render: number) => `<!doctype html><html lang="en"><meta charset="utf-8"><style>body{margin:0}#stage{width:${render}px;height:${render}px}</style>
 <div id="stage"></div><script id="glb" type="text/plain">@GLB@</script><script src="mesh-viewer.js"></script>
 <script>window.ready = MeshViewer.mount(document.getElementById('stage'), { glb: document.getElementById('glb').textContent, background: null, floor: false, projection: 'orthographic', autoplay: false, orbit: false, quality: { pixelRatio: 1, shadows: false, antialias: false } }).then(v => (window.viewer = v));</script></html>`;
 

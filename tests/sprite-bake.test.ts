@@ -11,7 +11,7 @@ import type { Clip, Project } from '../src/core/types.ts';
 import { exportGLB } from '../src/export.ts';
 import { readGLB } from '../src/gltf-read.ts';
 import { decodePng } from '../src/png.ts';
-import { bakeClipInfo, bakeSprites, parseBakeOptions, reduceCell, touchesBorder } from '../src/sprite-bake.ts';
+import { bakeClipInfo, bakeSprites, harness, parseBakeOptions, reduceCell, touchesBorder } from '../src/sprite-bake.ts';
 import { checkAtlasContract, type Atlas } from '../src/sprite-atlas.ts';
 
 // The fixture is a small rigged figure that differs left to right (a long arm on +X, a stub on -X) and front to back
@@ -219,4 +219,21 @@ describe('bake without a browser', () => {
     });
     expect(await files(dir)).toEqual([]);
   }, 120_000);
+});
+
+describe('the bake harness mount options', () => {
+  // The centre-pixel reduction hides the edge difference antialiasing makes, so the pixel tests cannot catch it being turned on.
+  // Read the options object the harness passes to MeshViewer.mount and pin it.
+  const mountOptions = (): Record<string, unknown> => {
+    const page = harness(384).replace('@GLB@', 'AAAA');
+    const literal = /MeshViewer\.mount\(document\.getElementById\('stage'\), (\{.*\})\)\.then/s.exec(page)?.[1];
+    expect(literal).toBeTruthy();
+    return new Function('document', `return (${literal});`)({ getElementById: () => ({ textContent: 'AAAA' }) });
+  };
+
+  it('mounts the viewer without antialiasing, shadows or any scene dressing', () => {
+    const options = mountOptions();
+    expect(options).toMatchObject({ background: null, floor: false, projection: 'orthographic', autoplay: false, orbit: false });
+    expect(options.quality).toEqual({ pixelRatio: 1, shadows: false, antialias: false });
+  });
 });
