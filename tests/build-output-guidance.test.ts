@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { applyOperation, createProject } from '../src/core/model.ts';
 import { buildAsset } from '../src/build.ts';
 import { loadBuildConfig } from '../src/build-config.ts';
+import { RULES, privateRules, scanLine } from './helpers/content-rules.ts';
 
 // Document checks: the reference has a "Committing build output" section that names the files to ignore, the flags
 // that tolerate a missing listed file and the line-ending rule, and labels every paragraph and bullet. Fixture
@@ -58,26 +59,7 @@ function blocks(): string[] {
   return result;
 }
 
-// The same rules as tests/plugin-content-hygiene.test.ts, written so that this file does not trip them itself.
-const PLACEHOLDER_USER = /^(?:one|two|a|a b|shared|public|user|you|me|name|username|example|fixture|test|someone|runner)$/i;
-const HOME_PATH = /[A-Za-z]:[\\/]+Users[\\/]+([^\\/\s"']+)|\/Users\/([a-z][\w.-]*)\/|\/home\/([a-z][\w.-]*)\//g;
-const homePathIn = (line: string) => [...line.matchAll(HOME_PATH)].some(m => !PLACEHOLDER_USER.test(m[1] ?? m[2] ?? m[3]) && !(m[1] ?? m[2] ?? m[3]).startsWith('<'));
-const RULES: [string, (line: string) => boolean][] = [
-  ['a home-directory path', homePathIn],
-  ['a GPU model name', line => /\b(?:[G]eForce|RTX ?\d{3,4}|[R]adeon(?: RX)?|[I]ris Xe|[U]HD Graphics)\b/.test(line)],
-  ['a link into a repository that is not a plugin', line => /github\.com\/ehartye\/(?!agent-|hartye-)[\w.-]+|ehartye\.github\.io\/(?!agent-|hartye-)/.test(line)],
-  ['a wiki vault path', line => /wiki\/(?:authored|sources|entities)\//.test(line)],
-];
-function privateRules(): [string, (line: string) => boolean][] {
-  const termsFile = process.env.AGENT_MESHES_PRIVATE_TERMS_FILE;
-  const terms = termsFile ? readFileSync(termsFile, 'utf8').split(/\r?\n/).map(term => term.trim()).filter(Boolean) : [];
-  return terms.map((term): [string, (line: string) => boolean] => {
-    const pattern = /^\/(.+)\/([a-z]*)$/.exec(term);
-    if (pattern) { const expression = new RegExp(pattern[1], pattern[2]); return [`the private pattern ${term}`, line => expression.test(line)]; }
-    const lower = term.toLowerCase();
-    return [`the private term "${term}"`, line => line.toLowerCase().includes(lower)];
-  });
-}
+// The rules come from tests/helpers/content-rules.ts, shared with tests/plugin-content-hygiene.test.ts.
 
 describe('the Committing build output section of the native build identity reference', () => {
   it('has a heading, a Contents entry and the names a reader searches for', () => {
@@ -98,7 +80,8 @@ describe('the Committing build output section of the native build identity refer
   it('names no home directory, GPU model, non-plugin repository, wiki path or private term', () => {
     const body = section();
     expect(body.length).toBeGreaterThan(0);
-    const hits = body.flatMap(({ text }, index) => [...RULES, ...privateRules()].filter(([, matches]) => matches(text)).map(([what]) => `section line ${index + 1}: ${what}`));
+    const rules = [...RULES, ...privateRules()];
+    const hits = body.flatMap(({ text }, index) => scanLine(rules, text).map(what => `section line ${index + 1}: ${what}`));
     expect(hits).toEqual([]);
   });
 });

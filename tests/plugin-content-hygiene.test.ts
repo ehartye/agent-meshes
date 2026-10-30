@@ -1,51 +1,52 @@
 /** @lane merge
  * @subject repository content
  */
-import { readdirSync, readFileSync } from 'node:fs';
-import { dirname, extname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { expect, it } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, expect, it } from 'vitest';
+import { CHECKOUT_ROOT, RULES, contentRoot, pathListFromEnvironment, privateRules, scanContent } from './helpers/content-rules.ts';
 
-// Plugin content stays free of language about our own machines and non-plugin projects; that belongs in the wiki.
-// Generic patterns are checked here. Private project names are not listed in the repo: point
-// AGENT_MESHES_PRIVATE_TERMS_FILE at a local file with one term per line to check those too. A plain term matches
-// case-insensitively anywhere in a line; a term written /pattern/flags is a regular expression with exactly those flags
-// (no flags means case-sensitive), for names that are also ordinary words or substrings, such as /\bPip\b/.
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const TEXT = new Set(['.md', '.mjs', '.js', '.ts', '.json', '.yml', '.yaml', '.py', '.html', '.sh', '.txt', '']);
-const SKIP_DIRS = new Set(['.git', 'node_modules', '.cache', '.playwright-mcp', 'dist', 'dist-web', 'results']);
-const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
-  const full = join(dir, entry.name);
-  if (entry.isDirectory()) return SKIP_DIRS.has(entry.name) ? [] : walk(full);
-  return entry.isFile() && entry.name !== '.git' && TEXT.has(extname(entry.name)) ? [full] : [];
-});
-// Fixture paths use placeholder user names; a real account name is a finding.
-const PLACEHOLDER_USER = /^(?:one|two|a|a b|shared|public|user|you|me|name|username|example|fixture|test|someone|runner)$/i;
-const HOME_PATH = /[A-Za-z]:[\\/]+Users[\\/]+([^\\/\s"']+)|\/Users\/([a-z][\w.-]*)\/|\/home\/([a-z][\w.-]*)\//g;
-const homePathIn = (line: string) => [...line.matchAll(HOME_PATH)].some(m => !PLACEHOLDER_USER.test(m[1] ?? m[2] ?? m[3]) && !(m[1] ?? m[2] ?? m[3]).startsWith('<'));
-const RULES: [string, (line: string) => boolean][] = [
-  ['a home-directory path', homePathIn],
-  ['a GPU model name', line => /\b(?:GeForce|RTX ?\d{3,4}|Radeon(?: RX)?|Iris Xe|UHD Graphics)\b/.test(line)],
-  ['a link into a repository that is not a plugin', line => /github\.com\/ehartye\/(?!agent-|hartye-)[\w.-]+|ehartye\.github\.io\/(?!agent-|hartye-)/.test(line)],
-  ['a wiki vault path', line => /wiki\/(?:authored|sources|entities)\//.test(line)],
-];
+// The rules, the term-file format and the file walk live in tests/helpers/content-rules.ts. By default this scans the
+// whole checkout, untracked files included. AGENT_MESHES_TEST_ROOT points at another directory (for example a copy of
+// the files to check); AGENT_MESHES_CONTENT_PATHS_FILE lists the paths to scan, one per line, so parallel edits to
+// other files do not matter. scripts/check_private_terms.py takes the same inputs.
 
 it('plugin content names no home directory, GPU model, non-plugin repository or wiki path', () => {
-  const termsFile = process.env.AGENT_MESHES_PRIVATE_TERMS_FILE;
-  const terms = termsFile ? readFileSync(termsFile, 'utf8').split(/\r?\n/).map(t => t.trim()).filter(Boolean) : [];
-  const rules = [...RULES, ...terms.map((term): [string, (line: string) => boolean] => {
-    const pattern = /^\/(.+)\/([a-z]*)$/.exec(term);
-    if (pattern) { const re = new RegExp(pattern[1], pattern[2]); return [`the private pattern ${term}`, line => re.test(line)]; }
-    const lower = term.toLowerCase();
-    return [`the private term "${term}"`, line => line.toLowerCase().includes(lower)];
-  })];
-  const self = resolve(fileURLToPath(import.meta.url));
-  const hits: string[] = [];
-  for (const file of walk(ROOT)) {
-    if (resolve(file) === self) continue; // this file holds the patterns
-    readFileSync(file, 'utf8').split(/\r?\n/).forEach((line, index) => {
-      for (const [what, matches] of rules) if (matches(line)) hits.push(`${relative(ROOT, file).split(sep).join('/')}:${index + 1}: ${what}`);
-    });
+  expect(scanContent(contentRoot(), [...RULES, ...privateRules()], pathListFromEnvironment())).toEqual([]);
+});
+
+// The standalone script and the helper must agree. The fixture is assembled at run time so this file holds no violation.
+const directories: string[] = [];
+afterAll(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+it('the helper and scripts/check_private_terms.py report the same findings on one fixture', () => {
+  const python = ['python', 'python3'].find(name => spawnSync(name, ['--version']).status === 0);
+  if (!python) return; // the script is a manual aid; without Python only the helper is checked
+  const root = mkdtempSync(join(tmpdir(), 'agent-meshes-content-rules-')); directories.push(root);
+  mkdirSync(join(root, 'docs'));
+  const literal = 'zq' + 'literal' + 'word', pattern = 'zq' + 'pat' + 'tern';
+  const homeDirectory = ['', 'home', 'real' + 'person', 'work'].join('/');
+  writeFileSync(join(root, 'docs', 'clean.md'), 'Nothing here.\nA placeholder path: ' + ['', 'home', 'someone', 'work'].join('/') + '\n');
+  writeFileSync(join(root, 'docs', 'literal.md'), `fine\nuses ${literal.toUpperCase()} here\n`);
+  writeFileSync(join(root, 'docs', 'regex.md'), `${pattern}7 matches\n${pattern} alone does not\n`);
+  writeFileSync(join(root, 'docs', 'home.md'), `first\nsecond\nsee ${homeDirectory}\n`);
+  writeFileSync(join(root, 'docs', 'skipped.png'), literal);
+  const outside = mkdtempSync(join(tmpdir(), 'agent-meshes-content-lists-')); directories.push(outside); // lists stay out of the scanned root
+  const terms = join(outside, 'terms.txt');
+  writeFileSync(terms, `\n${literal}\n/${pattern}\\d/\n`);
+  const list = join(outside, 'list.txt');
+  writeFileSync(list, 'docs/literal.md\ndocs/regex.md\ndocs/home.md\ndocs/clean.md\ndocs/gone.md\ndocs/skipped.png\n');
+
+  for (const paths of [undefined, ['docs/literal.md', 'docs/regex.md', 'docs/home.md', 'docs/clean.md', 'docs/gone.md', 'docs/skipped.png']]) {
+    const expected = scanContent(root, [...RULES, ...privateRules(terms)], paths);
+    const args = ['-I', join(CHECKOUT_ROOT, 'scripts', 'check_private_terms.py'), '--root', root, '--terms-file', terms, ...(paths ? ['--paths-file', list] : [])];
+    const run = spawnSync(python, args, { encoding: 'utf8', env: { ...process.env, AGENT_MESHES_TEST_ROOT: '', AGENT_MESHES_PRIVATE_TERMS_FILE: '' } });
+    expect(expected).toEqual(['docs/home.md:3: a home-directory path', 'docs/literal.md:2: private term #1', 'docs/regex.md:1: private pattern #2']);
+    expect(run.status).toBe(1);
+    expect(run.stdout.trim().split(/\r?\n/).sort()).toEqual([...expected].sort());
+    expect(run.stdout + run.stderr).not.toContain(literal);
+    expect(run.stdout + run.stderr).not.toContain(pattern);
   }
-  expect(hits).toEqual([]);
 });
