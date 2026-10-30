@@ -1,6 +1,7 @@
-import { AnimationMixer, Mesh, PropertyBinding, SkinnedMesh, Vector3 } from 'three';
+import { AnimationMixer, Mesh, PropertyBinding, SkinnedMesh, Texture, Vector3 } from 'three';
 import type { AnimationClip, Object3D } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import type { GLTFLoaderPlugin } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 /**
  * Enclosure verifier: a helmet (or dome, jar, cockpit) must hold what it declares at every pose the file can play.
@@ -248,9 +249,21 @@ function clipTimes(clip: AnimationClip): number[] {
   return Array.from({ length: MAX_SAMPLES_PER_CLIP }, (_, i) => sorted[Math.round(i * (sorted.length - 1) / (MAX_SAMPLES_PER_CLIP - 1))]);
 }
 
+/**
+ * An enclosure verdict is geometric (vertices, skins, morphs, clips), so the file is loaded without decoding its
+ * images: the loader decodes them through browser globals (`self`, `document`) that Node lacks, which failed every
+ * textured GLB. Each texture is an empty placeholder. Image validity stays with the glTF validator that runs before
+ * this check, and nothing here reads, rewrites or strips the file's images.
+ */
+function geometryOnly(): (parser: unknown) => GLTFLoaderPlugin {
+  return () => ({ name: 'AGENT_MESHES_geometry_only', loadTexture: () => Promise.resolve(new Texture()) } as GLTFLoaderPlugin);
+}
+
 /** Check every `extras.encloses` declaration in a GLB. A file that declares none passes with nothing to check. */
 export async function verifyEnclosures(bytes: Uint8Array): Promise<EnclosuresReport> {
-  const gltf = await new GLTFLoader().parseAsync(bytes.slice().buffer as ArrayBuffer, '');
+  const loader = new GLTFLoader();
+  loader.register(geometryOnly());
+  const gltf = await loader.parseAsync(bytes.slice().buffer as ArrayBuffer, '');
   const scene = gltf.scene;
   const declaring: Object3D[] = [];
   scene.traverse(object => { if (object.userData?.encloses !== undefined) declaring.push(object); });
