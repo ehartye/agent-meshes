@@ -38,7 +38,9 @@ Every command prints one JSON line. On failure it exits nonzero and prints
 ## Optional pieces
 
 - Rendering (`build` with previews, `view`) needs the Chromium that setup installs. `build
-  --no-preview` produces the GLB and validation report without a browser.
+  --no-preview` produces the GLB and validation report without a browser, and deletes the previews an
+  earlier build left in the output folder (the warning `BUILD_PREVIEWS_REMOVED` names them; see
+  [mesh-build](../../mesh-build/SKILL.md)).
 - The Blender refine stage needs Blender on PATH, in a usual install folder, in the Microsoft
   Store app alias, or at `AGENT_MESHES_BLENDER`. Setup reports the path it found as `blender`.
 - `serve` starts the loopback workbench on port 3388 for a human to look at; skills do not need

@@ -435,9 +435,9 @@ export async function main(args = process.argv): Promise<void> {
     .option('--if-changed', 'Reuse native Blender output when declared inputs and tracked tools match (declare every dependency)')
     .option('--force', 'Regenerate native Blender output and refresh its incremental cache')
     .option('--preview', 'Render views and write the standalone preview page (the default; --no-preview turns it off)')
-    .option('--no-preview', 'Skip browser renders and the standalone preview page')
+    .option('--no-preview', 'Skip renders and the standalone preview page; removes earlier previews from the output folder (a .png, any case, or preview.html), and the build warns BUILD_PREVIEWS_REMOVED naming them when it does')
     .option('--preview-page', 'Write the standalone preview.html (the default)')
-    .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html').action(async (config, options) => {
+    .option('--no-preview-page', 'Keep the PNG renders and contact sheets but skip the standalone preview.html, which removes an earlier preview.html (warns BUILD_PREVIEWS_REMOVED)').action(async (config, options) => {
     const { buildAsset } = await import('./build.ts');
     print(await buildAsset(config, await buildOptionsFor(options)));
   });
@@ -445,9 +445,9 @@ export async function main(args = process.argv): Promise<void> {
     .option('--if-changed', 'Reuse unchanged native Blender output with current verification')
     .option('--force', 'Regenerate native Blender output for every attempted asset')
     .option('--preview', 'Render views and write standalone preview pages (the default; --no-preview turns it off)')
-    .option('--no-preview', 'Skip browser renders and standalone preview pages')
+    .option('--no-preview', 'Skip renders and standalone preview pages; removes earlier previews from each output folder and warns BUILD_PREVIEWS_REMOVED naming them when it does')
     .option('--preview-page', 'Write standalone previews (the default)')
-    .option('--no-preview-page', 'Keep PNG renders but skip standalone previews')
+    .option('--no-preview-page', 'Keep PNG renders but skip standalone previews, which removes an earlier preview.html (warns BUILD_PREVIEWS_REMOVED)')
     .action(async (configs, options) => {
       const { buildAssets } = await import('./build-batch.ts');
       const result = await buildAssets(configs, await buildOptionsFor(options));

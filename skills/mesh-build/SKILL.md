@@ -25,6 +25,9 @@ adds nine donor banks, rigging tools and a protected offline demo generator.
 Load `mesh-setup` first. Commands run through the managed launcher
 (`node "<plugin-root>/scripts/run-managed.js" ...`, written `mesh` below).
 
+To look at a GLB that already exists without rebuilding it, run `mesh preview model.glb --out <folder>`; `mesh view`
+takes no GLB. Read [Preview a built GLB without rebuilding](references/previews-and-refine.md#preview-a-built-glb-without-rebuilding).
+
 ## Find the relevant build guidance
 
 Keep editable recipes in the project; apps consume the exported GLB. For a native
@@ -124,13 +127,26 @@ isolated state, `project.mesh.json`, `model.glb`, `verification.json`, `front.pn
 `perspective.png`, `<clip>.png` contact sheets, and a self-contained offline `preview.html` with
 orbit, playback and scrub (and, for a model with morphs, a slider per morph and the emotion
 presets from `extras.arkitFace`). Renders and the preview page are on by default (`--preview` and
-`--preview-page` say so explicitly); `--no-preview` skips the browser entirely and `--no-preview-page` keeps
-the PNGs but skips the 1 MB preview page when your own page embeds the GLB. The output directory is the
+`--preview-page` say so explicitly); `--no-preview` writes no renders and no preview page and `--no-preview-page`
+keeps the PNGs but skips the 1 MB preview page when your own page embeds the GLB. Skipping previews also
+removes the ones an earlier build left in the folder (see below). The output directory is the
 `output` field of the config (`build` has no `--out`). A build replaces that whole directory, so it
 creates a missing one, adopts an empty one, and replaces one only when its marker names that config.
 A directory holding other work is refused with `BUILD_OUTPUT_NOT_OWNED`, which names the directory and what
 it holds; set `output` to a different directory or move the files. A failed build leaves the previous output
 in place; after a crash, confirm the process is gone before removing the adjacent `.agent-meshes.lock`.
+
+**A rebuild removes earlier previews it does not write again.** The swap deletes every earlier file, so a build that
+writes fewer previews than the one before it (`--no-preview`, `--no-preview-page`, or a model with fewer clips)
+deletes the old ones. A preview is a file whose name ends `.png` in any case, or exactly `preview.html`. When that
+happens the build still succeeds and returns the warning `BUILD_PREVIEWS_REMOVED`, which lists the removed files in
+the order the earlier `.agent-meshes-build.json` listed them. It is keyed on the removal, not on the flag: a
+`--no-preview` build into a folder that held no previews warns nothing, and a build without the flag that drops a
+preview warns. It reads the earlier marker, so a folder with no marker, an unreadable marker or an adopted empty
+folder gets no warning, and no warning does not prove nothing was removed. Do not restore removed previews from
+version control: they are stale and sit beside a marker that does not list them, so the next build refuses with
+`BUILD_OUTPUT_UNOWNED_FILE`. Delete them and rebuild with previews on. `--if-changed` and `--force` apply to native
+`blender.script` builds only, so a project or operations build cannot use them to keep earlier previews.
 
 ## Done means looked at
 
@@ -144,7 +160,7 @@ sheets and compare them with the intent. If something looks blocky, floating or 
 | --- | --- |
 | Name a static prop, merge or budget it, or judge a set | [Static props for a game engine: names, merge and budgets](references/static-props-names-and-budgets.md) |
 | Author a static prop in Blender | [Blender-authored static props](references/blender-static-props.md) |
-| Preview a bpy source quickly, refine a model or check garment penetration | [Blender previews, refine and the garment check](references/previews-and-refine.md) |
+| Look at an existing GLB without rebuilding it, preview a bpy source quickly, refine a model or check garment penetration | [Blender previews, refine and the garment check](references/previews-and-refine.md) |
 | Check an import into Unity or Unreal | [Engine import checks: Unity and Unreal](references/engine-import-checks.md) |
 | Embed a model or a stage in a page | [Embedding a model in a page](references/embedding-in-a-page.md) |
 | Verify a face rig against its contract | [Face-rig contract check](references/face-rig-contract-check.md) |

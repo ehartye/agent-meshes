@@ -88,6 +88,21 @@ function outputError(code: string, summary: string, hint: string): Error {
   return Object.assign(new Error(`${summary} Hint: ${hint}`), { code, hint });
 }
 const replaceHint = 'A build replaces its whole output directory, so move the file out of it or give the build a different "output" in its config.';
+const unownedHint = `${replaceHint} If it is a preview (a .png or preview.html) that mesh preview wrote into the build folder, or one restored from version control, delete it: give mesh preview an --out outside the build folder, and rebuild with previews on (omit --no-preview) instead of restoring old ones. --if-changed and --force apply to native blender.script builds only, so they do not get past this check.`;
+/** A preview is a name ending in .png in any case, or exactly preview.html. */
+const isPreview = (file: string) => /\.png$/i.test(file) || file === 'preview.html';
+/**
+ * The preview files the owned directory's marker lists and that are on disk, in the marker's order. Empty when the marker
+ * is missing or unreadable (an adopted empty folder has none), so no result proves nothing about what a swap removes.
+ */
+async function earlierPreviews(directory: string): Promise<string[]> {
+  try {
+    const marker = markerSchema.safeParse(JSON.parse(await readFile(join(directory, markerName), 'utf8')));
+    if (!marker.success) return [];
+    const present = await Promise.all(marker.data.files.filter(isPreview).map(async file => [file, await exists(join(directory, ...file.split('/')))] as const));
+    return present.filter(([, there]) => there).map(([file]) => file);
+  } catch { return []; }
+}
 async function checkTree(directory: string, files: string[], allowMissing = false): Promise<void> {
   checkFiles(files);
   const expected = new Set([...files, markerName]);
@@ -97,10 +112,10 @@ async function checkTree(directory: string, files: string[], allowMissing = fals
       const name = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isSymbolicLink()) throw new Error(`Symlink in build output: ${name}`);
       if (entry.isDirectory()) {
-        if (![...expected].some(file => file.startsWith(`${name}/`))) throw outputError('BUILD_OUTPUT_UNOWNED_FILE', `Unexpected directory "${name}" in build output ${directory}.`, replaceHint);
+        if (![...expected].some(file => file.startsWith(`${name}/`))) throw outputError('BUILD_OUTPUT_UNOWNED_FILE', `Unexpected directory "${name}" in build output ${directory}.`, unownedHint);
         await visit(join(path, entry.name), name);
       } else if (entry.isFile() && expected.has(name)) found.add(name);
-      else throw outputError('BUILD_OUTPUT_UNOWNED_FILE', `Unexpected unowned file "${name}" in build output ${directory}.`, replaceHint);
+      else throw outputError('BUILD_OUTPUT_UNOWNED_FILE', `Unexpected unowned file "${name}" in build output ${directory}.`, unownedHint);
     }
   }
   await visit(directory, '');
@@ -319,6 +334,7 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
     if (inputRoot) { await loadedConfig.assertPlainSources(); await inputRoot.assertUnchanged(); }
     // Check again just before replacing, so files added during a long render are preserved.
     const owned = await checkOwnership(output, configFile, incremental);
+    const earlier = owned ? await earlierPreviews(output) : [];
     if (owned) {
       backup = join(dirname(output), `.${basename(output)}.backup-${randomUUID()}`);
       await move(output, backup);
@@ -326,6 +342,8 @@ export async function buildAsset(configPath: string, options: BuildOptions = {},
     try { await move(stage, output); stage = undefined; }
     catch (error) { if (backup) { await move(backup, output); backup = undefined; } throw error; }
     if (backup) { await rm(backup, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); backup = undefined; }
+    const removed = earlier.filter(file => !files.includes(file));
+    if (removed.length) warnings.push({ code: 'BUILD_PREVIEWS_REMOVED', message: `Removed ${removed.length} preview ${removed.length === 1 ? 'file' : 'files'} of the earlier build from ${output}: ${removed.join(', ')}. A build replaces its whole output directory and this one did not write them again. Rebuild with previews on (omit --no-preview and --no-preview-page) to write fresh ones; restoring the old files from version control makes the next build refuse them as unowned (BUILD_OUTPUT_UNOWNED_FILE).` });
     if (readAudit && readAudit.status !== 'clean') warnings.push({ code: 'BLENDER_READ_AUDIT', message: `Python read audit ${readAudit.status}; native reuse disabled. Declare observed inputs: ${readAudit.undeclaredReads.join(', ') || '(audit incomplete)'}. Native file reads and dependency closure are not covered.` });
     return { output, files, ...(warnings.length ? { warnings } : {}), ...(readAudit ? { readAudit } : {}), ...(incrementalResult ? { incremental: incrementalResult } : {}) };
   } finally {
