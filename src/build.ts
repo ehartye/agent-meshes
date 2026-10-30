@@ -104,7 +104,7 @@ async function checkTree(directory: string, files: string[], allowMissing = fals
     }
   }
   await visit(directory, '');
-  for (const file of expected) if (!found.has(file) && !allowMissing) throw new Error(`Missing owned build file: ${file}`);
+  for (const file of expected) if (!found.has(file) && !allowMissing) throw outputError('BUILD_OUTPUT_FILE_MISSING', `Missing owned build file: ${file}.`, `${file} is listed in the ${markerName} marker of ${directory} but is not on disk, often because version control ignores it. --if-changed and --force apply to native blender.script builds only, so a project or operations build cannot use them. Restore ${file}, or delete the output directory so the next build recreates it.`);
 }
 async function checkOwnership(output: string, config: string, allowMissing = false): Promise<boolean> {
   if (!await exists(output)) return false;

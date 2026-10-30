@@ -445,8 +445,9 @@ source of 0.31.0 (line numbers are from that release); [general] neither.
   `nativeCacheFiles` 14, `nativeCacheLimits` 15, `historyFile` 32, `write` 200-211).
 - [documented] and [tested] A plain build refuses an owned directory whose marker
   lists a missing file, whichever file it is (GLB, report, preview, cache or
-  history): `Missing owned build file: <name>`, with no error code and no hint, and
-  before anything is replaced (`src/build.ts`: `checkTree` 107, `allowMissing` false).
+  history): `Missing owned build file: <name>`, code `BUILD_OUTPUT_FILE_MISSING` with a hint that
+  names the file, says the flags apply to native builds only and offers restoring the file or
+  deleting the output directory, and before anything is replaced (`src/build.ts`: `checkTree` 107, `allowMissing` false).
 - [documented] and [tested] `--if-changed` and `--force` pass `allowMissing`
   (`src/build.ts` 169, 194, 312). On a native build the lookup then misses, Blender
   runs once and the cache is rewritten: reason `cache-record-missing` for a missing
