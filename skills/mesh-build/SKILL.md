@@ -165,3 +165,4 @@ sheets and compare them with the intent. If something looks blocky, floating or 
 | Embed a model or a stage in a page | [Embedding a model in a page](references/embedding-in-a-page.md) |
 | Look up MeshViewer mount options, the puppet API or `bounds()` | [Viewer API](references/viewer-api.md) |
 | Verify a face rig against its contract | [Face-rig contract check](references/face-rig-contract-check.md) |
+| Bake a rigged clip into a sprite sheet and Aseprite atlas for a 2D engine | [Sprite bake](references/sprite-bake.md) |

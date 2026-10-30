@@ -81,3 +81,5 @@ produces the same files and manifest as before.
   value (`background` is `null` when transparent). An absent key means the default above.
 - The fixed camera of a region (`center`, `radius`, `elevation`) with `size` and
   `background: null` gives a repeatable cell-sized capture for compositing or source frames.
+  This is a review capture, not a sprite exporter: to turn a clip into a sprite sheet and Aseprite atlas for a 2D engine,
+  run `agent-meshes bake` ([sprite bake](../../mesh-build/references/sprite-bake.md)).
