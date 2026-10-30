@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findBlender } from './refine.ts';
 import { readGLB } from './gltf-read.ts';
@@ -126,12 +126,32 @@ async function waitForFile(path: string, deadline: number, alive?: () => Promise
   throw new Error(`Preview did not finish within the timeout (${path})`);
 }
 
+/** The ownership marker `mesh build` writes into its output folder (`markerName` in src/build.ts); a build replaces or rejects everything else there. */
+export const BUILD_MARKER_NAME = '.agent-meshes-build.json';
+
+/**
+ * Where a preview goes when no `--out` is given: `preview/` beside the source, unless the source sits in a folder a build
+ * owns (the folder or an ancestor holds the build marker). A build rejects or deletes anything it did not write there, so
+ * the default then moves to a sibling of that folder: `dist/model.glb` previews into `dist-preview/`.
+ */
+export async function defaultPreviewOut(source: string): Promise<string> {
+  const start = dirname(source);
+  for (let dir = start; ; dir = dirname(dir)) {
+    const owned = await stat(join(dir, BUILD_MARKER_NAME)).then(info => info.isFile(), () => false);
+    if (owned) {
+      if (dirname(dir) === dir) throw Object.assign(new Error(`${source} sits in a build output folder at the filesystem root, so there is no sibling folder for the preview. Pass --out <directory>.`), { code: 'CLI_ARGUMENT_ERROR' });
+      return join(dirname(dir), `${basename(dir)}-preview`);
+    }
+    if (dirname(dir) === dir) return join(start, 'preview');
+  }
+}
+
 export interface RunPreviewOptions { outDir?: string; queue?: string; useWorker?: boolean; timeoutMs?: number }
 
 /** Render a preview: through a live worker when one is running (unless useWorker is false), else in a fresh Blender. */
 export async function runPreview(input: string, settings: PreviewSettings, options: RunPreviewOptions = {}): Promise<PreviewManifest> {
   const source = await realpath(await resolvePreviewSource(input));
-  const outDir = resolve(options.outDir ?? join(dirname(source), 'preview'));
+  const outDir = resolve(options.outDir ?? await defaultPreviewOut(source));
   await mkdir(outDir, { recursive: true });
   const queue = resolve(options.queue ?? DEFAULT_PREVIEW_QUEUE);
   const job = previewJob(source, outDir, settings);

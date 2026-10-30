@@ -368,7 +368,7 @@ export async function main(args = process.argv): Promise<void> {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   });
   program.command('preview [input]').description('Workbench previews of a Blender-authored source (build.json or .py) from fixed cameras, in one Blender run: no GLB, no browser')
-    .option('--out <directory>', 'Output folder (default: preview/ beside the source)')
+    .option('--out <directory>', 'Output folder (default: preview/ beside the source, or <folder>-preview/ beside a build output folder)')
     .option('--views <list>', `Comma-separated views or aliases: ${['head', 'body', 'front', 'q34', 'side', 'below', 'above', 'close', 'eyes', 'mouth', 'mouth-q34', 'back', 'body-front', 'body-q34', 'body-side', 'body-back'].join(', ')}`, 'front,q34,side')
     .option('--shading <list>', 'Comma-separated: matcap, wire, cavity, zebra, color (materials), vertex (active RGB attribute), or all', 'matcap')
     .option('--shape <weights>', 'Shape-key weights for every pose, e.g. eyeBlinkLeft=1,jawOpen=.5')
