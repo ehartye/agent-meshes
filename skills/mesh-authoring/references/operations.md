@@ -130,7 +130,9 @@ mirrored and offset in the root parent's frame. Model one leg, then copy it.
 {"op":"clip.remove","name":"sway"}
 ```
 
-`property` is `rotation` (quaternion offset from rest) or `position` (meters offset from rest).
+`property` is `rotation` (quaternion offset from rest), `position` (meters offset from rest) or `scale`
+(three positive multipliers of the bone's rest scale, which is `[1,1,1]`; zero or negative is rejected).
+A bone has at most one track per property. `assembly.copy` with `mirror` keeps a copied scale as written.
 Key times strictly increase from 0 through `duration` (0.05 to 120 s). Matching first and last
 keys make a seamless loop. Bones without a track stay at rest during playback.
 
@@ -163,5 +165,36 @@ keys make a seamless loop. Bones without a track stay at rest during playback.
 - `endpoints` is `free` (default: write only the key given) or `loop` (a key at time 0 or at the
   duration is copied to the other end). A `time` outside 0 through `duration` fails; so does a
   name that is taken or an unknown clip or bone, each reported with its operation index.
+- `clip.key.set` also takes `"property":"scale"` with `[x,y,z]`, and `clip.key.record` poses take an
+  optional `scale`; a recorded stored pose carries rotation only.
 - Only the tracks an operation names change; the rest stay identical. A batch of these is atomic
   and one `undo` restores the project from before it.
+
+### Controls
+
+Controls bake a stated motion into ordinary tracks of clip `name` (new clips need `duration`; an
+existing clip keeps its own). No quaternion is written by hand, rotation keys are never more than a
+quarter turn apart with continuous signs, and only the controlled bone and property track is
+replaced; every other track stays identical. Axes are in the bone's rest frame: `x`, `y`, `z` or a vector.
+
+```json
+{"op":"control.hinge","name":"talk","bone":"head","axis":"x","from":0,"to":12,"cycles":2,"duration":4}
+{"op":"control.spin","name":"run","bone":"wheel","axis":"z","turns":3,"duration":3}
+{"op":"control.pulse","name":"talk","bone":"lid_L","property":"scale","peak":[1,0.05,1],"times":[1,2.6],"width":0.2}
+{"op":"control.pulse","name":"talk","bone":"jaw","property":"position","peak":[0,-0.04,0],"times":[0.5],"width":0.4}
+{"op":"control.couple","name":"run","driver":"gear_a","driven":"gear_b","axis":"z","teeth":[20,10],"phase":18}
+```
+
+- `control.hinge` swings `bone` from `from` to `to` degrees and back (`mode` `swing`, default, `cycles`
+  times, ending where it began) or goes once from one to the other (`mode` `ramp`).
+- `control.spin` turns `bone` a whole number of `turns` about `axis` (negative reverses) over the clip,
+  starting at `phase` degrees, `keysPerTurn` keys per turn (4 to 360, default 8). An odd turn count
+  ends on the negated quaternion, the same orientation as the start.
+- `control.pulse` raises `scale` (positive multipliers, a blink is `[1,0.05,1]`) or `position` to `peak`
+  and back to rest at each time in `times` (the centre) over `width` seconds, `shape` `smooth` (default)
+  or `triangle`. Pulses must fit in the clip and not overlap.
+- `control.couple` bakes the driven rotation `angle2 = -ratio * angle1 + phase` from the driver's
+  existing rotation track about `axis` (spin or hinge the driver first). Give `ratio` or `teeth`
+  `[driver, driven]`; `mesh` `external` (default) reverses the direction, `internal` keeps it. A `phase`
+  of 180 over the driven tooth count lines a tooth up with a gap. By default it refuses a ratio whose driven
+  end pose differs from its start; `loop: false` allows it.

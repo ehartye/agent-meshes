@@ -6,6 +6,7 @@ import { shellSchema } from './core/model.ts';
 import { assemblyCopySchema } from './core/assembly.ts';
 import { poseTargetSchema } from './core/pose-target.ts';
 import { clipOperationSchemas } from './core/clip-ops.ts';
+import { controlOperationSchemas } from './core/subsystems.ts';
 import { ModelError } from './errors.ts';
 import { lintProject } from './project-lint.ts';
 import type { BoneDef, Clip, GeometryKind, Operation, Part, Project } from './core/types.ts';
@@ -32,6 +33,7 @@ export const operationSchemas = {
   'clip.set': z.object({ op: z.literal('clip.set'), clip: clipSchema }).strict(),
   'clip.remove': z.object({ op: z.literal('clip.remove'), ...named }).strict(),
   ...clipOperationSchemas,
+  ...controlOperationSchemas,
   'shell.set': z.object({ op: z.literal('shell.set'), shell: shellSchema }).strict(),
   'shell.remove': z.object({ op: z.literal('shell.remove'), ...named }).strict(),
 } satisfies Record<Operation['op'], z.ZodType>;
@@ -68,6 +70,10 @@ const examples: Record<Operation['op'], Operation[]> = {
   'clip.key.set': [{ op: 'clip.key.set', name: 'idle', bone: 'root', property: 'rotation', time: 0.5, value: [0, 0, 0.258819, 0.965926], endpoints: 'free' }],
   'clip.key.remove': [{ op: 'clip.key.remove', name: 'idle', bone: 'root', property: 'rotation', time: 0.5 }],
   'clip.key.record': [{ op: 'clip.key.record', name: 'idle', time: 0.5, bones: ['root'] }, { op: 'clip.key.record', name: 'idle', time: 0, poses: [{ bone: 'root', rotation: [0, 0, 0.258819, 0.965926], position: [0, 0.05, 0] }], endpoints: 'loop' }],
+  'control.hinge': [{ op: 'control.hinge', name: 'idle', bone: 'jaw', axis: 'x', from: 0, to: 20, cycles: 2, duration: 2 }, { op: 'control.hinge', name: 'open', bone: 'lid', axis: [1, 0, 0], from: 0, to: 90, mode: 'ramp', duration: 1 }],
+  'control.spin': [{ op: 'control.spin', name: 'spin', bone: 'wheel', axis: 'z', turns: 3, duration: 3 }, { op: 'control.spin', name: 'spin', bone: 'prop', axis: [0, 0, 1], turns: -4, phase: 45, keysPerTurn: 12 }],
+  'control.pulse': [{ op: 'control.pulse', name: 'face', bone: 'eyelid', property: 'scale', peak: [1, 0.05, 1], times: [1, 2.6], width: 0.16, duration: 4 }, { op: 'control.pulse', name: 'face', bone: 'jaw', property: 'position', peak: [0, -0.02, 0], times: [0.5], width: 0.3, shape: 'triangle' }],
+  'control.couple': [{ op: 'control.couple', name: 'spin', driver: 'gear_a', driven: 'gear_b', axis: 'z', teeth: [20, 10], phase: 18 }, { op: 'control.couple', name: 'spin', driver: 'gear_a', driven: 'ring', axis: 'z', ratio: 0.5, mesh: 'internal', loop: false }],
   'shell.set': [
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], blend: 0.12, resolution: 48 } },
     { op: 'shell.set', shell: { name: 'skin', parts: ['body', 'head'], cut: ['hole'], blend: 0.12, resolution: 48 } },
@@ -98,6 +104,10 @@ const descriptions: Record<Operation['op'], string> = {
   'clip.key.set': 'Insert or replace one key on a bone/property track at a time within 0 through the clip duration, creating the track if absent without touching other tracks. A rotation is normalized (any non-zero quaternion). endpoints "loop" copies a key at time 0 or the duration to the other end.',
   'clip.key.remove': 'Remove one interior key. Refuses to leave fewer than 2 keys or to remove the start or end key, which every track needs.',
   'clip.key.record': 'Write the current pose of bones at a time into their tracks, creating tracks if absent, without resending other tracks. bones (default all) record the stored pose rotation of each bone; poses give explicit rotation and position values (normalized) and override it. endpoints "loop" copies a key at time 0 or the duration to the other end.',
+  'control.hinge': 'Bake a rotation track for bone about axis (x, y, z or a vector in the bone rest frame) between two angles in degrees, no quaternions to write. mode "swing" (default) goes from to to and back with a smooth cosine ease, repeated cycles times (default 1), ending where it began so the clip loops; mode "ramp" goes once from "from" to "to". Keys are added until none is more than a quarter turn from the next. name is the clip: an existing clip keeps its duration (duration must match or be omitted); a new clip needs duration. Replaces only the rotation track of that bone.',
+  'control.spin': 'Bake continuous rotation: bone turns a whole number of turns (negative reverses) about axis over the clip duration, with phase degrees at the start. Keys come keysPerTurn per turn (4 to 360, default 8) with continuous quaternion signs, so repeated turns never reverse; the last pose is the first (an odd turn count ends on the negated quaternion, the same orientation). name is the clip; a new clip needs duration. Replaces only the rotation track of that bone.',
+  'control.pulse': 'Bake a scale or position pulse that returns to rest: at each time (the centre) the property rises to peak and back over width seconds, smooth (half cosine, default) or triangle. property scale takes positive multipliers of the rest scale 1 (a blink is eyelid peak [1, 0.05, 1]); position takes an offset from rest (a jaw drop). Pulses must fit in the clip and not overlap. name is the clip; a new clip needs duration. Replaces only that bone and property.',
+  'control.couple': 'Couple two spinning bones in clip name, for meshing gears: driven rotates about its axis (drivenAxis, default axis) by angle2 = -ratio * angle1 + phase degrees, with angle1 read from the existing rotation track of the driver about axis (bake it with control.spin or control.hinge first). Give ratio (driver turns per driven turn is 1/ratio) or teeth [driver teeth, driven teeth], whose quotient is the ratio; mesh "external" (default) reverses the direction and "internal" (a ring gear) keeps it. A phase of 180 / driven teeth lines a tooth up with a gap. loop (default true) refuses a ratio and turn count whose driven end pose differs from its start. Replaces only the rotation track of the driven bone.',
   'shell.set': 'Create or replace a smooth shell that blends the listed parts into one surface and replaces them when rendered or exported. Members must all be rigid-bound or all unbound; colors and bone weights come from the members that own each point. Optional colorBlend (meters, min 0) is the width of the band where member colors mix: default half of blend, 0 gives hard-edged patches by ownership; bone weights are unaffected. Optional cut lists parts subtracted from the surface (holes and hollows) with the same blend; cutters are hidden like members, contribute no color or weight, and cannot also be members. An optional material (metalness, roughness, 0 to 1, plus the glass fields opacity, transmission, ior and doubleSided) sets the finish of the whole shell. An optional pattern (dots, stripes or checks) is painted over the blended colors in world space, before ambient occlusion. By default the shell bakes member colors and ambient occlusion into vertex colors (COLOR_0, COLOR_1) that multiply the material color, so it looks darker or tinted next to a plain part of the same color; vertexColors false exports none, takes the single member color from the material like a plain part, and requires all members to share one color and no pattern.',
   'shell.remove': 'Remove a shell; its member parts render individually again.',
   'assembly.copy': 'Copy a bone subtree with its bound parts and clip tracks under a prefix, optionally mirrored and offset in the root parent frame.',

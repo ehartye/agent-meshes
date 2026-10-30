@@ -166,3 +166,20 @@ describe('rigged assembly copies', () => {
     expect(() => copy(collision)).toThrow(/collision|duplicate/i);
   });
 });
+
+describe('scale tracks in copied clips', () => {
+  it('keeps a scale track as written when the copy is mirrored, while reflecting position', () => {
+    const p = fixture();
+    p.clips[0].tracks.push({ bone: 'upper', property: 'scale', keys: [{ time: 0, value: [1, 1, 1] }, { time: 1, value: [1.5, 0.25, 2] }] });
+    for (const mirror of ['x', 'y', 'z'] as const) {
+      const next = copy(p, { mirror });
+      const scaled = next.clips[0].tracks.find(item => item.bone === 'right.upper' && item.property === 'scale')!;
+      expect(scaled.keys, mirror).toEqual([{ time: 0, value: [1, 1, 1] }, { time: 1, value: [1.5, 0.25, 2] }]);
+      const moved = next.clips[0].tracks.find(item => item.bone === 'right.upper' && item.property === 'position')!;
+      const axis = ['x', 'y', 'z'].indexOf(mirror);
+      expect((moved.keys[1].value as number[])[axis]).toBeCloseTo(-[.2, .1, -.3][axis]);
+    }
+    expect(copy(p).clips[0].tracks.find(item => item.bone === 'right.upper' && item.property === 'scale')!.keys).toEqual(p.clips[0].tracks.at(-1)!.keys);
+    expect(copy(p, { clips: false }).clips).toEqual(p.clips);
+  });
+});

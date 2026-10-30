@@ -71,6 +71,16 @@ to the floor. `_L` parts sit at -X, which is the character's anatomical right.
 keys at strictly increasing times from 0 through the duration. First and last keys equal make a
 seamless loop. Tracks are offsets from rest, so an untracked bone stays put.
 
+Track properties are `rotation`, `position` and `scale`. A scale key is three positive multipliers of
+the bone's rest scale, which is `[1,1,1]`; it scales the bone's children too, so a blink is a lid bone
+scaled to `[1,0.05,1]`. Zero or negative scale is rejected, and a mirrored copy keeps a scale as written.
+
+For repeatable motion, state it instead of keying it: `control.hinge`, `control.spin`, `control.pulse`
+(scale or position) and `control.couple` bake rotation, position or scale tracks with keys dense enough
+that a spin never reverses, and replace only their own bone's track. Meshing gears are a `control.spin`
+on the driver and a `control.couple` with `teeth` (`angle2 = -ratio * angle1 + phase`); a wheel,
+propeller or fan is a `control.spin`. Shapes are in [operations](../mesh-authoring/references/operations.md#controls).
+
 To change an existing clip, edit it in place instead of resending it: `clip.create`, `clip.clone`,
 `clip.rename` and `clip.retime` handle whole clips, and `clip.key.set`, `clip.key.remove` and
 `clip.key.record` touch single keys and leave every other track unchanged. Rotations are normalized;

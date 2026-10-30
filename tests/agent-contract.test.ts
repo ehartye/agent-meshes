@@ -11,7 +11,7 @@ function fixture() {
 
 describe('agent authoring contract', () => {
   it('publishes serializable schemas and valid examples for every supported operation', () => {
-    const expected = ['add', 'update', 'remove', 'bone.add', 'bone.update', 'bone.remove', 'bone.mirror', 'pose', 'pose.reset', 'bind', 'unbind', 'clip.set', 'clip.remove', 'clip.create', 'clip.clone', 'clip.rename', 'clip.retime', 'clip.key.set', 'clip.key.remove', 'clip.key.record', 'assembly.copy', 'pose.target', 'shell.set', 'shell.remove'];
+    const expected = ['add', 'update', 'remove', 'bone.add', 'bone.update', 'bone.remove', 'bone.mirror', 'pose', 'pose.reset', 'bind', 'unbind', 'clip.set', 'clip.remove', 'clip.create', 'clip.clone', 'clip.rename', 'clip.retime', 'clip.key.set', 'clip.key.remove', 'clip.key.record', 'control.hinge', 'control.spin', 'control.pulse', 'control.couple', 'assembly.copy', 'pose.target', 'shell.set', 'shell.remove'];
     const contract = capabilities();
     expect(contract.version).toBe(1);
     expect(Object.keys(operationSchemas).sort()).toEqual(expected.sort());

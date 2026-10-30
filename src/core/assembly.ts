@@ -120,7 +120,8 @@ export function applyAssemblyCopy(project: Project, operation: unknown): void {
   if (input.clips) for (const clip of project.clips) {
     const tracks = clip.tracks.filter(track => bones.has(track.bone)).map(track => ({
       ...structuredClone(track), bone: input.prefix + track.bone,
-      keys: track.keys.map(key => ({ time: key.time, value: track.property === 'rotation' ? reflectRotation(key.value as Quat) : reflectVector(key.value as Vec3) })),
+      // A scale is a size multiplier, not a direction: mirroring a bone's size keeps it as written (reflecting would make it negative).
+      keys: track.keys.map(key => ({ time: key.time, value: track.property === 'rotation' ? reflectRotation(key.value as Quat) : track.property === 'scale' ? [...key.value] as Vec3 : reflectVector(key.value as Vec3) })),
     }));
     clip.tracks.push(...tracks);
   }

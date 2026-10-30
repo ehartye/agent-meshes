@@ -217,6 +217,40 @@ describe('per-key set, remove and record', () => {
   });
 });
 
+describe('scale keys', () => {
+  it('sets a scale key, creating a track that rests at 1 at both ends, and leaves other tracks deep-equal', () => {
+    const before = fixture();
+    const project = applyOperation(before, { op: 'clip.key.set', name: 'walk', bone: 'hand', property: 'scale', time: 1, value: [1, 0.5, 1] });
+    const clip = walk(project);
+    expect(track(clip, 'hand', 'scale').keys).toEqual([{ time: 0, value: [1, 1, 1] }, { time: 1, value: [1, 0.5, 1] }, { time: 2, value: [1, 1, 1] }]);
+    expectUnrelatedUntouched(walk(before), clip, ['hand:scale']);
+    expect(walk(applyOperation(project, { op: 'clip.key.set', name: 'walk', bone: 'hand', property: 'scale', time: 0, value: [2, 2, 2], endpoints: 'loop' })).tracks.find(item => item.property === 'scale')!.keys.map(key => key.value)).toEqual([[2, 2, 2], [1, 0.5, 1], [2, 2, 2]]);
+    expect(times(walk(applyOperation(project, { op: 'clip.key.remove', name: 'walk', bone: 'hand', property: 'scale', time: 1 })), 'hand', 'scale')).toEqual([0, 2]);
+  });
+
+  it('rejects a zero, negative or wrong-length scale with the operation index', () => {
+    const project = fixture();
+    for (const [value, message] of [[[1, 0, 1], /positive/], [[-1, 1, 1], /positive/], [[1, 1], /Invalid input/], [[1, 1, 1, 1], /three positive multipliers/]] as const) {
+      const error = failure(project, [{ op: 'clip.key.set', name: 'walk', bone: 'arm', property: 'scale', time: 1, value }]);
+      expect(error.operationIndex).toBe(0);
+      expect(error.message).toMatch(message);
+    }
+    expect(failure(project, [{ op: 'clip.key.record', name: 'walk', time: 1, poses: [{ bone: 'arm', scale: [1, -2, 1] }] }]).message).toMatch(/positive/);
+  });
+
+  it('records an explicit scale pose beside rotation and position, with the loop policy', () => {
+    const before = fixture();
+    const project = applyOperation(before, { op: 'clip.key.record', name: 'walk', time: 0, endpoints: 'loop', poses: [{ bone: 'arm', scale: [1.2, 0.8, 1.2] }, { bone: 'hand', rotation: [0, 0, 3, 4], scale: [2, 2, 2] }] });
+    const clip = walk(project);
+    expect(track(clip, 'arm', 'scale').keys.map(key => key.value)).toEqual([[1.2, 0.8, 1.2], [1.2, 0.8, 1.2]]);
+    expect(track(clip, 'hand', 'scale').keys.map(key => key.value)).toEqual([[2, 2, 2], [2, 2, 2]]);
+    expect(track(clip, 'hand', 'rotation').keys[0].value).toEqual([0, 0, 0.6, 0.8]);
+    expectUnrelatedUntouched(walk(before), clip, ['arm:scale', 'hand:scale', 'hand:rotation']);
+    // Recording stored bone poses (which carry rotation only) never adds a scale track.
+    expect(walk(applyOperation(before, { op: 'clip.key.record', name: 'walk', time: 1 })).tracks.some(item => item.property === 'scale')).toBe(false);
+  });
+});
+
 describe('batches', () => {
   const directories: string[] = [];
   const run = promisify(execFile);
