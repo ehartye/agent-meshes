@@ -78,7 +78,9 @@ file of the 0.32.0 source; [general] neither.
   failed the next build with `BUILD_OUTPUT_UNOWNED_FILE` (`Unexpected directory "preview"`). `--out` always wins; pass it
   to choose the place yourself.
 - [documented] `view` renders `currentProject()`, the workspace project (`src/cli.ts`: `currentProject` 70-73, `view`
-  406-413). [tested] `mesh view` run where no workspace or server exists failed with `fetch failed`. With no workspace,
+  406-413). [tested] `mesh view` run where no workspace or server exists exits 1 with the JSON error code
+  `WORKBENCH_UNREACHABLE`, naming `--workspace` and `mesh preview <model.glb>`.
+  Earlier versions failed with `fetch failed`. With no workspace,
   `view` needs `--workspace` or a running workbench; to look at a built model, use `mesh preview <model.glb>`.
 - [general] This is Blender's Workbench shading of an imported glTF, not the three.js viewer's look. For the viewer's
   look, or a set compared from one camera, use the build previews or `recipes/set-sheet.mjs`.
