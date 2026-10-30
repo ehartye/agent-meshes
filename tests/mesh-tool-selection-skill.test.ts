@@ -135,14 +135,14 @@ describe('mesh-tool-selection links', () => {
   });
 });
 
-describe('mesh-tool-selection 2D reference evidence', () => {
-  // A bullet is its first line plus the indented lines that wrap under it.
-  const bullets = () => linesOf(REFERENCE).reduce<string[]>((found, line) => {
-    if (/^\s*[-*]\s/.test(line)) found.push(line);
-    else if (/^\s+\S/.test(line) && found.length > 0) found[found.length - 1] += ` ${line.trim()}`;
-    return found;
-  }, []);
+// A bullet is its first line plus the indented lines that wrap under it.
+const bullets = () => linesOf(REFERENCE).reduce<string[]>((found, line) => {
+  if (/^\s*[-*]\s/.test(line)) found.push(line);
+  else if (/^\s+\S/.test(line) && found.length > 0) found[found.length - 1] += ` ${line.trim()}`;
+  return found;
+}, []);
 
+describe('mesh-tool-selection 2D reference evidence', () => {
   it('labels every bullet and names a file in every documented bullet', () => {
     const all = bullets();
     expect(all.length).toBeGreaterThanOrEqual(5);
@@ -207,5 +207,47 @@ describe('mesh-tool-selection pre-render tripwires', () => {
     expect(capture, message).toMatch(/for\(const pose of poses\)[\s\S]*?for\(const region of \[\{name:'body'\},\.\.\.selected\]\)[\s\S]*?for\(const azimuth of ring\)/);
     expect(viewer, message).toMatch(/new THREE\.PerspectiveCamera\(/);
     expect(viewer, message).not.toMatch(/OrthographicCamera/);
+  });
+});
+
+// A sentence in the skill that says something is absent ("no shipped command", "not a runtime asset") is a factual claim
+// about code or a package. Each one needs a [documented] or [tested] bullet in the evidence reference that names what
+// was read, so a claim wider than the evidence (for example "no support" for engines that were never opened) cannot pass.
+describe('mesh-tool-selection absence claims are paired with evidence', () => {
+  const NEGATIVE = /\bno shipped\b|\bnot shipped\b|\bno support\b|\bnot supported\b|\bnot built yet\b|\bnot yet (?:built|shipped|supported)\b|\bnot a runtime asset\b|\bhas no\b|\bno loader\b/i;
+  const sentencesOf = (file: string) => read(file).replace(/\r?\n(?!\r?\n)/g, ' ').split(/\r?\n\r?\n|\|\s*|(?<=[.;])\s+/).map(sentence => sentence.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const hasEvidence = (label: string, ...needles: RegExp[]) => bullets().some(bullet => bullet.startsWith(`- [${label}]`) && needles.every(needle => needle.test(bullet)));
+  // Each claim lists the bullets that support it: a label and what the bullet must name.
+  const CLAIMS: { say: RegExp; evidence: [label: string, ...needles: RegExp[]][] }[] = [
+    { say: /no shipped command exports sprite frames/, evidence: [['documented', /`src\/cli\.ts` registers/, /and no `bake`/], ['tested', /`tests\/mesh-tool-selection-skill\.test\.ts`/, /`bake` command/]] },
+    { say: /A GLB is not a runtime asset in Phaser/, evidence: [['documented', /phaser \d+\.\d+\.\d+ \(`package\.json`\) has no glTF code/, /`src\/loader\/filetypes\/index\.js`/]] },
+  ];
+
+  it('pairs every absence claim in the skill with a documented or tested bullet that names what was read', () => {
+    const claims = sentencesOf(SKILL).filter(sentence => NEGATIVE.test(sentence));
+    expect(claims.length).toBeGreaterThanOrEqual(CLAIMS.length);
+    const unpaired = claims.filter(sentence => !CLAIMS.some(({ say }) => say.test(sentence)));
+    expect(unpaired, 'add a [documented] or [tested] bullet to references/two-d-engines.md that names the file read, then list the claim in CLAIMS; or drop the claim').toEqual([]);
+    for (const { say, evidence } of CLAIMS) {
+      expect(claims.some(sentence => say.test(sentence)), `the skill no longer says ${say}: remove it from CLAIMS`).toBe(true);
+      for (const [label, ...needles] of evidence) expect(hasEvidence(label, ...needles), `${say} needs a [${label}] bullet matching ${needles.join(' and ')}`).toBe(true);
+    }
+  });
+
+  it('claims nothing in the skill about an engine the evidence says was not read', () => {
+    // Only Phaser's package was read. Canvas and Pixi are on the route because they draw sprites, and the reference says so.
+    const absent = /\b(?:no|not|never|without|cannot|lacks?)\b/i;
+    expect(sentencesOf(SKILL).filter(sentence => /\b(?:Canvas|Pixi)\b/.test(sentence) && absent.test(sentence))).toEqual([]);
+    const other = bullets().filter(bullet => /\b(?:Canvas|Pixi)\b/.test(bullet));
+    expect(other.length).toBeGreaterThan(0);
+    for (const bullet of other) {
+      expect(bullet, bullet).toMatch(/^- \[general\]/);
+      expect(bullet, bullet).toMatch(/\bnot read\b/);
+    }
+  });
+
+  it('keeps absence claims out of the 2D reference prose, where they carry no label', () => {
+    const prose = sentencesOf(REFERENCE).filter(sentence => !/^[-*] \[(?:tested|documented|general)\]/.test(sentence) && !/^#/.test(sentence) && NEGATIVE.test(sentence));
+    expect(prose).toEqual([]);
   });
 });

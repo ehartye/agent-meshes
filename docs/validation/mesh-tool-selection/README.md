@@ -58,9 +58,11 @@ invisible control/tag characters, whitespace, and direct reachability of each re
 batch contains 62 topic clippings and all 62 hashes appear in ingested source summaries. Key Unreal limits were
 checked against captured evidence and current Epic documentation.
 
-The Skill Creator YAML validator reports `Skill is valid!`; [documentation check results](documentation-checks.json)
-record the local scan and final file hashes. After the paired run, only YAML quoting and a direct evidence-list
-link changed in the selector; its behavioral instructions are unchanged.
+The Skill Creator YAML validator reported `Skill is valid!`. A results file that pinned the scan counts and file
+hashes of that moment was removed once the skill files changed; `tests/plugin-content-hygiene.test.ts` and
+`tests/mesh-tool-selection-skill.test.ts` now check the links, reachability and description lengths on every run.
+After the paired run, only YAML quoting and a direct evidence-list link changed in the selector; its behavioral
+instructions are unchanged.
 Final review also narrowed the profile's import-check claim to its actual heuristic, scoped B-rep measurements
 to the appropriate CAD tools, and disclosed conflicting Import Into Level format lists in Epic's captured pages.
 At the owner's request, an Unreal flowchart was added as an explanatory reference after the comparison. It is
