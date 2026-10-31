@@ -37,14 +37,15 @@ node "<plugin-root>/scripts/run-managed.js" --workspace <dir> <command> ...
 
 Resolve `<plugin-root>` from this loaded skill (two parents up). Read
 [CLI setup](references/cli-setup.md) for checked shell helpers. Stop after a failed command; the
-CLI prints one JSON line and exits nonzero with `error` and details.
+CLI exits nonzero and prints `{"ok":false,"error":{...}}` with a `code` and details on stderr.
 
 ## Workspace
 
 `--workspace <dir>` keeps the project on disk with undo history and a revision counter; no server
 runs. Use one workspace per model, inside the project you are working in (for example
 `.agent-meshes/<name>`), and keep it out of version control. `--expect-revision <n>` refuses a
-mutation when someone else changed the workspace first. `mesh new <name>` on an existing workspace
+mutation when someone else changed the workspace first, with `REVISION_CONFLICT` (it carries the `expected` and `actual`
+revisions: `inspect` again, replan, retry). `mesh new <name>` on an existing workspace
 replaces the project and starts an empty undo and redo history (from 0.15.0; before that the old
 project stayed one `undo` away), but the revision keeps counting up: it is the `--expect-revision`
 token, so resetting it would let a stale expectation match a changed workspace. `<name>` also names
@@ -69,7 +70,8 @@ mesh --workspace .agent-meshes/fox export fox.glb
 `capabilities` prints the versioned JSON schema, defaults and one example per operation (about 40 KB
 on one line). Read one contract instead of the whole dump with `capabilities lathe`,
 `capabilities prism` or `capabilities shell.set`; it prints that geometry's or operation's
-conventions, schema and examples. Coordinates are meters, +Y up, rotations are unit quaternions
+conventions, schema and examples; a name that is neither an operation nor a geometry fails with `UNKNOWN_CAPABILITY`
+and lists the valid ones. Coordinates are meters, +Y up, rotations are unit quaternions
 `[x,y,z,w]` or, easier, `rotationEuler: [x,y,z]` degrees (three.js XYZ order: world z first, then y,
 then x; positive angles are right-handed, so +x rotation takes +y toward +z). Give one, not both.
 
@@ -143,6 +145,11 @@ the recipe plus a batch of edits, kept as files so it can be rebuilt. To deliver
 model, `save <name>.mesh.json` from the workspace and point `build.json` at it with
 `"project":"<name>.mesh.json"` (see mesh-build).
 
+The `recipes/` files (`stylized_character.py`, `stylized_walk.py`, `stylized_face.py`, `face_project.py`,
+`botanical_kit.mjs`, `set-stats.mjs`, `set-sheet.mjs`) are listed with one line each in
+[recipes and Blender helpers](references/recipes.md), which also links the hanging cloth flap helper
+(`agent_meshes_cloth_flap`).
+
 For a **face**, choose the required motion and consumer contract before the construction.
 A static or rigid face may fit the workspace parts model. Custom blendshapes or an existing
 sculpt generally need an authoring route that preserves their topology and morphs; use
@@ -211,7 +218,8 @@ glTF material, so a rook is no longer 7 materials. For a flat-colour prop:
 - Add `"merge": "byMaterial"` to the build config to fuse the static parts into one mesh with one primitive per material
   (named parts are lost in the GLB; a model with bound parts or clips is refused with `MERGE_NOT_STATIC`).
 - A `shell.set` surface bakes tint and ambient occlusion into `COLOR_0`/`COLOR_1`, which multiplies the base colour (ivory
-  comes out tan). Set `vertexColors: false` on the shell, or leave the shell out of flat-colour props.
+  comes out tan). Set `vertexColors: false` on the shell, or leave the shell out of flat-colour props. That option needs
+  every member to share one colour and no `pattern`, else the operation fails with `SHELL_VERTEX_COLORS`.
 - Check the result with `verify model.glb --max-materials 1` or `set-stats.mjs --max-materials 1 --require-named-materials`.
 
 Before 0.14.0 none of these fields exist (every part exported its own unnamed material), so check `capabilities` and

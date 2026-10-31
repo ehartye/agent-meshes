@@ -31,9 +31,17 @@ For POSIX shells, use `set -e` before sequences, then
 
 Global options go before the command: `--workspace <dir>` and `--expect-revision <n>`.
 Inline JSON for `op` is awkward to quote in PowerShell; prefer `batch <file>` with a JSON file.
-Every command prints one JSON line. On failure it exits nonzero and prints
-`{"ok":false,"error":{...}}` on stderr with a `code` and, for batches, the failing
-`operationIndex`.
+Most commands print one JSON line. `silhouette`, `verify-unreal` and `check-garments` print indented JSON unless
+given `--json`, and `clip-report` prints text unless given `--json`. On failure a command exits nonzero and prints
+`{"ok":false,"error":{...}}` on stderr with a `code` and, for batches, the failing `operationIndex`.
+
+Codes an authoring agent meets:
+
+- `REVISION_CONFLICT`: `--expect-revision <n>` no longer matches the workspace, because someone else changed it. The
+  error carries `expected` and `actual`; `inspect` again, replan the edit, and retry with the new revision.
+- `UNKNOWN_CAPABILITY`: `capabilities <name>` got a name that is neither an operation nor a geometry kind. The message
+  lists the valid operations and geometries.
+- `SHELL_VERTEX_COLORS`: see [operations](operations.md#shells) (`shell.set` with `vertexColors: false`).
 
 ## Optional pieces
 
@@ -41,10 +49,12 @@ Every command prints one JSON line. On failure it exits nonzero and prints
   --no-preview` produces the GLB and validation report without a browser, and deletes the previews an
   earlier build left in the output folder (the warning `BUILD_PREVIEWS_REMOVED` names them; see
   [mesh-build](../../mesh-build/SKILL.md)).
-- The Blender refine stage needs Blender on PATH, in a usual install folder, in the Microsoft
-  Store app alias, or at `AGENT_MESHES_BLENDER`. Setup reports the path it found as `blender`. It must be a 5.2.x
-  copy: any other version stops with `BLENDER_UNSUPPORTED_VERSION`, and `setup --check` reports
-  `blenderSupported: false` with the message in `blenderError`. A Windows Store launcher counts as unsupported because
-  its version cannot be read, so set `AGENT_MESHES_BLENDER` to a portable 5.2.x copy.
+- The Blender refine stage needs Blender at `AGENT_MESHES_BLENDER`, in a portable folder (`~/.agent-meshes/blender` or
+  `~/tools/blender`), in a usual install folder, or on PATH. Setup reports the path it found as `blender`. It must be a
+  5.2.x copy: any other version stops with `BLENDER_UNSUPPORTED_VERSION`, and `setup --check` reports
+  `blenderSupported: false` with the message in `blenderError`. A Windows Store launcher is always unsupported because
+  its version cannot be read, so it never counts as a place Blender is found; use a portable 5.2.x copy. The search
+  order is in [mesh-setup](../../mesh-setup/SKILL.md).
+- Rendering from an offline or system Chromium: set `AGENT_MESHES_CHROMIUM_EXECUTABLE_PATH` (see mesh-setup).
 - `serve` starts the loopback workbench on port 3388 for a human to look at; skills do not need
   it. Do not stop a server you did not start.

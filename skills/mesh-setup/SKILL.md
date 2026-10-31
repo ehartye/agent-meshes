@@ -36,6 +36,17 @@ usual reason (`errors` says `Managed CLI ... is missing`, and `nextStep` repeats
 install", not as a failure, and read the JSON on stdout rather than the exit code alone; a script that shells out to
 `setup --check` must not throw on exit 1 (use `spawnSync`).
 
+## Chromium for an offline or system browser (optional)
+
+By default setup downloads the Playwright-managed Chromium. To use a Chromium already on the machine (offline, a
+locked-down network, a system package), set `AGENT_MESHES_CHROMIUM_EXECUTABLE_PATH` to its absolute executable path
+before `setup.js`, `setup.js --check` and every rendering command (`build` previews, `view`, `bake`, `review-model`,
+`set-sheet`). Setup then skips the download and checks that the browser launches and has WebGL2 before it publishes the
+release. A relative path, a missing file or a non-executable file fails with an error that names the variable and does not fall
+back to a download; nothing is picked from PATH. Keep the variable set for later commands, or they look for the
+Playwright Chromium that setup did not install. Verify renders after a browser update, since a system Chromium can
+differ from the version Playwright pins.
+
 ## Blender (optional)
 
 Which tool a given asset needs (and whether Blender, Unreal or a CAD kernel is the right one) is covered by
