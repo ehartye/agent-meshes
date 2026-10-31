@@ -1,6 +1,7 @@
 # Repeatable GLB review capture
 
-From the agent-meshes runtime with its dependencies and Playwright Chromium installed:
+`scripts/review-model.mjs` lives in the setup runtime root (the `runtimeRoot` reported by `mesh-setup`); the plugin cache has
+no dependencies to run it. From that folder, with Playwright Chromium installed:
 
 ```text
 node scripts/review-model.mjs path/to/review.json
