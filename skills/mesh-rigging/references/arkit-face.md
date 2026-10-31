@@ -68,7 +68,11 @@ exposed fangs). The rules that are easy to get wrong:
   a nose ball: `attach_to_skin(bead, ball)`). Nothing may float off the skin or sink under a morph
   (the verifier's `attached-parts` check).
 - Put every morph-bearing part in one mesh with `join_face_parts`: Unreal discards all morph
-  names when a name repeats across glTF meshes. Keep only the eyeballs separate.
+  names when a name repeats across glTF meshes. Keep only the eyeballs separate. The morph-name audit
+  rejects these layouts with the codes below (`verify-unreal` lists them in `preflight.morphNames.issues[].code`; the
+  `morph-names` check of `verify --contract arkit-face/1` prints the same messages): `MORPH_NAME_SHARED_ACROSS_MESHES` (a name on more than one glTF mesh),
+  `MORPH_NAME_DUPLICATE_IN_MESH`, `MORPH_NAMES_MISSING` (no `extras.targetNames`), `MORPH_NAMES_COUNT_MISMATCH`
+  (names differ in number from targets) and `MORPH_TARGET_COUNT_VARIES` (primitives of one mesh carry different target counts).
 - Name teeth materials `teeth_upper` and `teeth_lower`, and write the extras with
   `face_contract(rig, objects, yaw_max, pitch_max, exposed_teeth=[...])`.
 - Gaze is eye-bone rotation, not morphs: yaw about the eye bone's local Y, pitch about local X.

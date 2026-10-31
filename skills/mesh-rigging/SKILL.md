@@ -111,11 +111,28 @@ are in [operations](../mesh-authoring/references/operations.md#clips).
 - Keep joint ranges anatomical. A knee that bends forward or a hoof that passes through the
   shin reads wrong even in a contact sheet.
 
+## Check a clip
+
+Details, options, defaults and error codes are in [clip checks](references/clip-checks.md).
+
+- `mesh clip-report model.glb` checks every clip of any rig for loop discontinuity and velocity spikes. Add `--foot <bone>`
+  (repeatable) for foot penetration, `--speed <mps>` for stance sliding and `--min-support <count>` (default 1; 0 for a run) for the
+  support count; it prints text unless `--json`, and `CLIP_NOT_FOUND` or `NO_CLIPS` mean the clip is absent.
+- `mesh gait` also takes `--reference` and `--compare` (reference curves), `--gait walk|jog` (natural ranges) and
+  `--curve-score raw|symmetric`; `GAIT_BONES` means the rig is not a humanoid it can read by bone name.
+- `mesh verify model.glb --max-clips N --max-tracks N --max-keys N` budgets the animation; all three are unset by default.
+- `node scripts/compare-rigs.mjs comparison.json review.html` plays two to four rigs side by side.
+
 ## Start from a recipe when one fits
 
 `recipe biped|equine|vulpine|insectoid|arachnid|strandbeest` produces a complete rig with
 clips. Edit the result with batches rather than building a walk from nothing; a fox with a
-different head is a `vulpine` recipe plus a few `update` and `add` operations.
+different head is a `vulpine` recipe plus a few `update` and `add` operations. For a stylized
+human or alien, copy `recipes/stylized_character.py` and `recipes/stylized_walk.py` (walk and jog clips) and,
+for a living face, `recipes/face_project.py`; see [clip checks](references/clip-checks.md#character-recipes-with-a-rig).
+
+A rigged clip can be baked into a sprite sheet for a 2D engine with `agent-meshes bake <glb> --clip <name>`; the options
+and errors are in the [sprite-bake reference](../mesh-build/references/sprite-bake.md).
 
 ## Verify
 

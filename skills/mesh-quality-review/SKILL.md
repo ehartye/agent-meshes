@@ -60,6 +60,25 @@ construction. Inspect the local details during movement too; a good rest pose pr
 Check facial extremes and relevant combinations. Normal materials establish fidelity;
 clay, wire and skeleton views diagnose problems but do not replace that inspection.
 
+## Measured evidence
+
+Quote a measured check next to the images; it narrows a defect, it does not replace looking. Run these through
+the managed launcher (`mesh`, see [mesh-setup](../mesh-setup/SKILL.md)).
+
+- `mesh check-garments model.glb` samples every clip and reports one part pushing into another (garment against body,
+  garment against garment, a garment folding through itself) and garments that already cross at rest. Options: `--clips <list>`
+  (default all), `--samples <count>` (16 phases per clip), `--tolerance <m>` (0.002), `--garments <regex>` (default `layer-*`, gloves,
+  boots, outsoles), `--ignore <regex>`, `--crossing-depth <m>` (0.004), `--crossing-vertices <count>` (8) and `--json`. It exits 1 with
+  one `FAIL` line per part pair. A `--clips` name the GLB lacks raises `GARMENT_CLIP`.
+- `mesh clip-report model.glb` names the clip, bone, time and check of a loop seam or a velocity spike, and with `--foot <bone>` (and
+  `--speed <mps>`) a sunk or sliding foot; `--json` for a machine-readable report, text otherwise. `CLIP_NOT_FOUND` and `NO_CLIPS`
+  mean the clip is absent. The rest of the clip tooling (`gait` options, `--max-clips`, `--max-tracks`, `--max-keys`) is in
+  [clip checks](../mesh-rigging/references/clip-checks.md).
+- `node scripts/compare-rigs.mjs comparison.json review.html` plays a reference rig and the character (or up to four revisions) side
+  by side, by clip phase, with a skeleton overlay: compare skeletons to find retargeting errors, then surfaces to find weight errors.
+- `scripts/review-model.mjs` (the capture helper above) lives in the setup runtime root, the `runtimeRoot` that `mesh-setup`
+  reports under `~/.agent-meshes/releases/`; run it from there. `compare-rigs.mjs` is in the same folder.
+
 ## Record, repair and recheck
 
 For every finding record the region, observed defect, reference expectation, severity,
