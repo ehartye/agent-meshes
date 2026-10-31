@@ -29,10 +29,19 @@ export interface AtlasFrame {
   duration: number;
 }
 export interface AtlasTag { name: string; from: number; to: number; direction: 'forward' | 'reverse' | 'pingpong' | 'pingpong_reverse' }
+export interface AtlasSliceKey { frame: number; bounds: { x: number; y: number; w: number; h: number }; pivot: { x: number; y: number } }
+export interface AtlasSlice { name: string; color: string; keys: AtlasSliceKey[] }
 export interface Atlas {
   frames: AtlasFrame[];
-  meta: { app: string; image: string; format: string; size: { w: number; h: number }; scale: string; frameTags: AtlasTag[] };
+  /** `slices` is present only when a pivot was given; it is never an empty list. */
+  meta: { app: string; image: string; format: string; size: { w: number; h: number }; scale: string; frameTags: AtlasTag[]; slices?: AtlasSlice[] };
 }
+
+/** An integer cell pixel from the top-left of the cell, y down. */
+export interface SlicePivot { x: number; y: number }
+
+export const SPRITE_PIVOT_SLICE = 'pivot';
+const PIVOT_SLICE_COLOR = '#0000ffff';
 
 function sheetError(message: string): Error {
   return Object.assign(new Error(message), { code: 'SPRITE_SHEET_INVALID' });
@@ -61,11 +70,16 @@ export function sheetLayout(spec: SheetSpec): SheetLayout {
   return { width: phases * cell, height: directions * cell, cell, directions, phases, frames };
 }
 
-/** The Aseprite-format atlas: array frames named by decimal index and one forward tag per direction. */
-export function buildAtlas(spec: SheetSpec): Atlas {
+/**
+ * The Aseprite-format atlas: array frames named by decimal index and one forward tag per direction. With a `pivot`
+ * it also carries one slice named `pivot` whose single key sits at frame 0, spans the whole cell and holds the pivot.
+ */
+export function buildAtlas(spec: SheetSpec, pivot?: SlicePivot): Atlas {
   const layout = sheetLayout(spec);
   const duration = Math.round(spec.clipDurationMs / spec.phases);
   const { cell } = spec;
+  if (pivot && (!Number.isInteger(pivot.x) || !Number.isInteger(pivot.y) || pivot.x < 0 || pivot.y < 0 || pivot.x >= cell || pivot.y >= cell))
+    throw sheetError(`The pivot must be an integer pixel inside the ${cell} by ${cell} cell, got ${pivot.x}, ${pivot.y}`);
   return {
     frames: layout.frames.map(f => ({
       filename: String(f.index),
@@ -85,6 +99,11 @@ export function buildAtlas(spec: SheetSpec): Atlas {
       frameTags: Array.from({ length: spec.directions }, (_, k) => ({
         name: `dir-${k}`, from: k * spec.phases, to: k * spec.phases + spec.phases - 1, direction: 'forward' as const,
       })),
+      ...(pivot ? { slices: [{
+        name: SPRITE_PIVOT_SLICE,
+        color: PIVOT_SLICE_COLOR,
+        keys: [{ frame: 0, bounds: { x: 0, y: 0, w: cell, h: cell }, pivot: { x: pivot.x, y: pivot.y } }],
+      }] } : {}),
     },
   };
 }
@@ -105,6 +124,12 @@ export interface ManifestInput {
   sheetSha256: string;
   atlasSha256: string;
   pluginVersion: string;
+  /** Each optional key below is written to the manifest only when it is given. */
+  look?: string;
+  bands?: number;
+  palette?: { colors: number; sha256: string };
+  outline?: string;
+  anchor?: { name: string; x: number; y: number };
 }
 export interface SpriteManifest {
   format: typeof SPRITE_MANIFEST_FORMAT;
@@ -117,6 +142,11 @@ export interface SpriteManifest {
   camera: Record<string, number | string | number[]>;
   sheet: { file: string; width: number; height: number; sha256: string };
   atlas: { file: string; frames: number; sha256: string };
+  look?: string;
+  bands?: number;
+  palette?: { colors: number; sha256: string };
+  outline?: string;
+  anchor?: { name: string; x: number; y: number };
 }
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -139,6 +169,11 @@ export function buildManifest(input: ManifestInput): SpriteManifest {
     camera: Object.fromEntries(Object.entries(input.camera).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
     sheet: { file: SPRITE_ATLAS_IMAGE, width: layout.width, height: layout.height, sha256: input.sheetSha256 },
     atlas: { file: 'atlas.json', frames: layout.frames.length, sha256: input.atlasSha256 },
+    ...(input.look !== undefined ? { look: input.look } : {}),
+    ...(input.bands !== undefined ? { bands: input.bands } : {}),
+    ...(input.palette !== undefined ? { palette: { colors: input.palette.colors, sha256: input.palette.sha256 } } : {}),
+    ...(input.outline !== undefined ? { outline: input.outline } : {}),
+    ...(input.anchor !== undefined ? { anchor: { name: input.anchor.name, x: input.anchor.x, y: input.anchor.y } } : {}),
   };
 }
 
@@ -198,6 +233,30 @@ export function checkAtlasContract(atlas: Atlas, options: ContractOptions = {}):
       if (!['forward', 'reverse', 'pingpong', 'pingpong_reverse'].includes(tag.direction ?? 'forward')) problems.push(`${at} ("${tag.name}") has an unsupported direction`);
     });
     if (frames.length && next !== frames.length) problems.push(`The tags cover ${next} of ${frames.length} frames; every frame must be in a tag`);
+  }
+  const slices: unknown = atlas?.meta?.slices;
+  if (slices !== undefined) {
+    if (!Array.isArray(slices) || !slices.length) problems.push('meta.slices must be a non-empty array when present');
+    else {
+      const cellW = frames[0]?.sourceSize?.w, cellH = frames[0]?.sourceSize?.h;
+      const inside = (v: unknown, max: number | undefined): boolean => Number.isInteger(v) && (v as number) >= 0 && max !== undefined && (v as number) < max;
+      (slices as AtlasSlice[]).forEach((slice, i) => {
+        const at = `slice ${i}`;
+        if (slice?.name !== SPRITE_PIVOT_SLICE) problems.push(`${at} is named "${slice?.name}" but only "${SPRITE_PIVOT_SLICE}" is supported`);
+        if (!Array.isArray(slice?.keys) || !slice.keys.length) { problems.push(`${at} needs at least one key`); return; }
+        const seen = new Set<number>();
+        slice.keys.forEach((key, k) => {
+          const keyAt = `${at} key ${k}`;
+          if (!Number.isInteger(key?.frame) || key.frame < 0) problems.push(`${keyAt} needs a non-negative integer frame, got ${key?.frame}`);
+          else if (seen.has(key.frame)) problems.push(`${keyAt} repeats frame ${key.frame}`);
+          else seen.add(key.frame);
+          const b = key?.bounds;
+          if (!isRect(b) || b.x + b.w > width! || b.y + b.h > height!) problems.push(`${keyAt} bounds are not a whole rectangle inside the ${width} by ${height} sheet`);
+          const p = key?.pivot;
+          if (!p || !inside(p.x, cellW) || !inside(p.y, cellH)) problems.push(`${keyAt} pivot ${p?.x}, ${p?.y} is not an integer pixel inside the ${cellW} by ${cellH} cell`);
+        });
+      });
+    }
   }
   for (const name of options.expectedTags ?? []) if (!tagNames.has(name)) problems.push(`The required tag "${name}" is missing`);
   return problems;
