@@ -632,11 +632,12 @@ Species references are measurements, not certificates that the source clip passe
 
 ## Sprite bake
 
-`bake` turns one clip of a rigged GLB into a sprite sheet a 2D engine loads unchanged. It needs Chromium and no Blender.
+`bake` turns one clip of a rigged GLB into a sprite sheet a 2D engine loads unchanged. It needs Chromium and no Blender. Optional flags snap the sheet to a palette, add an outline, change the lighting and write a feet pivot.
 
 ```powershell
 node scripts/agent-meshes.mjs bake knight.glb --clip walk
 node scripts/agent-meshes.mjs bake knight.glb --clip walk --directions 4 --phases 6 --cell 64 --out art/knight
+node scripts/agent-meshes.mjs bake knight.glb --clip walk --palette art/dawnbringer16.hex --outline auto --look banded --bands 3 --anchor feet
 ```
 
 | Flag | Default | Range |
@@ -646,25 +647,40 @@ node scripts/agent-meshes.mjs bake knight.glb --clip walk --directions 4 --phase
 | `--phases <count>` | 8 | integer 1 to 64 |
 | `--cell <pixels>` | 48 | integer 8 to 256 |
 | `--out <directory>` | `<glb name>-sprites` beside the GLB | created if missing; the three files are overwritten |
+| `--palette <file>` | none | a `.gpl` file or a hex list of 1 to 256 colours |
+| `--outline <#rrggbb\|auto>` | none | a hex colour, or `auto` for the palette's darkest colour (needs `--palette`) |
+| `--look <lit\|unlit\|banded>` | `lit` | the room lighting, flat colour, or a hard-banded key light |
+| `--bands <count>` | 3 | integer 2 to 8; only with `--look banded` |
+| `--anchor <feet>` | none | only `feet` |
+
+With none of the optional flags the sheet and atlas are byte-identical to the 0.37.0 output and the manifest differs only in `pluginVersion`.
 
 It writes exactly three files and prints one JSON line with `output`, `files`, `size`, `frames`, `sheetSha256` and `atlasSha256`:
 
 - `sheet.png` is `phases * cell` pixels wide and `directions * cell` tall. Rows are directions and columns are clip phases.
 - `atlas.json` is an Aseprite-format atlas with one frame per cell (the filename is the frame index) and one frame tag per direction, `dir-0` to `dir-(N-1)`, each spanning its row left to right with `direction: "forward"`. Each frame lasts the clip length in milliseconds divided by `--phases`, rounded. It holds no plugin version, timestamp or path.
-- `manifest.json` records the model and sheet hashes, the clip and its length, the flags, the camera and the plugin version.
+- `manifest.json` records the model and sheet hashes, the clip and its length, the flags, the camera and the plugin version. The keys `look`, `bands`, `palette` (the colour count and a SHA-256 of the colour list), `outline` (the resolved colour) and `anchor` (the pivot pixel) appear only when their flag is used, and `--anchor` adds `groundYM` to the camera.
 
 Direction `k` looks at the model from azimuth `k * 360 / directions` degrees, and azimuth 0 looks from +Z toward the model. Phase `p` is the clip at `length * p / phases`; the end of the clip is not rendered, so a looping clip does not repeat its first pose. On the asymmetric test fixture (a long arm on +X and a nose on +Z) the body mass sits left of centre in `dir-0` and right of centre in `dir-4`, which are the front and the back. In `dir-2` it sits on the right half of the cell and in `dir-6` on the left. Check the order against your own model's facing axis before you map directions to game headings.
 
-The camera is orthographic at 15 degrees elevation and is fitted once, to the rest pose, so the scale is the same in every cell. Each cell is rendered at 8 times its size with no antialiasing and reduced by taking the centre pixel of every 8 by 8 block. Every pixel of the sheet then has alpha 0 or 255, and a transparent pixel is 0, 0, 0. There is no palette work.
+The camera is orthographic at 15 degrees elevation and is fitted once, to the rest pose, so the scale is the same in every cell. Each cell is rendered at 8 times its size with no antialiasing and reduced by taking the centre pixel of every 8 by 8 block. Every pixel of the sheet then has alpha 0 or 255, and a transparent pixel is 0, 0, 0.
+
+The optional passes run per cell in this order: render under the look, reduce, check the border, snap the palette, then outline. `BAKE_CELL_CLIPPED` is checked on the model's silhouette before the outline, so the outline may sit on the cell's border ring.
+
+- **Palette.** `--palette` reads a GIMP palette when the extension is `.gpl`; any other extension is a hex list with one `#rrggbb` per line, blank lines ignored and lines starting with `;` taken as comments. Duplicates are dropped keeping the first. Each pixel with alpha 255 becomes the nearest palette colour in OKLab, with a tie going to the earlier entry; alpha and transparent pixels are untouched. Every opaque pixel of the sheet, the outline included, is then a palette colour.
+- **Outline.** One pixel wide and outer only: every transparent pixel with an opaque 4-neighbour becomes the outline colour at alpha 255, and neighbours outside the cell count as transparent. There are no inner lines. `auto` uses the palette colour with the lowest OKLab lightness. With `--palette` a hex outline colour must be one of its colours.
+- **Look.** `lit` is the 0.37.0 room lighting. `unlit` shows each part's base colour, texture and vertex colour with no light and no tone mapping, so a single-colour part is exactly that sRGB colour. `banded` uses one key light fixed relative to the camera (up and to the left), an ambient floor, a stepped gradient of `--bands` steps, no environment and no tone mapping, so the highlight stays on the same side in every direction. Emissive is dropped, and materials with the unlit extension are not banded.
+- **Anchor.** `--anchor feet` writes one atlas slice named `pivot` (colour `#0000ffff`, one key at frame 0, bounds the whole cell) with the pivot in pixels from the cell's top-left, y down. The pivot is the cell pixel that contains the ground point, the point below the rest-bounds centre at the lowest bounds height, and it is the same pixel in every cell. `BAKE_ANCHOR_OUTSIDE` means it falls outside the cell. Phaser ignores slices, so the game calls `setOrigin`; the Unity and Godot loaders in agent-sprites can honour it.
 
 Errors are one JSON line on stderr, `{"ok":false,"error":{...}}`, with exit code 1:
 
 - `CLIP_NOT_FOUND` names the clips the GLB has; `NO_CLIPS` means it has none.
 - `BAKE_CLIP_EMPTY`: the clip has zero duration, so there are no phases to render.
 - `BAKE_CELL_CLIPPED`: an opaque pixel touches a cell border, because the pose reaches outside the frame fitted to the rest pose. It names the direction, phase and clip, and writes nothing. Raise `--cell` or reshape the clip.
-- `CLI_ARGUMENT_ERROR`: a flag is missing or outside its range.
+- `BAKE_ANCHOR_OUTSIDE`: the `--anchor feet` pivot falls outside the cell. Raise `--cell` or leave `--anchor` out.
+- `CLI_ARGUMENT_ERROR`: a flag is missing or outside its range, or a flag is used wrongly: an unreadable palette file or a bad palette line (named by its line number), `--bands` without `--look banded`, `--outline auto` without `--palette`, an `--outline` colour that is not in the palette, or an `--anchor` other than `feet`. These are raised before Chromium starts and nothing is written.
 
-The atlas depends only on the GLB and the flags, so it is the same everywhere. The sheet and manifest are byte-identical from run to run in one environment (the same machine, Node and Chromium); the sheet pixels can differ on another GPU or Chrome build, so do not commit a hash of the sheet as an expected value.
+The atlas depends only on the GLB and the flags, so it is the same everywhere. The sheet and manifest are byte-identical from run to run in one environment (the same machine, Node and Chromium); the palette snap is deterministic for a given Node, and the sheet pixels can differ on another GPU or Chrome build, so do not commit a hash of the sheet as an expected value.
 
 In Phaser, load the pair with `this.load.aseprite(key, 'sheet.png', 'atlas.json')` and create the animations with `this.anims.createFromAseprite(key)`. Every tag has `repeat 0`, so set the looping in your game, for example `repeat: -1`. The [sprite-bake reference](skills/mesh-build/references/sprite-bake.md) has the fit and reduction method, the clipped-cell fix and an optional check against the agent-sprites atlas verifier.
 
