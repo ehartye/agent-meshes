@@ -251,11 +251,11 @@ An entry hash alone does not cover external imports or donor data: prefer explic
 project imports and declared inputs in new integrations, with reviewed toolchain
 pins. Generated combined files remain a supported compatibility route.
 
-The current CLI creates fixed PNG views for operations assets but only an HTML
-preview for Blender-authored assets. `--no-preview-page` therefore gives no PNGs
-for authored assets. Consumers must capture their exported GLBs with the viewer;
-A consuming project saves those outside build-owned model folders. This is a known
-workflow gap for a separate tool change, not a reason to manually patch renders.
+A build writes fixed PNG views of the built GLB for operations and Blender-authored assets alike: `front.png`,
+`side.png` and `perspective.png`, plus one `<clip>-contact.png` contact sheet per animation clip (since 0.33.0; a
+Blender-authored build renders them through Blender and needs no Chromium). `--no-preview-page` keeps those PNGs and
+skips only the standalone `preview.html` (and removes an earlier one); `--no-preview` skips both. A consumer that wants
+other cameras or sizes captures its exported GLBs with the viewer and saves those outside build-owned model folders.
 
 ## Static set tools
 

@@ -81,6 +81,11 @@ member, adds no color or weight, cannot also be a member, and is carved where it
 over the blended colors in world space; parts take the same `pattern` field, and `update` with
 `{"pattern":null}` removes it. The viewer can swap it later with `setPattern` without a remesh.
 
+By default a shell bakes member tint and ambient occlusion into `COLOR_0`/`COLOR_1`, which multiplies the material colour
+(ivory comes out tan). `"vertexColors": false` exports none and takes the one member colour from the material like a plain
+part. It fails with `SHELL_VERTEX_COLORS` when the members have different colours (give them one colour, or leave
+`vertexColors` on) or when the shell has a `pattern`, which is baked into vertex colours.
+
 ## Bones and bindings
 
 ```json
