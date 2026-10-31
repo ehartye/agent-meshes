@@ -6,8 +6,8 @@ inputs and build it through the managed launcher; recipes are not in the managed
 
 ## Character and face (Blender)
 
-- `stylized_character.py`: `build_character(parameters)` makes a named, metre-scale human or alien character (height 0.7 to 2.5 m, adult or child, female or male, optional `vacuum` suit and glass helmet); `geometry(parameters)` is the same shape without Blender.
-- `stylized_walk.py`: `rig_character(...)` adds a 16-bone rig and an in-place `walk` clip, and a `jog` clip when `jog_duration` is given, to that character.
+- `stylized_character.py`: `build_character(values=None, layout=None)` makes a named, metre-scale human or alien character (height 0.7 to 2.5 m, adult or child, female or male, optional `vacuum` suit and glass helmet); `geometry(values=None, meshes=None, layout=None)` is the same shape without Blender.
+- `stylized_walk.py`: `rig_character(...)` adds a 20-bone rig and an in-place `walk` clip, and a `jog` clip when `jog_duration` is given, to that character.
 - `stylized_face.py`: `add_face(...)` gives the rigged character an `arkit-face/1` face on the MakeHuman hm08 head (`face: 'arkit'`, shaped by `face_shape`).
 - `face_project.py` with `face-project.build.json`: an editable project entrypoint that composes the three modules above with an explicit `recipe=`; copy all of them together.
 

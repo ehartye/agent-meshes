@@ -131,6 +131,14 @@ will render wrong: fix it before exporting.
 
 ## Recipes
 
+A request for a stylized human or alien character, with or without a suit or helmet, and for walk and jog
+clips, starts from `recipes/stylized_character.py` and `recipes/stylized_walk.py`, before the
+`biped` kind below. `build_character(values=None, layout=None)` makes the named, metre-scale character (height 0.7 to 2.5 m, adult or
+child, `vacuum: True` for the suit and glass helmet); `rig_character(...)` gives it a 20-bone rig and an in-place
+`walk` clip, plus a `jog` clip when `jog_duration` is given. They are Blender scripts you copy from the source
+checkout and build through the managed launcher, not CLI commands
+([recipes and Blender helpers](references/recipes.md)).
+
 `recipe <kind>` replaces the workspace project with a rigged, animated creature to edit further.
 Pick the kind by body plan: a person, robot or figure is `biped`; a horse, deer, donkey, cow or
 any hoofed animal is `equine`; a fox, dog, cat, wolf or any pawed animal is `vulpine`; a beetle,
