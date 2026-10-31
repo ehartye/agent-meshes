@@ -1,7 +1,7 @@
 ---
 name: mesh-rigging
-description: Rig and animate agent-meshes models with bone hierarchies, rigid, linear or weighted bindings, two-link IK posing, mirrored assemblies, keyframed clips such as walk cycles, idles and gaits, and ARKit face rigs for talking heads (eyelids, eye bones, a toothed puppet jaw, the arkit-face/1 contract).
-when_to_use: Use when a model needs a skeleton, when parts should move with joints, when asked for a walk, trot, gallop, idle, sway, flap, wave or any animation clip in a GLB, when a clip plays wrong, feet slide, or limbs pop, or when a head needs blendshapes, blinking or squinting lids, gaze, emotions or a talking jaw with teeth.
+description: Rig and animate agent-meshes models with bone hierarchies, rigid, linear or weighted bindings, two-link IK posing, mirrored assemblies, keyframed clips such as walk cycles, idles and gaits, and ARKit face rigs for talking heads (eyelids, eye bones, a toothed puppet jaw, the arkit-face/1 contract), and the compare-rigs viewer that plays two to four versions of one rig or walk cycle side by side.
+when_to_use: Use when a model needs a skeleton, when parts should move with joints, when asked for a walk, trot, gallop, idle, sway, flap, wave or any animation clip in a GLB, when a clip plays wrong, feet slide, or limbs pop, or when a head needs blendshapes, blinking or squinting lids, gaze, emotions or a talking jaw with teeth, or when asked for a viewer to compare the motion of several versions of the same rig or walk cycle side by side (compare-rigs).
 ---
 
 # Mesh rigging and animation
@@ -121,7 +121,7 @@ Details, options, defaults and error codes are in [clip checks](references/clip-
 - `mesh gait` also takes `--reference` and `--compare` (reference curves), `--gait walk|jog` (natural ranges) and
   `--curve-score raw|symmetric`; `GAIT_BONES` means the rig is not a humanoid it can read by bone name.
 - `mesh verify model.glb --max-clips N --max-tracks N --max-keys N` budgets the animation; all three are unset by default.
-- `node scripts/compare-rigs.mjs comparison.json review.html` plays two to four rigs side by side.
+- Several versions of one rig or walk cycle to watch side by side: `node scripts/compare-rigs.mjs comparison.json review.html` plays two to four rigs in one synchronized viewer.
 
 ## Start from a recipe when one fits
 
