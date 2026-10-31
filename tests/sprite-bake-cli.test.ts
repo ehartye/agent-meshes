@@ -12,6 +12,7 @@ import { applyOperation, createProject } from '../src/core/model.ts';
 import type { Clip, Project } from '../src/core/types.ts';
 import { exportGLB } from '../src/export.ts';
 import { readGLB } from '../src/gltf-read.ts';
+import { decodePng } from '../src/png.ts';
 
 // Drives `agent-meshes bake` end to end through the real entry point. The fixture (the same small asymmetric rigged
 // figure as tests/sprite-bake.test.ts) comes from core operations and the Node exporter, so no Blender is needed.
@@ -163,5 +164,170 @@ describe.skipIf(!process.env.AGENT_MESHES_SPRITES_VERIFY)('agent-sprites verify 
     const verify = (expected: string[]) => run(process.execPath, [sprite, 'verify', join(dir, 'atlas.json'), '--expect-tags', expected.join(',')]);
     expect((await verify(tags)).stdout).toMatch(/PASS: 64 atlas frames/);
     await expect(verify([...tags, 'dir-8'])).rejects.toMatchObject({ code: 1 });
+  }, 120_000);
+});
+
+// The 0.38.0 flags: --palette, --outline, --look, --bands and --anchor, through the real entry point.
+const DAWN = ['#140c1c', '#442434', '#30346d', '#4e4a4e', '#854c30', '#346524', '#d04648', '#757161', '#597dce', '#d27d2c', '#8595a1', '#6daa2c', '#d2aa99', '#6dc2ca', '#dad45e', '#deeed6'];
+const CELL = 48;
+let dawn: string, broken: string;
+const hexOf = (rgba: Uint8Array, i: number) => '#' + [0, 1, 2].map(k => rgba[i + k].toString(16).padStart(2, '0')).join('');
+const readOutput = async (dir: string) => ({ sheet: await readFile(join(dir, 'sheet.png')), atlas: await readFile(join(dir, 'atlas.json')), manifest: await readFile(join(dir, 'manifest.json')) });
+/** The pivot by projecting the ground point through a hand-built orthographic camera (dir-0, from +Z) from the manifest's camera values. */
+function projectedGroundPixel(manifest: { cell: number; camera: { elevationDeg: number; halfExtentM: number; centreM: number[]; groundYM: number } }): { x: number; y: number } {
+  const { elevationDeg, halfExtentM, centreM, groundYM } = manifest.camera, e = elevationDeg * Math.PI / 180;
+  const back = [0, Math.sin(e), Math.cos(e)], right = [back[2], 0, 0];
+  const up = [back[1] * right[2] - back[2] * right[1], back[2] * right[0] - back[0] * right[2], back[0] * right[1] - back[1] * right[0]];
+  const offset = [0, groundYM - centreM[1], 0];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  return { x: Math.floor((1 + dot(offset, right) / halfExtentM) / 2 * manifest.cell), y: Math.floor((1 - dot(offset, up) / halfExtentM) / 2 * manifest.cell) };
+}
+
+describe('agent-meshes bake with --palette, --outline, --look, --bands and --anchor', () => {
+  beforeAll(async () => {
+    dawn = join(root, 'dawn.hex');
+    broken = join(root, 'broken.hex');
+    await writeFile(dawn, `${DAWN.join('\n')}\n`);
+    await writeFile(broken, '#000000\n#808080\nnot-a-colour\n');
+  });
+  const everyFlag = () => ['--phases', '2', '--palette', dawn, '--outline', 'auto', '--look', 'banded', '--bands', '4', '--anchor', 'feet'];
+  const cached = new Map<string, Promise<{ dir: string; outcome: Outcome }>>();
+  /** One bake per distinct argument list, shared by the tests that only read its output. */
+  const baked = (key: string, args: () => string[]) => {
+    if (!cached.has(key)) cached.set(key, (async () => { const dir = outDir(); return { dir, outcome: await bake(glbPath, '--clip', 'sway', '--out', dir, ...args()) }; })());
+    return cached.get(key)!;
+  };
+
+  it('prints the same success keys as before, and writes a sheet of palette colours with the darkest colour on every edge', async () => {
+    const { dir, outcome } = await baked('all', everyFlag);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(Object.keys(JSON.parse(outcome.stdout))).toEqual(['output', 'files', 'size', 'frames', 'sheetSha256', 'atlasSha256']);
+    expect(await list(dir)).toEqual(['atlas.json', 'manifest.json', 'sheet.png']);
+    const image = decodePng(await readFile(join(dir, 'sheet.png')));
+    for (let i = 0; i < image.rgba.length; i += 4) if (image.rgba[i + 3] === 255) expect(DAWN).toContain(hexOf(image.rgba, i));
+    // Every opaque pixel with a transparent 4-neighbour, or on the edge of its cell, is the outline colour.
+    const opaque = (x: number, y: number) => x >= 0 && y >= 0 && x < image.width && y < image.height && image.rgba[(y * image.width + x) * 4 + 3] === 255;
+    const inCell = (x: number, y: number, dx: number, dy: number) => Math.floor((x + dx) / CELL) === Math.floor(x / CELL) && Math.floor((y + dy) / CELL) === Math.floor(y / CELL);
+    let edges = 0;
+    for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+      if (!opaque(x, y)) continue;
+      const solid = ([[-1, 0], [1, 0], [0, -1], [0, 1]] as const).every(([dx, dy]) => inCell(x, y, dx, dy) && opaque(x + dx, y + dy));
+      if (!solid) { edges++; expect(hexOf(image.rgba, (y * image.width + x) * 4), `${x},${y}`).toBe('#140c1c'); }
+    }
+    expect(edges).toBeGreaterThan(100);
+    expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))).toMatchObject({ look: 'banded', bands: 4, outline: '#140c1c', palette: { colors: 16 }, anchor: { name: 'feet' } });
+  }, 120_000);
+
+  it('writes the pivot slice at the pixel an independent projection of the manifest camera gives, as one slice for every cell', async () => {
+    const { dir } = await baked('all', everyFlag);
+    const atlas = JSON.parse(await readFile(join(dir, 'atlas.json'), 'utf8')), manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'));
+    expect(atlas.meta.slices).toHaveLength(1);
+    expect(atlas.meta.slices[0]).toMatchObject({ name: 'pivot', color: '#0000ffff' });
+    expect(atlas.meta.slices[0].keys).toEqual([{ frame: 0, bounds: { x: 0, y: 0, w: CELL, h: CELL }, pivot: projectedGroundPixel(manifest) }]);
+    expect(manifest.anchor).toEqual({ name: 'feet', ...projectedGroundPixel(manifest) });
+  }, 120_000);
+
+  it('gives identical bytes for all three files on two runs with every flag', async () => {
+    const { dir } = await baked('all', everyFlag);
+    const second = await baked('all-again', everyFlag);
+    expect(second.outcome.code, second.outcome.stderr).toBe(0);
+    const a = await readOutput(dir), b = await readOutput(second.dir);
+    expect(b.sheet.equals(a.sheet)).toBe(true);
+    expect(b.atlas.equals(a.atlas)).toBe(true);
+    expect(b.manifest.equals(a.manifest)).toBe(true);
+  }, 120_000);
+
+  it('renders --look unlit and --look banded --bands 4 differently from the lit sheet, and --look lit like no flag', async () => {
+    const lit = await baked('lit', () => ['--phases', '2']), litFlag = await baked('lit-flag', () => ['--phases', '2', '--look', 'lit']);
+    const unlit = await baked('unlit', () => ['--phases', '2', '--look', 'unlit']), banded = await baked('banded', () => ['--phases', '2', '--look', 'banded', '--bands', '4']);
+    for (const { outcome } of [lit, litFlag, unlit, banded]) expect(outcome.code, outcome.stderr).toBe(0);
+    const sheet = (dir: string) => readFile(join(dir, 'sheet.png'));
+    const reference = await sheet(lit.dir);
+    expect((await sheet(litFlag.dir)).equals(reference)).toBe(true);
+    expect((await sheet(unlit.dir)).equals(reference)).toBe(false);
+    expect((await sheet(banded.dir)).equals(reference)).toBe(false);
+    expect((await sheet(banded.dir)).equals(await sheet(unlit.dir))).toBe(false);
+  }, 120_000);
+
+  it('leaves the manifest of a bake without the flags free of the new keys', async () => {
+    const { dir } = await baked('lit', () => ['--phases', '2']);
+    const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')), atlas = JSON.parse(await readFile(join(dir, 'atlas.json'), 'utf8'));
+    for (const key of ['look', 'bands', 'palette', 'outline', 'anchor']) expect(manifest).not.toHaveProperty(key);
+    expect(manifest.camera).not.toHaveProperty('groundYM');
+    expect(atlas.meta).not.toHaveProperty('slices');
+  }, 120_000);
+
+  it('states every new flag, its values, defaults and ranges in its help', async () => {
+    const help = (await run(process.execPath, [script, 'bake', '--help'], { windowsHide: true })).stdout.replace(/\s+/g, ' ');
+    for (const text of ['--palette <file>', '--outline <colour>', '--look <name>', '--bands <count>', '--anchor <name>', '.gpl', 'hex list', '#rrggbb', 'auto', 'lit', 'unlit', 'banded',
+      'an integer from 2 to 8', '(default: 3)', 'feet', 'BAKE_ANCHOR_OUTSIDE', 'before Chromium starts']) expect(help).toContain(text);
+  });
+});
+
+describe('agent-meshes bake rejects bad 0.38.0 flags before Chromium starts and writes nothing', () => {
+  const cases: { name: string; args: () => string[]; message: RegExp }[] = [
+    { name: '--bands 3 without --look banded', args: () => ['--bands', '3'], message: /--bands needs --look banded/ },
+    { name: '--bands 9', args: () => ['--look', 'banded', '--bands', '9'], message: /--bands must be an integer from 2 to 8, got 9/ },
+    { name: '--outline auto without --palette', args: () => ['--outline', 'auto'], message: /--outline auto needs --palette/ },
+    { name: '--outline #112233 with a palette that lacks it', args: () => ['--palette', dawn, '--outline', '#112233'], message: /--outline #112233 is not a colour of the palette/ },
+    { name: 'a missing palette file', args: () => ['--palette', join(root, 'no-such-palette.hex')], message: /Cannot read the palette file/ },
+    { name: 'an invalid palette line', args: () => ['--palette', broken], message: /line 3/ },
+    { name: '--anchor head', args: () => ['--anchor', 'head'], message: /--anchor must be feet, got head/ },
+    { name: '--look dark', args: () => ['--look', 'dark'], message: /--look must be one of lit, unlit, banded/ },
+  ];
+  for (const { name, args, message } of cases) {
+    it(`exits 1 with CLI_ARGUMENT_ERROR for ${name}`, async () => {
+      const dir = outDir(), started = Date.now();
+      const outcome = await bake(glbPath, '--clip', 'sway', '--out', dir, ...args());
+      expect(outcome.code).toBe(1);
+      expect(outcome.stdout).toBe('');
+      const body = failure(outcome);
+      expect(body.ok).toBe(false);
+      expect(body.error.code).toBe('CLI_ARGUMENT_ERROR');
+      expect(body.error.message).toMatch(message);
+      expect(await list(dir)).toEqual([]);
+      // Node starting and the options being refused; a Chromium launch alone takes longer than this.
+      expect(Date.now() - started).toBeLessThan(30_000);
+    }, 120_000);
+  }
+});
+
+// Optional: needs the same AGENT_MESHES_SPRITES_VERIFY script as above. A palette-less fixture of eight colours would pass
+// --max-colors 16 on its own, so this one paints every part a different colour and rounds the head and body, which shade smoothly, so the lit render has more than 16.
+describe.skipIf(!process.env.AGENT_MESHES_SPRITES_VERIFY)('agent-sprites verify of a bake with a palette, an outline and an anchor', () => {
+  const tags = Array.from({ length: 8 }, (_, k) => `dir-${k}`).join(',');
+  const sprite = () => process.env.AGENT_MESHES_SPRITES_VERIFY!;
+  const verify = (dir: string, ...extra: string[]) => run(process.execPath, [sprite(), 'verify', join(dir, 'atlas.json'), '--expect-tags', tags, ...extra]);
+  const colours = ['#c0392b', '#e67e22', '#f1c40f', '#27ae60', '#16a085', '#2980b9', '#8e44ad', '#ecf0f1'];
+  let coloured: string, palette: string;
+  const bakeColoured = async (...args: string[]) => {
+    const dir = outDir(), outcome = await bake(coloured, '--clip', 'sway', '--phases', '2', '--out', dir, ...args);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    return dir;
+  };
+  beforeAll(async () => {
+    const project = fixtureProject();
+    coloured = join(root, 'coloured.glb');
+    palette = join(root, 'dawn16.hex');
+    await writeFile(coloured, await exportGLB({ ...project, parts: project.parts.map((part, i) => ({ ...part, color: colours[i % colours.length], geometry: part.name === 'head' || part.name === 'body' ? { ...part.geometry, type: 'sphere' as const } : part.geometry })) }));
+    await writeFile(palette, `${DAWN.join('\n')}\n`);
+  });
+
+  it('passes --max-colors 16 and --outline-colors with the darkest palette colour, and 8 direction tags', async () => {
+    const dir = await bakeColoured('--palette', palette, '--outline', 'auto');
+    const result = await verify(dir, '--max-colors', '16', '--outline-colors', DAWN[0]);
+    expect(result.stdout).toMatch(/PASS: 16 atlas frames/);
+  }, 120_000);
+
+  it('fails --max-colors 16 and --outline-colors for the same bake without the flags', async () => {
+    const dir = await bakeColoured();
+    await expect(verify(dir, '--max-colors', '16')).rejects.toMatchObject({ code: 1, stdout: expect.stringMatching(/palette-budget/) });
+    await expect(verify(dir, '--outline-colors', DAWN[0])).rejects.toMatchObject({ code: 1, stdout: expect.stringMatching(/outline-gap/) });
+  }, 120_000);
+
+  it('still passes verify with --anchor feet', async () => {
+    const dir = await bakeColoured('--anchor', 'feet');
+    expect((await verify(dir)).stdout).toMatch(/PASS: 16 atlas frames/);
+    expect(JSON.parse(await readFile(join(dir, 'atlas.json'), 'utf8')).meta.slices).toHaveLength(1);
   }, 120_000);
 });
