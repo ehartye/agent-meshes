@@ -5,13 +5,14 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { chromium } from 'playwright';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { applyOperation, createProject } from '../src/core/model.ts';
 import type { Clip, Project } from '../src/core/types.ts';
 import { exportGLB } from '../src/export.ts';
 import { readGLB } from '../src/gltf-read.ts';
 import { decodePng } from '../src/png.ts';
-import { bakeClipInfo, bakeSprites, harness, parseBakeOptions, reduceCell, touchesBorder } from '../src/sprite-bake.ts';
+import { bakeClipInfo, bakeSprites, feetPivot, harness, parseBakeOptions, reduceCell, touchesBorder } from '../src/sprite-bake.ts';
 import { checkAtlasContract, type Atlas } from '../src/sprite-atlas.ts';
 
 // The fixture is a small rigged figure that differs left to right (a long arm on +X, a stub on -X) and front to back
@@ -236,4 +237,263 @@ describe('the bake harness mount options', () => {
     expect(options).toMatchObject({ background: null, floor: false, projection: 'orthographic', autoplay: false, orbit: false });
     expect(options.quality).toEqual({ pixelRatio: 1, shadows: false, antialias: false });
   });
+});
+
+// The options added in 0.38.0 (palette, outline, look, bands, anchor). Renders use 4 directions and 2 phases to stay quick.
+const SMALL = { directions: 4, phases: 2 } as const;
+const DAWN = ['#140c1c', '#442434', '#30346d', '#4e4a4e', '#854c30', '#346524', '#d04648', '#757161', '#597dce', '#d27d2c', '#8595a1', '#6daa2c', '#d2aa99', '#6dc2ca', '#dad45e', '#deeed6'];
+const hexOf = (rgba: Uint8Array, i: number) => '#' + [0, 1, 2].map(k => rgba[i + k].toString(16).padStart(2, '0')).join('');
+/** Every cell of a decoded sheet as its pixels, row-major by cell index. */
+function cellsOf(image: { rgba: Uint8Array; width: number; height: number }, cell: number): Uint8Array[] {
+  const out: Uint8Array[] = [];
+  for (let row = 0; row < image.height / cell; row++) for (let column = 0; column < image.width / cell; column++) {
+    const pixels = new Uint8Array(cell * cell * 4);
+    for (let y = 0; y < cell; y++) pixels.set(image.rgba.subarray(((row * cell + y) * image.width + column * cell) * 4, ((row * cell + y) * image.width + (column + 1) * cell) * 4), y * cell * 4);
+    out.push(pixels);
+  }
+  return out;
+}
+/** The pivot by projecting the ground point through a hand-built orthographic camera (dir-0, from +Z), not by the closed form in the source. */
+function projectedGroundPixel(manifest: { cell: number; camera: { elevationDeg: number; halfExtentM: number; centreM: number[]; groundYM: number } }): { x: number; y: number } {
+  const { elevationDeg, halfExtentM, centreM, groundYM } = manifest.camera, e = elevationDeg * Math.PI / 180;
+  const back = [0, Math.sin(e), Math.cos(e)];                       // from the target toward the camera
+  const right = [back[2], 0, 0];                                    // world up x back, normalised: +X
+  const up = [back[1] * right[2] - back[2] * right[1], back[2] * right[0] - back[0] * right[2], back[0] * right[1] - back[1] * right[0]];
+  const offset = [0, groundYM - centreM[1], 0];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const sx = dot(offset, right) / halfExtentM, sy = dot(offset, up) / halfExtentM;
+  // Continuous position from the top-left corner of the cell; the pixel whose centre sample is nearest is the floor.
+  return { x: Math.floor((1 + sx) / 2 * manifest.cell), y: Math.floor((1 - sy) / 2 * manifest.cell) };
+}
+/** A cone with its point down on the vertical axis through the bounds centre, turning about that axis: the lowest point is a known tip. */
+async function tipFixture(): Promise<Buffer> {
+  let project = createProject('tip-fixture');
+  project = applyOperation(project, { op: 'bone.add', bone: { name: 'root' } });
+  project = applyOperation(project, { op: 'add', part: { name: 'spike', geometry: { type: 'lathe', size: [1, 1, 1], segments: 16, profileUnits: 'metres', profile: [[0, 0], [0.3, 0.15], [0.3, 0.5], [0, 0.5]] }, position: [0, 0, 0] } });
+  project = applyOperation(project, { op: 'bind', name: 'spike', binding: { type: 'rigid', bone: 'root' } });
+  const about = (degrees: number): [number, number, number, number] => [0, Math.sin(degrees * Math.PI / 360), 0, Math.cos(degrees * Math.PI / 360)];
+  const turn: Clip = { name: 'turn', duration: 1, tracks: [{ bone: 'root', property: 'rotation', keys: [0, 0.5, 1].map((time, i) => ({ time, value: about(i === 1 ? 30 : 0) })) }] };
+  return Buffer.from(await exportGLB({ ...project, clips: [turn] }));
+}
+
+describe('a bake with none of the 0.38.0 options is the 0.37.0 bake', () => {
+  it('keeps the 0.37.0 key lists: no slices, no look, palette, outline or anchor, no extra camera value', async () => {
+    const dir = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL });
+    const { atlas, manifest } = await read(dir);
+    expect(Object.keys((JSON.parse(atlas.toString('utf8')) as Atlas).meta)).toEqual(['app', 'image', 'format', 'size', 'scale', 'frameTags']);
+    const parsed = JSON.parse(manifest.toString('utf8'));
+    expect(Object.keys(parsed)).toEqual(['format', 'pluginVersion', 'model', 'clip', 'directions', 'phases', 'cell', 'camera', 'sheet', 'atlas']);
+    expect(Object.keys(parsed.camera)).toEqual(['centreM', 'distanceM', 'elevationDeg', 'halfExtentM', 'padding', 'projection', 'supersample']);
+  }, 120_000);
+
+  it('gives the same sheet, atlas and manifest bytes when every new option is passed as unset', async () => {
+    const plain = outDir(), unset = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL });
+    await bakeSprites(glbPath, { clip: 'sway', out: unset, ...SMALL, palette: undefined, outline: undefined, look: undefined, bands: undefined, anchor: undefined });
+    const a = await read(plain), b = await read(unset);
+    expect(b.sheet.equals(a.sheet)).toBe(true);
+    expect(b.atlas.equals(a.atlas)).toBe(true);
+    expect(b.manifest.equals(a.manifest)).toBe(true);
+  }, 120_000);
+
+  it('renders --look lit exactly as the default and records only the look in the manifest', async () => {
+    const plain = outDir(), lit = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL });
+    await bakeSprites(glbPath, { clip: 'sway', out: lit, ...SMALL, look: 'lit' });
+    const a = await read(plain), b = await read(lit);
+    expect(b.sheet.equals(a.sheet)).toBe(true);
+    expect(b.atlas.equals(a.atlas)).toBe(true);
+    expect(JSON.parse(b.manifest.toString('utf8'))).toEqual({ ...JSON.parse(a.manifest.toString('utf8')), look: 'lit' });
+  }, 120_000);
+});
+
+describe('the 0.38.0 options are checked before Chromium starts', () => {
+  const palettes: Record<string, string> = {};
+  beforeAll(async () => {
+    const write = async (name: string, text: string) => { palettes[name] = join(root, name); await writeFile(palettes[name], text); };
+    await write('dawn.hex', DAWN.join('\n') + '\n');
+    await write('dawn-notes.hex', `; DB16\n\n${DAWN.slice(0, 3).join('\n')}\n`);
+    await write('mono.hex', '#000000\n#808080\n#ffffff\n');
+    await write('broken.hex', '#000000\n#808080\nnot-a-colour\n');
+    await write('empty.hex', '; nothing here\n');
+    await write('dawn.gpl', `GIMP Palette\nName: dawn\n#\n${DAWN.map(h => `${parseInt(h.slice(1, 3), 16)} ${parseInt(h.slice(3, 5), 16)} ${parseInt(h.slice(5, 7), 16)} c${h}`).join('\n')}\n`);
+  });
+
+  it('resolves the options: --outline auto is the darkest palette colour, a hex outline is lowercased, --bands defaults to 3 with banded', () => {
+    expect(parseBakeOptions({ clip: 'sway', palette: palettes['dawn.hex'], outline: 'auto' })).toMatchObject({ outline: '#140c1c', outlineColor: [20, 12, 28] });
+    expect(parseBakeOptions({ clip: 'sway', palette: palettes['dawn.gpl'], outline: 'auto' }).outline).toBe('#140c1c');
+    expect(parseBakeOptions({ clip: 'sway', outline: '#AABBCC' })).toMatchObject({ outline: '#aabbcc', outlineColor: [170, 187, 204] });
+    expect(parseBakeOptions({ clip: 'sway', palette: palettes['dawn.hex'], outline: '#D04648' }).outline).toBe('#d04648');
+    expect(parseBakeOptions({ clip: 'sway', look: 'banded' })).toMatchObject({ look: 'banded', bands: 3 });
+    expect(parseBakeOptions({ clip: 'sway', look: 'banded', bands: '8' })).toMatchObject({ bands: 8 });
+    expect(parseBakeOptions({ clip: 'sway', look: 'unlit', anchor: 'feet' })).toMatchObject({ look: 'unlit', anchor: 'feet' });
+    expect(parseBakeOptions({ clip: 'sway' })).toEqual({ clip: 'sway', directions: 8, phases: 8, cell: 48, out: undefined });
+  });
+
+  const cases: { name: string; options: () => Record<string, unknown>; message: RegExp }[] = [
+    { name: '--bands without --look banded', options: () => ({ bands: 3 }), message: /--bands needs --look banded/ },
+    { name: '--bands with --look unlit', options: () => ({ look: 'unlit', bands: '4' }), message: /--bands needs --look banded/ },
+    { name: '--bands 9', options: () => ({ look: 'banded', bands: 9 }), message: /--bands must be an integer from 2 to 8, got 9/ },
+    { name: '--bands 1', options: () => ({ look: 'banded', bands: 1 }), message: /--bands must be an integer from 2 to 8/ },
+    { name: '--look dark', options: () => ({ look: 'dark' }), message: /--look must be one of lit, unlit, banded, got dark/ },
+    { name: '--outline auto without --palette', options: () => ({ outline: 'auto' }), message: /--outline auto needs --palette/ },
+    { name: '--outline that is not a colour', options: () => ({ outline: 'black' }), message: /--outline must be #rrggbb or auto, got black/ },
+    { name: '--outline #112233 with a palette that lacks it', options: () => ({ palette: palettes['dawn.hex'], outline: '#112233' }), message: /--outline #112233 is not a colour of the palette/ },
+    { name: 'a missing palette file', options: () => ({ palette: join(root, 'missing.hex') }), message: /Cannot read the palette file/ },
+    { name: 'an invalid palette line', options: () => ({ palette: palettes['broken.hex'] }), message: /line 3/ },
+    { name: 'a palette with no colours', options: () => ({ palette: palettes['empty.hex'] }), message: /holds no colours/ },
+    { name: '--anchor head', options: () => ({ anchor: 'head' }), message: /--anchor must be feet, got head/ },
+  ];
+  for (const { name, options, message } of cases) {
+    it(`rejects ${name} with CLI_ARGUMENT_ERROR, writes nothing and never launches the browser`, async () => {
+      const launch = vi.spyOn(chromium, 'launch'), dir = outDir();
+      try {
+        await expect(bakeSprites(glbPath, { clip: 'sway', out: dir, ...options() })).rejects.toMatchObject({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(message) });
+        expect(launch).not.toHaveBeenCalled();
+        expect(await files(dir)).toEqual([]);
+      } finally { launch.mockRestore(); }
+    });
+  }
+
+  it('accepts a hex list with comments and a .gpl palette of the same colours', () => {
+    expect(parseBakeOptions({ clip: 'sway', palette: palettes['dawn-notes.hex'] }).palette?.hex).toEqual(DAWN.slice(0, 3));
+    expect(parseBakeOptions({ clip: 'sway', palette: palettes['dawn.gpl'] }).palette?.hex).toEqual(DAWN);
+  });
+});
+
+describe('palette, outline, look and anchor on the asymmetric fixture', () => {
+  const CELL = 48;
+  let dawn: string;
+  const sheetOf = async (dir: string) => decodePng(await readFile(join(dir, 'sheet.png')));
+  beforeAll(async () => { dawn = join(root, 'dawn-render.hex'); await writeFile(dawn, DAWN.join('\n') + '\n'); });
+
+  /** Byte offsets of the opaque pixels of a cell that have a transparent 4-neighbour or sit on the cell edge. */
+  const boundary = (pixels: Uint8Array): number[] => {
+    const out: number[] = [];
+    const opaque = (x: number, y: number) => x >= 0 && y >= 0 && x < CELL && y < CELL && pixels[(y * CELL + x) * 4 + 3] === 255;
+    for (let y = 0; y < CELL; y++) for (let x = 0; x < CELL; x++)
+      if (opaque(x, y) && !(opaque(x - 1, y) && opaque(x + 1, y) && opaque(x, y - 1) && opaque(x, y + 1))) out.push((y * CELL + x) * 4);
+    return out;
+  };
+
+  it('snaps every opaque pixel of the sheet to a palette colour and uses more than one of them', async () => {
+    const dir = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, palette: dawn });
+    const { rgba } = await sheetOf(dir), seen = new Set<string>();
+    for (let i = 0; i < rgba.length; i += 4) {
+      if (rgba[i + 3] === 255) { expect(DAWN).toContain(hexOf(rgba, i)); seen.add(hexOf(rgba, i)); }
+      else expect([...rgba.subarray(i, i + 4)]).toEqual([0, 0, 0, 0]);
+    }
+    expect(seen.size).toBeGreaterThan(1);
+    const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'));
+    expect(manifest.palette).toMatchObject({ colors: 16, sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect(manifest).not.toHaveProperty('outline');
+  }, 120_000);
+
+  it('outlines the silhouette in a hex colour with no palette: every edge pixel is the outline colour, and the model is untouched inside', async () => {
+    const plain = outDir(), dir = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL });
+    await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, outline: '#ff00ff' });
+    const before = cellsOf(await sheetOf(plain), CELL), after = cellsOf(await sheetOf(dir), CELL);
+    for (const [i, pixels] of after.entries()) {
+      const edge = boundary(pixels);
+      expect(edge.length).toBeGreaterThan(20);
+      for (const at of edge) expect(hexOf(pixels, at), `cell ${i}`).toBe('#ff00ff');
+      // Every pixel the plain bake had opaque keeps its colour; the outline only adds pixels around it.
+      for (let at = 0; at < pixels.length; at += 4) if (before[i][at + 3] === 255) expect([...pixels.subarray(at, at + 4)]).toEqual([...before[i].subarray(at, at + 4)]);
+    }
+    expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))).toMatchObject({ outline: '#ff00ff' });
+  }, 120_000);
+
+  it('outlines with --outline auto in the darkest palette colour, so the whole sheet stays in the palette', async () => {
+    const dir = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, palette: dawn, outline: 'auto' });
+    const image = await sheetOf(dir);
+    for (let i = 0; i < image.rgba.length; i += 4) if (image.rgba[i + 3] === 255) expect(DAWN).toContain(hexOf(image.rgba, i));
+    for (const [i, pixels] of cellsOf(image, CELL).entries()) for (const at of boundary(pixels)) expect(hexOf(pixels, at), `cell ${i}`).toBe('#140c1c');
+    expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'))).toMatchObject({ outline: '#140c1c' });
+  }, 120_000);
+
+  it('lets the outline reach the cell border ring, which is not a clipped cell because the check is made before the outline', async () => {
+    const small = 12, plain = outDir(), outlinedDir = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL, cell: small });
+    await bakeSprites(glbPath, { clip: 'sway', out: outlinedDir, ...SMALL, cell: small, outline: '#ff00ff' });
+    const ring = (x: number, y: number) => x === 0 || y === 0 || x === small - 1 || y === small - 1;
+    const count = (image: { rgba: Uint8Array; width: number; height: number }, magenta: boolean) => {
+      let n = 0;
+      for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+        const at = (y * image.width + x) * 4;
+        if (ring(x % small, y % small) && image.rgba[at + 3] === 255 && (hexOf(image.rgba, at) === '#ff00ff') === magenta) n++;
+      }
+      return n;
+    };
+    const unoutlined = await sheetOf(plain);
+    expect(count(unoutlined, true) + count(unoutlined, false)).toBe(0);
+    const outlined = await sheetOf(outlinedDir);
+    expect(count(outlined, true)).toBeGreaterThan(0);
+    expect(count(outlined, false)).toBe(0);
+  }, 120_000);
+
+  it('writes the pivot slice at the pixel the ground point projects to, in one slice for every cell', async () => {
+    const dir = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, anchor: 'feet' });
+    const atlas = JSON.parse(await readFile(join(dir, 'atlas.json'), 'utf8')) as Atlas, manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'));
+    expect(Object.keys(atlas.meta)).toEqual(['app', 'image', 'format', 'size', 'scale', 'frameTags', 'slices']);
+    expect(atlas.meta.slices).toHaveLength(1);
+    const [slice] = atlas.meta.slices!;
+    expect(slice).toMatchObject({ name: 'pivot', color: '#0000ffff' });
+    expect(slice.keys).toHaveLength(1);
+    expect(slice.keys[0]).toMatchObject({ frame: 0, bounds: { x: 0, y: 0, w: CELL, h: CELL } });
+    const expected = projectedGroundPixel(manifest);
+    expect(slice.keys[0].pivot).toEqual(expected);
+    expect(feetPivot({ cell: CELL, elevationDeg: manifest.camera.elevationDeg, halfExtentM: manifest.camera.halfExtentM, centreYM: manifest.camera.centreM[1], groundYM: manifest.camera.groundYM })).toEqual(expected);
+    expect(manifest.anchor).toEqual({ name: 'feet', x: expected.x, y: expected.y });
+    expect(checkAtlasContract(atlas)).toEqual([]);
+    // The figure stands on y = 0, and the camera's ground height is the rest bounds' lowest point.
+    expect(manifest.camera.groundYM).toBeCloseTo(0, 5);
+  }, 120_000);
+
+  it('puts the pivot on the lowest point of a pointed model in every direction and phase', async () => {
+    const tip = join(root, 'tip.glb'), dir = outDir();
+    await writeFile(tip, await tipFixture());
+    await bakeSprites(tip, { clip: 'turn', out: dir, directions: 4, phases: 3, anchor: 'feet' });
+    const atlas = JSON.parse(await readFile(join(dir, 'atlas.json'), 'utf8')) as Atlas, manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'));
+    const pivot = atlas.meta.slices![0].keys[0].pivot;
+    expect(pivot).toEqual(projectedGroundPixel(manifest));
+    const cells = cellsOf(await sheetOf(dir), CELL);
+    expect(cells).toHaveLength(12);
+    for (const [i, pixels] of cells.entries()) {
+      let lowest = -1;
+      const columns: number[] = [];
+      for (let y = 0; y < CELL; y++) for (let x = 0; x < CELL; x++) if (pixels[(y * CELL + x) * 4 + 3] === 255) { if (y > lowest) { lowest = y; columns.length = 0; } if (y === lowest) columns.push(x); }
+      expect(Math.abs(lowest - pivot.y), `cell ${i} lowest row ${lowest}, pivot ${pivot.y}`).toBeLessThanOrEqual(1);
+      expect(Math.min(...columns.map(x => Math.abs(x - pivot.x))), `cell ${i} columns ${columns}`).toBeLessThanOrEqual(1);
+    }
+  }, 120_000);
+
+  it('renders --look unlit and --look banded differently from lit and from each other, and records them', async () => {
+    const dirs = { lit: outDir(), unlit: outDir(), banded: outDir() };
+    await bakeSprites(glbPath, { clip: 'sway', out: dirs.lit, ...SMALL });
+    await bakeSprites(glbPath, { clip: 'sway', out: dirs.unlit, ...SMALL, look: 'unlit' });
+    await bakeSprites(glbPath, { clip: 'sway', out: dirs.banded, ...SMALL, look: 'banded', bands: 4 });
+    const sheets = { lit: await readFile(join(dirs.lit, 'sheet.png')), unlit: await readFile(join(dirs.unlit, 'sheet.png')), banded: await readFile(join(dirs.banded, 'sheet.png')) };
+    expect(sheets.unlit.equals(sheets.lit)).toBe(false);
+    expect(sheets.banded.equals(sheets.lit)).toBe(false);
+    expect(sheets.banded.equals(sheets.unlit)).toBe(false);
+    expect(JSON.parse(await readFile(join(dirs.unlit, 'manifest.json'), 'utf8'))).toMatchObject({ look: 'unlit' });
+    expect(JSON.parse(await readFile(join(dirs.banded, 'manifest.json'), 'utf8'))).toMatchObject({ look: 'banded', bands: 4 });
+  }, 120_000);
+
+  it('gives identical bytes for all three files on two runs with every option together', async () => {
+    const first = outDir(), second = outDir();
+    const all = { clip: 'sway', ...SMALL, palette: dawn, outline: 'auto', look: 'banded', bands: 4, anchor: 'feet' };
+    await bakeSprites(glbPath, { ...all, out: first });
+    await bakeSprites(glbPath, { ...all, out: second });
+    const a = await read(first), b = await read(second);
+    expect(b.sheet.equals(a.sheet)).toBe(true);
+    expect(b.atlas.equals(a.atlas)).toBe(true);
+    expect(b.manifest.equals(a.manifest)).toBe(true);
+    expect(JSON.parse(a.manifest.toString('utf8'))).toMatchObject({ look: 'banded', bands: 4, outline: '#140c1c', palette: { colors: 16 }, anchor: { name: 'feet' } });
+  }, 120_000);
 });
