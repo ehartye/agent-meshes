@@ -17,7 +17,11 @@ Record the exact nodes, material roles, sockets, clip/morph controls, frames and
 budgets the consumer addresses; check them on the final optimized output. For
 reference-rig and motion review, use the shipped
 [neutral mannequins](../../scripts/blender_lib/references/mannequin-library.md)
-and existing comparison viewer.
+and `compare-rigs`, which plays two to four GLBs in step in one offline page
+(`node scripts/compare-rigs.mjs comparison.json review.html`, run from the runtime root
+that `mesh-setup` reports). The [mesh-rigging](../mesh-rigging/SKILL.md) skill and its
+[clip checks](../mesh-rigging/references/clip-checks.md#compare-rigs-side-by-side-motion-review)
+give the config and the clip-name mapping.
 
 The [organized rig library](../../scripts/blender_lib/references/rig-library.md)
 adds nine donor banks, rigging tools and a protected offline demo generator.
