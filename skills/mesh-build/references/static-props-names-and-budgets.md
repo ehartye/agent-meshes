@@ -19,11 +19,26 @@ For a static prop or a set of them, use `build.json` only; no workspace is neede
   "expectHeight":0.58}` or `mesh verify model.glb --max-triangles N --max-materials N --expect-pivot bottom-center
   --expect-height H [--tolerance m]`. Bounds are world-space from the final vertices, so rotated parts are measured
   correctly; do not read accessor min/max.
+- Animation budgets, for a rigged GLB: `"maxClips":N` (clips in the file), `"maxTracks":N` (tracks, meaning animation
+  channels, in any one clip) and `"maxKeys":N` (keys in any one track); `verify` takes `--max-clips`, `--max-tracks`
+  and `--max-keys`. A failure names the clip, or the clip and track.
+- `"tolerance":0.002` (or `--tolerance`) is the slack in metres for `expectPivot` and `expectHeight`; the default is
+  0.001. `"warnOnly":true` (or `--warn-only`) reports limit failures without failing: `verify` prints `WARN` lines and exits 0,
+  and a build keeps them in `verification.json`.
+- A violated limit in `build.json` fails the build with `VERIFY_LIMITS_FAILED`, listing each failure, and nothing is
+  published; `verify` prints `FAIL` lines and exits 1 instead.
+- `"lintProfile":{"axis":"y","bins":100,"tolerance":0.001,"allow":[[0.0,0.05]]}` runs the `silhouette --lint` notch
+  check on the final GLB inside the build. `axis` is `x`, `y` or `z` (default `y`), `bins` 2 to 2000 (default 100),
+  `tolerance` is the radius slack in metres, and `allow` lists `[from, to]` height ranges exempt from the lint. A notch
+  counts as a failure like any other limit.
 - `"maxGap":0.01` (or `--max-gap 0.01`) fails the build when a part floats more than that from every other part
   (`DETACHED_PART`); `"allowDetached":["halo"]` exempts intended floaters. Without it the lint still runs and warns.
 - `mesh silhouette model.glb --axis y --bins 80 --json` charts radius against height. `--lint` flags notches (a
   radius minimum with larger radii above and below; exit 1) and `--allow y0:y1` exempts intended collars. State the
   invariant first ("radius never grows above the plinth"), then lint it.
+- `mesh export model.glb --merge byMaterial` exports the workspace project the way `"merge":"byMaterial"` builds one (one
+  mesh, one primitive per material, part names lost); any other mode is `CLI_ARGUMENT_ERROR`, and a skinned or animated
+  model is refused with `MERGE_NOT_STATIC`.
 - Before a revert, `mesh stats model.glb` records triangles, materials, bounds and a profile hash; afterwards
   `mesh diff before.glb after.glb` proves nothing changed.
 

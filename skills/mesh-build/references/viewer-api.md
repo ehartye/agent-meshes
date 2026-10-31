@@ -207,6 +207,22 @@ names are rejected with a message before any WebGL context is created.
 | `idRender(options)`, `screenshot({id?})` | As above; `models` limits the ID render to some models |
 | `setBackground`, `onFrame(fn)`, `resize`, `dispose`, `renderer`, `scene`, `camera`, `controls` | As for `mount` |
 
+## Factories that need no mount
+
+`window.MeshViewer` also carries renderer-free factories. None mounts a viewer or loads a GLB; each owns only
+its own numbers or geometry, so call `dispose()` where it exists.
+
+| Factory | Use |
+| --- | --- |
+| `createAssembly(spec)` | A reversible construction state of `pieces` and named mating `joints` (at most 128 pieces and 512 joints). `snap(id)` and `remove(id)` return `{ok}` or the refusing `reason`; `setExplode(amount)`, `reset()`, `snapshot()`, `anchors()`, `dispose()`. It places pieces and checks no collisions. |
+| `createSweep(spec)` | A capped elliptical tube along a centreline: `{geometry, length, update(spec), samplePath(u), dispose()}`, `u` in 0 to 1. |
+| `createCarver({project, shell, floorY?})` | Asynchronous solid carving of a shell in a worker: `update(request)` resolves `{geometry, removed, stats}`, or null when a newer request superseded it; `dispose()`. |
+| `createPlanarFigure(targets?)` | One connected 2D boundary of the fixed `dance-v1` figure, with elbows and knees solved from hand and foot targets: `snapshot()`, `setTargets(patch)`, `reset()`. |
+| `createPlanarLinkage(spec)` | A stateless single-crank 2D mechanism: `sample(angleRadians)` throws when that angle is unreachable. |
+| `createBeltDrive({driver, driven, crossed})` | Two pulleys joined by an ideal taut belt, no slip: `ratio`, `length`, `segments`, `sample(driverAngle)`, `point(distance)`. |
+
+`MeshViewer.countColors(image)` is the pixel tally described under "ID render".
+
 ## Scripted checks
 
 Feet on the ground over a stride, using a Playwright page that loaded the viewer:

@@ -34,7 +34,10 @@ without a contract, also fails when geometry vanished: fewer vertices reached Un
 renders (`geometry` in the report). It exits 1 and lists `failures` otherwise, naming the cause.
 Unreal comes from `AGENT_MESHES_UNREAL` (the engine directory), the Epic launcher manifest or the
 usual install roots. Without one the command fails with `UNREAL_NOT_FOUND`: say so rather than
-claiming Unreal support. Later runs take seconds. A first run on a new engine can compile
+claiming Unreal support. The scratch project lives in a per-engine cache folder (under the user's local cache directory by
+default); `AGENT_MESHES_UNREAL_CACHE` names another folder. Two runs share one cache through a lock: a run waits for the
+other, and after about ten minutes fails with `UNREAL_BUSY`, naming the process that holds it; a lock left by a dead
+process is replaced. Later runs take seconds. A first run on a new engine can compile
 shaders for minutes, so the default `--timeout` is 1800 s.
 
 This proves the **import only**. Nothing is rendered or animated in Unreal. When you report it,
@@ -91,3 +94,9 @@ and a GLB with two skins that Unreal happened to merge only warns.
   without them, while the same model coloured per material kept its colours. `verify --target uefn`
   warns `VERTEX_COLOUR_ONLY` for that shape (a skinned primitive with `COLOR_0`, no base-colour
   texture and a white base-colour factor); use per-material colours or a baked texture instead.
+- A UEFN delivery sets `"target":"uefn"` in `build.json` (the only target), or passes `verify --target uefn`. The
+  report then carries `geometryBudget`: per mesh the exported render vertices, position vertices and triangles, with
+  the warning `RENDER_VERTEX_BUDGET_EXCEEDED` for a mesh over 30000 render vertices. `"renderVertexBudget":N` in
+  `build.json` (it requires the target) or `--render-vertex-budget N` (a positive integer; the flag needs `--target uefn`) sets another budget. The
+  excess is a warning, not a failure, and nothing is checked against a native LOD. A mesh whose counts cannot be read
+  (Draco or meshopt data) warns `GEOMETRY_COUNT_UNKNOWN`.

@@ -84,19 +84,32 @@ rest pose. The message names the direction, phase and clip, and nothing is writt
 
 ## Check the atlas with agent-sprites
 
-The atlas follows the agent-sprites atlas contract. When a checkout of agent-sprites is available, set
-`AGENT_MESHES_SPRITES_VERIFY` to its `scripts/sprite.js` and run:
+The atlas follows the agent-sprites atlas contract. The CLI never runs that check and never reads
+`AGENT_MESHES_SPRITES_VERIFY`; this repository's tests read that variable, and their optional agent-sprites test runs
+`sprite.js verify` when it is set to the `scripts/sprite.js` of an agent-sprites checkout (it skips when unset). To
+check a bake yourself, run the same verifier from your own checkout:
 
 ```text
-node <path in AGENT_MESHES_SPRITES_VERIFY> verify art/knight/atlas.json --expect-tags dir-0,dir-1,dir-2,dir-3,dir-4,dir-5,dir-6,dir-7
+node <checkout>/scripts/sprite.js verify art/knight/atlas.json --expect-tags dir-0,dir-1,dir-2,dir-3,dir-4,dir-5,dir-6,dir-7
 ```
 
 For a palette bake add `--max-colors N` (the palette size) and `--outline-colors <hex>` (the outline colour); every
 visible boundary pixel must then be opaque and in that list. The verifier does not read slices.
 
 A pass prints `PASS: 64 atlas frames` for the defaults; an `--expect-tags` name the atlas lacks, such as `dir-8`,
-exits 1. The repository's own contract test restates these rules and does not need the variable; the optional test
-skips when it is unset.
+exits 1. The repository's own contract test restates these rules and does not need the variable.
+
+## Error codes
+
+Every bake error is a JSON error with a `code`:
+
+- `CLIP_NOT_FOUND`: `--clip` names no clip in the GLB; the message lists the clips it has.
+- `NO_CLIPS`: the GLB has no animation clip.
+- `BAKE_CLIP_EMPTY`: the clip has zero duration, so there are no phases to render. Pick another clip or re-export it
+  with keys that span time.
+- `BAKE_CELL_CLIPPED`: an opaque pixel touches a cell border; see "A clipped cell". Nothing is written.
+- `BAKE_ANCHOR_OUTSIDE`: the `--anchor feet` pivot falls outside the cell. Raise `--cell` or leave `--anchor` out.
+- `CLI_ARGUMENT_ERROR`: a bad flag value, checked before Chromium starts; see "Argument errors" above.
 
 ## What is guaranteed
 

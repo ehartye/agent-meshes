@@ -1,7 +1,7 @@
 ---
 name: mesh-build
-description: Export, verify, render and deliver GLBs with agent-meshes. Use for repeatable Blender builds, slow unchanged builds or cache misses, shared configs and batches, generated mesh arrays and vertex colours, configured Unreal static-prop, collision or character import checks, model previews and web viewers.
-when_to_use: Use when asked to set up build.json, avoid repeated Blender launches or hashing, reuse a rollback, share pins or defaults, keep scripts beside assets with a shared library, diagnose environment-driven rebuilds, consume audit receipts, commit or ignore build output or fix line-ending rebuilds, preserve UV/RGBA arrays or wear masks, match project import settings, check a built GLB against an engine's import contract (size, axes, collision, Nanite, UV precision, morphs, bones), render or screenshot a model, preview bpy sources quickly, produce an offline preview or multi-model stage, count pixels per part, embed MeshViewer, refine a model, compare GLB budgets. Performing the import into Unity, Godot or Unreal is agent-engine:engine-asset-import or agent-unreal:unreal-import. Choose mesh-tool-selection first only when the authoring or engine route is unsettled.
+description: Export, verify, render and deliver GLBs with agent-meshes, and bake a rigged clip into a sprite sheet and sprite atlas for a 2D or pixel-art game. Use for repeatable Blender builds, slow unchanged builds or cache misses, shared configs and batches, generated mesh arrays and vertex colours, configured Unreal static-prop, collision or character import checks, model previews and web viewers.
+when_to_use: Use when asked to set up build.json, avoid repeated Blender launches or hashing, reuse a rollback, share pins or defaults, keep scripts beside assets with a shared library, diagnose environment-driven rebuilds, consume audit receipts, commit or ignore build output or fix line-ending rebuilds, preserve UV/RGBA arrays or wear masks, match project import settings, check a built GLB against an engine's import contract (size, axes, collision, Nanite, UV precision, morphs, bones), render or screenshot a model, preview bpy sources quickly, produce an offline preview or multi-model stage, count pixels per part, embed MeshViewer, refine a model, compare GLB budgets, or turn a rigged walk or attack clip into an 8-direction sprite sheet, sprite atlas or Aseprite atlas with a pixel-art palette, outline or feet pivot for Phaser or another 2D engine (agent-meshes bake). Performing the import into Unity, Godot or Unreal is agent-engine:engine-asset-import or agent-unreal:unreal-import. Choose mesh-tool-selection first only when the authoring or engine route is unsettled.
 ---
 
 # Mesh build and delivery
@@ -133,7 +133,8 @@ removes the ones an earlier build left in the folder (see below). The output dir
 `output` field of the config (`build` has no `--out`). A build replaces that whole directory, so it
 creates a missing one, adopts an empty one, and replaces one only when its marker names that config.
 A directory holding other work is refused with `BUILD_OUTPUT_NOT_OWNED`, which names the directory and what
-it holds; set `output` to a different directory or move the files. A failed build leaves the previous output
+it holds; set `output` to a different directory or move the files. A directory whose marker names another config is refused with
+`BUILD_OUTPUT_OTHER_CONFIG`; give each build config its own `output`. A failed build leaves the previous output
 in place; after a crash, confirm the process is gone before removing the adjacent `.agent-meshes.lock`.
 
 **A rebuild removes earlier previews it does not write again.** The swap deletes every earlier file, so a build that
@@ -158,11 +159,12 @@ sheets and compare them with the intent. If something looks blocky, floating or 
 
 | You are about to | Read |
 | --- | --- |
-| Name a static prop, merge or budget it, or judge a set | [Static props for a game engine: names, merge and budgets](references/static-props-names-and-budgets.md) |
+| Name a static prop, merge or budget it (`maxTriangles`, `maxClips`, `lintProfile`, `export --merge`), or judge a set | [Static props for a game engine: names, merge and budgets](references/static-props-names-and-budgets.md) |
 | Author a static prop in Blender | [Blender-authored static props](references/blender-static-props.md) |
 | Look at an existing GLB without rebuilding it, preview a bpy source quickly, refine a model or check garment penetration | [Blender previews, refine and the garment check](references/previews-and-refine.md) |
-| Check an import into Unity or Unreal | [Engine import checks: Unity and Unreal](references/engine-import-checks.md) |
+| Check an import into Unity or Unreal, or a UEFN vertex budget (`target: "uefn"`) | [Engine import checks: Unity and Unreal](references/engine-import-checks.md) |
 | Embed a model or a stage in a page | [Embedding a model in a page](references/embedding-in-a-page.md) |
-| Look up MeshViewer mount options, the puppet API or `bounds()` | [Viewer API](references/viewer-api.md) |
+| Look up MeshViewer mount options, the puppet API, `bounds()` or the mount-free factories (`createAssembly`, `createSweep`, `createCarver`, `createPlanarFigure`, `createPlanarLinkage`, `createBeltDrive`) | [Viewer API](references/viewer-api.md) |
 | Verify a face rig against its contract | [Face-rig contract check](references/face-rig-contract-check.md) |
-| Bake a rigged clip into a sprite sheet and Aseprite atlas for a 2D engine | [Sprite bake](references/sprite-bake.md) |
+| Bake a rigged clip with `agent-meshes bake` into a sprite sheet and Aseprite atlas for a 2D engine | [Sprite bake](references/sprite-bake.md) |
+| Assemble LDraw parts, write the mobile physics script or serve the editor behind a proxy | [Assemble, mobile physics and the editing server](references/other-delivery-commands.md) |

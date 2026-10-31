@@ -59,17 +59,17 @@ mesh preview model.glb --views body-side --clip Walk --phases 8 --sheet --out re
 ```
 
 Labels: [tested] ran on `scripts/reference-assets/rigs/fox.glb` in the 0.32.0 cycle; [documented] read in the named
-file of the 0.32.0 source; [general] neither.
+file of the source (functions are named, not numbered, because line numbers drift); [general] neither.
 
 - [documented] `.glb` and `.gltf` are accepted beside a Blender `build.json` and a `.py` source
-  (`src/preview.ts`: `resolvePreviewSource` 96-105), and Blender imports the file with its glTF importer
-  (`scripts/blender-preview.py`: `build_objects` 58-62). The run needs Blender and no Chromium.
+  (`src/preview.ts`: `resolvePreviewSource`), and Blender imports the file with its glTF importer
+  (`scripts/blender-preview.py`: `build_objects`). The run needs Blender and no Chromium.
 - [tested] `mesh preview` of that GLB with `--sheet --out <dir>` exited 0 and wrote one PNG per view, `sheet.png` and
   `preview.json` into the directory.
 - [tested] The default views `front,q34,side` framed the head and upper body of a whole animal and cut off its legs
   and tail; `--views body` (`body-front`, `body-q34`, `body-side`, `body-back`) framed all of it. [documented] The
   head is the mesh with an `eyeBlinkLeft` shape key, the mesh `--target` matches, or else the top seventh of the
-  body (`scripts/blender-preview.py`: `framing` 89-113).
+  body (`scripts/blender-preview.py`: `framing`).
 - [tested] `--clip Walk --phases 4 --views body-side --sheet` wrote `Walk-p0` to `Walk-p3` PNGs and a `sheet.png` with
   one posed row per phase. `--clip` with a name the file does not have exits 1 and lists the clips it has.
 - [documented] With no `--out` the default is `preview/` beside the input, except when the input sits in a folder a build
@@ -77,8 +77,7 @@ file of the 0.32.0 source; [general] neither.
   previews into `dist-preview/` and the next `mesh build` still passes. Earlier versions wrote `dist/preview/`, which
   failed the next build with `BUILD_OUTPUT_UNOWNED_FILE` (`Unexpected directory "preview"`). `--out` always wins; pass it
   to choose the place yourself.
-- [documented] `view` renders `currentProject()`, the workspace project (`src/cli.ts`: `currentProject` 70-73, `view`
-  406-413). [tested] `mesh view` run where no workspace or server exists exits 1 with the JSON error code
+- [documented] `view` renders `currentProject()`, the workspace project (`src/cli.ts`: `currentProject` and the `view` command). [tested] `mesh view` run where no workspace or server exists exits 1 with the JSON error code
   `WORKBENCH_UNREACHABLE`, naming `--workspace` and `mesh preview <model.glb>`.
   Earlier versions failed with `fetch failed`. With no workspace,
   `view` needs `--workspace` or a running workbench; to look at a built model, use `mesh preview <model.glb>`.
