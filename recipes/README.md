@@ -130,7 +130,7 @@ def build():
 ```
 
 `landmarks()` is shared by the anatomy and rig, so child proportions and alien
-heads do not need hand-placed joints. The rig has 16 bones prefixed `rig-` to
+heads do not need hand-placed joints. The rig has 20 bones, all but `head` prefixed `rig-` to
 avoid collisions with mesh names. Named garments use up to four normalized
 bone influences; heads, hands, footwear and attached equipment use rigid skin
 weights. Bindings are specific to the named output of this character recipe,

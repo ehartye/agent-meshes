@@ -78,7 +78,7 @@ more than four models, no clip name, or a clip missing from a model stops it wit
 `recipes/` is in the plugin root, not in the managed runtime; copy a file beside the authored source.
 `stylized_character.py` builds a named, metre-scale character (`build_character`); `stylized_walk.py` rigs it with
 `rig_character(objects, landmarks(definition), duration=1.1, jog_duration=.75)` and bakes an in-place `walk`, and a `jog` when
-`jog_duration` is given, at 60 Hz with identical loop endpoints (durations 0.6 to 3 s; 16 bones prefixed `rig-`).
+`jog_duration` is given, at 60 Hz with identical loop endpoints (durations 0.6 to 3 s; 20 bones, all but `head` prefixed `rig-`).
 `face_project.py` with `face-project.build.json` adds the living `arkit-face/1` head to that rig (see
 [arkit-face](arkit-face.md)). Their bindings are specific to the recipe's own part names. Details and tests are in
 `recipes/README.md`.
