@@ -173,6 +173,124 @@ describe('manifest', () => {
   });
 });
 
+describe('pivot slice', () => {
+  const pivotSpec = { ...spec, cell: 48 };
+  const withPivot = (): Atlas => buildAtlas(pivotSpec, { x: 24, y: 40 });
+
+  it('writes one pivot slice with the whole cell as bounds when a pivot is given', () => {
+    const atlas = withPivot();
+    expect(atlas.meta.slices).toEqual([
+      { name: 'pivot', color: '#0000ffff', keys: [{ frame: 0, bounds: { x: 0, y: 0, w: 48, h: 48 }, pivot: { x: 24, y: 40 } }] },
+    ]);
+    expect(Object.keys(atlas.meta)).toEqual(['app', 'image', 'format', 'size', 'scale', 'frameTags', 'slices']);
+    expect(atlas.frames).toEqual(fresh().frames);
+    expect(checkAtlasContract(atlas, { expectedTags: tags })).toEqual([]);
+    expect(JSON.parse(serializeAtlas(atlas))).toEqual(atlas);
+  });
+
+  it('omits slices entirely, not as an empty list, without a pivot', () => {
+    for (const atlas of [fresh(), buildAtlas(spec, undefined)]) {
+      expect('slices' in atlas.meta).toBe(false);
+      expect(Object.keys(atlas.meta)).toEqual(['app', 'image', 'format', 'size', 'scale', 'frameTags']);
+      expect(serializeAtlas(atlas)).not.toMatch(/slices/);
+    }
+    expect(serializeAtlas(buildAtlas(spec, undefined))).toBe(serializeAtlas(fresh()));
+  });
+
+  it('accepts the corners of the cell as a pivot', () => {
+    for (const pivot of [{ x: 0, y: 0 }, { x: 47, y: 47 }]) expect(checkAtlasContract(buildAtlas(pivotSpec, pivot))).toEqual([]);
+  });
+
+  it.each([
+    [{ x: 48, y: 0 }], [{ x: 0, y: 48 }], [{ x: -1, y: 3 }], [{ x: 3, y: -1 }], [{ x: 2.5, y: 3 }], [{ x: Number.NaN, y: 3 }],
+  ])('rejects the pivot %j when building the atlas', pivot => {
+    expect(() => buildAtlas(pivotSpec, pivot)).toThrowError(expect.objectContaining({ code: 'SPRITE_SHEET_INVALID', message: expect.stringMatching(/pivot/) }));
+  });
+
+  it('fails a pivot outside the cell or off the pixel grid in the contract check', () => {
+    for (const pivot of [{ x: 48, y: 5 }, { x: 5, y: 48 }, { x: -1, y: 5 }, { x: 5.5, y: 5 }]) {
+      const atlas = withPivot();
+      atlas.meta.slices![0]!.keys[0]!.pivot = pivot;
+      expect(checkAtlasContract(atlas).join('\n')).toMatch(/slice 0 key 0 pivot .* is not an integer pixel inside the 48 by 48 cell/);
+    }
+  });
+
+  it('fails a slice with the wrong name', () => {
+    const atlas = withPivot();
+    atlas.meta.slices![0]!.name = 'feet';
+    expect(checkAtlasContract(atlas)).toEqual(['slice 0 is named "feet" but only "pivot" is supported']);
+  });
+
+  it('fails an empty slice list and a slice without keys', () => {
+    const empty = withPivot();
+    empty.meta.slices = [];
+    expect(checkAtlasContract(empty)).toEqual(['meta.slices must be a non-empty array when present']);
+    const keyless = withPivot();
+    keyless.meta.slices![0]!.keys = [];
+    expect(checkAtlasContract(keyless)).toEqual(['slice 0 needs at least one key']);
+  });
+
+  it('fails a frame key that is fractional, negative or repeated', () => {
+    for (const frame of [0.5, -1, Number.NaN]) {
+      const atlas = withPivot();
+      atlas.meta.slices![0]!.keys[0]!.frame = frame;
+      expect(checkAtlasContract(atlas).join('\n')).toMatch(/slice 0 key 0 needs a non-negative integer frame/);
+    }
+    const twin = withPivot();
+    twin.meta.slices![0]!.keys.push({ ...twin.meta.slices![0]!.keys[0]! });
+    expect(checkAtlasContract(twin)).toEqual(['slice 0 key 1 repeats frame 0']);
+  });
+
+  it('fails bounds that are fractional, empty or outside the sheet', () => {
+    for (const bounds of [{ x: 0.5, y: 0, w: 48, h: 48 }, { x: 0, y: 0, w: 0, h: 48 }, { x: 0, y: 0, w: 385, h: 48 }, { x: 340, y: 0, w: 48, h: 48 }, { x: 0, y: -1, w: 48, h: 48 }]) {
+      const atlas = withPivot();
+      atlas.meta.slices![0]!.keys[0]!.bounds = bounds;
+      expect(checkAtlasContract(atlas).join('\n')).toMatch(/slice 0 key 0 bounds are not a whole rectangle inside the 384 by 384 sheet/);
+    }
+  });
+});
+
+describe('optional manifest keys', () => {
+  const sha = (c: string) => c.repeat(64);
+  const base = (): ManifestInput => ({
+    model: { sha256: sha('a') }, clip: { name: 'walk', durationMs: 1000 }, directions: 8, phases: 8, cell: 48,
+    camera: { projection: 'orthographic', half: 0.9 },
+    sheetSha256: sha('b'), atlasSha256: sha('c'), pluginVersion: '0.38.0',
+  });
+  const plain = ['format', 'pluginVersion', 'model', 'clip', 'directions', 'phases', 'cell', 'camera', 'sheet', 'atlas'];
+
+  it('keeps the key list when every new input is left out or undefined', () => {
+    const explicit = buildManifest({ ...base(), look: undefined, bands: undefined, palette: undefined, outline: undefined, anchor: undefined });
+    expect(Object.keys(explicit)).toEqual(plain);
+    expect(JSON.stringify(explicit)).toBe(JSON.stringify(buildManifest(base())));
+    expect(JSON.stringify(explicit)).not.toMatch(/look|bands|palette|outline|anchor/);
+  });
+
+  it('writes each new key only when its input is given, after the existing keys', () => {
+    const only = (extra: Partial<ManifestInput>) => Object.keys(buildManifest({ ...base(), ...extra }));
+    expect(only({ look: 'unlit' })).toEqual([...plain, 'look']);
+    expect(only({ bands: 3 })).toEqual([...plain, 'bands']);
+    expect(only({ palette: { colors: 16, sha256: sha('d') } })).toEqual([...plain, 'palette']);
+    expect(only({ outline: '#140c1c' })).toEqual([...plain, 'outline']);
+    expect(only({ anchor: { name: 'feet', x: 24, y: 40 } })).toEqual([...plain, 'anchor']);
+  });
+
+  it('carries the values of all five keys in a fixed order', () => {
+    const manifest = buildManifest({
+      ...base(), anchor: { name: 'feet', x: 24, y: 40 }, outline: '#140c1c', palette: { colors: 16, sha256: sha('d') }, bands: 3, look: 'banded',
+    });
+    expect(Object.keys(manifest)).toEqual([...plain, 'look', 'bands', 'palette', 'outline', 'anchor']);
+    expect(manifest).toMatchObject({ look: 'banded', bands: 3, palette: { colors: 16, sha256: sha('d') }, outline: '#140c1c', anchor: { name: 'feet', x: 24, y: 40 } });
+    expect(JSON.stringify(manifest)).toBe(JSON.stringify(buildManifest({
+      ...base(), look: 'banded', bands: 3, palette: { colors: 16, sha256: sha('d') }, outline: '#140c1c', anchor: { name: 'feet', x: 24, y: 40 },
+    })));
+  });
+
+  it('writes a bands value of zero rather than dropping it', () => {
+    expect(buildManifest({ ...base(), bands: 0 }).bands).toBe(0);
+  });
+});
+
 // Optional: set AGENT_MESHES_SPRITES_VERIFY to the sprite.js script of a local agent-sprites checkout to run its verifier.
 describe.skipIf(!process.env.AGENT_MESHES_SPRITES_VERIFY)('agent-sprites verify', () => {
   it('passes a generated atlas and fails a tag it lacks', async () => {
