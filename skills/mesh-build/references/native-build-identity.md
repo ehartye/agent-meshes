@@ -181,7 +181,7 @@ The default is `"blender": {"script":"prop.py", "readAudit":"warn"}`; omitting
 `BLENDER_READ_AUDIT` warning, but no reusable native cache. Repeated --if-changed
 calls therefore generate again until declarations or incomplete observation are
 resolved. `"readAudit":"strict"` rejects undeclared/incomplete observation before
-publishing, preserving previous owned output. Results distinguish `clean`,
+publishing, preserving previous owned output, with the error `READ_AUDIT_FAILED` naming the status and the undeclared reads. Results distinguish `clean`,
 `undeclared` and `incomplete`; clean means clean **within this diagnostic's scope**.
 Strict mode does not fail merely for a reported out-of-scope external read.
 
