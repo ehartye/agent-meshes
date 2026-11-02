@@ -331,3 +331,33 @@ describe.skipIf(!process.env.AGENT_MESHES_SPRITES_VERIFY)('agent-sprites verify 
     expect(JSON.parse(await readFile(join(dir, 'atlas.json'), 'utf8')).meta.slices).toHaveLength(1);
   }, 120_000);
 });
+
+// The 0.40.0 flag --pixels-per-metre, through the real entry point.
+describe('agent-meshes bake with --pixels-per-metre', () => {
+  it('reaches the camera: the manifest records the scale and the half extent it gives', async () => {
+    const dir = outDir();
+    const outcome = await bake(glbPath, '--clip', 'sway', '--directions', '2', '--phases', '2', '--cell', '64', '--pixels-per-metre', '40', '--out', dir);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(Object.keys(JSON.parse(outcome.stdout))).toEqual(['output', 'files', 'size', 'frames', 'sheetSha256', 'atlasSha256']);
+    expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')).camera).toMatchObject({ pixelsPerMetre: 40, halfExtentM: 0.8 });
+  }, 120_000);
+
+  it('refuses a scale outside 1 to 1024 before Chromium starts and writes nothing', async () => {
+    for (const value of ['2000', '0.5']) {
+      const dir = outDir(), started = Date.now();
+      const outcome = await bake(glbPath, '--clip', 'sway', '--pixels-per-metre', value, '--out', dir);
+      expect(outcome.code).toBe(1);
+      expect(outcome.stdout).toBe('');
+      expect(failure(outcome).ok).toBe(false);
+      expect(failure(outcome).error.code).toBe('CLI_ARGUMENT_ERROR');
+      expect(failure(outcome).error.message).toBe(`--pixels-per-metre must be a number from 1 to 1024, got ${value}`);
+      expect(await list(dir)).toEqual([]);
+      expect(Date.now() - started).toBeLessThan(30_000);
+    }
+  }, 120_000);
+
+  it('states the option, its range, the clipped-cell advice and the early check in its help', async () => {
+    const help = (await run(process.execPath, [script, 'bake', '--help'], { windowsHide: true })).stdout.replace(/\s+/g, ' ');
+    for (const text of ['--pixels-per-metre <n>', 'from 1 to 1024', 'Lower --pixels-per-metre or raise --cell to widen the frame', '0.966', 'before Chromium starts']) expect(help).toContain(text);
+  });
+});

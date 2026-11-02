@@ -22,6 +22,8 @@ import { darkestColor, paletteManifest, readPalette, snapToPalette, type Palette
  * block; alpha is then snapped to 0 or 255 and a transparent pixel is 0, 0, 0, 0. A cell with an opaque pixel on its
  * outer ring fails the whole bake (`BAKE_CELL_CLIPPED`) and nothing is written.
  *
+ * With `pixelsPerMetre` the half extent is set from the scale (`cell / (2 * pixelsPerMetre)`, no padding) instead of fitted.
+ *
  * Optional passes, all off by default (a bake with none of them is the 0.37.0 output): `look` (`unlit` or `banded`)
  * replaces the room lighting before the fit; after the border check `palette` snaps every opaque pixel to the palette,
  * then `outline` adds a one-pixel outer outline; `anchor: 'feet'` writes the ground point as a pivot slice. Every option is
@@ -29,6 +31,8 @@ import { darkestColor, paletteManifest, readPalette, snapToPalette, type Palette
  */
 export const BAKE_DEFAULTS = { directions: 8, phases: 8, cell: 48 } as const;
 export const BAKE_LIMITS = { directions: [1, 32], phases: [1, 64], cell: [8, 256] } as const;
+/** Inclusive range of `pixelsPerMetre`: below 1 the frame is wider than `cell` metres and the sprite would be a few pixels. */
+export const BAKE_PIXELS_PER_METRE_LIMITS = [1, 1024] as const;
 /** Render size over cell size: each cell pixel is the centre of an 8 by 8 block. */
 export const BAKE_SUPERSAMPLE = 8;
 /** Camera height above the horizon, in degrees. */
@@ -58,11 +62,13 @@ export interface BakeOptions {
   bands?: number | string;
   /** `feet` writes the ground point of the rest bounds as the atlas pivot slice. */
   anchor?: string;
+  /** Sets the sprite scale instead of fitting the camera: a number (or numeric text) from 1 to 1024; default none (fitted). */
+  pixelsPerMetre?: number | string;
 }
 export interface BakeSettings {
   clip: string; directions: number; phases: number; cell: number; out?: string;
   /** Each of these is set only when the matching option was given. */
-  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet';
+  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet'; pixelsPerMetre?: number;
 }
 export interface BakeResult {
   /** Absolute output folder. */
@@ -83,6 +89,14 @@ function integerOption(name: 'directions' | 'phases' | 'cell', value: number | s
   const [min, max] = BAKE_LIMITS[name];
   const number = typeof value === 'number' ? value : /^\d+$/.test(value.trim()) ? Number(value) : Number.NaN;
   if (!Number.isInteger(number) || number < min || number > max) throw code(`--${name} must be an integer from ${min} to ${max}, got ${value}`, 'CLI_ARGUMENT_ERROR');
+  return number;
+}
+
+/** The scale as a number: a finite number, or text of digits with an optional fraction ("007", "24.5"), from 1 to 1024. */
+function pixelsPerMetreOption(value: unknown): number {
+  const [min, max] = BAKE_PIXELS_PER_METRE_LIMITS;
+  const number = typeof value === 'number' ? value : typeof value === 'string' && /^\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : Number.NaN;
+  if (!(number >= min && number <= max)) throw code(`--pixels-per-metre must be a number from ${min} to ${max}, got ${String(value)}`, 'CLI_ARGUMENT_ERROR');
   return number;
 }
 
@@ -116,6 +130,7 @@ export function parseBakeOptions(options: BakeOptions): BakeSettings {
     settings.outline = hex;
     settings.outlineColor = [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
   }
+  if (options.pixelsPerMetre !== undefined) settings.pixelsPerMetre = pixelsPerMetreOption(options.pixelsPerMetre);
   if (options.anchor !== undefined) {
     if (options.anchor !== 'feet') throw code(`--anchor must be feet, got ${options.anchor}`, 'CLI_ARGUMENT_ERROR');
     settings.anchor = 'feet';
@@ -193,6 +208,11 @@ export const harness = (render: number) => `<!doctype html><html lang="en"><meta
 <div id="stage"></div><script id="glb" type="text/plain">@GLB@</script><script src="mesh-viewer.js"></script>
 <script>window.ready = MeshViewer.mount(document.getElementById('stage'), { glb: document.getElementById('glb').textContent, background: null, floor: false, projection: 'orthographic', autoplay: false, orbit: false, quality: { pixelRatio: 1, shadows: false, antialias: false } }).then(v => (window.viewer = v));</script></html>`;
 
+/** The end of the `BAKE_CELL_CLIPPED` message: with a set scale nothing was fitted, so the advice is to lower the scale or raise `--cell`. */
+const clippedAdvice = (settings: BakeSettings) => settings.pixelsPerMetre === undefined
+  ? 'fitted to its rest pose. Keep the clip inside the rest bounds, or raise --cell if it only grazes the border. Nothing was written.'
+  : `set by --pixels-per-metre ${settings.pixelsPerMetre} at --cell ${settings.cell}. Lower --pixels-per-metre or raise --cell to widen the frame. Nothing was written.`;
+
 /** Bake one clip of a rigged GLB. See the module comment for the pipeline and the error codes. */
 export async function bakeSprites(glbPath: string, options: BakeOptions): Promise<BakeResult> {
   const settings = parseBakeOptions(options);
@@ -220,24 +240,27 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
       const look = lookScript(settings.look ?? 'lit', settings.bands);
       if (look) await page.evaluate(look);
       // Fit once, at rest: the largest square half extent over every direction, with the camera a fixed distance out.
-      fit = await page.evaluate(({ directions, elevation, padding }) => {
+      // With a set scale the half extent is not fitted: the frame spans `cell` pixels at `pixelsPerMetre`, with no padding.
+      const setHalf = settings.pixelsPerMetre === undefined ? null : cell / (2 * settings.pixelsPerMetre);
+      fit = await page.evaluate(({ directions, elevation, padding, setHalf }) => {
         const v = (window as unknown as { viewer: ViewerLike }).viewer;
         const box = v.bounds(), centre = box.getCenter(box.min.clone());
         const diagonal = Math.max(box.min.distanceTo(box.max), 1e-3), distance = diagonal * 2, c = centre.toArray();
         const el = elevation * Math.PI / 180;
         let half = 0;
-        for (let k = 0; k < directions; k++) {
+        for (let k = 0; setHalf === null && k < directions; k++) {
           const az = k / directions * 2 * Math.PI;
           v.view({ position: [c[0] + Math.sin(az) * Math.cos(el) * distance, c[1] + Math.sin(el) * distance, c[2] + Math.cos(az) * Math.cos(el) * distance], target: c });
           v.frame(padding);
           half = Math.max(half, v.camera.top);
         }
+        if (setHalf !== null) half = setHalf;
         const camera = v.camera;
         camera.zoom = 1; camera.top = half; camera.bottom = -half; camera.left = -half; camera.right = half;
         camera.near = distance * 0.05; camera.far = distance * 3;
         camera.updateProjectionMatrix();
         return { centre: c as [number, number, number], distance, half, groundY: box.min.y, durationSeconds: 0 };
-      }, { directions, elevation: BAKE_ELEVATION_DEG, padding: BAKE_PADDING });
+      }, { directions, elevation: BAKE_ELEVATION_DEG, padding: BAKE_PADDING, setHalf });
       fit.durationSeconds = await page.evaluate(name => { const v = (window as unknown as { viewer: ViewerLike }).viewer; v.play(name); v.pause(); return v.duration; }, clip);
       if (!(fit.durationSeconds > 0)) throw code(`Clip ${clip} has zero duration, so there are no phases to bake`, 'BAKE_CLIP_EMPTY');
       cells = [];
@@ -253,7 +276,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
         if (image.width !== render || image.height !== render) throw code(`The render for direction ${d}, phase ${p} is ${image.width} by ${image.height}, not ${render} by ${render}`, 'BAKE_RENDER_FAILED');
         const reduced = reduceCell(image.rgba, cell);
         if (touchesBorder(reduced, cell))
-          throw code(`Cell for direction ${d} (dir-${d}, ${+(d * 360 / directions).toFixed(3)} degrees), phase ${p}, clip ${clip} has opaque pixels on its border, so the model reaches outside the frame fitted to its rest pose. Keep the clip inside the rest bounds, or raise --cell if it only grazes the border. Nothing was written.`, 'BAKE_CELL_CLIPPED');
+          throw code(`Cell for direction ${d} (dir-${d}, ${+(d * 360 / directions).toFixed(3)} degrees), phase ${p}, clip ${clip} has opaque pixels on its border, so the model reaches outside the frame ${clippedAdvice(settings)}`, 'BAKE_CELL_CLIPPED');
         // The border check is on the model alone; the palette snap and the outline come after it.
         let finished = reduced;
         if (settings.palette) finished = snapToPalette(finished, settings.palette);
@@ -281,7 +304,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   const manifest = buildManifest({
     model: { sha256: sha256(glb) }, clip: { name: clip, durationMs: spec.clipDurationMs }, directions, phases, cell,
-    camera: { projection: 'orthographic', elevationDeg: BAKE_ELEVATION_DEG, padding: BAKE_PADDING, supersample: BAKE_SUPERSAMPLE, halfExtentM: round(fit.half), distanceM: round(fit.distance), centreM: fit.centre.map(round), ...(pivot ? { groundYM: round(fit.groundY) } : {}) },
+    camera: { projection: 'orthographic', elevationDeg: BAKE_ELEVATION_DEG, padding: BAKE_PADDING, supersample: BAKE_SUPERSAMPLE, halfExtentM: round(fit.half), distanceM: round(fit.distance), centreM: fit.centre.map(round), ...(settings.pixelsPerMetre !== undefined ? { pixelsPerMetre: settings.pixelsPerMetre } : {}), ...(pivot ? { groundYM: round(fit.groundY) } : {}) },
     sheetSha256, atlasSha256, pluginVersion: version,
     ...(settings.look !== undefined ? { look: settings.look } : {}),
     ...(settings.bands !== undefined ? { bands: settings.bands } : {}),
