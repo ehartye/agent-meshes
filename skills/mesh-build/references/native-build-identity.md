@@ -530,7 +530,7 @@ build.json text eol=lf
   `build.json` under the block warns `CRLF will be replaced by LF` and stores `i/lf`.
 - [tested] Files already committed with CRLF (`git ls-files --eol` shows `i/crlf` for the text files) are rewritten
   by adding the block and then renormalizing. Add `.gitattributes` first: `git add --renormalize .` restages tracked
-  files only and left a new `.gitattributes` untracked in the probe.
+  files only. In the probe it restaged the CRLF files without that line and left the new `.gitattributes` untracked.
 
 ```sh
 git add .gitattributes
@@ -548,7 +548,8 @@ git commit -m "Normalize line endings"
   fails afterwards with `SHA-256 pin mismatch for build input: <path>`: record the pin again, and expect one Blender
   run for the changed inputs on the next `--if-changed` build.
 - [documented] Inputs are read and hashed as raw bytes (`snapshotFile` in `src/build-provenance.ts`, `snapshot` in
-  `src/build-config.ts`), so CRLF changes hashes, pins and the cache key. The runner runs the entry script with
+  `src/build-config.ts`; the cache key is the digest of the components in `prepareNativeCache` in
+  `src/build-native-cache.ts`), so CRLF changes hashes, pins and the cache key. The runner runs the entry script with
   `runpy.run_path` (`main` in `scripts/blender-author.py`) and no step there compares line endings.
 - [tested] CRLF changed the hashes and pins and not the GLB. A native fixture (an entry script, a parameters JSON and a
   helper module in a declared `lib` folder) was built with Blender 5.2.2 from an LF folder, again from a second LF
