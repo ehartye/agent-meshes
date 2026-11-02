@@ -67,7 +67,8 @@ environment, and the manifest differs only in `pluginVersion`.
 
 `--pixels-per-metre <n>` sets the scale of the sprite instead of fitting the camera to each model. Use it when a cast
 must share one scale, so a 1.1 m goblin and a 1.8 m knight differ in height on screen by the ratio of their heights.
-Without it every model is fitted to its own cell and fills about 80 percent of it whatever its size.
+Without it every model is fitted to its own cell, its rest bounds filling about 80 percent of the frame (the 1.25
+padding) whatever its size; the silhouette itself can be smaller.
 
 - **Value.** A number from 1 to 1024, decimals allowed (`24.5`); default none, which keeps the fitted camera. On the
   command line it is plain digits with an optional fraction: `32`, `24.5` and `007` pass; `.5`, `5.`, `+5`, `1e2` and
@@ -88,6 +89,9 @@ Without it every model is fitted to its own cell and fills about 80 percent of i
 - **Choosing a value.** Bake the largest model plain, read `camera.halfExtentM` from its `manifest.json`, take
   `cell / (2 * halfExtentM)` and round down. A lower value widens the frame; a higher one enlarges the sprites and can
   clip them ("A clipped cell").
+- **From a height.** An upright figure is about `height in metres * scale * 0.966` pixels tall, 0.966 being the vertical
+  metre above: a 1.8 m figure at a scale of 32 is about 55 pixels (1.8 * 32 * 0.966). The arm swing and other parts can
+  reach past the standing height, so check for `BAKE_CELL_CLIPPED` and raise `--cell` or lower the scale.
 - **Reading it back.** With the flag, `camera.pixelsPerMetre` in `manifest.json` is the exact value as parsed. Without
   it, `cell / (2 * halfExtentM)` gives the scale only approximately, because the manifest rounds `halfExtentM` to 6
   decimals (at 1024 with `--cell 8` it reads about 1024.06).
@@ -95,7 +99,9 @@ Without it every model is fitted to its own cell and fills about 80 percent of i
 ## Contact sheet
 
 `--contact-sheet` is off by default. With it the bake writes a fourth file, `contact.png`, after the other three in the
-same folder, so one image shows the whole bake.
+same folder, so one image shows the whole bake. Look for a limb cut at a cell edge, a pivot that jumps between phases,
+and a facing in the wrong cell; rows are directions and columns are phases. It is 4 times the cell, so judge pixel
+detail from `sheet.png` at 8x, not from the contact sheet.
 
 - **Layout.** The finished sheet (after the palette and outline) with every cell scaled 4 times by nearest neighbour,
   one row per direction and one column per phase, and a 4-pixel gutter of opaque mid-grey (128, 128, 128, 255) between
@@ -130,8 +136,8 @@ same folder, so one image shows the whole bake.
 
 `BAKE_CELL_CLIPPED` means an opaque pixel touches a cell border, so a pose reaches outside the frame. The message names
 the direction, phase and clip, and nothing is written. Without `--pixels-per-metre` the frame was fitted to the rest
-pose, and the message ends "Keep the clip inside the rest bounds, or raise --cell if it only grazes the border". Fix it
-in this order:
+pose, and the message contains "Keep the clip inside the rest bounds, or raise --cell if it only grazes the border".
+Fix it in this order:
 
 1. If the pose only grazes the border, raise `--cell`. The frame in metres does not change, but one border pixel then
    covers a smaller slice of it, so a pose that just reaches the edge can clear.
@@ -140,7 +146,7 @@ in this order:
    fit includes the reach.
 3. Bake again.
 
-With `--pixels-per-metre` nothing was fitted and there is no padding, so the message names the set scale and ends
+With `--pixels-per-metre` nothing was fitted and there is no padding, so the message names the set scale and contains
 "Lower --pixels-per-metre or raise --cell to widen the frame". Raising `--cell` here enlarges the frame in metres, so
 either change widens it:
 
