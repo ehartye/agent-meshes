@@ -497,3 +497,120 @@ describe('palette, outline, look and anchor on the asymmetric fixture', () => {
     expect(JSON.parse(a.manifest.toString('utf8'))).toMatchObject({ look: 'banded', bands: 4, outline: '#140c1c', palette: { colors: 16 }, anchor: { name: 'feet' } });
   }, 120_000);
 });
+
+// The scale option added in 0.40.0 (pixelsPerMetre). The value checks and the pivot arithmetic are pure; one shared set of small
+// bakes carries the camera, pixel and pivot checks.
+describe('the pixelsPerMetre option is checked before Chromium starts', () => {
+  const accepted: [number | string, number][] = [[1, 1], ['1', 1], ['1.0', 1], [32, 32], ['32', 32], [' 24.5 ', 24.5], ['007', 7], [1024, 1024], ['1024', 1024]];
+  for (const [value, expected] of accepted)
+    it(`accepts ${JSON.stringify(value)} as ${expected}`, () => {
+      expect(parseBakeOptions({ clip: 'sway', pixelsPerMetre: value }).pixelsPerMetre).toBe(expected);
+    });
+
+  const refused: unknown[] = [0, '0', '0.0', 0.5, '0.5', 0.999, '0.999', '0.001', -1, '-5', '+5', '.5', '5.', '5 5', 1024.5, '1024.5', '1025', Number.NaN, Number.POSITIVE_INFINITY, '', '  ', 'fast', '1e2', '0x10', '3,5', true, null, {}];
+  for (const [index, value] of refused.entries())
+    it(`refuses the bad scale ${index} (${typeof value} ${JSON.stringify(value) ?? String(value)}) with CLI_ARGUMENT_ERROR`, () => {
+      expect(() => parseBakeOptions({ clip: 'sway', pixelsPerMetre: value as number })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/--pixels-per-metre must be a number from 1 to 1024, got /) }));
+    });
+
+  it('leaves the key out of the settings when the option is unset', () => {
+    expect(Object.keys(parseBakeOptions({ clip: 'sway' }))).not.toContain('pixelsPerMetre');
+    expect(Object.keys(parseBakeOptions({ clip: 'sway', pixelsPerMetre: undefined }))).not.toContain('pixelsPerMetre');
+  });
+
+  it('rejects a bad scale from bakeSprites, writes nothing and never launches the browser', async () => {
+    const launch = vi.spyOn(chromium, 'launch'), dir = outDir();
+    try {
+      await expect(bakeSprites(glbPath, { clip: 'sway', out: dir, pixelsPerMetre: 0 })).rejects.toMatchObject({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/--pixels-per-metre must be a number from 1 to 1024, got 0/) });
+      expect(launch).not.toHaveBeenCalled();
+      expect(await files(dir)).toEqual([]);
+    } finally { launch.mockRestore(); }
+  });
+});
+
+describe('the feet pivot follows a set scale', () => {
+  it('refuses a frame too narrow for the pivot and places it inside a wider one', () => {
+    const input = { cell: 48, elevationDeg: 15, centreYM: 0.55, groundYM: 0 };
+    expect(() => feetPivot({ ...input, halfExtentM: 0.24 })).toThrow(expect.objectContaining({ code: 'BAKE_ANCHOR_OUTSIDE' }));
+    const pivot = feetPivot({ ...input, halfExtentM: 0.8 });
+    expect(pivot).toEqual({ x: 24, y: Math.floor(24 + 0.55 * Math.cos(15 * Math.PI / 180) * 30) });
+    expect(pivot.y).toBeLessThan(48);
+  });
+});
+
+describe('a bake with a set scale', () => {
+  const baked = new Map<string, Promise<{ dir: string; sheet: ReturnType<typeof decodePng>; manifest: any; atlas: Atlas }>>();
+  /** One bake per distinct option set, shared by the tests below that only read its output. */
+  const bakeWith = (key: string, options: Record<string, unknown>) => {
+    if (!baked.has(key)) baked.set(key, (async () => {
+      const dir = outDir();
+      await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, ...options });
+      const out = await read(dir);
+      return { dir, sheet: decodePng(out.sheet), manifest: JSON.parse(out.manifest.toString('utf8')), atlas: JSON.parse(out.atlas.toString('utf8')) as Atlas };
+    })());
+    return baked.get(key)!;
+  };
+  /** Opaque pixel extent across the first cell (direction 0, phase 0): the largest column minus the smallest, plus one. */
+  const extentX = (image: { rgba: Uint8Array; width: number }, cell: number) => {
+    let low = cell, high = -1;
+    for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) if (image.rgba[(y * image.width + x) * 4 + 3] === 255) { low = Math.min(low, x); high = Math.max(high, x); }
+    return high - low + 1;
+  };
+
+  it('replaces the fitted half extent by cell / (2 * scale) and keeps the centre and distance, recording the scale between padding and projection', async () => {
+    const plain = await bakeWith('plain', {}), a = await bakeWith('c64-p40', { cell: 64, pixelsPerMetre: 40 }), b = await bakeWith('c32-p20', { cell: 32, pixelsPerMetre: 20 });
+    expect(a.manifest.camera).toMatchObject({ pixelsPerMetre: 40, halfExtentM: 0.8, padding: 1.25, distanceM: plain.manifest.camera.distanceM, centreM: plain.manifest.camera.centreM });
+    expect(Object.keys(a.manifest.camera)).toEqual(['centreM', 'distanceM', 'elevationDeg', 'halfExtentM', 'padding', 'pixelsPerMetre', 'projection', 'supersample']);
+    expect(b.manifest.camera.halfExtentM).toBe(0.8);
+    expect(Object.keys(plain.manifest.camera)).toEqual(['centreM', 'distanceM', 'elevationDeg', 'halfExtentM', 'padding', 'projection', 'supersample']);
+    expect(plain.manifest.camera.halfExtentM).not.toBe(0.8);
+  }, 120_000);
+
+  it('draws the figure at the set scale: 1.2 m across is 48 pixels at 40 and 24 at 20, and the fitted bake follows its own half extent', async () => {
+    const plain = await bakeWith('plain-cell64', { cell: 64 }), high = await bakeWith('c64-p40', { cell: 64, pixelsPerMetre: 40 }), low = await bakeWith('c64-p20', { cell: 64, pixelsPerMetre: 20 });
+    // The plain bake confirms the 1.2 m: its scale is cell / (2 * halfExtentM) pixels per metre.
+    expect(Math.abs(extentX(plain.sheet, 64) - 64 / (2 * plain.manifest.camera.halfExtentM) * 1.2)).toBeLessThanOrEqual(2);
+    expect(Math.abs(extentX(high.sheet, 64) - 48)).toBeLessThanOrEqual(2);
+    expect(Math.abs(extentX(low.sheet, 64) - 24)).toBeLessThanOrEqual(2);
+  }, 120_000);
+
+  it('writes the pivot where the set scale projects the ground point, and the manifest anchor agrees', async () => {
+    const { atlas, manifest } = await bakeWith('c64-p40-feet', { cell: 64, pixelsPerMetre: 40, anchor: 'feet' });
+    // `projectedGroundPixel` above builds its right and up axes without normalising them, so both come out cos(15 degrees) too
+    // short and its row is off whenever the ground point falls near a pixel boundary; this case does, so project with unit axes.
+    const { elevationDeg, halfExtentM, centreM, groundYM } = manifest.camera, e = elevationDeg * Math.PI / 180;
+    const offsetY = groundYM - centreM[1], screenX = 0, screenY = offsetY * Math.cos(e) / halfExtentM; // the dot product with unit right (+X) and unit up (0, cos e, -sin e)
+    const expected = { x: Math.floor((1 + screenX) / 2 * manifest.cell), y: Math.floor((1 - screenY) / 2 * manifest.cell) };
+    expect(atlas.meta.slices![0].keys[0].pivot).toEqual(expected);
+    expect(expected.y).toBe(Math.floor(32 + (manifest.camera.centreM[1] - manifest.camera.groundYM) * Math.cos(15 * Math.PI / 180) * 40));
+    expect(manifest.anchor).toEqual({ name: 'feet', ...expected });
+    expect(Object.keys(manifest.camera)).toEqual(['centreM', 'distanceM', 'elevationDeg', 'groundYM', 'halfExtentM', 'padding', 'pixelsPerMetre', 'projection', 'supersample']);
+  }, 120_000);
+
+  it('gives the same bytes as no option when the scale is passed as unset', async () => {
+    const plain = outDir(), unset = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL });
+    await bakeSprites(glbPath, { clip: 'sway', out: unset, ...SMALL, pixelsPerMetre: undefined });
+    const a = await read(plain), b = await read(unset);
+    expect(b.sheet.equals(a.sheet)).toBe(true);
+    expect(b.atlas.equals(a.atlas)).toBe(true);
+    expect(b.manifest.equals(a.manifest)).toBe(true);
+  }, 120_000);
+
+  it('refuses a frame narrower than the figure with advice to lower the scale or raise --cell, and writes nothing', async () => {
+    const dir = outDir();
+    await expect(bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, cell: 48, pixelsPerMetre: 100 })).rejects.toMatchObject({
+      code: 'BAKE_CELL_CLIPPED',
+      message: 'Cell for direction 0 (dir-0, 0 degrees), phase 0, clip sway has opaque pixels on its border, so the model reaches outside the frame set by --pixels-per-metre 100 at --cell 48. Lower --pixels-per-metre or raise --cell to widen the frame. Nothing was written.',
+    });
+    expect(await files(dir)).toEqual([]);
+  }, 120_000);
+
+  it('keeps the fitted wording of the clipped-cell message when no scale is set', async () => {
+    const dir = outDir();
+    const error = await bakeSprites(glbPath, { clip: 'overreach', out: dir, directions: 2, phases: 4, cell: 16 }).catch((e: Error) => e);
+    expect((error as Error).message).toBe('Cell for direction 0 (dir-0, 0 degrees), phase 1, clip overreach has opaque pixels on its border, so the model reaches outside the frame fitted to its rest pose. Keep the clip inside the rest bounds, or raise --cell if it only grazes the border. Nothing was written.');
+    expect((error as Error).message).not.toContain('--pixels-per-metre');
+    expect(await files(dir)).toEqual([]);
+  }, 120_000);
+});
