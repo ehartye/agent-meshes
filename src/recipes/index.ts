@@ -4,7 +4,7 @@ import type { Project, Vec3, Quat, GeometryKind, Track } from '../core/types.ts'
 import { footPath, solveLeg } from './gait.ts';
 import { createSpiderLeg } from './spider-leg.ts';
 import { spiderGait } from './spider-motion.ts';
-import { createQuadruped } from './quadruped.ts';
+import { createQuadruped, defaultQuadrupedGaits, gaitSettings, withGaitContext, type GaitOverride } from './quadruped.ts';
 import { createStrandbeest } from './strandbeest.ts';
 
 export const creatureKinds = ['biped', 'equine', 'vulpine', 'insectoid', 'arachnid'] as const;
@@ -25,19 +25,53 @@ const bipedGaits = {
   walk: { stride: 0.52, lift: 0.14, stance: 0.62, duration: 1.2, bob: 0.024 },
   run: { stride: 0.8, lift: 0.3, stance: 0.4, duration: 0.6, bob: 0.04 },
 } as const;
-type BipedGait = { name: string; stride: number; lift: number; stance: number; duration: number; bob: number };
-function bipedGaitPlan(gaits: readonly string[] = ['walk'], speed?: number | Record<string, number>): BipedGait[] {
+type BipedGait = { name: string; stride: number; lift: number; stance: number; duration: number; bob: number; given?: GaitOverride };
+
+export type { GaitOverride, GaitSetting } from './quadruped.ts';
+export type GaitParams = Record<string, GaitOverride>;
+const describe = (value: unknown) => typeof value === 'object' ? JSON.stringify(value) : typeof value === 'string' ? JSON.stringify(value) : String(value);
+/** Validate one gait's replacement settings. Every message names the setting as `gait-params <gait>.<setting>`; the limits are the ones footPath enforces plus the gallop flight window (stance below 0.6). Returns only the settings that were given. */
+export function validateGaitOverride(gait: string, entry: unknown): GaitOverride {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new Error(`gait-params ${gait} must be an object with any of ${gaitSettings.join(', ')}, received ${describe(entry)}`);
+  const result: GaitOverride = {};
+  for (const [setting, value] of Object.entries(entry)) {
+    const name = `gait-params ${gait}.${setting}`;
+    if (!(gaitSettings as readonly string[]).includes(setting)) throw new Error(`${name} is not a gait setting; the settings are ${gaitSettings.join(', ')}`);
+    if (value === undefined) continue;
+    if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${name} must be a finite number, received ${describe(value)}`);
+    if (setting === 'stance') {
+      if (value <= 0 || value >= 1) throw new Error(`${name} must be greater than 0 and less than 1 (a fraction of the cycle), received ${value}`);
+      if (gait === 'gallop' && value >= 0.6) throw new Error(`${name} must be below 0.6 on a gallop, or the flight phase closes, received ${value}`);
+    } else if (value < 0) throw new Error(`${name} must be zero or more (metres), received ${value}`);
+    result[setting as keyof GaitOverride] = value;
+  }
+  return result;
+}
+/** Validate the whole `gaitParams` option against the gaits being generated; entries with no settings are dropped. */
+export function validateGaitParams(params: unknown, gaits: readonly string[]): GaitParams {
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) throw new Error(`gait-params must be a JSON object keyed by gait name, received ${describe(params)}`);
+  const result: GaitParams = {};
+  for (const [gait, entry] of Object.entries(params)) {
+    if (!gaits.includes(gait)) throw new Error(`gait-params names the clip ${gait}, which is not among the gaits being generated (${gaits.join(', ')})`);
+    const override = validateGaitOverride(gait, entry);
+    if (Object.keys(override).length) result[gait] = override;
+  }
+  return result;
+}
+function bipedGaitPlan(gaits: readonly string[] = ['walk'], speed?: number | Record<string, number>, gaitParams?: unknown): BipedGait[] {
   const known = Object.keys(bipedGaits);
+  const overrides = gaitParams === undefined ? {} : validateGaitParams(gaitParams, gaits);
   if (speed !== undefined && typeof speed === 'object') for (const name of Object.keys(speed)) if (!gaits.includes(name)) throw new Error(`Speed names the clip ${name}, which is not among the requested gaits (${gaits.join(', ')})`);
   return gaits.map(name => {
     if (!known.includes(name)) throw new Error(`Unknown biped gait ${name}; the gaits are ${known.join(', ')}`);
-    const base = bipedGaits[name as keyof typeof bipedGaits];
+    const given = (overrides as GaitParams)[name];
+    const base = { ...bipedGaits[name as keyof typeof bipedGaits], ...given };
     const wanted = typeof speed === 'object' ? speed[name] : speed;
-    if (wanted === undefined) return { name, ...base };
+    if (wanted === undefined) return { name, ...base, ...(given ? { given } : {}) };
     if (!Number.isFinite(wanted) || wanted <= 0) throw new Error(`Speed for ${name} must be a positive number of metres per second, received ${wanted}`);
     const duration = base.stride / (base.stance * wanted);
     if (duration < 0.3 || duration > 4) throw new Error(`A speed of ${wanted} m/s gives a ${name} cycle of ${duration.toFixed(2)} s; the cycle must be between 0.3 and 4 s, so choose a speed between ${(base.stride / (base.stance * 4)).toFixed(2)} and ${(base.stride / (base.stance * 0.3)).toFixed(2)} m/s`);
-    return { name, ...base, duration };
+    return { name, ...base, duration, ...(given ? { given } : {}) };
   });
 }
 interface Leg { name: string; hip: Vec3; knee: Vec3; foot: Vec3; pole: Vec3; phase: number; stride: number; lift: number; stance: number }
@@ -46,22 +80,24 @@ interface Leg { name: string; hip: Vec3; knee: Vec3; foot: Vec3; pole: Vec3; pha
 export interface CreatureOptions {
   /** Clips for equine or vulpine: any of walk, trot, gallop (default walk and trot); for biped: any of walk, run (default walk). */ gaits?: readonly string[];
   /** Biped only: the travel speed in metres per second the stance foot is planted at, for every clip (a number) or per clip (a record). Sets the cycle length to stride / (stance * speed). Default: the clip's own design speed. */ speed?: number | Record<string, number>;
+  /** Biped, equine or vulpine: per-gait replacements of the table's `stride`, `lift` and `bob` (metres) and `stance` (fraction of the cycle), as `{ walk: { stride: 0.4, lift: 0.2 } }`; a setting not given keeps its table value. Out-of-range values are refused naming `gait-params <gait>.<setting>`. */ gaitParams?: GaitParams;
   /** Equine or vulpine only: smooth skin, retaining distinct equine hair, ears and hard hooves. */ shell?: boolean;
   /** Insectoid only: one clip per entry, each a touchdown phase (0 to 1) per leg in order L1 L2 L3 R1 R2 R3. */ legPhases?: Record<string, number[]>;
   /** Strandbeest only: crank positions along the crankshaft, four legs each. Default 3, at most 5. */ pairs?: number;
   /** Strandbeest only: distance between pairs in meters, and one clip per named crank-offset pattern. */ spacing?: number; patterns?: Record<string, number[]>;
 }
 export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest', options: CreatureOptions = {}): Project {
+  if (options.gaitParams !== undefined && (kind === 'strandbeest' || (creatureKinds.includes(kind as CreatureKind) && kind !== 'biped' && kind !== 'equine' && kind !== 'vulpine'))) throw new Error(`Gait parameters (--gait-params) are only configurable for biped, equine and vulpine, not ${kind}`);
   // Jansen's walking machine is a linkage, not a limb rig, so it has its own recipe and is not one of the gallery creatures.
   if (kind === 'strandbeest') return createStrandbeest({ pairs: options.pairs, spacing: options.spacing, patterns: options.patterns });
   if (kind === 'quadruped') kind = 'vulpine';
   if (!creatureKinds.includes(kind)) throw new Error(`Unknown creature recipe: ${kind}`);
   const info = creatureInfo[kind];
-  if (kind === 'equine' || kind === 'vulpine') return createQuadruped(kind, info.name, options.gaits, { shell: options.shell });
+  if (kind === 'equine' || kind === 'vulpine') return createQuadruped(kind, info.name, options.gaits, { shell: options.shell, ...(options.gaitParams === undefined ? {} : { gaitParams: validateGaitParams(options.gaitParams, options.gaits ?? defaultQuadrupedGaits) }) });
   if (options.shell) throw new Error(`Shells are only configurable for equine and vulpine, not ${kind}`);
   if (options.gaits && kind !== 'biped') throw new Error(`Gaits are only configurable for equine, vulpine or biped, not ${kind}`);
   if (options.speed !== undefined && kind !== 'biped') throw new Error(`Speed is only configurable for biped, not ${kind}`);
-  const bipedClips = kind === 'biped' ? bipedGaitPlan(options.gaits, options.speed) : [];
+  const bipedClips = kind === 'biped' ? bipedGaitPlan(options.gaits, options.speed, options.gaitParams) : [];
   if (options.legPhases && kind !== 'insectoid') throw new Error(`Leg phases are only configurable for insectoid, not ${kind}`);
   const project: Project = { version: 1, name: info.name, parts: [], bones: [], clips: [] };
   const legs: Leg[] = [];
@@ -195,7 +231,7 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
       legs.forEach((leg, legIndex) => {
         const offset = footPath(phase + phaseOf(legIndex), gait?.stride ?? leg.stride, gait?.lift ?? leg.lift, gait?.stance ?? leg.stance);
         const target: Vec3 = [leg.foot[0] + offset[0], leg.foot[1] + offset[1] - clipBob(phase), leg.foot[2] + offset[2]];
-        const pose = solveLeg(leg.hip, leg.knee, leg.foot, target, leg.pole);
+        const pose = withGaitContext('biped', name, gait?.given, () => solveLeg(leg.hip, leg.knee, leg.foot, target, leg.pole));
         for (const value of [pose.upper, pose.lower, pose.ankle]) clipTracks[index++].keys.push({ time, value });
       });
       for (const leg of spiderLegs) for (const value of leg.sample(phase, clipBob(phase))) clipTracks[index++].keys.push({ time, value });
