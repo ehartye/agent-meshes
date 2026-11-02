@@ -152,6 +152,7 @@ keys make a seamless loop. Bones without a track stay at rest during playback.
 {"op":"clip.key.remove","name":"wave","bone":"arm_R","property":"rotation","time":0.5}
 {"op":"clip.key.record","name":"wave","time":1,"bones":["arm_R"]}
 {"op":"clip.key.record","name":"wave","time":0,"endpoints":"loop","poses":[{"bone":"arm_R","rotation":[0,0,0.258819,0.965926],"position":[0,0.05,0]}]}
+{"op":"clip.regenerate","name":"walk","params":{"stride":0.4,"lift":0.2}}
 ```
 
 - `clip.create` makes a clip of `duration` seconds with a rotation track on each listed bone
@@ -172,6 +173,11 @@ keys make a seamless loop. Bones without a track stay at rest during playback.
   name that is taken or an unknown clip or bone, each reported with its operation index.
 - `clip.key.set` also takes `"property":"scale"` with `[x,y,z]`, and `clip.key.record` poses take an
   optional `scale`; a recorded stored pose carries rotation only.
+- `clip.regenerate` rebuilds the clip `name` from the `recipe` stored on a project made by the `recipe` command, in
+  place (appended when the recipe generates that name and the project has no such clip; a name the recipe does not
+  generate is refused, listing the ones it does), and replaces any tracks added to it, so `clip.clone` a hand-edited
+  clip first. Optional `params` (`stride`, `lift`, `stance`, `bob`; biped, equine and vulpine) merge over the stored
+  settings. It fails with `RECIPE_STALE`, changing nothing, when a recipe bone or part is missing or moved.
 - Only the tracks an operation names change; the rest stay identical. A batch of these is atomic
   and one `undo` restores the project from before it.
 
