@@ -434,8 +434,8 @@ an array. Neither schema proves complete native dependencies or external freshne
 
 ### Committing build output
 
-[general] Labels: [tested] ran on this repository; [documented] read in the named
-source of 0.31.0 (line numbers are from that release); [general] neither.
+[general] Labels: [tested] ran on this repository; [documented] read in the named source of 0.31.0 (line numbers
+are from that release) or, for the bullets added after it, of 0.39.2 (cited by function name); [general] neither.
 
 - [documented] The marker `.agent-meshes-build.json` lists every file a build wrote.
   An incremental native build adds `.agent-meshes-blender-cache.json`,
@@ -512,3 +512,64 @@ build.json text eol=lf
   `text eol=lf` it gives `w/lf`. A built GLB shows `-text` even without attributes,
   and `git check-attr binary` reports `set` once `*.glb binary` is present, so that
   line makes the detection explicit instead of changing it.
+
+- [tested] Binary and text detection, probed with `git ls-files --eol` and `git check-attr` in a throwaway
+  repository, once with git 2.55.0.windows.3 in Git Bash and once with git 2.53.0 inside WSL on an ext4 folder (files
+  sent in as a tar stream and compared by SHA-256 on both sides). Both gave the same values, with `core.autocrlf` set
+  to `true` and to `false`. With no `.gitattributes`, a real preview PNG, a real
+  `.agent-meshes-blender-cache.bin` and a built GLB all show `i/-text w/-text`, so detection already treats them as
+  binary, and `build.json` and `make.py` show `i/lf`. The same three stay `-text` under `* text=auto eol=lf`.
+- [tested] A `.bin` extension alone does not make a file binary. A control `.bin` of ASCII text with CRLF and no NUL
+  byte, with no attributes, is text: `core.autocrlf=true` stores it as `i/lf` and checks it out as `w/crlf`, and
+  `core.autocrlf=false` keeps `i/crlf`. Under `* text=auto eol=lf` it is stored as `i/lf`. With the `*.bin binary` line
+  of the block above, `git check-attr -a` reports `binary: set`, `text: unset`, and the file stays `i/crlf`, byte for
+  byte. A real cache `.bin` is binary either way, so the line matters for files like the control.
+- [tested] With the block above, `git check-attr` reports `text: set` and `eol: lf` for `build.json` and `make.py`,
+  and a fresh checkout shows `w/lf` for both under `core.autocrlf` true and false. Without it, the same checkout
+  shows `w/crlf` under `true` and `w/lf` under `false`; `* text=auto eol=lf` also gives `w/lf`. Adding a CRLF
+  `build.json` under the block warns `CRLF will be replaced by LF` and stores `i/lf`.
+- [tested] Files already committed with CRLF (`git ls-files --eol` shows `i/crlf` for the text files) are rewritten
+  by adding the block and then renormalizing. Add `.gitattributes` first: `git add --renormalize .` restages tracked
+  files only and left a new `.gitattributes` untracked in the probe.
+
+```sh
+git add .gitattributes
+git add --renormalize .
+git status --short
+git commit -m "Normalize line endings"
+```
+
+- [tested] In the probe (git 2.55.0.windows.3 and git 2.53.0 alike, `core.autocrlf` true and false), the sequence
+  changed `build.json` and `make.py` from `i/crlf` to `i/lf`, left the PNG, the cache `.bin`, the GLB and the control
+  `.bin` unmodified (the committed bytes matched their SHA-256), and `git status --short` listed `A  .gitattributes`,
+  `M  build.json` and `M  make.py` and nothing else. Working copies stayed `w/crlf` until the files were checked out
+  again (`rm` then `git checkout -- build.json make.py` gave `w/lf`).
+- [general] Renormalizing changes the committed bytes of those files, so a `sha256` pin recorded over the CRLF bytes
+  fails afterwards with `SHA-256 pin mismatch for build input: <path>`: record the pin again, and expect one Blender
+  run for the changed inputs on the next `--if-changed` build.
+- [documented] Inputs are read and hashed as raw bytes (`snapshotFile` in `src/build-provenance.ts`, `snapshot` in
+  `src/build-config.ts`), so CRLF changes hashes, pins and the cache key. The runner runs the entry script with
+  `runpy.run_path` (`main` in `scripts/blender-author.py`) and no step there compares line endings.
+- [tested] CRLF changed the hashes and pins and not the GLB. A native fixture (an entry script, a parameters JSON and a
+  helper module in a declared `lib` folder) was built with Blender 5.2.2 from an LF folder, again from a second LF
+  folder, and from a copy whose three files had CRLF endings: the three `model.glb` files had the same SHA-256. The
+  CRLF copy's input hashes differed, and a `--if-changed` build over the LF output missed with `cache-key-changed`
+  and `inputs` among the changed components.
+- [general] One fixture does not prove every recipe: a script that reads a text file and depends on its line endings,
+  such as one that splits on `"\n"`, can build a different model from a CRLF copy.
+- [documented] The runner puts the entry script's own directory first on `sys.path` before it runs the script
+  (`main` in `scripts/blender-author.py`).
+- [tested] With Blender 5.2.2, a helper beside the entry script, or in a declared subfolder imported by package path
+  (`from lib import helper`), imported without extra path setup. A bare `import helper` for a file in `lib` failed
+  (`ModuleNotFoundError: No module named 'helper'`, exit 1) unless the script added the folder first:
+
+```python
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+import helper
+```
+
+- [general] A macOS run and a Linux run of the native build were not made in this verification, so the earlier
+  bullets keep their labels, and nothing above says how git or the build behave on those systems.
