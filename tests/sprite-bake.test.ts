@@ -610,3 +610,87 @@ describe('a bake with a set scale', () => {
     expect(await files(dir)).toEqual([]);
   }, 120_000);
 });
+
+// The contact sheet option added in 0.40.0 (contactSheet). The value and size checks are pure; one small bake carries the
+// end-to-end checks.
+describe('the contactSheet option is checked before Chromium starts', () => {
+  it('refuses a contact sheet over 134,217,728 pixels, naming the option, the size and the options to lower, and accepts the same bake without it', () => {
+    const big = { clip: 'sway', cell: 256, directions: 8, phases: 16 };
+    expect(() => parseBakeOptions({ ...big, contactSheet: true })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/--contact-sheet.*16444 by 8220.*--cell.*--phases.*--directions/) }));
+    expect(() => parseBakeOptions(big)).not.toThrow();
+    expect(parseBakeOptions({ ...big, contactSheet: false })).not.toHaveProperty('contactSheet');
+  });
+
+  it('accepts a contact sheet of 67,568,400 pixels', () => {
+    expect(parseBakeOptions({ clip: 'sway', cell: 256, directions: 8, phases: 8, contactSheet: true }).contactSheet).toBe(true);
+  });
+
+  for (const value of ['yes', 1, 0, null, 'true', {}])
+    it(`refuses contactSheet ${JSON.stringify(value)} with CLI_ARGUMENT_ERROR`, () => {
+      expect(() => parseBakeOptions({ clip: 'sway', contactSheet: value as boolean })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringContaining('--contact-sheet') }));
+    });
+
+  it('leaves the key out of the settings when the option is unset or false', () => {
+    expect(Object.keys(parseBakeOptions({ clip: 'sway' }))).not.toContain('contactSheet');
+    expect(Object.keys(parseBakeOptions({ clip: 'sway', contactSheet: undefined }))).not.toContain('contactSheet');
+    expect(Object.keys(parseBakeOptions({ clip: 'sway', contactSheet: false }))).not.toContain('contactSheet');
+  });
+
+  it('rejects an oversize contact sheet from bakeSprites, writes nothing and never launches the browser', async () => {
+    const launch = vi.spyOn(chromium, 'launch'), dir = outDir();
+    try {
+      await expect(bakeSprites(glbPath, { clip: 'sway', out: dir, cell: 256, directions: 8, phases: 16, contactSheet: true })).rejects.toMatchObject({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringContaining('16444 by 8220') });
+      expect(launch).not.toHaveBeenCalled();
+      expect(await files(dir)).toEqual([]);
+    } finally { launch.mockRestore(); }
+  });
+});
+
+describe('a bake with a contact sheet', () => {
+  it('writes contact.png after the three files, with every sheet cell as a 4 times block and grey gutters, and leaves the other three files as they are', async () => {
+    const plain = outDir(), withContact = outDir(), unset = outDir(), off = outDir(), options = { clip: 'sway', directions: 2, phases: 3, cell: 16 };
+    await bakeSprites(glbPath, { ...options, out: plain });
+    const result = await bakeSprites(glbPath, { ...options, out: withContact, contactSheet: true });
+    await bakeSprites(glbPath, { ...options, out: unset, pixelsPerMetre: undefined, contactSheet: undefined });
+    await bakeSprites(glbPath, { ...options, out: off, contactSheet: false });
+    expect(Object.keys(result.files)).toEqual(['sheet', 'atlas', 'manifest', 'contact']);
+    expect(result.files.contact).toBe('contact.png');
+    expect(await files(withContact)).toEqual(['atlas.json', 'contact.png', 'manifest.json', 'sheet.png']);
+    const a = await read(plain), b = await read(withContact);
+    expect(b.sheet.equals(a.sheet)).toBe(true);
+    expect(b.atlas.equals(a.atlas)).toBe(true);
+    expect(b.manifest.equals(a.manifest)).toBe(true);
+    for (const key of ['contact', 'pixelsPerMetre']) { expect(b.atlas.toString('utf8')).not.toContain(key); expect(b.manifest.toString('utf8')).not.toContain(key); }
+    // Unset and false change nothing: the same three files, and no fourth.
+    for (const dir of [unset, off]) {
+      expect(await files(dir)).toEqual(['atlas.json', 'manifest.json', 'sheet.png']);
+      const c = await read(dir);
+      expect(c.sheet.equals(a.sheet) && c.atlas.equals(a.atlas) && c.manifest.equals(a.manifest)).toBe(true);
+    }
+
+    const sheet = decodePng(a.sheet), contact = decodePng(await readFile(join(withContact, 'contact.png')));
+    expect([contact.width, contact.height]).toEqual([3 * 64 + 2 * 4, 2 * 64 + 4]);
+    const at = (image: { rgba: Uint8Array; width: number }, x: number, y: number) => [...image.rgba.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 4)];
+    for (let y = 0; y < contact.height; y++) for (let x = 0; x < contact.width; x++) {
+      const column = Math.floor(x / 68), row = Math.floor(y / 68), inX = x - column * 68, inY = y - row * 68;
+      if (inX >= 64 || inY >= 64) expect(at(contact, x, y), `gutter ${x},${y}`).toEqual([128, 128, 128, 255]);
+      else expect(at(contact, x, y), `cell ${row},${column} at ${x},${y}`).toEqual(at(sheet, column * 16 + Math.floor(inX / 4), row * 16 + Math.floor(inY / 4)));
+    }
+  }, 120_000);
+
+  it('leaves a contact.png from an earlier bake in the folder, byte for byte, after a plain bake', async () => {
+    const dir = outDir(), options = { clip: 'sway', directions: 2, phases: 2, cell: 16, out: dir };
+    await bakeSprites(glbPath, { ...options, contactSheet: true });
+    const before = await readFile(join(dir, 'contact.png'));
+    const plain = await bakeSprites(glbPath, options);
+    expect(Object.keys(plain.files)).toEqual(['sheet', 'atlas', 'manifest']);
+    expect(await files(dir)).toEqual(['atlas.json', 'contact.png', 'manifest.json', 'sheet.png']);
+    expect((await readFile(join(dir, 'contact.png'))).equals(before)).toBe(true);
+  }, 120_000);
+
+  it('writes nothing, contact.png included, when a cell clips', async () => {
+    const dir = outDir();
+    await expect(bakeSprites(glbPath, { clip: 'overreach', out: dir, directions: 2, phases: 4, cell: 16, contactSheet: true })).rejects.toMatchObject({ code: 'BAKE_CELL_CLIPPED' });
+    expect(await files(dir)).toEqual([]);
+  }, 120_000);
+});
