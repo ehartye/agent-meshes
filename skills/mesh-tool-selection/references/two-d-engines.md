@@ -12,8 +12,7 @@ named file at the named version; [general] neither. Re-read a file if your versi
 - [documented] agent-phaser 0.1.11, `skills/engine-phaser/references/loading-assets.md` section "Choosing a format":
   Phaser 4.2.1 has no glTF or GLB loader, and `Mesh2D` is 2D. After an upgrade, list the `src/loader/filetypes` folder
   of the installed phaser package again; that section holds the command.
-- [general] Canvas 2D and Pixi are on the row because they also draw sprites. Their packages were not read here, so
-  check the engine's loaders before assuming the same.
+- [general] Canvas 2D and Pixi packages were not read here; they also draw sprites, so check their loaders.
 
 ## The sprite route
 
@@ -28,7 +27,8 @@ named file at the named version; [general] neither. Re-read a file if your versi
 ## Pre-rendering
 
 - [documented] `src/cli.ts` registers `bake`: `agent-meshes bake <glb> --clip <name>` writes a sprite sheet, an Aseprite
-  atlas with a `dir-N` tag per facing and a manifest.- [documented] `mesh preview --clip <name> --phases <count>` and `scripts/review-model.mjs` are review tools,
+  atlas with a `dir-N` tag per facing and a manifest.
+- [documented] `mesh preview --clip <name> --phases <count>` and `scripts/review-model.mjs` are review tools,
   not sprite exporters. `src/preview.ts` lines 62-71 set evenly spaced phases;
   `scripts/blender-preview.py` renders each selected view at every phase, sets `film_transparent = False` (line 237) and
   an 85 mm lens (`LENS`, lines 39, 122) and never selects an orthographic camera. `scripts/review-model.mjs` writes
