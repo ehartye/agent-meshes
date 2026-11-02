@@ -4,12 +4,13 @@
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Editor, applyOperation } from '../src/core/model.ts';
 import { applyOperations, OperationPlanError, parseOperation, planOperations, capabilities } from '../src/agent-contract.ts';
-import { createServer } from '../src/server.ts';
+import { Workspace } from '../src/workspace.ts';
 import { createCreature } from '../src/recipes/index.ts';
 import { createRecipe } from '../src/recipes/regenerate.ts';
 import type { Operation, Project } from '../src/core/types.ts';
@@ -22,8 +23,13 @@ const apply = (project: Project, ...operations: object[]) => planOperations(proj
 const regenerate = (name: string, params?: object) => ({ op: 'clip.regenerate', name, ...(params ? { params } : {}) }) as Operation;
 let equine: Project;
 beforeAll(() => { equine = createRecipe('equine', { gaits }); });
-const cleanup: (() => Promise<unknown>)[] = [];
+const cleanup: (() => Promise<unknown> | unknown)[] = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); });
+const scratch = async () => { const directory = await mkdtemp(join(tmpdir(), 'mesh-regenerate-')); cleanup.push(() => rm(directory, { recursive: true, force: true })); return directory; };
+// Child processes load the CLI, server and build fresh, so they show which paths register the recipe generator on their own.
+const node = promisify(execFile);
+const cli = async (directory: string, ...args: string[]) => JSON.parse((await node(process.execPath, [resolve('scripts/agent-meshes.mjs'), '--workspace', directory, ...args], { timeout: 30000, windowsHide: true })).stdout);
+const failure = async (run: Promise<unknown>) => { try { await run; } catch (error) { return error as { code: number; stdout: string; stderr: string }; } throw new Error('Expected the process to fail'); };
 
 it('rebuilds only the named clip, exactly as a fresh recipe with the same options would, and merges settings', () => {
   const edited = apply(equine,
@@ -73,12 +79,33 @@ it('refuses with RECIPE_STALE and changes nothing when the skeleton or a recipe 
   expect(stale({ op: 'remove', name: 'mane' }).message).toContain('part mane is missing');
   const renamed = stale({ op: 'remove', name: 'neck_crest' }, { op: 'add', part: { name: 'neck_crest_2', geometry: { type: 'box', size: [0.1, 0.1, 0.1] } } });
   expect(renamed.message).toContain('neck_crest');
-  // The batch is atomic and the build path reports the same code.
+  // The dry run and the build path report the same code.
   const missing = apply(equine, { op: 'remove', name: 'mane' });
   const batch = [{ op: 'add', part: { name: 'saddle', geometry: { type: 'box', size: [0.4, 0.1, 0.4] } } }, regenerate('walk')];
   expect(() => planOperations(missing, batch)).toThrow(expect.objectContaining({ code: 'RECIPE_STALE', operationIndex: 1 }));
   expect(() => applyOperations(missing, batch)).toThrow(expect.objectContaining({ code: 'RECIPE_STALE' }));
-  expect(missing.parts.some(part => part.name === 'saddle')).toBe(false);
+});
+
+it('applies a batch atomically: a failing clip.regenerate leaves the project object and the stored workspace as they were', async () => {
+  const workspace = new Workspace(await scratch()); cleanup.push(() => workspace.close());
+  // The path the workspace batch command takes: plan inside the write transaction and replace only when the whole batch plans.
+  const failing = (project: Project, operations: object[], error: object) => {
+    workspace.transact(editor => editor.replace(project));
+    const original = structuredClone(project), state = structuredClone(workspace.read());
+    expect(() => workspace.transact(editor => editor.replace(planOperations(editor.project, operations).project))).toThrow(expect.objectContaining(error));
+    expect(project).toEqual(original);
+    expect(workspace.read()).toEqual(state);
+  };
+  const saddle = { op: 'add', part: { name: 'saddle', geometry: { type: 'box', size: [0.4, 0.1, 0.4] } } };
+  // Stale: the part added before the failing step is not stored.
+  failing(apply(equine, { op: 'remove', name: 'mane' }), [saddle, regenerate('walk')], { code: 'RECIPE_STALE', operationIndex: 1 });
+  expect(workspace.read().project.parts.some(part => part.name === 'saddle')).toBe(false);
+  // Healthy: a regenerate that works on its own takes no effect when a later step of the batch fails.
+  const lift = regenerate('walk', { lift: 0.15 });
+  expect(clipOf(apply(equine, lift), 'walk')).not.toEqual(clipOf(equine, 'walk'));
+  failing(equine, [lift, regenerate('gallop')], { operationIndex: 1 });
+  expect(clipOf(workspace.read().project, 'walk')).toEqual(clipOf(equine, 'walk'));
+  expect(workspace.read().project.recipe).toEqual(equine.recipe);
 });
 
 it('does not call additions, appearance edits or poses stale', () => {
@@ -134,33 +161,48 @@ it('reports a missing stored recipe the same way when a build applies operations
   expect(() => applyOperations(createCreature('biped'), [regenerate('walk')])).toThrow(/no stored recipe/);
 });
 
-it('regenerates through the HTTP server', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'mesh-regenerate-server-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
-  const server = await createServer({ port: 0, workspacePath: directory }); cleanup.push(server.close);
-  const post = (path: string, body: unknown) => fetch(`${server.url}/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  expect((await post('project', createRecipe('equine', { gaits }))).status).toBe(200);
-  const response = await post('op', regenerate('walk', { lift: 0.15 }));
-  expect(response.status).toBe(200);
-  const project = await response.json() as Project;
-  expect(clipOf(project, 'walk')).toEqual(clipOf(createCreature('equine', lifted), 'walk'));
-  expect(project.recipe!.options.gaitParams).toEqual({ walk: { lift: 0.15 } });
-  const refused = await post('op', regenerate('gallop'));
-  expect(refused.status).toBeGreaterThanOrEqual(400);
-}, 30000);
+it('regenerates through the HTTP server, which loads the recipe generator itself and reports RECIPE_STALE', async () => {
+  const directory = await scratch();
+  await cli(directory, 'recipe', 'equine', '--gaits', 'walk,trot');
+  // A separate process starts the server and never imports the regenerate module; its only route to the generator is the one a real server has.
+  const script = `import {createServer} from ${JSON.stringify(pathToFileURL(resolve('src/server.ts')).href)};
+const server = await createServer({port: 0, workspacePath: ${JSON.stringify(directory)}});
+const post = async body => { const response = await fetch(server.url + '/api/op', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)}); return {status: response.status, body: await response.json()}; };
+const out = {regenerated: await post(${JSON.stringify(regenerate('walk', { lift: 0.15 }))}), unknown: await post(${JSON.stringify(regenerate('gallop'))})};
+await post({op: 'remove', name: 'mane'});
+out.stale = await post(${JSON.stringify(regenerate('walk'))});
+await server.close(); console.log(JSON.stringify(out)); process.exit(0);`;
+  const out = JSON.parse((await node(process.execPath, ['--input-type=module', '-e', script], { timeout: 60000, windowsHide: true })).stdout);
+  expect(out.regenerated.status).toBe(200);
+  expect(clipOf(out.regenerated.body, 'walk')).toEqual(clipOf(createCreature('equine', lifted), 'walk'));
+  expect(out.regenerated.body.recipe.options.gaitParams).toEqual({ walk: { lift: 0.15 } });
+  expect(out.unknown.status).toBe(400);
+  expect(out.unknown.body.error).toMatch(/walk, trot/);
+  expect(out.stale.status).toBe(400);
+  expect(out.stale.body.details.code).toBe('RECIPE_STALE');
+}, 90000);
+
+it('loads the recipe generator when a build applies operations, which cannot hold a stored recipe', async () => {
+  const directory = await scratch();
+  await writeFile(join(directory, 'ops.json'), JSON.stringify([regenerate('walk')]));
+  await writeFile(join(directory, 'build.json'), JSON.stringify({ version: 1, name: 'recipe', operations: 'ops.json', output: 'generated' }));
+  const failed = await failure(node(process.execPath, [resolve('scripts/agent-meshes.mjs'), 'build', join(directory, 'build.json'), '--no-preview'], { timeout: 60000, windowsHide: true }));
+  expect(failed.code).toBe(1);
+  const message = JSON.parse(failed.stdout || failed.stderr).error.message as string;
+  expect(message).toMatch(/no stored recipe/);
+  expect(message).not.toMatch(/not loaded/);
+}, 90000);
 
 it('works across CLI processes and reports RECIPE_STALE with the revision unchanged', async () => {
-  const run = promisify(execFile), directory = await mkdtemp(join(tmpdir(), 'mesh-regenerate-cli-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
-  const cli = async (...args: string[]) => JSON.parse((await run(process.execPath, [resolve('scripts/agent-meshes.mjs'), '--workspace', directory, ...args], { timeout: 30000, windowsHide: true })).stdout);
-  await cli('recipe', 'equine', '--gaits', 'walk,trot');
-  await cli('op', JSON.stringify(regenerate('walk', { lift: 0.15 })), '--quiet');
-  const state = await cli('state');
+  const directory = await scratch(), run = (...args: string[]) => cli(directory, ...args);
+  await run('recipe', 'equine', '--gaits', 'walk,trot');
+  await run('op', JSON.stringify(regenerate('walk', { lift: 0.15 })), '--quiet');
+  const state = await run('state');
   expect(state.project.recipe).toEqual({ kind: 'equine', options: { gaits, gaitParams: { walk: { lift: 0.15 } } } });
-  await cli('op', JSON.stringify({ op: 'remove', name: 'mane' }), '--quiet');
-  const before = (await cli('state')).revision;
-  try { await cli('op', JSON.stringify(regenerate('walk'))); throw new Error('Expected CLI failure'); }
-  catch (error) {
-    expect(error).toMatchObject({ code: 1 });
-    expect(JSON.parse((error as { stderr: string }).stderr).error).toMatchObject({ code: 'RECIPE_STALE' });
-  }
-  expect((await cli('state')).revision).toBe(before);
+  await run('op', JSON.stringify({ op: 'remove', name: 'mane' }), '--quiet');
+  const before = (await run('state')).revision;
+  const failed = await failure(run('op', JSON.stringify(regenerate('walk'))));
+  expect(failed.code).toBe(1);
+  expect(JSON.parse(failed.stderr).error).toMatchObject({ code: 'RECIPE_STALE' });
+  expect((await run('state')).revision).toBe(before);
 }, 90000);
