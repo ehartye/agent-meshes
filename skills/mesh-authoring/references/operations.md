@@ -174,7 +174,8 @@ keys make a seamless loop. Bones without a track stay at rest during playback.
 - `clip.key.set` also takes `"property":"scale"` with `[x,y,z]`, and `clip.key.record` poses take an
   optional `scale`; a recorded stored pose carries rotation only.
 - `clip.regenerate` rebuilds the clip `name` from the `recipe` stored on a project made by the `recipe` command, in
-  place (appended when no clip has that name), and replaces any tracks added to it, so `clip.clone` a hand-edited
+  place (appended when the recipe generates that name and the project has no such clip; a name the recipe does not
+  generate is refused, listing the ones it does), and replaces any tracks added to it, so `clip.clone` a hand-edited
   clip first. Optional `params` (`stride`, `lift`, `stance`, `bob`; biped, equine and vulpine) merge over the stored
   settings. It fails with `RECIPE_STALE`, changing nothing, when a recipe bone or part is missing or moved.
 - Only the tracks an operation names change; the rest stay identical. A batch of these is atomic
