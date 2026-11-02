@@ -253,12 +253,12 @@ function cellsOf(image: { rgba: Uint8Array; width: number; height: number }, cel
   }
   return out;
 }
-/** The pivot by projecting the ground point through a hand-built orthographic camera (dir-0, from +Z), not by the closed form in the source. */
+/** The pivot by projecting the ground point through a hand-built orthographic camera (dir-0, from +Z) with unit right and up axes, not by the closed form in the source. */
 function projectedGroundPixel(manifest: { cell: number; camera: { elevationDeg: number; halfExtentM: number; centreM: number[]; groundYM: number } }): { x: number; y: number } {
   const { elevationDeg, halfExtentM, centreM, groundYM } = manifest.camera, e = elevationDeg * Math.PI / 180;
   const back = [0, Math.sin(e), Math.cos(e)];                       // from the target toward the camera
-  const right = [back[2], 0, 0];                                    // world up x back, normalised: +X
-  const up = [back[1] * right[2] - back[2] * right[1], back[2] * right[0] - back[0] * right[2], back[0] * right[1] - back[1] * right[0]];
+  const right = [1, 0, 0];                                          // world up x back, normalised: +X
+  const up = [0, back[2], -back[1]];                                // back x right, unit length: (0, cos e, -sin e)
   const offset = [0, groundYM - centreM[1], 0];
   const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
   const sx = dot(offset, right) / halfExtentM, sy = dot(offset, up) / halfExtentM;
@@ -576,11 +576,7 @@ describe('a bake with a set scale', () => {
 
   it('writes the pivot where the set scale projects the ground point, and the manifest anchor agrees', async () => {
     const { atlas, manifest } = await bakeWith('c64-p40-feet', { cell: 64, pixelsPerMetre: 40, anchor: 'feet' });
-    // `projectedGroundPixel` above builds its right and up axes without normalising them, so both come out cos(15 degrees) too
-    // short and its row is off whenever the ground point falls near a pixel boundary; this case does, so project with unit axes.
-    const { elevationDeg, halfExtentM, centreM, groundYM } = manifest.camera, e = elevationDeg * Math.PI / 180;
-    const offsetY = groundYM - centreM[1], screenX = 0, screenY = offsetY * Math.cos(e) / halfExtentM; // the dot product with unit right (+X) and unit up (0, cos e, -sin e)
-    const expected = { x: Math.floor((1 + screenX) / 2 * manifest.cell), y: Math.floor((1 - screenY) / 2 * manifest.cell) };
+    const expected = projectedGroundPixel(manifest);
     expect(atlas.meta.slices![0].keys[0].pivot).toEqual(expected);
     expect(expected.y).toBe(Math.floor(32 + (manifest.camera.centreM[1] - manifest.camera.groundYM) * Math.cos(15 * Math.PI / 180) * 40));
     expect(manifest.anchor).toEqual({ name: 'feet', ...expected });
