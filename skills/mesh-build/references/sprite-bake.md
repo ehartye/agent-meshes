@@ -90,7 +90,7 @@ padding) whatever its size; the silhouette itself can be smaller.
   `cell / (2 * halfExtentM)` and round down. A lower value widens the frame; a higher one enlarges the sprites and can
   clip them ("A clipped cell").
 - **From a height.** An upright figure is about `height in metres * scale * 0.966` pixels tall, 0.966 being the vertical
-  metre above: a 1.8 m figure at a scale of 32 is about 55 pixels (1.8 * 32 * 0.966). The arm swing and other parts can
+  metre above: a 1.8 m figure at a scale of 32 is about 56 pixels (1.8 * 32 * 0.966). The arm swing and other parts can
   reach past the standing height, so check for `BAKE_CELL_CLIPPED` and raise `--cell` or lower the scale.
 - **Reading it back.** With the flag, `camera.pixelsPerMetre` in `manifest.json` is the exact value as parsed. Without
   it, `cell / (2 * halfExtentM)` gives the scale only approximately, because the manifest rounds `halfExtentM` to 6
