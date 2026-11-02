@@ -13,16 +13,22 @@ when a rigged model must show many facings; for a small cast, drawing sprites di
 mesh bake knight.glb --clip walk
 mesh bake knight.glb --clip walk --directions 4 --phases 6 --cell 64 --out art/knight
 mesh bake knight.glb --clip walk --palette art/dawnbringer16.hex --outline auto --look banded --anchor feet
+mesh bake knight.glb --clip walk --cell 64 --pixels-per-metre 32 --anchor feet --contact-sheet
 ```
 
 The README section "Sprite bake" lists the flags, defaults, ranges, output files and error codes; `mesh bake --help`
-is the authority. The success line is one JSON line: `output`, `files`, `size`, `frames`, `sheetSha256`, `atlasSha256`.
-Look at `sheet.png` before using it, at 1x and enlarged.
+is the authority. The success line is one JSON line: `output`, `files`, `size`, `frames`, `sheetSha256`, `atlasSha256`;
+`files` gains `contact` only with `--contact-sheet`. Look at `sheet.png` before using it, at 1x and enlarged, or add
+`--contact-sheet` and review the whole bake in one image.
+
+Two flags answer common requests. `--pixels-per-metre` gives a whole cast one sprite scale ("Sprite scale" below).
+`--contact-sheet` writes `contact.png`, the sheet enlarged 4 times for review ("Contact sheet" below).
 
 ## Palette, outline, look and anchor
 
-Four optional flags shape the sheet to a game's palette and sprite look. With none of them the sheet and atlas are
-byte-identical to the 0.37.0 output and the manifest differs only in `pluginVersion`.
+Four optional flags shape the sheet to a game's palette and sprite look. With none of the optional flags, these four and
+the scale and contact sheet after them, the sheet and atlas are byte-identical to the 0.39.2 output in the same
+environment, and the manifest differs only in `pluginVersion`.
 
 | Flag | Values | Default |
 | --- | --- | --- |
@@ -57,10 +63,60 @@ byte-identical to the 0.37.0 output and the manifest differs only in `pluginVers
   palette file or a bad palette line (named by line number), `--bands` without `--look banded`, `--outline auto`
   without `--palette`, an `--outline` colour not in the palette, or an `--anchor` other than `feet`.
 
+## Sprite scale
+
+`--pixels-per-metre <n>` sets the scale of the sprite instead of fitting the camera to each model. Use it when a cast
+must share one scale, so a 1.1 m goblin and a 1.8 m knight differ in height on screen by the ratio of their heights.
+Without it every model is fitted to its own cell and fills about 80 percent of it whatever its size.
+
+- **Value.** A number from 1 to 1024, decimals allowed (`24.5`); default none, which keeps the fitted camera. On the
+  command line it is plain digits with an optional fraction: `32`, `24.5` and `007` pass; `.5`, `5.`, `+5`, `1e2` and
+  `0x10` do not. Anything else, and any value below 1 or above 1024, is `CLI_ARGUMENT_ERROR` with
+  `--pixels-per-metre must be a number from 1 to 1024, got <value>`, raised before Chromium starts, with nothing written.
+- **Frame.** `half = cell / (2 * pixelsPerMetre)` metres each side of the rest-bounds centre, so `--cell 64
+  --pixels-per-metre 40` and `--cell 32 --pixels-per-metre 20` both give `halfExtentM` 0.8. The centre, camera distance,
+  near and far planes are computed as before.
+- **Vertical metre.** The scale is exact across the frame, in horizontal metres. A metre of height is drawn
+  `cos(15 degrees)`, about 0.966, as tall, so a game that reads the value as a height scale is off by about 3.4 percent.
+- **No padding.** The 1.25 padding is not applied, so a model that fills its cell touches the border. The manifest
+  still records `padding` 1.25; the real frame is `halfExtentM`.
+- **With `--cell`.** `--cell` fixes how many pixels the frame has and the scale fixes how many metres they cover.
+  Unlike the fitted bake, raising `--cell` with a set scale enlarges the frame in metres.
+- **A cast.** Bake every model with the same `--cell` and the same value. Each model is centred on its own rest bounds,
+  so add `--anchor feet` and give each sprite its own origin. The pivot follows the scale (it is computed from the
+  recorded `halfExtentM`), and `BAKE_ANCHOR_OUTSIDE` is still fixed by raising `--cell`.
+- **Choosing a value.** Bake the largest model plain, read `camera.halfExtentM` from its `manifest.json`, take
+  `cell / (2 * halfExtentM)` and round down. A lower value widens the frame; a higher one enlarges the sprites and can
+  clip them ("A clipped cell").
+- **Reading it back.** With the flag, `camera.pixelsPerMetre` in `manifest.json` is the exact value as parsed. Without
+  it, `cell / (2 * halfExtentM)` gives the scale only approximately, because the manifest rounds `halfExtentM` to 6
+  decimals (at 1024 with `--cell 8` it reads about 1024.06).
+
+## Contact sheet
+
+`--contact-sheet` is off by default. With it the bake writes a fourth file, `contact.png`, after the other three in the
+same folder, so one image shows the whole bake.
+
+- **Layout.** The finished sheet (after the palette and outline) with every cell scaled 4 times by nearest neighbour,
+  one row per direction and one column per phase, and a 4-pixel gutter of opaque mid-grey (128, 128, 128, 255) between
+  neighbouring cells and none around the grid. It is `phases * (4 * cell) + (phases - 1) * 4` pixels wide and
+  `directions * (4 * cell) + (directions - 1) * 4` tall: 1564 by 1564 at the defaults.
+- **Transparency.** Cell pixels are copied unchanged, so a transparent pixel stays 0, 0, 0, 0 and the viewer's own
+  background shows through the cell; the gutter marks the cell edges. There are no labels.
+- **Review only.** `contact.png` is not for the engine. It is not recorded in `manifest.json` or `atlas.json`, and the
+  `files` object of the success line lists it as `contact` only with the flag.
+- **Size limit.** At most 134,217,728 pixels (16384 by 8192). A larger image, such as `--cell 256 --directions 8
+  --phases 16` (16444 by 8220), is `CLI_ARGUMENT_ERROR` before Chromium starts; lower `--cell`, `--phases` or
+  `--directions`. The flag takes no value.
+- **Stale file.** A bake without the flag neither updates nor removes a `contact.png` an earlier bake left in the
+  folder, so the file may be out of date. Delete it yourself, or bake with the flag again.
+
 ## Fit and reduction
 
 - The camera is orthographic at 15 degrees elevation. It is fitted once, to the rest pose, as the largest square frame
-  over every direction with 1.25 padding, and never refitted per pose, so the scale is the same in every cell.
+  over every direction with 1.25 padding, and never refitted per pose, so the scale is the same in every cell. With
+  `--pixels-per-metre` nothing is fitted: the frame is set from the scale as in "Sprite scale", and it is still the same
+  in every cell.
 - Direction `k` is azimuth `k * 360 / directions` degrees, 0 looking from +Z toward the model. Phase `p` is rendered at
   `length * p / phases`; the end of the clip is not rendered, so a loop does not repeat its first pose.
 - Each cell is rendered at 8 times the cell size with no antialiasing, then reduced by taking the centre pixel of each
@@ -72,8 +128,10 @@ byte-identical to the 0.37.0 output and the manifest differs only in `pluginVers
 
 ## A clipped cell
 
-`BAKE_CELL_CLIPPED` means an opaque pixel touches a cell border, so a pose reaches outside the frame fitted to the
-rest pose. The message names the direction, phase and clip, and nothing is written. Fix it in this order:
+`BAKE_CELL_CLIPPED` means an opaque pixel touches a cell border, so a pose reaches outside the frame. The message names
+the direction, phase and clip, and nothing is written. Without `--pixels-per-metre` the frame was fitted to the rest
+pose, and the message ends "Keep the clip inside the rest bounds, or raise --cell if it only grazes the border". Fix it
+in this order:
 
 1. If the pose only grazes the border, raise `--cell`. The frame in metres does not change, but one border pixel then
    covers a smaller slice of it, so a pose that just reaches the edge can clear.
@@ -81,6 +139,15 @@ rest pose. The message names the direction, phase and clip, and nothing is writt
    bounds: reduce the swing of the named part at the named phase, or model the rest pose with that part extended so the
    fit includes the reach.
 3. Bake again.
+
+With `--pixels-per-metre` nothing was fitted and there is no padding, so the message names the set scale and ends
+"Lower --pixels-per-metre or raise --cell to widen the frame". Raising `--cell` here enlarges the frame in metres, so
+either change widens it:
+
+1. Lower `--pixels-per-metre`, which widens the frame in every cell. If the cast shares a scale, lower it for the whole
+   cast.
+2. Or raise `--cell`, keeping the scale, at the cost of a bigger sheet.
+3. If the pose reaches well past the rest bounds, reshape the clip as above. Bake again.
 
 ## Check the atlas with agent-sprites
 
@@ -107,13 +174,16 @@ Every bake error is a JSON error with a `code`:
 - `NO_CLIPS`: the GLB has no animation clip.
 - `BAKE_CLIP_EMPTY`: the clip has zero duration, so there are no phases to render. Pick another clip or re-export it
   with keys that span time.
-- `BAKE_CELL_CLIPPED`: an opaque pixel touches a cell border; see "A clipped cell". Nothing is written.
+- `BAKE_CELL_CLIPPED`: an opaque pixel touches a cell border; see "A clipped cell". With `--pixels-per-metre` the
+  message names the set scale and says to lower it or raise `--cell`. Nothing is written.
 - `BAKE_ANCHOR_OUTSIDE`: the `--anchor feet` pivot falls outside the cell. Raise `--cell` or leave `--anchor` out.
-- `CLI_ARGUMENT_ERROR`: a bad flag value, checked before Chromium starts; see "Argument errors" above.
+- `CLI_ARGUMENT_ERROR`: a bad flag value, checked before Chromium starts; see "Argument errors" above. It also covers a
+  `--pixels-per-metre` outside 1 to 1024 or not a number, and a `--contact-sheet` image over 134,217,728 pixels.
 
 ## What is guaranteed
 
-`atlas.json` depends only on the GLB and the flags and is the same everywhere, with no plugin version, timestamp or
-path (`manifest.json` holds the version). The sheet is byte-identical from run to run in one environment (same
-machine, Node and Chromium); the palette snap is deterministic for a given Node; pixels can differ on another GPU or Chrome build. Never commit a hash of the sheet as an
-expected value. In Phaser every tag loads with `repeat 0`, so the game sets its own looping.
+`atlas.json` depends only on the GLB and the flags and holds no plugin version, timestamp or path (`manifest.json`
+holds the version). The sheet is byte-identical from run to run in one environment (same machine, Node and Chromium),
+and so is `contact.png`, which is made from the sheet's bytes alone. Sheet pixels can differ on another GPU or Chrome
+build, so never commit a hash of the sheet as an expected value. In Phaser every tag loads with `repeat 0`, so the game
+sets its own looping.
