@@ -3,12 +3,15 @@
  */
 import { describe, expect, it } from 'vitest';
 import { AnimationMixer, Vector3 } from 'three';
+import { analyzeGait, loadGait } from '../src/gait-analysis.ts';
+import { exportGLB } from '../src/export.ts';
 import { createCreature, validateGaitOverride, type GaitParams } from '../src/recipes/index.ts';
 import { quadrupedGaits } from '../src/recipes/quadruped.ts';
 import { buildScene } from '../src/render/scene.ts';
 
 type Project = ReturnType<typeof createCreature>;
 const clip = (project: Project, name: string) => project.clips.find(c => c.name === name)!;
+const within = (actual: number, expected: number, tolerance: number) => expect(Math.abs(actual - expected)).toBeLessThan(tolerance);
 const rootRise = (project: Project, name: string) => Math.max(...clip(project, name).tracks.find(t => t.bone === 'root' && t.property === 'position')!.keys.map(k => k.value[1]));
 
 // The biped table is private to the recipe, so the values are repeated here to prove the override path is the only difference.
@@ -31,9 +34,41 @@ describe('defaults are unchanged (a regression in every recipe)', () => {
   });
 });
 
+describe('tuning leaves the shared gait tables alone (a tuned call must not change later default recipes)', () => {
+  // Every setting at a non-default value, for every gait of each body plan.
+  const tuning = { stride: 0.3, lift: 0.1, stance: 0.55, bob: 0.015 };
+  const cases = [
+    ['biped', ['walk', 'run']],
+    ['equine', ['walk', 'trot', 'gallop']],
+    ['vulpine', ['walk', 'trot', 'gallop']],
+  ] as const;
+  for (const [kind, gaits] of cases) it(`${kind}: a tuned call changes neither the tables nor the next default recipe`, () => {
+    const options = { gaits: [...gaits] };
+    const before = JSON.stringify(createCreature(kind, options));
+    const tables = structuredClone(quadrupedGaits);
+    const gaitParams = Object.fromEntries(gaits.map(gait => [gait, { ...tuning, ...(gait === 'run' ? { stride: 0.6 } : {}), ...(gait === 'gallop' ? { stride: 0.4, lift: 0.3, stance: 0.25, bob: 0.006 } : {}) }]));
+    // Negative control: the tuning really changes the recipe, so a leak would be visible in the comparison below.
+    expect(JSON.stringify(createCreature(kind, { ...options, gaitParams }))).not.toBe(before);
+    expect(quadrupedGaits).toEqual(tables);
+    expect(JSON.stringify(createCreature(kind, options))).toBe(before);
+  });
+});
+
 describe('biped settings', () => {
   it('bob is the amplitude: the trunk rises by twice the bob', () => {
     expect(rootRise(createCreature('biped', { gaitParams: { walk: { bob: 0.04 } } }), 'walk')).toBeCloseTo(0.08, 6);
+  });
+  // Measured as the gait command does, on the exported clip: the foot joint's height curve and the stride over stance.
+  const walkReport = async (gaitParams?: GaitParams) => analyzeGait(await loadGait(await exportGLB(createCreature('biped', { gaitParams }))), { clip: 'walk' });
+  it('lift raises the foot: the foot joint peak rises from 0.0904 to 0.1266', async () => {
+    const peak = async (gaitParams?: GaitParams) => Math.max(...(await walkReport(gaitParams)).curves.footHeightLeft);
+    within(await peak(), 0.0904, 0.002);
+    within(await peak({ walk: { lift: 0.2 } }), 0.1266, 0.002);
+  });
+  it('stance sets the stride over stance and the travel speed', async () => {
+    const { metrics } = await walkReport({ walk: { stance: 0.5 } });
+    within(metrics.stride.meters, 0.52 / 0.5, 0.02);
+    within(metrics.stride.travelSpeed, 0.52 / (0.5 * 1.2), 0.02);
   });
   it('--speed uses the effective stride and stance for the cycle length', () => {
     const project = createCreature('biped', { speed: 0.7, gaitParams: { walk: { stride: 0.4, stance: 0.5 } } });
@@ -75,12 +110,12 @@ describe('quadruped settings take effect where the table says (wrong tuning)', (
     expect(wider.range / base.range).toBeCloseTo(0.5 / table.stride, 2);
   });
   it('lift sets the hoof clearance', () => {
-    expect(base.peak).toBeCloseTo(table.lift, 2);
-    expect(foot('equine', 'walk', { walk: { lift: 0.15 } }).peak).toBeCloseTo(0.15, 2);
+    within(base.peak, table.lift, 0.002);
+    within(foot('equine', 'walk', { walk: { lift: 0.15 } }).peak, 0.15, 0.002);
   });
   it('stance sets the planted fraction of the cycle', () => {
     const shorter = foot('equine', 'walk', { walk: { stance: 0.6 } });
-    expect(shorter.fraction).toBeCloseTo(0.6, 1);
+    within(shorter.fraction, 0.621, 0.01);
     expect(shorter.fraction).toBeLessThan(base.fraction);
   });
   it('bob is the amplitude: the trunk rises by twice the bob', () => {
@@ -90,7 +125,7 @@ describe('quadruped settings take effect where the table says (wrong tuning)', (
     const own = quadrupedGaits.vulpine.walk, tuned = foot('vulpine', 'walk', { walk: { stride: 0.4, lift: 0.12 } });
     expect(foot('vulpine', 'walk').range / own.stride).toBeCloseTo(1, 1);
     expect(tuned.range / 0.4).toBeCloseTo(1, 1);
-    expect(tuned.peak).toBeCloseTo(0.12, 2);
+    within(tuned.peak, 0.12, 0.003);
   });
   it('a high gallop lift still validates and loops', () => {
     const gallop = clip(createCreature('equine', { gaits: ['gallop'], gaitParams: { gallop: { lift: 0.4 } } }), 'gallop');
