@@ -14,6 +14,8 @@ The [project contract card](existing-project-engagement.md) applies to all three
 
 R3F is the React integration layer; three.js owns mesh geometry and rendering. Do not add Blender merely to
 obtain instancing, or choose procedural geometry merely because the application uses React.
+For an R3F game that loads agent-meshes GLB parts, `agent-engine:engine-r3f` builds, structures, debugs and verifies
+it; it is not for choosing an engine or authoring the models.
 
 - **Prepared assets:** use the project's GLTFLoader/useGLTF path and required decoders. `useLoader` caches by URL;
   cached loading shares resources but does not itself instance rendering. Reuse geometry/materials deliberately.
