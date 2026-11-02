@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { nameSchema, vec3Schema } from './rig.ts';
 import { scaleSchema } from './animation.ts';
+import { regenerateFromRecipe } from './recipe-hook.ts';
 import type { Clip, Project, Quat, Track, Vec3 } from './types.ts';
 
 /** Targeted clip authoring: create, clone, rename and retime clips, and set, remove or record single keys without resending the clip. */
@@ -34,12 +35,16 @@ export const clipKeyRecordSchema = z.object({
   op: z.literal('clip.key.record'), name: nameSchema, time,
   bones: z.array(nameSchema).min(1).max(256).optional(), poses: z.array(poseSchema).min(1).max(256).optional(), endpoints,
 }).strict();
+/** The four gait settings of a recipe clip, in the units of the recipe gait tables; ranges are checked when the clip is rebuilt. */
+const gaitParamsSchema = z.object({ stride: z.number(), lift: z.number(), stance: z.number(), bob: z.number() }).partial().strict();
+export const clipRegenerateSchema = z.object({ op: z.literal('clip.regenerate'), name: nameSchema, params: gaitParamsSchema.optional() }).strict();
 export const clipOperationSchemas = {
   'clip.create': clipCreateSchema, 'clip.clone': clipCloneSchema, 'clip.rename': clipRenameSchema, 'clip.retime': clipRetimeSchema,
   'clip.key.set': clipKeySetSchema, 'clip.key.remove': clipKeyRemoveSchema, 'clip.key.record': clipKeyRecordSchema,
+  'clip.regenerate': clipRegenerateSchema,
 };
 export type ClipOperation = z.infer<typeof clipCreateSchema> | z.infer<typeof clipCloneSchema> | z.infer<typeof clipRenameSchema> | z.infer<typeof clipRetimeSchema>
-  | z.infer<typeof clipKeySetSchema> | z.infer<typeof clipKeyRemoveSchema> | z.infer<typeof clipKeyRecordSchema>;
+  | z.infer<typeof clipKeySetSchema> | z.infer<typeof clipKeyRemoveSchema> | z.infer<typeof clipKeyRecordSchema> | z.infer<typeof clipRegenerateSchema>;
 
 const EPSILON = 1e-6;
 function findClip(project: Project, name: string): Clip {
@@ -155,6 +160,13 @@ function recordKeys(project: Project, operation: z.infer<typeof clipKeyRecordSch
     if (pose.scale) writeKey(project, clip, bone, 'scale', at, pose.scale, operation.endpoints ?? 'free');
   }
 }
+/** Replace the named clip with its rebuilt form from the stored recipe (appended when the project has none of that name) and store the merged options; every other part of the project is untouched. */
+function regenerate(project: Project, operation: z.infer<typeof clipRegenerateSchema>): void {
+  const { clip, recipe } = regenerateFromRecipe(project, operation.name, operation.params);
+  const index = project.clips.findIndex(item => item.name === clip.name);
+  if (index < 0) project.clips.push(clip); else project.clips[index] = clip;
+  project.recipe = recipe;
+}
 
 /** Mutates the caller's clone; applyOperation validates the whole project afterwards, so a failed operation changes nothing. */
 export function applyClipOperation(project: Project, operation: ClipOperation): void {
@@ -166,5 +178,6 @@ export function applyClipOperation(project: Project, operation: ClipOperation): 
     case 'clip.key.set': return setKey(project, clipKeySetSchema.parse(operation));
     case 'clip.key.remove': return removeKey(project, clipKeyRemoveSchema.parse(operation));
     case 'clip.key.record': return recordKeys(project, clipKeyRecordSchema.parse(operation));
+    case 'clip.regenerate': return regenerate(project, clipRegenerateSchema.parse(operation));
   }
 }

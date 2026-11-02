@@ -8,6 +8,8 @@ import { poseTargetSchema } from './core/pose-target.ts';
 import { clipOperationSchemas } from './core/clip-ops.ts';
 import { controlOperationSchemas } from './core/subsystems.ts';
 import { ModelError } from './errors.ts';
+// Registers the clip.regenerate generator with core, which cannot import it; every path that applies user operations loads this module.
+import './recipes/regenerate.ts';
 import { lintProject } from './project-lint.ts';
 import type { BoneDef, Clip, GeometryKind, Operation, Part, Project } from './core/types.ts';
 
@@ -69,6 +71,7 @@ const examples: Record<Operation['op'], Operation[]> = {
   'clip.retime': [{ op: 'clip.retime', name: 'sway', duration: 1.5 }],
   'clip.key.set': [{ op: 'clip.key.set', name: 'idle', bone: 'root', property: 'rotation', time: 0.5, value: [0, 0, 0.258819, 0.965926], endpoints: 'free' }],
   'clip.key.remove': [{ op: 'clip.key.remove', name: 'idle', bone: 'root', property: 'rotation', time: 0.5 }],
+  'clip.regenerate': [{ op: 'clip.regenerate', name: 'walk' }, { op: 'clip.regenerate', name: 'walk', params: { stride: 0.4, lift: 0.2 } }],
   'clip.key.record': [{ op: 'clip.key.record', name: 'idle', time: 0.5, bones: ['root'] }, { op: 'clip.key.record', name: 'idle', time: 0, poses: [{ bone: 'root', rotation: [0, 0, 0.258819, 0.965926], position: [0, 0.05, 0] }], endpoints: 'loop' }],
   'control.hinge': [{ op: 'control.hinge', name: 'idle', bone: 'jaw', axis: 'x', from: 0, to: 20, cycles: 2, duration: 2 }, { op: 'control.hinge', name: 'open', bone: 'lid', axis: [1, 0, 0], from: 0, to: 90, mode: 'ramp', duration: 1 }],
   'control.spin': [{ op: 'control.spin', name: 'spin', bone: 'wheel', axis: 'z', turns: 3, duration: 3 }, { op: 'control.spin', name: 'spin', bone: 'prop', axis: [0, 0, 1], turns: -4, phase: 45, keysPerTurn: 12 }],
@@ -104,6 +107,7 @@ const descriptions: Record<Operation['op'], string> = {
   'clip.key.set': 'Insert or replace one key on a bone/property track at a time within 0 through the clip duration, creating the track if absent without touching other tracks. A rotation is normalized (any non-zero quaternion). endpoints "loop" copies a key at time 0 or the duration to the other end.',
   'clip.key.remove': 'Remove one interior key. Refuses to leave fewer than 2 keys or to remove the start or end key, which every track needs.',
   'clip.key.record': 'Write the current pose of bones at a time into their tracks, creating tracks if absent, without resending other tracks. bones (default all) record the stored pose rotation of each bone; poses give explicit rotation and position values (normalized) and override it. endpoints "loop" copies a key at time 0 or the duration to the other end.',
+  'clip.regenerate': 'Rebuild one clip of a recipe project (made by the recipe command) from its stored recipe, leaving parts, bones, shells and every other clip as they are; the clip takes its place in the clip list, or is appended when the project has no clip of that name. Optional params (any of stride, lift, stance, bob; stride, lift and bob in metres, stance a fraction of the cycle) are merged over the stored settings for that clip and stored with the recipe; biped, equine and vulpine recipes only. Tracks added by hand to that clip are replaced, so clip.clone it first to keep a hand-edited clip. Refused with code RECIPE_STALE, changing nothing, when the project no longer matches the recipe skeleton (a recipe bone or part missing or moved); refused when the project has no stored recipe or the recipe does not generate that clip.',
   'control.hinge': 'Bake a rotation track for bone about axis (x, y, z or a vector in the bone rest frame) between two angles in degrees, no quaternions to write. mode "swing" (default) goes from to to and back with a smooth cosine ease, repeated cycles times (default 1), ending where it began so the clip loops; mode "ramp" goes once from "from" to "to". Keys are added until none is more than a quarter turn from the next. name is the clip: an existing clip keeps its duration (duration must match or be omitted); a new clip needs duration. Replaces only the rotation track of that bone.',
   'control.spin': 'Bake continuous rotation: bone turns a whole number of turns (negative reverses) about axis over the clip duration, with phase degrees at the start. Keys come keysPerTurn per turn (4 to 360, default 8) with continuous quaternion signs, so repeated turns never reverse; the last pose is the first (an odd turn count ends on the negated quaternion, the same orientation). name is the clip; a new clip needs duration. Replaces only the rotation track of that bone.',
   'control.pulse': 'Bake a scale or position pulse that returns to rest: at each time (the centre) the property rises to peak and back over width seconds, smooth (half cosine, default) or triangle. property scale takes positive multipliers of the rest scale 1 (a blink is eyelid peak [1, 0.05, 1]); position takes an offset from rest (a jaw drop). Pulses must fit in the clip and not overlap. name is the clip; a new clip needs duration. Replaces only that bone and property.',
@@ -268,6 +272,7 @@ export function inspectProject(input: Project, selection?: string) {
     })),
     bones: project.bones.map(bone => ({ name: bone.name, parent: bone.parent })),
     clips: project.clips.map(clip => ({ name: clip.name, duration: clip.duration, tracks: clip.tracks.length, keys: clip.tracks.reduce((sum, track) => sum + track.keys.length, 0) })),
+    ...(project.recipe ? { recipe: { kind: project.recipe.kind } } : {}),
     ...(selected ? { selection: selected } : {}),
     ...withWarnings(project),
   };
@@ -346,7 +351,10 @@ export class OperationPlanError extends Error {
     this.name = 'OperationPlanError';
     this.operationIndex = operationIndex;
     this.op = op; this.part = part; this.field = field; this.value = value; this.hint = hint;
-    if (options.code) this.code = options.code;
+    // A stale recipe must reach the user as RECIPE_STALE; other codes raised inside an operation keep the generic report.
+    const causeCode = (cause as { code?: unknown } | null)?.code;
+    if (causeCode === 'RECIPE_STALE') this.code = causeCode;
+    else if (options.code) this.code = options.code;
     if (cause instanceof z.ZodError) this.issues = cause.issues;
   }
 }

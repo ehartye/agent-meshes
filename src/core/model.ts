@@ -137,7 +137,22 @@ export const shellSchema = z.object({
   /** Default true: member colours and ambient occlusion are baked into COLOR_0 and multiply the material colour. false exports no vertex colours, so the shell takes its one member colour from the material and matches a plain part of that colour and finish. */
   vertexColors: z.boolean().optional(),
 }).strict();
-export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]), shells: z.array(shellSchema).max(50).default([]) }).strict();
+const gaitSettingsSchema = z.object({ stride: z.number().min(0), lift: z.number().min(0), stance: z.number().gt(0).lt(1), bob: z.number().min(0) }).partial().strict();
+const clipNumbers = z.record(nameSchema, z.array(z.number().finite()).max(64));
+/** The recipe command's options as given, with empty values left out; gait settings are checked when a clip is rebuilt. */
+export const recipeOptionsSchema = z.object({
+  gaits: z.array(nameSchema).min(1).max(8),
+  speed: z.union([z.number().positive(), z.record(nameSchema, z.number().positive())]),
+  shell: z.boolean(),
+  gaitParams: z.record(nameSchema, gaitSettingsSchema),
+  legPhases: clipNumbers,
+  pairs: z.number().int().positive().max(5),
+  spacing: z.number().positive(),
+  patterns: clipNumbers,
+}).partial().strict();
+/** Which recipe made the project, so clip.regenerate can rebuild one clip; absent on projects not made by the recipe command. */
+export const recipeSchema = z.object({ kind: z.enum(['biped', 'equine', 'vulpine', 'insectoid', 'arachnid', 'strandbeest']), options: recipeOptionsSchema }).strict();
+export const projectSchema = z.object({ version: z.literal(1), name: z.string().trim().min(1).max(100), parts: z.array(partSchema).max(2000), bones: z.array(boneSchema).max(256).default([]), clips: z.array(clipSchema).max(100).default([]), shells: z.array(shellSchema).max(50).default([]), recipe: recipeSchema.optional() }).strict();
 const shapeOptionKeys = ['profileUnits', 'corners', 'angleRange', 'startAngle', 'outlineUnits', 'axis', 'bevel'] as const;
 /** The shell's signed-distance fields model the default unit shapes only. */
 function checkShellShape(shell: Shell, part: Part): void {
@@ -262,7 +277,7 @@ export function applyOperation(project: Project, operation: Operation): Project 
       break;
     }
     case 'clip.create': case 'clip.clone': case 'clip.rename': case 'clip.retime':
-    case 'clip.key.set': case 'clip.key.remove': case 'clip.key.record':
+    case 'clip.key.set': case 'clip.key.remove': case 'clip.key.record': case 'clip.regenerate':
       applyClipOperation(next, operation); break;
     case 'control.hinge': case 'control.spin': case 'control.pulse': case 'control.couple':
       applyControlOperation(next, operation); break;
