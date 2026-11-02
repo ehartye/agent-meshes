@@ -10,6 +10,7 @@ import { decodePng, encodePng } from './png.ts';
 import { viewerScript } from './preview-html.ts';
 import { assertSheetSpec, buildAtlas, buildManifest, checkAtlasContract, serializeAtlas, SPRITE_ATLAS_IMAGE, type SheetSpec, type SlicePivot } from './sprite-atlas.ts';
 import { lookScript, parseBands, parseLook, type SpriteLook } from './sprite-look.ts';
+import { CONTACT_MAX_PIXELS, composeContactSheet, contactSize } from './sprite-contact.ts';
 import { outlineCell } from './sprite-outline.ts';
 import { darkestColor, paletteManifest, readPalette, snapToPalette, type Palette } from './sprite-palette.ts';
 
@@ -23,6 +24,7 @@ import { darkestColor, paletteManifest, readPalette, snapToPalette, type Palette
  * outer ring fails the whole bake (`BAKE_CELL_CLIPPED`) and nothing is written.
  *
  * With `pixelsPerMetre` the half extent is set from the scale (`cell / (2 * pixelsPerMetre)`, no padding) instead of fitted.
+ * With `contactSheet` a fourth file, `contact.png`, is written after the three: the sheet scaled 4 times for review (see sprite-contact.ts).
  *
  * Optional passes, all off by default (a bake with none of them is the 0.37.0 output): `look` (`unlit` or `banded`)
  * replaces the room lighting before the fit; after the border check `palette` snaps every opaque pixel to the palette,
@@ -41,6 +43,7 @@ export const BAKE_ELEVATION_DEG = 15;
 export const BAKE_PADDING = 1.25;
 const ALPHA_THRESHOLD = 128;
 const OUTPUT_NAMES = { sheet: SPRITE_ATLAS_IMAGE, atlas: 'atlas.json', manifest: 'manifest.json' } as const;
+const CONTACT_NAME = 'contact.png';
 
 export interface BakeOptions {
   clip: string;
@@ -64,17 +67,19 @@ export interface BakeOptions {
   anchor?: string;
   /** Sets the sprite scale instead of fitting the camera: a number (or numeric text) from 1 to 1024; default none (fitted). */
   pixelsPerMetre?: number | string;
+  /** `true` also writes `contact.png`, the sheet scaled 4 times with a grey gutter between cells, for review; `false` is the same as unset. */
+  contactSheet?: boolean;
 }
 export interface BakeSettings {
   clip: string; directions: number; phases: number; cell: number; out?: string;
   /** Each of these is set only when the matching option was given. */
-  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet'; pixelsPerMetre?: number;
+  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet'; pixelsPerMetre?: number; contactSheet?: true;
 }
 export interface BakeResult {
   /** Absolute output folder. */
   output: string;
-  /** The three files, relative to `output`. */
-  files: { sheet: string; atlas: string; manifest: string };
+  /** The files, relative to `output`: the three of the bake, and `contact` only with `contactSheet`. */
+  files: { sheet: string; atlas: string; manifest: string; contact?: string };
   size: { w: number; h: number };
   frames: number;
   sheetSha256: string;
@@ -131,6 +136,13 @@ export function parseBakeOptions(options: BakeOptions): BakeSettings {
     settings.outlineColor = [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
   }
   if (options.pixelsPerMetre !== undefined) settings.pixelsPerMetre = pixelsPerMetreOption(options.pixelsPerMetre);
+  if (options.contactSheet !== undefined && typeof options.contactSheet !== 'boolean') throw code(`--contact-sheet takes no value (contactSheet is true or false), got ${String(options.contactSheet)}`, 'CLI_ARGUMENT_ERROR');
+  if (options.contactSheet) {
+    const { width, height } = contactSize(settings);
+    if (width * height > CONTACT_MAX_PIXELS)
+      throw code(`--contact-sheet would make an image of ${width} by ${height} pixels, over the ${CONTACT_MAX_PIXELS} pixel limit (16384 by 8192). Lower --cell, --phases or --directions, or leave --contact-sheet out.`, 'CLI_ARGUMENT_ERROR');
+    settings.contactSheet = true;
+  }
   if (options.anchor !== undefined) {
     if (options.anchor !== 'feet') throw code(`--anchor must be feet, got ${options.anchor}`, 'CLI_ARGUMENT_ERROR');
     settings.anchor = 'feet';
@@ -300,6 +312,9 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const problems = checkAtlasContract(atlas, { sheet: { width, height }, expectedTags: Array.from({ length: directions }, (_, k) => `dir-${k}`) });
   if (problems.length) throw code(`The generated atlas breaks the atlas contract: ${problems.join('; ')}`, 'BAKE_ATLAS_INVALID');
   const png = encodePng(width, height, sheet), atlasText = serializeAtlas(atlas);
+  // The review image is built from the same buffer as the sheet and before any file is written, so a failure still writes nothing.
+  const contact = settings.contactSheet ? composeContactSheet(sheet, { cell, directions, phases }) : undefined;
+  const contactPng = contact ? encodePng(contact.width, contact.height, contact.rgba) : undefined;
   const sheetSha256 = sha256(png), atlasSha256 = sha256(atlasText);
   const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   const manifest = buildManifest({
@@ -316,5 +331,6 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   await writeFile(join(output, OUTPUT_NAMES.sheet), png);
   await writeFile(join(output, OUTPUT_NAMES.atlas), atlasText);
   await writeFile(join(output, OUTPUT_NAMES.manifest), `${JSON.stringify(manifest, null, 1)}\n`);
-  return { output, files: { ...OUTPUT_NAMES }, size: { w: width, h: height }, frames: atlas.frames.length, sheetSha256, atlasSha256 };
+  if (contactPng) await writeFile(join(output, CONTACT_NAME), contactPng);
+  return { output, files: { ...OUTPUT_NAMES, ...(contactPng ? { contact: CONTACT_NAME } : {}) }, size: { w: width, h: height }, frames: atlas.frames.length, sheetSha256, atlasSha256 };
 }

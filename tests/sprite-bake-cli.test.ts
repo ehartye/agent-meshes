@@ -361,3 +361,58 @@ describe('agent-meshes bake with --pixels-per-metre', () => {
     for (const text of ['--pixels-per-metre <n>', 'from 1 to 1024', 'Lower --pixels-per-metre or raise --cell to widen the frame', '0.966', 'before Chromium starts']) expect(help).toContain(text);
   });
 });
+
+// The 0.40.0 flag --contact-sheet, through the real entry point.
+describe('agent-meshes bake with --contact-sheet', () => {
+  it('writes contact.png beside the three files, lists it last in files, and decodes to the 4 times grid of the sheet', async () => {
+    const dir = outDir();
+    const outcome = await bake(glbPath, '--clip', 'sway', '--directions', '2', '--phases', '3', '--cell', '16', '--contact-sheet', '--out', dir);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(await list(dir)).toEqual(['atlas.json', 'contact.png', 'manifest.json', 'sheet.png']);
+    const lines = outcome.stdout.trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const result = JSON.parse(lines[0]);
+    expect(Object.keys(result)).toEqual(['output', 'files', 'size', 'frames', 'sheetSha256', 'atlasSha256']);
+    expect(result.files).toEqual({ sheet: 'sheet.png', atlas: 'atlas.json', manifest: 'manifest.json', contact: 'contact.png' });
+    expect(Object.keys(result.files)).toEqual(['sheet', 'atlas', 'manifest', 'contact']);
+
+    const sheet = decodePng(await readFile(join(dir, 'sheet.png'))), contact = decodePng(await readFile(join(dir, 'contact.png')));
+    expect([contact.width, contact.height]).toEqual([200, 132]);
+    const at = (image: { rgba: Uint8Array; width: number }, x: number, y: number) => [...image.rgba.subarray((y * image.width + x) * 4, (y * image.width + x) * 4 + 4)];
+    for (let row = 0; row < 2; row++) for (let column = 0; column < 3; column++) for (let y = 0; y < 68; y++) for (let x = 0; x < 68; x++) {
+      const expected = x >= 64 || y >= 64 ? [128, 128, 128, 255] : at(sheet, column * 16 + Math.floor(x / 4), row * 16 + Math.floor(y / 4));
+      // The last column and row have no gutter after them.
+      if ((x >= 64 && column === 2) || (y >= 64 && row === 1)) continue;
+      expect(at(contact, column * 68 + x, row * 68 + y), `cell ${row},${column} at ${x},${y}`).toEqual(expected);
+    }
+  }, 120_000);
+
+  it('leaves sheet.png, atlas.json and manifest.json byte-identical to the same bake without the flag, with neither key in the manifest or atlas', async () => {
+    const withFlag = outDir(), without = outDir(), args = ['--clip', 'sway', '--directions', '2', '--phases', '2', '--cell', '16'];
+    expect((await bake(glbPath, ...args, '--contact-sheet', '--out', withFlag)).code).toBe(0);
+    const plain = await bake(glbPath, ...args, '--out', without);
+    expect(plain.code, plain.stderr).toBe(0);
+    expect(await list(without)).toEqual(['atlas.json', 'manifest.json', 'sheet.png']);
+    expect(JSON.parse(plain.stdout).files).toEqual({ sheet: 'sheet.png', atlas: 'atlas.json', manifest: 'manifest.json' });
+    const a = await readOutput(withFlag), b = await readOutput(without);
+    expect(a.sheet.equals(b.sheet) && a.atlas.equals(b.atlas) && a.manifest.equals(b.manifest)).toBe(true);
+    for (const text of [a.atlas.toString('utf8'), a.manifest.toString('utf8')]) { expect(text).not.toContain('contact'); expect(text).not.toContain('pixelsPerMetre'); }
+  }, 120_000);
+
+  it('refuses a contact sheet over the bound before Chromium starts and writes nothing', async () => {
+    const dir = outDir(), started = Date.now();
+    const outcome = await bake(glbPath, '--clip', 'sway', '--cell', '256', '--directions', '8', '--phases', '16', '--contact-sheet', '--out', dir);
+    expect(outcome.code).toBe(1);
+    expect(outcome.stdout).toBe('');
+    expect(failure(outcome).ok).toBe(false);
+    expect(failure(outcome).error.code).toBe('CLI_ARGUMENT_ERROR');
+    expect(failure(outcome).error.message).toMatch(/--contact-sheet.*16444 by 8220.*--cell/);
+    expect(await list(dir)).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(30_000);
+  }, 120_000);
+
+  it('states the flag, the file, the layout, the bound and the early check in its help', async () => {
+    const help = (await run(process.execPath, [script, 'bake', '--help'], { windowsHide: true })).stdout.replace(/\s+/g, ' ');
+    for (const text of ['--contact-sheet', 'contact.png', '4 times', '4-pixel', 'transparent', 'There are no labels', '134217728', 'before Chromium starts', 'same bytes with and without it']) expect(help).toContain(text);
+  });
+});
