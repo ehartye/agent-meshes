@@ -81,4 +81,5 @@ more than four models, no clip name, or a clip missing from a model stops it wit
 `jog_duration` is given, at 60 Hz with identical loop endpoints (durations 0.6 to 3 s; 20 bones, all but `head` prefixed `rig-`).
 `face_project.py` with `face-project.build.json` adds the living `arkit-face/1` head to that rig (see
 [arkit-face](arkit-face.md)). Their bindings are specific to the recipe's own part names. Details and tests are in
-`recipes/README.md`.
+`recipes/README.md`. These Blender scripts take neither `recipe --gait-params` nor `clip.regenerate`, which work on
+a project made by the `recipe` command.

@@ -108,6 +108,21 @@ are in [operations](../mesh-authoring/references/operations.md#clips).
   a centimeter of ground; the puppet API in [mesh-build](../mesh-build/SKILL.md) can do it.
 - Order the footfalls: walk is a four-beat lateral sequence, trot pairs diagonals, gallop has a
   suspension phase. The quadruped recipes carry all three (`--gaits walk,trot,gallop`).
+- Tune a recipe gait with `recipe <biped|equine|vulpine> --gait-params '{"walk":{"stride":0.4,"lift":0.2}}'`: per gait,
+  any of `stride`, `lift` and `bob` (metres) and `stance` (a fraction of the cycle, above 0 and below 1, below 0.6 on a
+  gallop). A setting you give replaces the table value for that gait; the rest keep theirs, and no option is the same
+  recipe as before. `bob` is an amplitude: the trunk rises by twice it. The quadruped cycle length stays fixed and the
+  biped keeps its table cycle unless `--speed` is given, so design speed is `stride / (stance × duration)` and moves
+  with `stride` and `stance`. Insectoid, arachnid and strandbeest refuse the option, and the Blender `stylized_walk.py`
+  character does not take it. A leg that cannot reach is refused, naming `gait-params <gait>.<setting>`. With the other
+  settings at their table values the largest `stride` is about 0.86 (biped walk and run), 0.72 (equine walk) and 0.54
+  (vulpine walk); lowering `stance` or raising `lift` or `bob` lowers it. Measure a biped result with `mesh gait`.
+- Rebuild one clip of a recipe project with `{"op":"clip.regenerate","name":"walk","params":{"stride":0.4}}`; `params` is
+  optional, merges over the stored settings and is stored. It works because `recipe` keeps `recipe: {kind, options}` on
+  the project; a project from `new` has none and is refused. Parts, bones and other clips stay as they are, and tracks
+  added by hand to that clip are replaced, so `clip.clone` a hand-edited clip first. When a recipe bone has changed or
+  gone, or a recipe part is missing, the operation fails with `RECIPE_STALE` and changes nothing; extra bones and
+  parts, recolouring and a changed `pose` are fine. Start a new recipe, or edit the clip with the clip operations.
 - Keep joint ranges anatomical. A knee that bends forward or a hoof that passes through the
   shin reads wrong even in a contact sheet.
 
