@@ -108,13 +108,14 @@ export async function main(args = process.argv): Promise<void> {
   program.command('recipe <kind>').description('Load biped, equine, vulpine, insectoid, arachnid or strandbeest (quadruped aliases vulpine)')
     .option('--gaits <list>', 'Comma-separated clips: walk, trot, gallop for equine or vulpine (default walk,trot); walk, run for biped (default walk)')
     .option('--speed <value>', 'Biped: travel speed in m/s the stance foot is planted at, for every clip (0.99) or per clip as JSON ({"walk":0.99,"run":3.5})')
+    .option('--gait-params <json>', 'Biped, equine or vulpine: JSON object of gait name to any of stride, lift, stance, bob replacing the table value for that gait, e.g. {"walk":{"stride":0.4,"lift":0.2}}; stride, lift and bob are metres, stance is a fraction of the cycle (more than 0, less than 1; below 0.6 on a gallop)')
     .option('--shell', 'Equine or vulpine: blend every part into one smooth skin with lathe hooves')
     .option('--leg-phases <json>', 'Insectoid: JSON object of clip name to six touchdown phases (0 to 1) in leg order L1 L2 L3 R1 R2 R3')
     .option('--pairs <count>', 'Strandbeest: crank positions on the crankshaft, four legs each (default 3, at most 5)')
     .option('--spacing <meters>', 'Strandbeest: distance between crank positions (default 0.42)')
     .option('--patterns <json>', 'Strandbeest: JSON object of clip name to one crank offset (0 to 1) per crank position').action(async (kind, options) => {
     const { createCreature } = await import('./recipes/index.ts');
-    await request('project', createCreature(kind, { ...(options.gaits ? { gaits: String(options.gaits).split(',').map((g: string) => g.trim()) } : {}), ...(options.shell ? { shell: true } : {}), ...(options.speed ? { speed: /^\s*[{]/.test(String(options.speed)) ? JSON.parse(String(options.speed)) : Number(options.speed) } : {}), ...(options.legPhases ? { legPhases: JSON.parse(String(options.legPhases)) } : {}), ...(options.pairs ? { pairs: Number(options.pairs) } : {}), ...(options.spacing ? { spacing: Number(options.spacing) } : {}), ...(options.patterns ? { patterns: JSON.parse(String(options.patterns)) } : {}) }));
+    await request('project', createCreature(kind, { ...(options.gaits ? { gaits: String(options.gaits).split(',').map((g: string) => g.trim()) } : {}), ...(options.gaitParams ? { gaitParams: JSON.parse(String(options.gaitParams)) } : {}), ...(options.shell ? { shell: true } : {}), ...(options.speed ? { speed: /^\s*[{]/.test(String(options.speed)) ? JSON.parse(String(options.speed)) : Number(options.speed) } : {}), ...(options.legPhases ? { legPhases: JSON.parse(String(options.legPhases)) } : {}), ...(options.pairs ? { pairs: Number(options.pairs) } : {}), ...(options.spacing ? { spacing: Number(options.spacing) } : {}), ...(options.patterns ? { patterns: JSON.parse(String(options.patterns)) } : {}) }));
   });
   program.command('state').action(() => request('project'));
   program.command('op <json>').action(json => request('op', JSON.parse(json)));

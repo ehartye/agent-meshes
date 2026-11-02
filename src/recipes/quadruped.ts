@@ -56,7 +56,24 @@ export const quadrupedGaits: Record<Species, Record<string, GaitSettings>> = {
 };
 export const defaultQuadrupedGaits = ['walk', 'trot'] as const;
 
-export interface QuadrupedOptions { /** Smooth body skin; equine hair, ears and hard hooves retain distinct geometry. */ shell?: boolean }
+/** The four settings a recipe caller may replace per gait, in the units of the gait tables: stride, lift and bob in metres, stance as a fraction of the cycle. */
+export const gaitSettings = ['stride', 'lift', 'stance', 'bob'] as const;
+export type GaitSetting = typeof gaitSettings[number];
+export type GaitOverride = Partial<Record<GaitSetting, number>>;
+/** Run a leg solve; when the caller replaced gait settings for this clip, an unreachable target is rethrown naming them. */
+export function withGaitContext<T>(species: string, clip: string, given: GaitOverride | undefined, solve: () => T): T {
+  const entries = Object.entries(given ?? {});
+  if (!entries.length) return solve();
+  try { return solve(); } catch (error) {
+    const named = entries.map(([setting, value]) => `gait-params ${clip}.${setting}=${value}`).join(', ');
+    throw new Error(`Cannot build the ${species} ${clip} clip with ${named}: ${(error as Error).message}. Reduce stride, lift or bob`, { cause: error });
+  }
+}
+
+export interface QuadrupedOptions {
+  /** Smooth body skin; equine hair, ears and hard hooves retain distinct geometry. */ shell?: boolean;
+  /** Validated per-gait replacements of stride, lift, stance and bob; settings not given keep the table value. */ gaitParams?: Record<string, GaitOverride>;
+}
 export function createQuadruped(species: Species, name: string, gaits: readonly string[] = defaultQuadrupedGaits, options: QuadrupedOptions = {}): Project {
   for (const gait of gaits) if (!Object.hasOwn(quadrupedGaits[species], gait)) throw new Error(`Unknown ${species} gait: ${gait}`);
   const horse = species === 'equine';
@@ -103,7 +120,8 @@ export function createQuadruped(species: Species, name: string, gaits: readonly 
   // The trunk pitches about the midpoint of shoulders and hips, not the ground origin, so the body does not lurch.
   const pivot = v(legs[0].points[0]).add(v(legs[1].points[0])).multiplyScalar(0.5).setX(0);
   for (const gait of gaits) {
-    const settings = quadrupedGaits[species][gait];
+    const given = options.gaitParams?.[gait];
+    const settings = { ...quadrupedGaits[species][gait], ...given };
     const tracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }, ...(settings.pitch ? [{ bone: 'root', property: 'rotation' as const, keys: [] }] : []), ...legs.flatMap(leg => leg.names.map(bone => ({ bone, property: 'rotation' as const, keys: [] }))), { bone: 'head', property: 'rotation', keys: [] }, { bone: 'tail', property: 'rotation', keys: [] }];
     // The flight window: after the last foot leaves until the first foot lands again.
     const flightStart = Math.max(...Object.values(settings.footfall)) + settings.stance, flightEnd = Math.min(...Object.values(settings.footfall)) + 1;
@@ -145,7 +163,7 @@ export function createQuadruped(species: Species, name: string, gaits: readonly 
         const lowerOffset = v(points[3]).sub(v(points[2])).applyQuaternion(distal);
         if (horse) lowerOffset.add(v(points[4]).sub(v(points[3])).applyQuaternion(pastern));
         const middleTarget = target.clone().sub(lowerOffset);
-        const solved = solveLeg(points[0], points[1], points[2], tuple(middleTarget), [0, 0, front ? -1 : 1]);
+        const solved = withGaitContext(species, gait, given, () => solveLeg(points[0], points[1], points[2], tuple(middleTarget), [0, 0, front ? -1 : 1]));
         const parent = new Quaternion().fromArray(solved.upper).multiply(new Quaternion().fromArray(solved.lower));
         const values: Quat[] = [solved.upper, solved.lower, parent.invert().multiply(distal).toArray() as Quat];
         if (horse) values.push(distal.clone().invert().multiply(pastern).toArray() as Quat);
