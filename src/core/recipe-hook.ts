@@ -5,7 +5,7 @@ import type { Clip, Project, RecipeIntent } from './types.ts';
  * the generators on demand. The generator module registers itself here when it is imported; clip.regenerate calls
  * through this slot, and fails with a clear message when nothing has registered.
  */
-export type GaitSettingsInput = { stride?: number; lift?: number; stance?: number; bob?: number };
+export type GaitSettingsInput = { stride?: number; lift?: number; stance?: number; bob?: number; duration?: number };
 /** Rebuilds the named clip from the project's stored recipe, or throws; it must not change `project`. */
 export type RecipeRegenerator = (project: Project, name: string, params: GaitSettingsInput | undefined) => { clip: Clip; recipe: RecipeIntent };
 

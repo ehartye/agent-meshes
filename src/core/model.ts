@@ -137,7 +137,7 @@ export const shellSchema = z.object({
   /** Default true: member colours and ambient occlusion are baked into COLOR_0 and multiply the material colour. false exports no vertex colours, so the shell takes its one member colour from the material and matches a plain part of that colour and finish. */
   vertexColors: z.boolean().optional(),
 }).strict();
-const gaitSettingsSchema = z.object({ stride: z.number().min(0), lift: z.number().min(0), stance: z.number().gt(0).lt(1), bob: z.number().min(0) }).partial().strict();
+const gaitSettingsSchema = z.object({ stride: z.number().min(0), lift: z.number().min(0), stance: z.number().gt(0).lt(1), bob: z.number().min(0), duration: z.number().min(0.3).max(4) }).partial().strict();
 const clipNumbers = z.record(nameSchema, z.array(z.number().finite()).max(64));
 /** The recipe command's options as given, with empty values left out; gait settings are checked when a clip is rebuilt. */
 export const recipeOptionsSchema = z.object({

@@ -71,7 +71,7 @@ export type RecipeKind = 'biped' | 'equine' | 'vulpine' | 'insectoid' | 'arachni
 /** The settings a recipe was made with, kept so one clip can be rebuilt later; empty values are left out. */
 export interface RecipeOptions {
   gaits?: string[]; speed?: number | Record<string, number>; shell?: boolean;
-  gaitParams?: Record<string, { stride?: number; lift?: number; stance?: number; bob?: number }>;
+  gaitParams?: Record<string, { stride?: number; lift?: number; stance?: number; bob?: number; duration?: number }>;
   legPhases?: Record<string, number[]>; pairs?: number; spacing?: number; patterns?: Record<string, number[]>;
 }
 /** Which recipe made the project and with which options. Only the recipe command writes it, and clip.regenerate reads it. */

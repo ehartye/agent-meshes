@@ -5,6 +5,13 @@ import { defaultQuadrupedGaits } from './quadruped.ts';
 
 type RecipeKindInput = CreatureKind | 'quadruped' | 'strandbeest';
 const filled = (value: object | undefined) => value !== undefined && Object.keys(value).length > 0;
+/** The clip names a recipe generates when its options name none; the gait settings of a stored recipe are keyed by these. The insectoid, arachnid and strandbeest entries keep the quadruped default until they take gait settings. */
+function defaultGaits(kind: RecipeKindInput): readonly string[] {
+  switch (kind) {
+    case 'biped': return ['walk'];
+    default: return defaultQuadrupedGaits;
+  }
+}
 
 /** The recipe command's options as the project stores them: values given, empty ones left out, gait settings in their validated form, `quadruped` stored as `vulpine`. */
 export function recipeIntent(kind: RecipeKindInput, options: CreatureOptions = {}): RecipeIntent {
@@ -13,8 +20,7 @@ export function recipeIntent(kind: RecipeKindInput, options: CreatureOptions = {
   if (typeof options.speed === 'number' || filled(options.speed)) stored.speed = structuredClone(options.speed)!;
   if (options.shell) stored.shell = true;
   if (options.gaitParams !== undefined) {
-    const gaits = options.gaits ?? (kind === 'biped' ? ['walk'] : defaultQuadrupedGaits);
-    const params = validateGaitParams(options.gaitParams, gaits);
+    const params = validateGaitParams(options.gaitParams, options.gaits ?? defaultGaits(kind), kind);
     if (filled(params)) stored.gaitParams = params;
   }
   if (filled(options.legPhases)) stored.legPhases = structuredClone(options.legPhases)!;

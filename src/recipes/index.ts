@@ -30,16 +30,22 @@ type BipedGait = { name: string; stride: number; lift: number; stance: number; d
 export type { GaitOverride, GaitSetting } from './quadruped.ts';
 export type GaitParams = Record<string, GaitOverride>;
 const describe = (value: unknown) => typeof value === 'object' ? JSON.stringify(value) : typeof value === 'string' ? JSON.stringify(value) : String(value);
-/** Validate one gait's replacement settings. Every message names the setting as `gait-params <gait>.<setting>`; the limits are the ones footPath enforces plus the gallop flight window (stance below 0.6). Returns only the settings that were given. */
-export function validateGaitOverride(gait: string, entry: unknown): GaitOverride {
-  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new Error(`gait-params ${gait} must be an object with any of ${gaitSettings.join(', ')}, received ${describe(entry)}`);
+/** The cycle time bounds in seconds, shared with the biped's --speed guard. */
+const cycleBounds = [0.3, 4] as const;
+/** Validate one gait's replacement settings. Every message names the setting as `gait-params <gait>.<setting>`; the limits are the ones footPath enforces plus the gallop flight window (stance below 0.6) and a cycle time of 0.3 to 4 s. `kind` is optional: with the biped, `duration` is refused and left out of the setting list. Returns only the settings that were given. */
+export function validateGaitOverride(gait: string, entry: unknown, kind?: string): GaitOverride {
+  const settings = kind === 'biped' ? gaitSettings.filter(setting => setting !== 'duration') : gaitSettings;
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new Error(`gait-params ${gait} must be an object with any of ${settings.join(', ')}, received ${describe(entry)}`);
   const result: GaitOverride = {};
   for (const [setting, value] of Object.entries(entry)) {
     const name = `gait-params ${gait}.${setting}`;
-    if (!(gaitSettings as readonly string[]).includes(setting)) throw new Error(`${name} is not a gait setting; the settings are ${gaitSettings.join(', ')}`);
+    if (!(gaitSettings as readonly string[]).includes(setting)) throw new Error(`${name} is not a gait setting; the settings are ${settings.join(', ')}`);
+    if (setting === 'duration' && kind === 'biped') throw new Error(`${name} is not accepted for the biped; set the pace with --speed`);
     if (value === undefined) continue;
     if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`${name} must be a finite number, received ${describe(value)}`);
-    if (setting === 'stance') {
+    if (setting === 'duration') {
+      if (value < cycleBounds[0] || value > cycleBounds[1]) throw new Error(`${name} must be from ${cycleBounds[0]} to ${cycleBounds[1]} (seconds per cycle), received ${value}`);
+    } else if (setting === 'stance') {
       if (value <= 0 || value >= 1) throw new Error(`${name} must be greater than 0 and less than 1 (a fraction of the cycle), received ${value}`);
       if (gait === 'gallop' && value >= 0.6) throw new Error(`${name} must be below 0.6 on a gallop, or the flight phase closes, received ${value}`);
     } else if (value < 0) throw new Error(`${name} must be zero or more (metres), received ${value}`);
@@ -47,20 +53,20 @@ export function validateGaitOverride(gait: string, entry: unknown): GaitOverride
   }
   return result;
 }
-/** Validate the whole `gaitParams` option against the gaits being generated; entries with no settings are dropped. */
-export function validateGaitParams(params: unknown, gaits: readonly string[]): GaitParams {
+/** Validate the whole `gaitParams` option against the gaits being generated; entries with no settings are dropped. `kind` is optional and is passed to validateGaitOverride. */
+export function validateGaitParams(params: unknown, gaits: readonly string[], kind?: string): GaitParams {
   if (typeof params !== 'object' || params === null || Array.isArray(params)) throw new Error(`gait-params must be a JSON object keyed by gait name, received ${describe(params)}`);
   const result: GaitParams = {};
   for (const [gait, entry] of Object.entries(params)) {
     if (!gaits.includes(gait)) throw new Error(`gait-params names the clip ${gait}, which is not among the gaits being generated (${gaits.join(', ')})`);
-    const override = validateGaitOverride(gait, entry);
+    const override = validateGaitOverride(gait, entry, kind);
     if (Object.keys(override).length) result[gait] = override;
   }
   return result;
 }
 function bipedGaitPlan(gaits: readonly string[] = ['walk'], speed?: number | Record<string, number>, gaitParams?: unknown): BipedGait[] {
   const known = Object.keys(bipedGaits);
-  const overrides = gaitParams === undefined ? {} : validateGaitParams(gaitParams, gaits);
+  const overrides = gaitParams === undefined ? {} : validateGaitParams(gaitParams, gaits, 'biped');
   if (speed !== undefined && typeof speed === 'object') for (const name of Object.keys(speed)) if (!gaits.includes(name)) throw new Error(`Speed names the clip ${name}, which is not among the requested gaits (${gaits.join(', ')})`);
   return gaits.map(name => {
     if (!known.includes(name)) throw new Error(`Unknown biped gait ${name}; the gaits are ${known.join(', ')}`);
@@ -70,7 +76,7 @@ function bipedGaitPlan(gaits: readonly string[] = ['walk'], speed?: number | Rec
     if (wanted === undefined) return { name, ...base, ...(given ? { given } : {}) };
     if (!Number.isFinite(wanted) || wanted <= 0) throw new Error(`Speed for ${name} must be a positive number of metres per second, received ${wanted}`);
     const duration = base.stride / (base.stance * wanted);
-    if (duration < 0.3 || duration > 4) throw new Error(`A speed of ${wanted} m/s gives a ${name} cycle of ${duration.toFixed(2)} s; the cycle must be between 0.3 and 4 s, so choose a speed between ${(base.stride / (base.stance * 4)).toFixed(2)} and ${(base.stride / (base.stance * 0.3)).toFixed(2)} m/s`);
+    if (duration < cycleBounds[0] || duration > cycleBounds[1]) throw new Error(`A speed of ${wanted} m/s gives a ${name} cycle of ${duration.toFixed(2)} s; the cycle must be between 0.3 and 4 s, so choose a speed between ${(base.stride / (base.stance * cycleBounds[1])).toFixed(2)} and ${(base.stride / (base.stance * cycleBounds[0])).toFixed(2)} m/s`);
     return { name, ...base, duration, ...(given ? { given } : {}) };
   });
 }
@@ -80,7 +86,7 @@ interface Leg { name: string; hip: Vec3; knee: Vec3; foot: Vec3; pole: Vec3; pha
 export interface CreatureOptions {
   /** Clips for equine or vulpine: any of walk, trot, gallop (default walk and trot); for biped: any of walk, run (default walk). */ gaits?: readonly string[];
   /** Biped only: the travel speed in metres per second the stance foot is planted at, for every clip (a number) or per clip (a record). Sets the cycle length to stride / (stance * speed). Default: the clip's own design speed. */ speed?: number | Record<string, number>;
-  /** Biped, equine or vulpine: per-gait replacements of the table's `stride`, `lift` and `bob` (metres) and `stance` (fraction of the cycle), as `{ walk: { stride: 0.4, lift: 0.2 } }`; a setting not given keeps its table value. Out-of-range values are refused naming `gait-params <gait>.<setting>`. */ gaitParams?: GaitParams;
+  /** Biped, equine or vulpine: per-gait replacements of the table's `stride`, `lift` and `bob` (metres), `stance` (fraction of the cycle) and, for equine and vulpine only, `duration` (seconds per cycle, 0.3 to 4; the biped sets its pace with `speed`), as `{ walk: { stride: 0.4, lift: 0.2 } }`; a setting not given keeps its table value. Out-of-range values are refused naming `gait-params <gait>.<setting>`. */ gaitParams?: GaitParams;
   /** Equine or vulpine only: smooth skin, retaining distinct equine hair, ears and hard hooves. */ shell?: boolean;
   /** Insectoid only: one clip per entry, each a touchdown phase (0 to 1) per leg in order L1 L2 L3 R1 R2 R3. */ legPhases?: Record<string, number[]>;
   /** Strandbeest only: crank positions along the crankshaft, four legs each. Default 3, at most 5. */ pairs?: number;
@@ -93,7 +99,7 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
   if (kind === 'quadruped') kind = 'vulpine';
   if (!creatureKinds.includes(kind)) throw new Error(`Unknown creature recipe: ${kind}`);
   const info = creatureInfo[kind];
-  if (kind === 'equine' || kind === 'vulpine') return createQuadruped(kind, info.name, options.gaits, { shell: options.shell, ...(options.gaitParams === undefined ? {} : { gaitParams: validateGaitParams(options.gaitParams, options.gaits ?? defaultQuadrupedGaits) }) });
+  if (kind === 'equine' || kind === 'vulpine') return createQuadruped(kind, info.name, options.gaits, { shell: options.shell, ...(options.gaitParams === undefined ? {} : { gaitParams: validateGaitParams(options.gaitParams, options.gaits ?? defaultQuadrupedGaits, kind) }) });
   if (options.shell) throw new Error(`Shells are only configurable for equine and vulpine, not ${kind}`);
   if (options.gaits && kind !== 'biped') throw new Error(`Gaits are only configurable for equine, vulpine or biped, not ${kind}`);
   if (options.speed !== undefined && kind !== 'biped') throw new Error(`Speed is only configurable for biped, not ${kind}`);

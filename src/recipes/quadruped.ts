@@ -56,8 +56,8 @@ export const quadrupedGaits: Record<Species, Record<string, GaitSettings>> = {
 };
 export const defaultQuadrupedGaits = ['walk', 'trot'] as const;
 
-/** The four settings a recipe caller may replace per gait, in the units of the gait tables: stride, lift and bob in metres, stance as a fraction of the cycle. */
-export const gaitSettings = ['stride', 'lift', 'stance', 'bob'] as const;
+/** The settings a recipe caller may replace per gait, in the units of the gait tables: stride, lift and bob in metres, stance as a fraction of the cycle, duration in seconds per cycle (not accepted for the biped, whose cycle time follows --speed). */
+export const gaitSettings = ['stride', 'lift', 'stance', 'bob', 'duration'] as const;
 export type GaitSetting = typeof gaitSettings[number];
 export type GaitOverride = Partial<Record<GaitSetting, number>>;
 /** Run a leg solve; when the caller replaced gait settings for this clip, an unreachable target is rethrown naming them. */
@@ -72,7 +72,7 @@ export function withGaitContext<T>(species: string, clip: string, given: GaitOve
 
 export interface QuadrupedOptions {
   /** Smooth body skin; equine hair, ears and hard hooves retain distinct geometry. */ shell?: boolean;
-  /** Validated per-gait replacements of stride, lift, stance and bob; settings not given keep the table value. */ gaitParams?: Record<string, GaitOverride>;
+  /** Validated per-gait replacements of stride, lift, stance, bob and duration; settings not given keep the table value. */ gaitParams?: Record<string, GaitOverride>;
 }
 export function createQuadruped(species: Species, name: string, gaits: readonly string[] = defaultQuadrupedGaits, options: QuadrupedOptions = {}): Project {
   for (const gait of gaits) if (!Object.hasOwn(quadrupedGaits[species], gait)) throw new Error(`Unknown ${species} gait: ${gait}`);

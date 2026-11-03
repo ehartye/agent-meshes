@@ -35,8 +35,8 @@ export const clipKeyRecordSchema = z.object({
   op: z.literal('clip.key.record'), name: nameSchema, time,
   bones: z.array(nameSchema).min(1).max(256).optional(), poses: z.array(poseSchema).min(1).max(256).optional(), endpoints,
 }).strict();
-/** The four gait settings of a recipe clip, in the units of the recipe gait tables; ranges are checked when the clip is rebuilt. */
-const gaitParamsSchema = z.object({ stride: z.number(), lift: z.number(), stance: z.number(), bob: z.number() }).partial().strict();
+/** The gait settings of a recipe clip, in the units of the recipe gait tables (duration in seconds per cycle); ranges are checked when the clip is rebuilt. */
+const gaitParamsSchema = z.object({ stride: z.number(), lift: z.number(), stance: z.number(), bob: z.number(), duration: z.number() }).partial().strict();
 export const clipRegenerateSchema = z.object({ op: z.literal('clip.regenerate'), name: nameSchema, params: gaitParamsSchema.optional() }).strict();
 export const clipOperationSchemas = {
   'clip.create': clipCreateSchema, 'clip.clone': clipCloneSchema, 'clip.rename': clipRenameSchema, 'clip.retime': clipRetimeSchema,
