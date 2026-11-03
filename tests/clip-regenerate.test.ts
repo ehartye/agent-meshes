@@ -128,7 +128,8 @@ it('refuses the other bad requests with the reason named and the project unchang
   refuses(equine, regenerate('walk', { stride: 5 }), /gait-params walk\.stride=5.*Unreachable leg target/);
   refuses(equine, regenerate('walk', { stance: 1 }), /gait-params walk\.stance/);
   const insectoid = createRecipe('insectoid');
-  refuses(insectoid, regenerate(insectoid.clips[0].name, { stride: 0.4 }), /--gait-params.*insectoid/);
+  const strandbeest = createRecipe('strandbeest');
+  refuses(strandbeest, regenerate(strandbeest.clips[0].name, { stride: 0.4 }), /--gait-params.*strandbeest/);
   const name = insectoid.clips[0].name;
   const hand = apply(insectoid, { op: 'clip.key.set', name, bone: 'root', property: 'position', time: 0.1, value: [0, 0.2, 0] });
   expect(clipOf(apply(hand, regenerate(name)), name)).toEqual(clipOf(insectoid, name));

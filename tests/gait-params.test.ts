@@ -147,7 +147,7 @@ describe('refusals name the setting (silent bad output)', () => {
     ['reach exceeded on the run', () => createCreature('biped', { gaits: ['run'], gaitParams: { run: { stride: 0.9 } } }), /gait-params run\.stride=0\.9.*Unreachable leg target/],
     ['reach exceeded on the equine walk', () => createCreature('equine', { gaitParams: { walk: { stride: 5 } } }), /equine walk.*gait-params walk\.stride=5.*Unreachable leg target/],
     ['speed outside the cycle limit keeps its message', () => createCreature('biped', { speed: 40, gaitParams: { walk: { stride: 0.4 } } }), /speed of 40.*cycle/],
-    ...(['insectoid', 'arachnid', 'strandbeest'] as const).map(kind => [`${kind} refuses the option`, () => createCreature(kind, { gaitParams: { walk: { stride: 0.4 } } }), new RegExp(`--gait-params.*not ${kind}`)] as [string, () => unknown, RegExp]),
+    ...(['strandbeest'] as const).map(kind => [`${kind} refuses the option`, () => createCreature(kind, { gaitParams: { walk: { stride: 0.4 } } }), new RegExp(`--gait-params.*not ${kind}`)] as [string, () => unknown, RegExp]),
   ];
   for (const [label, build, message] of refused) it(label, () => expect(build).toThrow(message));
 

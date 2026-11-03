@@ -42,7 +42,7 @@ it('refuses a bad --gait-params with the setting named, the code reported and th
     [['biped', '--gait-params', '{"walk":{"stride":-0.1}}'], /gait-params walk\.stride/],
     [['biped', '--gaits', 'walk,run', '--gait-params', '{"run":{"stride":1.0}}'], /gait-params run\.stride=1.*Unreachable leg target/],
     [['equine', '--gait-params', '{"walk":{"stride":5}}'], /gait-params walk\.stride=5.*Unreachable leg target/],
-    [['insectoid', '--gait-params', '{"walk":{"stride":0.4}}'], /--gait-params.*insectoid/],
+    [['strandbeest', '--gait-params', '{"walk":{"stride":0.4}}'], /--gait-params.*biped, equine, vulpine, insectoid and arachnid.*strandbeest/],
   ];
   for (const [args, message] of cases) {
     const error = await failure(directory, 'recipe', ...args);
