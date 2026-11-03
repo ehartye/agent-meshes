@@ -55,6 +55,11 @@ it('the planted foot moves at stride / (stance * duration) of the stored setting
   near(plantedSpeed(slow, 'tripod', 'leg_L_1_ankle'), 0.30 / (0.62 * 2.5));
   near(plantedSpeed(createCreature('arachnid'), 'scuttle', 'leg_L_1_tip'), 0.25 / (0.70 * 1.6));
   near(plantedSpeed(build('arachnid', { scuttle: { stride: 0.3 } }), 'scuttle', 'leg_L_1_tip'), 0.3 / (0.70 * 1.6));
+  // Stance is not ignored: the planted foot speed follows stride / (stance * duration) for another stance, and the default stance is unchanged above.
+  near(plantedSpeed(build('insectoid', { tripod: { stance: 0.5 } }), 'tripod', 'leg_L_1_ankle'), 0.30 / (0.5 * 1.4));
+  near(plantedSpeed(build('insectoid', { tripod: { stance: 0.8 } }), 'tripod', 'leg_L_1_ankle'), 0.30 / (0.8 * 1.4));
+  near(plantedSpeed(build('arachnid', { scuttle: { stance: 0.5 } }), 'scuttle', 'leg_L_1_tip'), 0.25 / (0.5 * 1.6));
+  near(plantedSpeed(build('arachnid', { scuttle: { stance: 0.85 } }), 'scuttle', 'leg_L_1_tip'), 0.25 / (0.85 * 1.6));
   const spider = build('arachnid', { scuttle: { duration: 2 } });
   expect(clip(spider, 'scuttle').duration).toBe(2);
   expect(clip(spider, 'scuttle').tracks[0].keys).toHaveLength(Math.ceil(2 * 60) + 1);
@@ -86,7 +91,8 @@ it('the reach ceilings of Decision 6 build and the next 0.01 step is refused wit
     expect(() => build(kind, { [clipName]: { [setting]: failing } }), `${kind} ${setting} ${failing}`).toThrow(new RegExp(`Cannot build the ${kind} ${clipName} clip with gait-params ${clipName}\\.${setting}=${failing}: (Unreachable leg target|Spider)`));
   }
   // The label is the real kind, never the biped's.
-  try { build('insectoid', { tripod: { stride: 0.8 } }); } catch (error) { expect((error as Error).message).not.toMatch(/biped/i); }
+  expect(() => build('insectoid', { tripod: { stride: 0.8 } })).toThrow(/Cannot build the insectoid tripod clip/);
+  expect(() => build('insectoid', { tripod: { stride: 0.8 } })).not.toThrow(/biped/i);
 });
 
 it('refuses an unknown setting, a bad value or the strandbeest before anything is built (Decisions 2, 4 and 11)', () => {
