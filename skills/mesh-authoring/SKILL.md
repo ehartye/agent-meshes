@@ -145,7 +145,7 @@ any hoofed animal is `equine`; a fox, dog, cat, wolf or any pawed animal is `vul
 ant or six-legged bug is `insectoid`; a spider is `arachnid`; a walking machine is `strandbeest`.
 Resize and recolor parts afterward to turn the fox into a cat or the horse into a deer. Options: `--gaits walk,trot,gallop`
 (quadrupeds; `walk,run` for the biped, with `--speed 0.99` or `--speed '{"walk":0.99,"run":3.5}'` to plant the stance foot at the speed your game moves the character), `--gait-params '{"walk":{"stride":0.4}}'`
-(biped, equine and vulpine; `stride`, `lift`, `bob` in metres and `stance` as a cycle fraction per gait; insectoid, arachnid and strandbeest refuse it; see [rigging](../mesh-rigging/SKILL.md#locomotion-that-reads-right)), `--shell` (quadrupeds; one smooth skin with lathe hooves), `--leg-phases <json>`
+(biped, equine, vulpine, insectoid and arachnid; `stride`, `lift`, `bob` in metres, `stance` as a cycle fraction and `duration` in seconds per cycle, 0.3 to 4, per clip, keyed `tripod` or a `--leg-phases` key for the insectoid and `scuttle` for the arachnid; the biped refuses `duration` and takes `--speed`; the strandbeest refuses it; see [rigging](../mesh-rigging/SKILL.md#locomotion-that-reads-right) for the ranges and reach limits), `--shell` (quadrupeds; one smooth skin with lathe hooves), `--leg-phases <json>`
 (insectoid; one clip per named set of six touchdown phases), `--pairs`, `--spacing`, `--patterns <json>`
 (strandbeest; Jansen's real linkage: `--pairs` counts crank positions, at most 5, and each position
 carries four legs, `leg_L_1f_*` front-facing and `leg_L_1b_*` back-facing on each side, so the feet
@@ -154,7 +154,8 @@ the recipe plus a batch of edits, kept as files so it can be rebuilt. To deliver
 model, `save <name>.mesh.json` from the workspace and point `build.json` at it with
 `"project":"<name>.mesh.json"` (see mesh-build). The command also stores the options on the project as
 `recipe: {kind, options}`, which `clip.regenerate` uses to rebuild one clip; an earlier plugin version cannot open
-a saved file that holds `recipe`, and deleting that key makes it readable.
+a saved file that holds `recipe`, and deleting that key makes it readable. Version 0.41.0 reads `recipe` but not a stored
+`duration`; delete that key there.
 
 The `recipes/` files (`stylized_character.py`, `stylized_walk.py`, `stylized_face.py`, `face_project.py`,
 `botanical_kit.mjs`, `set-stats.mjs`, `set-sheet.mjs`) are listed with one line each in
