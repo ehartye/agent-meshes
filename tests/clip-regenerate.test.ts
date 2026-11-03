@@ -142,7 +142,7 @@ it('publishes the contract: name required, params optional with the four setting
   const descriptor = capabilities().operations['clip.regenerate'];
   const schema = descriptor.schema as unknown as { required: string[]; properties: { params: { properties: object } } };
   expect(schema.required).toEqual(['op', 'name']);
-  expect(Object.keys(schema.properties.params.properties)).toEqual(['stride', 'lift', 'stance', 'bob']);
+  expect(Object.keys(schema.properties.params.properties)).toEqual(['stride', 'lift', 'stance', 'bob', 'duration']);
   expect(descriptor.description).toMatch(/RECIPE_STALE/);
   for (const example of descriptor.examples) expect(parseOperation(example)).toEqual(example);
   expect(() => parseOperation({ op: 'clip.regenerate', name: 'walk', params: { cadence: 1 } })).toThrow();
