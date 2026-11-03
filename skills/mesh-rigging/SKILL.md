@@ -108,20 +108,28 @@ are in [operations](../mesh-authoring/references/operations.md#clips).
   a centimeter of ground; the puppet API in [mesh-build](../mesh-build/SKILL.md) can do it.
 - Order the footfalls: walk is a four-beat lateral sequence, trot pairs diagonals, gallop has a
   suspension phase. The quadruped recipes carry all three (`--gaits walk,trot,gallop`).
-- Tune a recipe gait with `recipe <biped|equine|vulpine> --gait-params '{"walk":{"stride":0.4,"lift":0.2}}'`: per gait, any of
-  `stride`, `lift` and `bob` (metres) and `stance` (a fraction of the cycle, above 0 and below 1, below 0.6 on a gallop); the
-  rest keep their table values. `bob` is an amplitude, so the trunk rises by twice it. Design travel speed is
-  `stride / (stance × duration)`: the quadruped cycle length is fixed and the biped keeps its table cycle unless `--speed`
-  is given. Insectoid, arachnid, strandbeest and the Blender `stylized_walk.py` character do not take it.
+- Tune a recipe gait with `recipe <biped|equine|vulpine|insectoid|arachnid> --gait-params '{"walk":{"stride":0.4,"lift":0.2}}'`:
+  per clip, any of `stride`, `lift` and `bob` (metres), `stance` (a fraction of the cycle, above 0 and below 1, below 0.6 on
+  a gallop) and `duration` (seconds per cycle, 0.3 to 4); the rest keep their table values. The key is the clip name: `walk`
+  or `run` for the biped, `walk`, `trot` or `gallop` for the quadrupeds, `tripod` (or a `--leg-phases` key) for the insectoid,
+  `scuttle` for the arachnid. `bob` is an amplitude, so the trunk rises by twice it. Design travel speed is
+  `stride / (stance × duration)`. The biped refuses `duration` (`--speed` sets its cycle time) and the strandbeest and the
+  Blender `stylized_walk.py` character do not take `--gait-params`. On the insectoid a `stance` below 0.5 stops the
+  0/0.5 tripod phasing from keeping three feet down.
 - A leg that cannot reach is refused, naming `gait-params <gait>.<setting>`. With the other settings at their table values
   the largest `stride` is about 0.86 (biped walk and run), 0.72 (equine walk) and 0.54 (vulpine walk). The limit moves with
-  the other settings, so re-check the stride after changing `stance`, `lift` or `bob`; raising `bob` lowers it on all three
-  bodies. Measure a biped result with `mesh gait`.
+  `stance` and `bob` on every body and with `lift` on all but the arachnid, so re-check the stride after changing them; raising
+  `bob` lowers it. Likewise the insectoid `tripod` reaches `stride` 0.79 (0.80 is refused), `lift` 1.59 and `bob` 0.22, and the
+  arachnid `scuttle` reaches `stride` 0.37 (0.38 is refused), `lift` 1.83 and `bob` 0.05. These are measured at the table
+  `duration`: a shorter `duration` raises the insectoid stride limit slightly (0.82 at 0.3 s) because fewer samples are baked,
+  and the arachnid limit does not move. Measure a biped result with
+  `mesh gait`.
 - Rebuild one clip of a recipe project with `{"op":"clip.regenerate","name":"walk","params":{"stride":0.4}}`; `params` is
-  optional, merges over the stored settings and is stored. It needs the `recipe: {kind, options}` field that the `recipe`
+  optional (`stride`, `lift`, `stance`, `bob`, `duration`), merges over the stored settings and is stored. It needs the `recipe: {kind, options}` field that the `recipe`
   command stores, so a project from `new` is refused. It replaces the whole clip, so `clip.clone` a hand-edited clip first.
   When a recipe bone has changed or gone, or a recipe part is missing, it fails with `RECIPE_STALE` and changes nothing;
-  start a new recipe, or edit the clip with the clip operations.
+  start a new recipe, or edit the clip with the clip operations. Version 0.41.0 cannot open a saved file that
+  stores a `duration`; delete that key to open it there.
 - Keep joint ranges anatomical. A knee that bends forward or a hoof that passes through the
   shin reads wrong even in a contact sheet.
 
