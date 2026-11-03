@@ -154,8 +154,7 @@ the recipe plus a batch of edits, kept as files so it can be rebuilt. To deliver
 model, `save <name>.mesh.json` from the workspace and point `build.json` at it with
 `"project":"<name>.mesh.json"` (see mesh-build). The command also stores the options on the project as
 `recipe: {kind, options}`, which `clip.regenerate` uses to rebuild one clip; an earlier plugin version cannot open
-a saved file that holds `recipe`, and deleting that key makes it readable. Version 0.41.0 reads `recipe` but not a stored
-`duration`; delete that key there.
+a saved file that holds `recipe`, and deleting that key makes it readable.
 
 The `recipes/` files (`stylized_character.py`, `stylized_walk.py`, `stylized_face.py`, `face_project.py`,
 `botanical_kit.mjs`, `set-stats.mjs`, `set-sheet.mjs`) are listed with one line each in

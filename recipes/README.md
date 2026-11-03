@@ -164,7 +164,7 @@ Mesh objects retain Armature modifiers but are detached from the rig's object
 parent so glTF skins export as scene roots without parent-transform warnings.
 The returned list includes the rig; pass the complete list to the managed build.
 This Blender walk is not one of the `recipe` command's bodies (biped, equine, vulpine, insectoid and arachnid take
-`--gait-params`, including `duration`): it takes no `--gait-params` and `clip.regenerate` cannot rebuild its clips, so tune
+`--gait-params`, and `duration` is accepted on all but the biped): it takes no `--gait-params` and `clip.regenerate` cannot rebuild its clips, so tune
 it through the arguments above.
 
 Run `python tests/stylized_walk.py` for anatomy/height sweeps, contact position,
