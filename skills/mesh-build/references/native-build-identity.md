@@ -514,9 +514,8 @@ build.json text eol=lf
   line makes the detection explicit instead of changing it.
 
 - [tested] Binary and text detection, probed with `git ls-files --eol` and `git check-attr` in a throwaway
-  repository, once with git 2.55.0.windows.3 in Git Bash and once with git 2.53.0 inside WSL on an ext4 folder (files
-  sent in as a tar stream and compared by SHA-256 on both sides). Both gave the same values, with `core.autocrlf` set
-  to `true` and to `false`. With no `.gitattributes`, a real preview PNG, a real
+  repository with git 2.55.0.windows.3 in Git Bash, with `core.autocrlf` set to `true` and to `false`. With no
+  `.gitattributes`, a real preview PNG, a real
   `.agent-meshes-blender-cache.bin` and a built GLB all show `i/-text w/-text`, so detection already treats them as
   binary, and `build.json` and `make.py` show `i/lf`. The same three stay `-text` under `* text=auto eol=lf`.
 - [tested] A `.bin` extension alone does not make a file binary. A control `.bin` of ASCII text with CRLF and no NUL
@@ -539,7 +538,7 @@ git status --short
 git commit -m "Normalize line endings"
 ```
 
-- [tested] In the probe (git 2.55.0.windows.3 and git 2.53.0 alike, `core.autocrlf` true and false), the sequence
+- [tested] In the probe (git 2.55.0.windows.3 in Git Bash, `core.autocrlf` true and false), the sequence
   changed `build.json` and `make.py` from `i/crlf` to `i/lf`, left the PNG, the cache `.bin`, the GLB and the control
   `.bin` unmodified (the committed bytes matched their SHA-256), and `git status --short` listed `A  .gitattributes`,
   `M  build.json` and `M  make.py` and nothing else. Working copies stayed `w/crlf` until the files were checked out
@@ -574,3 +573,4 @@ import helper
 
 - [general] A macOS run and a Linux run of the native build were not made in this verification, so the earlier
   bullets keep their labels, and nothing above says how git or the build behave on those systems.
+  The git probes ran only in Git Bash on Windows; other platforms and Git versions were not tested.
