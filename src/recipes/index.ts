@@ -25,7 +25,9 @@ const bipedGaits = {
   walk: { stride: 0.52, lift: 0.14, stance: 0.62, duration: 1.2, bob: 0.024 },
   run: { stride: 0.8, lift: 0.3, stance: 0.4, duration: 0.6, bob: 0.04 },
 } as const;
-type BipedGait = { name: string; stride: number; lift: number; stance: number; duration: number; bob: number; given?: GaitOverride };
+/** The insectoid's leg settings, shared by every clip it generates; --gait-params replaces them per clip and never changes this object. */
+const insectoidGait = { stride: 0.30, lift: 0.12, stance: 0.62, duration: 1.4, bob: 0.01 } as const;
+type ClipGait = { name: string; stride: number; lift: number; stance: number; duration: number; bob: number; given?: GaitOverride };
 
 export type { GaitOverride, GaitSetting } from './quadruped.ts';
 export type GaitParams = Record<string, GaitOverride>;
@@ -64,7 +66,7 @@ export function validateGaitParams(params: unknown, gaits: readonly string[], ki
   }
   return result;
 }
-function bipedGaitPlan(gaits: readonly string[] = ['walk'], speed?: number | Record<string, number>, gaitParams?: unknown): BipedGait[] {
+function bipedGaitPlan(gaits: readonly string[] = ['walk'], speed?: number | Record<string, number>, gaitParams?: unknown): ClipGait[] {
   const known = Object.keys(bipedGaits);
   const overrides = gaitParams === undefined ? {} : validateGaitParams(gaitParams, gaits, 'biped');
   if (speed !== undefined && typeof speed === 'object') for (const name of Object.keys(speed)) if (!gaits.includes(name)) throw new Error(`Speed names the clip ${name}, which is not among the requested gaits (${gaits.join(', ')})`);
@@ -86,14 +88,14 @@ interface Leg { name: string; hip: Vec3; knee: Vec3; foot: Vec3; pole: Vec3; pha
 export interface CreatureOptions {
   /** Clips for equine or vulpine: any of walk, trot, gallop (default walk and trot); for biped: any of walk, run (default walk). */ gaits?: readonly string[];
   /** Biped only: the travel speed in metres per second the stance foot is planted at, for every clip (a number) or per clip (a record). Sets the cycle length to stride / (stance * speed). Default: the clip's own design speed. */ speed?: number | Record<string, number>;
-  /** Biped, equine or vulpine: per-gait replacements of the table's `stride`, `lift` and `bob` (metres), `stance` (fraction of the cycle) and, for equine and vulpine only, `duration` (seconds per cycle, 0.3 to 4; the biped sets its pace with `speed`), as `{ walk: { stride: 0.4, lift: 0.2 } }`; a setting not given keeps its table value. Out-of-range values are refused naming `gait-params <gait>.<setting>`. */ gaitParams?: GaitParams;
+  /** Biped, equine, vulpine, insectoid or arachnid (not strandbeest): per-clip replacements of the table's `stride`, `lift` and `bob` (metres), `stance` (fraction of the cycle) and, for every kind but the biped, `duration` (seconds per cycle, 0.3 to 4; the biped sets its pace with `speed`), as `{ walk: { stride: 0.4, lift: 0.2 } }`, keyed by the clip name (`tripod` or a `legPhases` key for the insectoid, `scuttle` for the arachnid); a setting not given keeps its table value. Out-of-range values are refused naming `gait-params <gait>.<setting>`. */ gaitParams?: GaitParams;
   /** Equine or vulpine only: smooth skin, retaining distinct equine hair, ears and hard hooves. */ shell?: boolean;
   /** Insectoid only: one clip per entry, each a touchdown phase (0 to 1) per leg in order L1 L2 L3 R1 R2 R3. */ legPhases?: Record<string, number[]>;
   /** Strandbeest only: crank positions along the crankshaft, four legs each. Default 3, at most 5. */ pairs?: number;
   /** Strandbeest only: distance between pairs in meters, and one clip per named crank-offset pattern. */ spacing?: number; patterns?: Record<string, number[]>;
 }
 export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest', options: CreatureOptions = {}): Project {
-  if (options.gaitParams !== undefined && (kind === 'strandbeest' || (creatureKinds.includes(kind as CreatureKind) && kind !== 'biped' && kind !== 'equine' && kind !== 'vulpine'))) throw new Error(`Gait parameters (--gait-params) are only configurable for biped, equine and vulpine, not ${kind}`);
+  if (options.gaitParams !== undefined && kind === 'strandbeest') throw new Error(`Gait parameters (--gait-params) are only configurable for biped, equine, vulpine, insectoid and arachnid, not ${kind}`);
   // Jansen's walking machine is a linkage, not a limb rig, so it has its own recipe and is not one of the gallery creatures.
   if (kind === 'strandbeest') return createStrandbeest({ pairs: options.pairs, spacing: options.spacing, patterns: options.patterns });
   if (kind === 'quadruped') kind = 'vulpine';
@@ -105,6 +107,9 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
   if (options.speed !== undefined && kind !== 'biped') throw new Error(`Speed is only configurable for biped, not ${kind}`);
   const bipedClips = kind === 'biped' ? bipedGaitPlan(options.gaits, options.speed, options.gaitParams) : [];
   if (options.legPhases && kind !== 'insectoid') throw new Error(`Leg phases are only configurable for insectoid, not ${kind}`);
+  // The insectoid and arachnid clips are named by --leg-phases (insectoid only) or fixed, and their gait settings are checked before anything is built.
+  const clipNames = kind === 'insectoid' ? (options.legPhases ? Object.keys(options.legPhases) : [info.gait]) : [info.gait];
+  const tuned: GaitParams = kind !== 'biped' && options.gaitParams !== undefined ? validateGaitParams(options.gaitParams, clipNames, kind) : {};
   const project: Project = { version: 1, name: info.name, parts: [], bones: [], clips: [] };
   const legs: Leg[] = [];
   const spiderLegs: ReturnType<typeof createSpiderLeg>[] = [];
@@ -214,16 +219,16 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
       const hip: Vec3 = [side * 0.24, height - 0.05, z];
       const knee: Vec3 = [side * (0.76 + Math.sin(t * Math.PI) * 0.15), height + 0.10, z + spread * 0.50];
       const foot: Vec3 = [side * (1.05 + Math.sin(t * Math.PI) * 0.17), 0.045, z + spread];
-      leg({ name: `leg_${s}_${i + 1}`, hip, knee, foot, pole: [side, 0.7, 0], phase: (i + (side < 0 ? 0 : 1)) % 2 * 0.5, stride: 0.30, lift: 0.12, stance: 0.62 }, 0.09, shell, dark);
+      leg({ name: `leg_${s}_${i + 1}`, hip, knee, foot, pole: [side, 0.7, 0], phase: (i + (side < 0 ? 0 : 1)) % 2 * 0.5, stride: insectoidGait.stride, lift: insectoidGait.lift, stance: insectoidGait.stance }, 0.09, shell, dark);
       part(`hip_cover_${s}_${i + 1}`, 'sphere', [0.18, 0.16, 0.2], hip, highlight);
     }
     motion('head', [0, 1, 0], 0.035);
   }
-  const duration = kind === 'biped' ? 1.2 : kind === 'insectoid' ? 1.4 : spiderGait.duration;
+  const duration = kind === 'biped' ? 1.2 : kind === 'insectoid' ? insectoidGait.duration : spiderGait.duration;
   const samples = Math.ceil(duration * 60);
-  const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'arachnid' ? 0.003 : 0.01) * (1 - Math.cos(4 * Math.PI * t));
-  /** Sample one looping clip; phaseOf overrides each leg's touchdown phase in leg order. A biped gait replaces the stride, lift, stance, cycle length and bob. */
-  function sampleClip(name: string, phaseOf: (legIndex: number) => number, gait?: BipedGait): void {
+  const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'arachnid' ? 0.003 : insectoidGait.bob) * (1 - Math.cos(4 * Math.PI * t));
+  /** Sample one looping clip; phaseOf overrides each leg's touchdown phase in leg order. A gait (the biped's, or a tuned insectoid or arachnid clip's) replaces the stride, lift, stance, cycle length and bob. */
+  function sampleClip(name: string, phaseOf: (legIndex: number) => number, gait?: ClipGait): void {
     const clipDuration = gait?.duration ?? duration, clipSamples = Math.ceil(clipDuration * 60);
     const clipBob = gait ? (t: number) => gait.bob * (1 - Math.cos(4 * Math.PI * t)) : bob;
     const clipTracks: Track[] = [{ bone: 'root', property: 'position', keys: [] }];
@@ -237,10 +242,10 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
       legs.forEach((leg, legIndex) => {
         const offset = footPath(phase + phaseOf(legIndex), gait?.stride ?? leg.stride, gait?.lift ?? leg.lift, gait?.stance ?? leg.stance);
         const target: Vec3 = [leg.foot[0] + offset[0], leg.foot[1] + offset[1] - clipBob(phase), leg.foot[2] + offset[2]];
-        const pose = withGaitContext('biped', name, gait?.given, () => solveLeg(leg.hip, leg.knee, leg.foot, target, leg.pole));
+        const pose = withGaitContext(kind, name, gait?.given, () => solveLeg(leg.hip, leg.knee, leg.foot, target, leg.pole));
         for (const value of [pose.upper, pose.lower, pose.ankle]) clipTracks[index++].keys.push({ time, value });
       });
-      for (const leg of spiderLegs) for (const value of leg.sample(phase, clipBob(phase))) clipTracks[index++].keys.push({ time, value });
+      for (const leg of spiderLegs) for (const value of withGaitContext(kind, name, gait?.given, () => leg.sample(phase, clipBob(phase), gait))) clipTracks[index++].keys.push({ time, value });
       for (const { sample } of tracks) clipTracks[index++].keys.push({ time, value: sample(phase) });
     }
     // Avoid quaternion sign flips between adjacent samples without changing orientation.
@@ -253,14 +258,19 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
     }
     project.clips.push({ name, duration: clipDuration, tracks: clipTracks });
   }
+  /** The settings of a tuned insectoid or arachnid clip: the table with the given replacements; an untuned clip is baked from the constants as before. */
+  const tunedGait = (name: string): ClipGait | undefined => {
+    const given = tuned[name];
+    return given ? { name, ...(kind === 'insectoid' ? insectoidGait : { ...spiderGait, bob: 0.003 }), ...given, given } : undefined;
+  };
   if (options.legPhases) {
     if (kind !== 'insectoid') throw new Error(`Leg phases are only configurable for insectoid, not ${kind}`);
     for (const [name, phases] of Object.entries(options.legPhases)) {
       if (phases.length !== legs.length) throw new Error(`Expected ${legs.length} phases for ${name}, received ${phases.length}`);
-      sampleClip(name, legIndex => phases[legIndex]);
+      sampleClip(name, legIndex => phases[legIndex], tunedGait(name));
     }
   } else if (kind === 'biped') for (const gait of bipedClips) sampleClip(gait.name, legIndex => legs[legIndex].phase, gait);
-  else sampleClip(info.gait, legIndex => legs[legIndex].phase);
+  else sampleClip(info.gait, legIndex => legs[legIndex].phase, tunedGait(info.gait));
   // Canonical JSON also turns signed zero from quaternion math into ordinary zero.
   return validateProject(JSON.parse(JSON.stringify(project)));
 }

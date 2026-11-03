@@ -1,14 +1,17 @@
 import { setRecipeRegenerator, type GaitSettingsInput } from '../core/recipe-hook.ts';
 import type { Clip, Project, RecipeIntent, RecipeOptions } from '../core/types.ts';
-import { createCreature, validateGaitParams, type CreatureKind, type CreatureOptions } from './index.ts';
+import { createCreature, creatureInfo, validateGaitParams, type CreatureKind, type CreatureOptions } from './index.ts';
 import { defaultQuadrupedGaits } from './quadruped.ts';
 
 type RecipeKindInput = CreatureKind | 'quadruped' | 'strandbeest';
 const filled = (value: object | undefined) => value !== undefined && Object.keys(value).length > 0;
-/** The clip names a recipe generates when its options name none; the gait settings of a stored recipe are keyed by these. The insectoid, arachnid and strandbeest entries keep the quadruped default until they take gait settings. */
-function defaultGaits(kind: RecipeKindInput): readonly string[] {
+/** The clip names a recipe generates when its options name none; the gait settings of a stored recipe are keyed by these: the biped's walk, the quadrupeds' defaults, the insectoid's tripod or the keys of its leg phases, the arachnid's scuttle. The strandbeest takes no gait settings. */
+function defaultGaits(kind: RecipeKindInput, options: CreatureOptions): readonly string[] {
   switch (kind) {
     case 'biped': return ['walk'];
+    case 'insectoid': return options.legPhases ? Object.keys(options.legPhases) : [creatureInfo.insectoid.gait];
+    case 'arachnid': return [creatureInfo.arachnid.gait];
+    case 'strandbeest': return [];
     default: return defaultQuadrupedGaits;
   }
 }
@@ -20,7 +23,7 @@ export function recipeIntent(kind: RecipeKindInput, options: CreatureOptions = {
   if (typeof options.speed === 'number' || filled(options.speed)) stored.speed = structuredClone(options.speed)!;
   if (options.shell) stored.shell = true;
   if (options.gaitParams !== undefined) {
-    const params = validateGaitParams(options.gaitParams, options.gaits ?? defaultGaits(kind), kind);
+    const params = validateGaitParams(options.gaitParams, options.gaits ?? defaultGaits(kind, options), kind);
     if (filled(params)) stored.gaitParams = params;
   }
   if (filled(options.legPhases)) stored.legPhases = structuredClone(options.legPhases)!;

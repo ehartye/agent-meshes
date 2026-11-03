@@ -4,10 +4,13 @@ import { footPath } from './gait.ts';
 
 export const spiderGait = { stride: 0.25, lift: 0.075, stance: 0.70, duration: 1.6 } as const;
 
-export function spiderStep(phase: number, side: number, index: number) {
+/** The foot path settings a tuned scuttle replaces; the module's spiderGait is never changed. */
+export interface SpiderTuning { stride: number; lift: number; stance: number }
+
+export function spiderStep(phase: number, side: number, index: number, tuning: SpiderTuning = spiderGait) {
   // Adjacent legs alternate, with a small rear-to-front wave within each group.
   const cycle = phase + (index + (side < 0 ? 0 : 1)) % 2 * 0.5 + index * 0.035;
-  return footPath(cycle, spiderGait.stride, spiderGait.lift, spiderGait.stance);
+  return footPath(cycle, tuning.stride, tuning.lift, tuning.stance);
 }
 
 /** A wider, less fore/aft-splayed stance lets the hip sweep without changing reach much. */
