@@ -29,9 +29,9 @@ named file at the named version; [general] neither. Re-read a file if your versi
 - [documented] `src/cli.ts` registers `bake`: `agent-meshes bake <glb> --clip <name>` writes a sprite sheet, an Aseprite
   atlas with a `dir-N` tag per facing and a manifest.
 - [documented] `mesh preview --clip <name> --phases <count>` and `scripts/review-model.mjs` are review tools,
-  not sprite exporters. `src/preview.ts` lines 62-71 set evenly spaced phases;
-  `scripts/blender-preview.py` renders each selected view at every phase, sets `film_transparent = False` (line 237) and
-  an 85 mm lens (`LENS`, lines 39, 122) and never selects an orthographic camera. `scripts/review-model.mjs` writes
+  not sprite exporters. `src/preview.ts` lines 67-71 set evenly spaced phases;
+  `scripts/blender-preview.py` renders each selected view at every phase, sets `film_transparent = False` (line 301) and
+  an 85 mm lens (`LENS`, lines 39, 186) and never selects an orthographic camera. `scripts/review-model.mjs` writes
   one image per azimuth for each pose and region, from a viewer with `floor:false` and a solid background (`defaults`
   there), so an opaque canvas unless a config sets `background: null`, and a `THREE.PerspectiveCamera`
   (`createCamera` in `src/web/room.ts`). Both give perspective images, opaque by default.
