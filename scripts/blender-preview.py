@@ -96,6 +96,8 @@ def is_rendered(obj):
 
 def rendered_only(meshes):
     """The meshes a render shows, which is what the fit measures; all of them when none would show."""
+    # An object a source made through bpy.data is not in the view layer until the layer syncs.
+    bpy.context.view_layer.update()
     return [obj for obj in meshes if is_rendered(obj)] or meshes
 
 
@@ -107,45 +109,69 @@ def clip_samples(first, last):
     return [first + int(math.floor(n * (last - first) / (CLIP_SAMPLES - 1) + .5)) for n in range(CLIP_SAMPLES)]
 
 
-def sampled_points(meshes, chosen, samples):
-    """The world points of every mesh and of the chosen ones as the scene stands, or at each sample frame in turn
-    (the scene returns to the frame it was on)."""
-    if not samples: return [p for obj in meshes for p in world_points(obj)], [p for obj in chosen for p in world_points(obj)]
+class Extent:
+    """The running minimum and maximum per axis of every point added, so a fit never holds a whole clip's points."""
+    def __init__(self): self.lo = self.hi = None
+
+    def add(self, points):
+        if not points: return
+        lo, hi = bounds(points)
+        if self.lo is None: self.lo, self.hi = lo, hi
+        else:
+            self.lo = Vector(tuple(map(min, self.lo, lo)))
+            self.hi = Vector(tuple(map(max, self.hi, hi)))
+
+    def bounds(self):
+        if self.lo is None: raise ValueError('The meshes have no vertices to frame')
+        return self.lo, self.hi
+
+
+def sweep(meshes, samples, visit):
+    """Calls visit(mesh, world points) for each mesh as the scene stands, or at each sample frame in turn (the scene
+    returns to the frame it was on). Only one mesh's points are held at a time."""
+    if not samples:
+        for obj in meshes: visit(obj, world_points(obj))
+        return
     scene = bpy.context.scene
     current = scene.frame_current
-    everything, picked = [], []
     try:
         for frame in samples:
             scene.frame_set(frame)
             bpy.context.view_layer.update()
-            everything += [p for obj in meshes for p in world_points(obj)]
-            picked += [p for obj in chosen for p in world_points(obj)]
+            for obj in meshes: visit(obj, world_points(obj))
     finally: scene.frame_set(current)
-    return everything, picked
 
 
 def framing(meshes, target, samples=None):
     """The (center, radius) of the body and of the head: the named target, else the mesh with face shape keys, else
     the top seventh of the body. With `samples` (frames of a clip) the bounds cover the figure at all of them, so one
-    fit holds the whole clip."""
+    fit holds the whole clip. The head's cut depends on the whole range, so it takes a second sweep of the points."""
     chosen = []
     if target:
         chosen = [obj for obj in meshes if fnmatch.fnmatch(obj.name, target)]
         if not chosen: raise ValueError(f'No mesh matches --target {target}')
     else:
         chosen = [obj for obj in meshes if obj.data.shape_keys and 'eyeBlinkLeft' in obj.data.shape_keys.key_blocks]
-    everything, points = sampled_points(meshes, chosen, samples)
-    lo, hi = bounds(everything)
+    everything, picked = Extent(), Extent()
+    def measure(obj, points):
+        everything.add(points)
+        if obj in chosen: picked.add(points)
+    sweep(meshes, samples, measure)
+    lo, hi = everything.bounds()
     body = ((lo + hi) / 2, (hi - lo).length / 2)
     if chosen:
-        # A face mesh that also carries a neck reaches the shoulders: frame its top 70% only.
-        hlo, hhi = bounds(points)
-        top = [p for p in points if p.z >= hhi.z - .7 * (hhi.z - hlo.z)] if not target else points
-        hlo, hhi = bounds(top)
+        hlo, hhi = picked.bounds()
+        if target: top = picked
+        else:
+            # A face mesh that also carries a neck reaches the shoulders: frame its top 70% only.
+            cut = hhi.z - .7 * (hhi.z - hlo.z)
+            top = Extent()
+            sweep(chosen, samples, lambda obj, points: top.add([p for p in points if p.z >= cut]))
     else:
-        hhi = hi.copy(); hlo = Vector((lo.x, lo.y, hi.z - (hi.z - lo.z) / 7))
-        top = [p for p in everything if p.z >= hlo.z]
-        hlo, hhi = bounds(top)
+        cut = Vector((lo.x, lo.y, hi.z - (hi.z - lo.z) / 7)).z
+        top = Extent()
+        sweep(meshes, samples, lambda obj, points: top.add([p for p in points if p.z >= cut]))
+    hlo, hhi = top.bounds()
     head = ((hlo + hhi) / 2, max(1e-4, (hhi - hlo).length / 2))
     return {'body': body, 'head': head}
 
@@ -295,8 +321,11 @@ def run_job(job):
         clip_start, clip_end = action.frame_range
     set_pose(meshes, {})
     # One camera for every cell: a clip is fitted over its whole frame range, any other render at the scene as it stands.
-    frames = framing(rendered_only(meshes), job.get('target'), clip_samples(clip_start, clip_end) if clip else None)
-    wires = add_wires(meshes, frames['head'][1] * 2) if 'wire' in shadings else []
+    shown = rendered_only(meshes)
+    frames = framing(shown, job.get('target'), clip_samples(clip_start, clip_end) if clip else None)
+    # The wire copies, like the fit, are of what a render shows: a copy of an unrendered helper would be linked into
+    # the rendered scene and drawn outside the fitted bounds.
+    wires = add_wires(shown, frames['head'][1] * 2) if 'wire' in shadings else []
     files = []
     for pose in poses:
         set_pose(meshes, pose.get('shapes', {}))

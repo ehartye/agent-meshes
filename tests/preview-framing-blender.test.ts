@@ -165,3 +165,71 @@ blenderIt('renders the rest render for a clip whose poses all equal the rest pos
     }
   }
 }, 300000);
+
+blenderIt('draws the wire shading from what a render shows, not from the unrendered bone-shape sphere', async () => {
+  riggedFit();
+  const matcap = await cell(await render('rigged-rest', 'rigged', { views: ALL }), 'rest', 'body-front');
+  const wire = await subject(join(await render('rigged-wire', 'rigged', { views: 'body-front', shading: 'wire' }), 'rest-body-front-wire.png'));
+  // The wire copies sit on the figure's own surface, so their box is the matcap box to within a pixel or two. A wire copy
+  // of the sphere (larger than the figure, and outside the fitted bounds) widens it to 0..470 by 93..511 at 512 px.
+  for (const [name, got, want] of [['left', wire.x0, matcap.x0], ['top', wire.y0, matcap.y0], ['right', wire.x1, matcap.x1], ['bottom', wire.y1, matcap.y1]] as const) {
+    expect(Math.abs(got - want), `the wire render's ${name} edge is at ${got}, the matcap render's at ${want}: something else is drawn`).toBeLessThanOrEqual(2);
+  }
+}, 300000);
+
+// The static figure's rest renders (body front, then the head views front, q34 and side) as a 64 px contact sheet, made by
+// the script as it was before the fit looked at rendered objects or at a clip (from the main branch at 0.42.0, Blender
+// 5.2.2). Regenerate it by previewing small-static (smallFigureGlb(false)) with `--views body-front,front,q34,side --size 64
+// --sheet` on that script. The tolerance is for a different GPU's anti-aliasing; a moved or resized camera is far outside it.
+const REFERENCE_TOLERANCE = 2;
+
+blenderIt('renders a GLB with no skin and no armature, body and head views, pixel for pixel as the previous script did', async () => {
+  const dir = await render('static-sheet', 'static', { views: 'body-front,front,q34,side', size: 64, sheet: true });
+  const got = decodePng(await readFile(join(dir, 'sheet.png')));
+  const want = decodePng(await readFile(resolve('tests/fixtures/preview-framing/static-rest-sheet.png')));
+  expect([got.width, got.height]).toEqual([want.width, want.height]);
+  let worst = 0, first = -1;
+  for (let i = 0; i < got.rgba.length; i++) {
+    const difference = Math.abs(got.rgba[i]! - want.rgba[i]!);
+    if (difference > worst) worst = difference;
+    if (difference > REFERENCE_TOLERANCE && first < 0) first = i;
+  }
+  const at = Math.floor(first / 4);
+  expect(first, `pixel (${at % got.width}, ${Math.floor(at / got.width)}) channel ${first % 4} differs from the previous script's render by up to ${worst} levels`).toBe(-1);
+}, 300000);
+
+blenderIt('counts an object as rendered unless it is hidden from render, in a collection hidden from render, or out of the view layer', async () => {
+  const probe = join(root, 'rendered-probe.py');
+  await writeFile(probe, [
+    'import importlib.util, json, sys',
+    'import bpy',
+    "script = sys.argv[sys.argv.index('--') + 1]",
+    "spec = importlib.util.spec_from_file_location('blender_preview', script)",
+    'module = importlib.util.module_from_spec(spec)',
+    'spec.loader.exec_module(module)',
+    'bpy.ops.wm.read_factory_settings(use_empty=True)',
+    'scene = bpy.context.scene',
+    'def thing(name, collection=None):',
+    '    obj = bpy.data.objects.new(name, bpy.data.meshes.new(name))',
+    '    (collection or scene.collection).objects.link(obj)',
+    '    return obj',
+    "shown = thing('shown')",
+    "unrendered = thing('unrendered'); unrendered.hide_render = True",
+    "viewport_off = thing('viewportOff'); viewport_off.hide_viewport = True",
+    "eye_closed = thing('eyeClosed'); eye_closed.hide_set(True)",
+    "quiet = bpy.data.collections.new('quiet'); scene.collection.children.link(quiet); quiet.hide_render = True",
+    "in_quiet = thing('inQuietCollection', quiet)",
+    "excluded = bpy.data.collections.new('excluded'); scene.collection.children.link(excluded)",
+    "out_of_layer = thing('outOfLayer', excluded); bpy.context.view_layer.layer_collection.children['excluded'].exclude = True",
+    'everything = [shown, unrendered, viewport_off, eye_closed, in_quiet, out_of_layer]',
+    "print('RENDERED ' + json.dumps({'kept': [o.name for o in module.rendered_only(everything)], 'none': [o.name for o in module.rendered_only([unrendered, in_quiet])]}))",
+  ].join('\n'));
+  const run = spawnSync(blender!.command, ['-b', '--python', probe, '--', script], { encoding: 'utf8', timeout: 120000 });
+  const line = run.stdout.split(/\r?\n/).find(text => text.startsWith('RENDERED '));
+  if (!line) throw new Error(`The probe printed nothing: ${run.stdout.slice(-400)} ${run.stderr.slice(-400)}`);
+  const result = JSON.parse(line.slice('RENDERED '.length)) as { kept: string[]; none: string[] };
+  // Made through bpy.data and never synced to the view layer, an object still counts. Hidden only in the viewport, a
+  // render still shows it. With nothing shown, all of them are kept rather than none.
+  expect(result.kept).toEqual(['shown', 'viewportOff', 'eyeClosed']);
+  expect(result.none).toEqual(['unrendered', 'inQuietCollection']);
+}, 120000);
