@@ -128,8 +128,8 @@ only the still: a pop at the loop seam, a foot that slides, a facing that jumps.
 `sheet.png` beside it, so keep the two together, and it works from `file://`, offline: it loads no font and makes no
 network request. Without the sheet it shows a notice that it could not load it.
 
-- **Facing.** The picker has one entry per `dir-n` tag, `dir-0` first, and "All facings", which plays every facing at
-  once at the chosen scale and hides the frame strip and the loop-seam strip (it says so on the page).
+- **Facing.** The picker lists "All facings" first, then one entry per `dir-n` tag; `dir-0` is selected when the page
+  opens. "All facings" plays every facing at once at the chosen scale and hides the frame strip and the loop-seam strip (it says so on the page).
 - **Playback.** Scale 1, 2, 4 or 8 times, drawn by nearest neighbour; it starts at the largest of these that keeps the
   cell within 256 pixels. Speed 0.25, 0.5, 1 or 2 times. Backdrop neutral, green, light grey, near black or checker.
   Pause and play, and step back and forward, one frame each, wrapping at the ends. Each frame lasts its `duration` in
@@ -140,8 +140,9 @@ network request. Without the sheet it shows a notice that it could not load it.
   point. The step across that mark is the one that can pop.
 - **Pivot.** Only when the bake used `--anchor feet`: a "Show pivot" box, ticked by default, marks the pivot pixel on
   every frame, the strips and the "All facings" tiles included. Without the slice there is no box and no mark.
-- **Keys.** Space pauses and plays, the left and right arrows step, and 1 to 8 pick `dir-0` to `dir-7`. They are ignored
-  while a menu has focus. There is no key for "All facings".
+- **Keys.** Space pauses and plays, the left and right arrows step, and 1 to 8 pick `dir-0` to `dir-7`. A number key
+  does nothing when the bake has fewer facings than that number. Keys are ignored while a menu or the "Show pivot" box
+  has focus and with Ctrl, Meta or Alt held. There is no key for "All facings".
 - **Header and footer.** The header shows the clip name, the facings, the phases, the cell size and the loop length from
   the manifest. The footer shows the first 12 hex digits of the sheet's SHA-256, so you can match the page to a sheet.
   The clip name comes from the GLB and is shown as text, never as markup.
