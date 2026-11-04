@@ -37,6 +37,7 @@ VIEWS = {
 }
 SHADINGS = ('matcap', 'wire', 'cavity', 'zebra', 'color', 'vertex')
 LENS = 85.0
+CLIP_SAMPLES = 24
 
 
 def report(path, value):
@@ -86,20 +87,45 @@ def bounds(points):
     return lo, hi
 
 
-def framing(meshes, target):
+def clip_samples(first, last):
+    """The integer frames a clip's fit looks at: every frame of the action, or CLIP_SAMPLES evenly spaced ones when it
+    runs longer, always including its first and last frame."""
+    first, last = math.floor(first), math.ceil(last)
+    if last - first + 1 <= CLIP_SAMPLES: return list(range(first, last + 1))
+    return [first + int(math.floor(n * (last - first) / (CLIP_SAMPLES - 1) + .5)) for n in range(CLIP_SAMPLES)]
+
+
+def sampled_points(meshes, chosen, samples):
+    """The world points of every mesh and of the chosen ones as the scene stands, or at each sample frame in turn
+    (the scene returns to the frame it was on)."""
+    if not samples: return [p for obj in meshes for p in world_points(obj)], [p for obj in chosen for p in world_points(obj)]
+    scene = bpy.context.scene
+    current = scene.frame_current
+    everything, picked = [], []
+    try:
+        for frame in samples:
+            scene.frame_set(frame)
+            bpy.context.view_layer.update()
+            everything += [p for obj in meshes for p in world_points(obj)]
+            picked += [p for obj in chosen for p in world_points(obj)]
+    finally: scene.frame_set(current)
+    return everything, picked
+
+
+def framing(meshes, target, samples=None):
     """The (center, radius) of the body and of the head: the named target, else the mesh with face shape keys, else
-    the top seventh of the body."""
-    everything = [p for obj in meshes for p in world_points(obj)]
-    lo, hi = bounds(everything)
-    body = ((lo + hi) / 2, (hi - lo).length / 2)
+    the top seventh of the body. With `samples` (frames of a clip) the bounds cover the figure at all of them, so one
+    fit holds the whole clip."""
     chosen = []
     if target:
         chosen = [obj for obj in meshes if fnmatch.fnmatch(obj.name, target)]
         if not chosen: raise ValueError(f'No mesh matches --target {target}')
     else:
         chosen = [obj for obj in meshes if obj.data.shape_keys and 'eyeBlinkLeft' in obj.data.shape_keys.key_blocks]
+    everything, points = sampled_points(meshes, chosen, samples)
+    lo, hi = bounds(everything)
+    body = ((lo + hi) / 2, (hi - lo).length / 2)
     if chosen:
-        points = [p for obj in chosen for p in world_points(obj)]
         # A face mesh that also carries a neck reaches the shoulders: frame its top 70% only.
         hlo, hhi = bounds(points)
         top = [p for p in points if p.z >= hhi.z - .7 * (hhi.z - hlo.z)] if not target else points
@@ -256,7 +282,8 @@ def run_job(job):
             arm.animation_data.action = action
         clip_start, clip_end = action.frame_range
     set_pose(meshes, {})
-    frames = framing(meshes, job.get('target'))
+    # One camera for every cell: a clip is fitted over its whole frame range, any other render at the scene as it stands.
+    frames = framing(meshes, job.get('target'), clip_samples(clip_start, clip_end) if clip else None)
     wires = add_wires(meshes, frames['head'][1] * 2) if 'wire' in shadings else []
     files = []
     for pose in poses:
