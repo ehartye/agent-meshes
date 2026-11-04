@@ -77,8 +77,11 @@ afterAll(async () => { await browser?.close(); await rm(root, { recursive: true,
 
 interface Opened { page: Page; context: BrowserContext; problems: string[]; requests: string[]; dialogs: string[] }
 /** Open a page from file:// in an offline context; collects console errors, page errors, failed requests, every request URL and dialogs. */
-async function open(file: string, options: { colorScheme?: 'dark' | 'light' } = {}): Promise<Opened> {
-  const context = await browser.newContext({ offline: true, viewport: { width: 1500, height: 1200 }, deviceScaleFactor: 1, ...options });
+async function open(file: string, options: { colorScheme?: 'dark' | 'light'; clock?: boolean } = {}): Promise<Opened> {
+  const { clock, ...contextOptions } = options;
+  const context = await browser.newContext({ offline: true, viewport: { width: 1500, height: 1200 }, deviceScaleFactor: 1, ...contextOptions });
+  // A fake clock makes the page's requestAnimationFrame and performance.now advance only on page.clock.runFor, so timing is exact.
+  if (clock) { await context.clock.install({ time: 0 }); await context.clock.pauseAt(1000); }
   const page = await context.newPage();
   const problems: string[] = [], requests: string[] = [], dialogs: string[] = [];
   page.on('console', message => { if (message.type() === 'error') problems.push(`console: ${message.text()}`); });
@@ -163,20 +166,30 @@ describe('the viewer plays a baked loop from file://', () => {
         await page.selectOption(role('facing'), `dir-${direction}`);
         await page.click(role('strip-frame') + `[data-frame="${phase}"]`);
         await page.waitForFunction(c => (document.querySelector('[data-role="sprite"]') as HTMLCanvasElement).width === c, cell);
-        await page.waitForTimeout(150);
         // A canvas that drew a file:// image is tainted and cannot be read back, so the cell is read from a screenshot of it.
-        const shot = (await page.locator(role('sprite')).screenshot()).toString('base64');
-        const rgb = await page.evaluate(b64 => new Promise<number[]>((done, fail) => {
-          const image = new Image();
-          image.onload = () => { const c = document.createElement('canvas'); c.width = image.width; c.height = image.height; const x = c.getContext('2d')!; x.drawImage(image, 0, 0); done([image.width, image.height, ...x.getImageData(0, 0, image.width, image.height).data]); };
-          image.onerror = () => fail(new Error('screenshot did not decode'));
-          image.src = `data:image/png;base64,${b64}`;
-        }), shot);
-        const drawn = { width: rgb[0], height: rgb[1], rgba: rgb.slice(2) };
+        const readDrawn = async () => {
+          const shot = (await page.locator(role('sprite')).screenshot()).toString('base64');
+          const rgb = await page.evaluate(b64 => new Promise<number[]>((done, fail) => {
+            const image = new Image();
+            image.onload = () => { const c = document.createElement('canvas'); c.width = image.width; c.height = image.height; const x = c.getContext('2d')!; x.drawImage(image, 0, 0); done([image.width, image.height, ...x.getImageData(0, 0, image.width, image.height).data]); };
+            image.onerror = () => fail(new Error('screenshot did not decode'));
+            image.src = `data:image/png;base64,${b64}`;
+          }), shot);
+          return { width: rgb[0], height: rgb[1], rgba: rgb.slice(2) };
+        };
+        const expected = cellOf(direction, phase);
+        // The sheet loads after the first paint, so wait until the opaque pixels of the expected cell are on the canvas.
+        const opaqueMatches = async () => {
+          const got = await readDrawn();
+          let wrong = 0;
+          for (let i = 0; i < expected.length; i += 4) if (expected[i + 3] === 255 && (got.rgba[i] !== expected[i] || got.rgba[i + 1] !== expected[i + 1] || got.rgba[i + 2] !== expected[i + 2])) wrong++;
+          return wrong;
+        };
+        await expect.poll(opaqueMatches, { timeout: 10_000 }).toBe(0);
+        const drawn = await readDrawn();
         expect([drawn.width, drawn.height]).toEqual([cell, cell]);
         const stage = await page.locator(role('sprite-box')).evaluate(e => getComputedStyle(e).backgroundColor);
         expect(stage).toBe('rgb(230, 226, 210)');
-        const expected = cellOf(direction, phase);
         let opaque = 0;
         for (let i = 0; i < expected.length; i += 4) {
           const want = expected[i + 3] === 255 ? [...expected.subarray(i, i + 3)] : [230, 226, 210];
@@ -200,7 +213,7 @@ describe('the viewer plays a baked loop from file://', () => {
         await page.waitForFunction(([c, s]) => (document.querySelector('[data-role="sprite"]') as HTMLCanvasElement).style.width === `${c * s}px`, [cell, scale]);
         expect(await sizeOf(page, role('sprite'))).toEqual([[cell * scale, cell * scale]]);
         expect(await page.locator(role('sprite')).evaluate((e: HTMLElement) => [e.style.width, e.style.height])).toEqual([`${cell * scale}px`, `${cell * scale}px`]);
-        // The sprite sits on a whole pixel, so the browser never resamples it.
+        // The sprite sits on a whole CSS pixel, so at this device pixel ratio of 1 the browser does not resample it (a fractional ratio would).
         const at = await page.locator(role('sprite')).evaluate(e => { const r = e.getBoundingClientRect(); return [r.left, r.top]; });
         expect(at.map(Number.isInteger)).toEqual([true, true]);
         // The strips are drawn at the chosen scale too, with no cap.
@@ -281,6 +294,258 @@ describe('the viewer plays a baked loop from file://', () => {
     try {
       await page.click(role('play'));
       for (let phase = 0; phase < PHASES; phase++) { await page.click(role('strip-frame') + `[data-frame="${phase}"]`); expect(await text(page, 'frame-ms')).toBe('150'); }
+    } finally { await context.close(); }
+  }, 60_000);
+});
+
+/** A page composed from an edited copy of the plain bake's atlas, beside that bake's sheet. */
+async function pageFor(name: string, edit: (atlas: Atlas, manifest: SpriteManifest) => void): Promise<string> {
+  const atlas = structuredClone(plain.atlas), manifest = structuredClone(plain.manifest);
+  edit(atlas, manifest);
+  return writeShown(join(root, `page-${name}`), composeViewer(atlas, manifest, 'sheet.png', plain.sheetSha256), join(plain.dir, 'sheet.png'));
+}
+/** Focus nothing, so a key goes to the document. */
+const release = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+const focused = (page: Page) => page.evaluate(() => document.activeElement?.getAttribute('data-role') ?? document.activeElement?.tagName ?? '');
+const status = (page: Page) => text(page, 'status');
+
+describe('the viewer answers the keyboard', () => {
+  it('toggles play on Space from the document, from a stepped or held button and from the play button itself, once each', async () => {
+    const { page, context, problems } = await open(plain.page);
+    try {
+      await release(page);
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('paused');
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('playing');
+
+      // After a click on Step the button keeps focus; Space must still toggle play and not click Step again.
+      await page.click(role('step-forward'));
+      expect(await focused(page)).toBe('step-forward');
+      expect(await status(page)).toBe('paused');
+      const stepped = await frameIndex(page);
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('playing');
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('paused');
+      expect(stepped).toBeLessThan(PHASES);
+
+      // The same after a click on a frame of the strip, and on Step back; a paused press must not step the frame.
+      await page.click(role('strip-frame') + '[data-frame="2"]');
+      expect(await focused(page)).toBe('strip-frame');
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('playing');
+      await page.click(role('step-back'));
+      expect(await focused(page)).toBe('step-back');
+      expect(await status(page)).toBe('paused');
+      const held = await frameIndex(page);
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('playing');
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('paused');
+      expect(await frameIndex(page)).toBe(held);
+
+      // On the play button the browser clicks it itself: one toggle for one press, not two.
+      await page.focus(role('play'));
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('playing');
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('paused');
+      expect(problems).toEqual([]);
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('steps one frame on the arrow keys with wrap, pauses when it steps, and leaves a modified arrow alone', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      await page.selectOption(role('facing'), 'dir-4');
+      await page.click(role('strip-frame') + '[data-frame="0"]');
+      await release(page);
+      await page.keyboard.press('ArrowLeft');
+      expect(await frameIndex(page)).toBe(PHASES - 1);
+      await page.keyboard.press('ArrowRight');
+      expect(await frameIndex(page)).toBe(0);
+      for (let i = 1; i <= PHASES + 1; i++) { await page.keyboard.press('ArrowRight'); expect(await frameIndex(page)).toBe(i % PHASES); }
+      const at = await frameIndex(page);
+      await page.keyboard.press('Control+ArrowRight');
+      await page.keyboard.press('Alt+ArrowLeft');
+      expect(await frameIndex(page)).toBe(at);
+      expect(await status(page)).toBe('paused');
+
+      // An arrow key while playing pauses on the next frame.
+      await page.keyboard.press('Space');
+      expect(await status(page)).toBe('playing');
+      await page.keyboard.press('ArrowRight');
+      expect(await status(page)).toBe('paused');
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('picks a facing on the digits 1 to 8 and ignores 0, 9, a modified digit and a digit typed into the facing list', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      await release(page);
+      const scale = await page.locator(role('scale')).inputValue();
+      for (let digit = 1; digit <= DIRECTIONS; digit++) {
+        await page.keyboard.press(String(digit));
+        expect(await page.locator(role('facing')).inputValue()).toBe(`dir-${digit - 1}`);
+        expect(await text(page, 'facing-label')).toContain(`dir-${digit - 1} (`);
+      }
+      for (const key of ['0', '9', 'Control+2']) { await page.keyboard.press(key); expect(await page.locator(role('facing')).inputValue()).toBe(`dir-${DIRECTIONS - 1}`); }
+      await page.focus(role('facing'));
+      await page.keyboard.press('2');
+      expect(await page.locator(role('facing')).inputValue()).toBe(`dir-${DIRECTIONS - 1}`);
+      // The digits pick a facing; the page has no scale key, and the scale list is its own control.
+      expect(await page.locator(role('scale')).inputValue()).toBe(scale);
+    } finally { await context.close(); }
+  }, 60_000);
+});
+
+describe('the speed and backdrop controls', () => {
+  it('plays at the chosen speed: the clip time is the speed times the clock', async () => {
+    expect(plain.atlas.frames.every(frame => frame.duration === 300)).toBe(true);
+    // [speed, milliseconds on the clock, frame], each at least one animation frame from an edge of a 300 ms frame.
+    for (const [speed, ms, frame] of [[0.25, 1000, 0], [0.5, 1000, 1], [1, 1000, 3], [2, 350, 2], [1, 350, 1]]) {
+      const { page, context } = await open(plain.page, { clock: true });
+      try {
+        await page.selectOption(role('speed'), String(speed));
+        await page.clock.runFor(ms);
+        expect(await frameIndex(page), `${speed}x after ${ms} ms`).toBe(frame);
+      } finally { await context.close(); }
+    }
+  }, 120_000);
+
+  it('paints the stage behind the sprite, the strip and the tiles in the chosen backdrop', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      const stage = () => page.locator(role('sprite-box')).evaluate(e => { const s = getComputedStyle(e); return [s.backgroundColor, s.backgroundImage]; });
+      expect((await stage())[0]).toBe('rgb(230, 226, 210)');
+      expect(await page.locator('body').getAttribute('data-backdrop')).toBe('neutral');
+      for (const [value, color] of [['green', 'rgb(123, 191, 106)'], ['grey', 'rgb(201, 201, 201)'], ['dark', 'rgb(16, 16, 16)']]) {
+        await page.selectOption(role('backdrop'), value);
+        expect(await page.locator('body').getAttribute('data-backdrop')).toBe(value);
+        expect((await stage())[0]).toBe(color);
+      }
+      await page.selectOption(role('backdrop'), 'checker');
+      expect((await stage())[1]).toContain('conic-gradient');
+      await page.selectOption(role('backdrop'), 'neutral');
+      expect((await stage())[0]).toBe('rgb(230, 226, 210)');
+      await page.selectOption(role('backdrop'), 'dark');
+      expect(await page.locator(`${role('strip-frame')} .cellbox`).evaluateAll(list => list.map(e => getComputedStyle(e).backgroundColor))).toEqual(Array.from({ length: PHASES }, () => 'rgb(16, 16, 16)'));
+      await page.selectOption(role('facing'), 'all');
+      expect(await page.locator(`${role('facing-tile')}`).evaluateAll(list => list.map(e => getComputedStyle(e.parentElement!).backgroundColor))).toEqual(Array.from({ length: DIRECTIONS }, () => 'rgb(16, 16, 16)'));
+    } finally { await context.close(); }
+  }, 60_000);
+});
+
+describe('the viewer takes an atlas of any shape', () => {
+  const noMath = async (page: Page) => expect(await page.locator('body').innerText()).not.toMatch(/NaN|Infinity|undefined/);
+
+  it('plays an atlas with 1 phase on the one frame, steps and holds it, and shows a seam of that frame', async () => {
+    const file = await pageFor('one-phase', (atlas, manifest) => {
+      atlas.frames = atlas.frames.filter((_, i) => i % PHASES === 0);
+      atlas.meta.frameTags = atlas.frames.map((_, k) => ({ name: `dir-${k}`, from: k, to: k, direction: 'forward' as const }));
+      manifest.phases = 1;
+    });
+    const { page, context, problems } = await open(file, { clock: true });
+    try {
+      await page.clock.runFor(2000);
+      expect(await frameIndex(page)).toBe(0);
+      expect(await text(page, 'frame-count')).toBe('1');
+      expect(await page.locator(role('strip-frame')).count()).toBe(1);
+      expect(await page.locator(role('seam-frame')).evaluateAll(list => list.map(e => e.getAttribute('data-frame')))).toEqual(['0', '0', '0', '0']);
+      for (const control of ['step-forward', 'step-back']) { await page.click(role(control)); expect(await frameIndex(page)).toBe(0); }
+      await release(page);
+      await page.keyboard.press('ArrowRight');
+      expect(await frameIndex(page)).toBe(0);
+      await page.click(role('strip-frame'));
+      await page.click(role('play'));
+      await page.clock.runFor(1000);
+      expect(await frameIndex(page)).toBe(0);
+      expect(await text(page, 'frame-ms')).toBe('300');
+      await page.selectOption(role('facing'), 'all');
+      await page.clock.runFor(500);
+      expect(await page.locator(role('facing-tile')).count()).toBe(DIRECTIONS);
+      await noMath(page);
+      expect(problems).toEqual([]);
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('plays an atlas with 1 direction, offers it and All facings, and ignores the digits beyond it', async () => {
+    const file = await pageFor('one-direction', (atlas, manifest) => {
+      atlas.frames = atlas.frames.slice(0, PHASES);
+      atlas.meta.frameTags = [{ name: 'dir-0', from: 0, to: PHASES - 1, direction: 'forward' }];
+      manifest.directions = 1;
+    });
+    const { page, context, problems } = await open(file, { clock: true });
+    try {
+      const options = await page.locator(`${role('facing')} option`).evaluateAll(list => list.map(o => (o as HTMLOptionElement).value));
+      expect(options).toEqual(['all', 'dir-0']);
+      expect(await text(page, 'facing-label')).toBe('dir-0 (0 deg)');
+      expect(await text(page, 'meta')).toContain('1 facing /');
+      await release(page);
+      for (const key of ['2', '8', '1']) { await page.keyboard.press(key); expect(await page.locator(role('facing')).inputValue()).toBe('dir-0'); }
+      await page.clock.runFor(700);
+      expect(await frameIndex(page)).toBe(2);
+      expect(await text(page, 'frame-count')).toBe(String(PHASES));
+      await page.selectOption(role('facing'), 'all');
+      await page.clock.runFor(100);
+      expect(await page.locator(role('facing-tile')).count()).toBe(1);
+      await noMath(page);
+      expect(problems).toEqual([]);
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('plays an atlas with no frameTags as one facing over every frame', async () => {
+    const file = await pageFor('no-tags', atlas => { delete (atlas.meta as Partial<typeof atlas.meta>).frameTags; });
+    const { page, context, problems } = await open(file, { clock: true });
+    try {
+      const total = plain.atlas.frames.length;
+      const options = await page.locator(`${role('facing')} option`).evaluateAll(list => list.map(o => (o as HTMLOptionElement).value));
+      expect(options).toEqual(['all', 'dir-0']);
+      expect(await text(page, 'frame-count')).toBe(String(total));
+      expect(await page.locator(role('strip-frame')).count()).toBe(total);
+      await page.clock.runFor(1000);
+      expect(await frameIndex(page)).toBe(3);
+      await page.click(role('strip-frame') + '[data-frame="0"]');
+      await page.click(role('step-back'));
+      expect(await frameIndex(page)).toBe(total - 1);
+      await page.selectOption(role('facing'), 'all');
+      await page.clock.runFor(100);
+      expect(await page.locator(role('facing-tile')).count()).toBe(1);
+      await noMath(page);
+      expect(problems).toEqual([]);
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('advances a frame with no duration after 150 ms, not before', async () => {
+    const file = await pageFor('fallback-timing', atlas => { for (const frame of atlas.frames) delete (frame as Partial<typeof frame>).duration; });
+    const { page, context } = await open(file, { clock: true });
+    try {
+      // [milliseconds to run, frame]: the loop is 4 x 150 ms, every checkpoint at least 20 ms from a frame edge.
+      let total = 0;
+      for (const [ms, frame] of [[130, 0], [40, 1], [110, 1], [40, 2], [120, 2], [30, 3], [120, 3], [40, 0]]) {
+        await page.clock.runFor(ms);
+        total += ms;
+        expect(await frameIndex(page), `${total} ms into the loop`).toBe(frame);
+      }
+    } finally { await context.close(); }
+  }, 60_000);
+});
+
+describe('the viewer reads out the frame without reading out the playback', () => {
+  it('turns the frame readout into a polite live region only while paused, and labels the drawing surface', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      const live = () => page.locator(role('counter')).getAttribute('aria-live');
+      expect(await live()).toBe('off');
+      await page.click(role('play'));
+      expect(await live()).toBe('polite');
+      await page.click(role('step-forward'));
+      expect(await live()).toBe('polite');
+      await page.click(role('play'));
+      expect(await live()).toBe('off');
+      expect(await page.locator(role('sprite')).getAttribute('aria-label')).toMatch(/sprite/i);
+      expect(await page.locator(role('sprite')).getAttribute('role')).toBe('img');
     } finally { await context.close(); }
   }, 60_000);
 });

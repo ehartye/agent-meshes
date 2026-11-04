@@ -37,7 +37,7 @@ const PAGE = String.raw`<!doctype html>
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.5 var(--mono)}
-/* Whole-pixel line heights and a left-aligned page keep every canvas on a whole pixel, so the sprites are never resampled. */
+/* Whole-pixel line heights and a left-aligned page put every canvas on a whole CSS pixel, so at a whole device pixel ratio the sprites are not resampled; at a fractional ratio the browser still resamples them, and image-rendering:pixelated keeps the edges hard. */
 .page{max-width:1240px;margin:0;padding:0 20px}
 .bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0;border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:10px}
@@ -127,11 +127,11 @@ footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 20px;ma
 </section>
 <section class="panel" aria-label="Playback">
 <div class="stage">
-<div class="plate" data-role="single"><div class="cellbox" data-role="sprite-box"><canvas data-role="sprite"></canvas></div></div>
+<div class="plate" data-role="single"><div class="cellbox" data-role="sprite-box"><canvas data-role="sprite" role="img" aria-label="Sprite preview of the chosen facing and frame"></canvas></div></div>
 <div class="tiles" data-role="tiles" hidden></div>
 <div class="readout">
 <span class="label">Frame</span>
-<div class="counter"><span data-role="frame-index">0</span> <small>of <span data-role="frame-count">0</span></small></div>
+<div class="counter" data-role="counter" aria-live="off" aria-atomic="true"><span data-role="frame-index">0</span> <small>of <span data-role="frame-count">0</span></small></div>
 <span class="line" data-role="facing-label"></span>
 <span class="line"><span data-role="frame-ms">0</span> ms for this frame</span>
 <p class="note" data-role="all-note" hidden>All facings plays every facing at the chosen scale. The frame strip and the loop seam show one facing, so pick a facing to see them.</p>
@@ -172,7 +172,7 @@ var st = { facing: tags[0].name, scale: scale, speed: 1, playing: true, t: 0, he
 var facingSel = role('facing'), scaleSel = role('scale'), speedSel = role('speed'), backdropSel = role('backdrop');
 var playBtn = role('play'), sprite = role('sprite'), spriteBox = role('sprite-box'), single = role('single'), tilesBox = role('tiles');
 var stripsBox = role('strips'), stripBox = role('strip'), seamBox = role('seam'), notice = role('notice'), allNote = role('all-note');
-var pivotToggle = role('pivot-toggle');
+var pivotToggle = role('pivot-toggle'), counterBox = role('counter');
 var degrees = function (k) { return Math.round(k * 3600 / tags.length) / 10; };
 var tagLabel = function (t, k) { return t.name + ' (' + degrees(k) + ' deg)'; };
 
@@ -292,6 +292,8 @@ function paint() {
   }
   syncPivot();
   dirty = false;
+  // The frame readout is a polite live region only while paused or stepping, so a screen reader hears each step but not every playing frame.
+  counterBox.setAttribute('aria-live', st.playing ? 'off' : 'polite');
   if (rel !== shown.rel) {
     shown.rel = rel;
     role('frame-index').textContent = String(rel);
@@ -335,10 +337,17 @@ document.addEventListener('keydown', function (e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   var tagName = e.target && e.target.tagName;
   if (tagName === 'SELECT' || tagName === 'INPUT') return;
-  if (e.code === 'Space') { if (tagName === 'BUTTON') return; e.preventDefault(); togglePlay(); }
+  // Only the play button handles Space itself (it clicks on keyup); on any other focus, a button included, Space toggles play.
+  if (e.code === 'Space') { if (e.target === playBtn) return; e.preventDefault(); togglePlay(); }
   else if (e.key === 'ArrowLeft') step(-1);
   else if (e.key === 'ArrowRight') step(1);
   else if (/^[1-8]$/.test(e.key) && tags[+e.key - 1]) setFacing(tags[+e.key - 1].name);
+});
+
+// A focused button would also click on the Space keyup, so that keyup is cancelled too (the play button keeps its own click).
+document.addEventListener('keyup', function (e) {
+  var tagName = e.target && e.target.tagName;
+  if (e.code === 'Space' && e.target !== playBtn && tagName !== 'SELECT' && tagName !== 'INPUT' && !e.ctrlKey && !e.metaKey && !e.altKey) e.preventDefault();
 });
 
 setFacing(st.facing);
