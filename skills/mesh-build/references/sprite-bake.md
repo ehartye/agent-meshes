@@ -14,20 +14,23 @@ mesh bake knight.glb --clip walk
 mesh bake knight.glb --clip walk --directions 4 --phases 6 --cell 64 --out art/knight
 mesh bake knight.glb --clip walk --palette art/dawnbringer16.hex --outline auto --look banded --anchor feet
 mesh bake knight.glb --clip walk --cell 64 --pixels-per-metre 32 --anchor feet --contact-sheet
+mesh bake knight.glb --clip walk --viewer
 ```
 
 The README section "Sprite bake" lists the flags, defaults, ranges, output files and error codes; `mesh bake --help`
 is the authority. The success line is one JSON line: `output`, `files`, `size`, `frames`, `sheetSha256`, `atlasSha256`;
-`files` gains `contact` only with `--contact-sheet`. Look at `sheet.png` before using it, at 1x and enlarged, or add
-`--contact-sheet` and review the whole bake in one image.
+`files` gains `contact` only with `--contact-sheet` and `viewer` only with `--viewer`. Look at `sheet.png` before using
+it, at 1x and enlarged, or add `--contact-sheet` and review the whole bake in one image. A walk cycle is judged in
+motion, so add `--viewer` and play the loop.
 
-Two flags answer common requests. `--pixels-per-metre` gives a whole cast one sprite scale ("Sprite scale" below).
-`--contact-sheet` writes `contact.png`, the sheet enlarged 4 times for review ("Contact sheet" below).
+Three flags answer common requests. `--pixels-per-metre` gives a whole cast one sprite scale ("Sprite scale" below).
+`--contact-sheet` writes `contact.png`, the sheet enlarged 4 times for review ("Contact sheet" below). `--viewer`
+writes `viewer.html`, a page that plays the baked loop ("Viewer" below).
 
 ## Palette, outline, look and anchor
 
 Four optional flags shape the sheet to a game's palette and sprite look. With none of the optional flags, these four and
-the scale and contact sheet after them, the sheet and atlas are byte-identical to the 0.39.2 output in the same
+the scale, contact sheet and viewer after them, the sheet and atlas are byte-identical to the 0.39.2 output in the same
 environment, and the manifest differs only in `pluginVersion`.
 
 | Flag | Values | Default |
@@ -117,6 +120,37 @@ detail from `sheet.png` at 8x, not from the contact sheet.
 - **Stale file.** A bake without the flag neither updates nor removes a `contact.png` an earlier bake left in the
   folder, so the file may be out of date. Delete it yourself, or bake with the flag again.
 
+## Viewer
+
+`--viewer` is off by default. With it the bake writes one more file, `viewer.html`, after the others in the same folder
+(after `contact.png` when `--contact-sheet` is also set). It plays the baked loop, so you can judge the motion and not
+only the still: a pop at the loop seam, a foot that slides, a facing that jumps. Open it in a browser. It needs
+`sheet.png` beside it, so keep the two together, and it works from `file://`, offline: it loads no font and makes no
+network request. Without the sheet it shows a notice that it could not load it.
+
+- **Facing.** The picker has one entry per `dir-n` tag, `dir-0` first, and "All facings", which plays every facing at
+  once at the chosen scale and hides the frame strip and the loop-seam strip (it says so on the page).
+- **Playback.** Scale 1, 2, 4 or 8 times, drawn by nearest neighbour; it starts at the largest of these that keeps the
+  cell within 256 pixels. Speed 0.25, 0.5, 1 or 2 times. Backdrop neutral, green, light grey, near black or checker.
+  Pause and play, and step back and forward, one frame each, wrapping at the ends. Each frame lasts its `duration` in
+  the atlas, or 150 ms when it has none.
+- **Frame strip.** One entry per phase of the chosen facing with the current frame marked; click one to hold it. Frame
+  numbers on the page count inside the facing, from 0 to phases minus 1.
+- **Loop seam.** The last two frames and the first two of the chosen facing side by side, with a mark at the loop
+  point. The step across that mark is the one that can pop.
+- **Pivot.** Only when the bake used `--anchor feet`: a "Show pivot" box, ticked by default, marks the pivot pixel on
+  every frame, the strips and the "All facings" tiles included. Without the slice there is no box and no mark.
+- **Keys.** Space pauses and plays, the left and right arrows step, and 1 to 8 pick `dir-0` to `dir-7`. They are ignored
+  while a menu has focus. There is no key for "All facings".
+- **Header and footer.** The header shows the clip name, the facings, the phases, the cell size and the loop length from
+  the manifest. The footer shows the first 12 hex digits of the sheet's SHA-256, so you can match the page to a sheet.
+  The clip name comes from the GLB and is shown as text, never as markup.
+- **Review only.** `viewer.html` is not for the engine. It is not recorded in `manifest.json` or `atlas.json`, so
+  `sheet.png`, `atlas.json` and `manifest.json` are the same bytes with and without the flag, and the `files` object of
+  the success line lists it as `viewer`, after `contact`, only with the flag. The flag takes no value.
+- **Stale file.** A bake without the flag neither updates nor removes a `viewer.html` an earlier bake left in the
+  folder, so the page may belong to an older sheet. Delete it yourself, or bake with the flag again.
+
 ## Fit and reduction
 
 - The camera is orthographic at 15 degrees elevation. It is fitted once, to the rest pose, as the largest square frame
@@ -184,12 +218,14 @@ Every bake error is a JSON error with a `code`:
   message names the set scale and says to lower it or raise `--cell`. Nothing is written.
 - `BAKE_ANCHOR_OUTSIDE`: the `--anchor feet` pivot falls outside the cell. Raise `--cell` or leave `--anchor` out.
 - `CLI_ARGUMENT_ERROR`: a bad flag value, checked before Chromium starts; see "Argument errors" above. It also covers a
-  `--pixels-per-metre` outside 1 to 1024 or not a number, and a `--contact-sheet` image over 134,217,728 pixels.
+  `--pixels-per-metre` outside 1 to 1024 or not a number, a `--contact-sheet` image over 134,217,728 pixels, and a value
+  given to `--viewer`.
 
 ## What is guaranteed
 
 `atlas.json` depends only on the GLB and the flags and holds no plugin version, timestamp or path (`manifest.json`
 holds the version). The sheet is byte-identical from run to run in one environment (same machine, Node and Chromium),
-and so is `contact.png`, which is made from the sheet's bytes alone. Sheet pixels can differ on another GPU or Chrome
-build, so never commit a hash of the sheet as an expected value. In Phaser every tag loads with `repeat 0`, so the game
-sets its own looping.
+and so is `contact.png`, which is made from the sheet's bytes alone. `viewer.html` is made from the atlas, the manifest
+and the sheet's hash alone, with no clock, so the same bake gives the same page. Sheet pixels can differ on another GPU
+or Chrome build, so never commit a hash of the sheet as an expected value. In Phaser every tag loads with `repeat 0`, so
+the game sets its own looping.
