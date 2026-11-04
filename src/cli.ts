@@ -441,8 +441,10 @@ ${clipReportThresholds()}`)
   });
   program.command('view <directory>').description('Render fixed views and animation contact sheets')
     .option('--views <list>', 'Comma-separated views: front, side, top, perspective', 'front,side,perspective')
+    .option('--project <file>', 'Render a saved project file (a *.mesh.json, as save writes) with no workbench or workspace needed; --workspace and --url are ignored')
     .action(async (directory, options) => {
-      const project = await currentProject().catch((error: unknown) => {
+      // A project file is loaded (and validated) before anything is written, so a bad file creates no output directory.
+      const project = options.project !== undefined ? await (await import('./storage.ts')).loadProject(options.project) : await currentProject().catch((error: unknown) => {
         if ((error as { code?: string }).code !== 'WORKBENCH_UNREACHABLE') throw error;
         throw Object.assign(new Error('view renders the workspace project and needs --workspace <directory> or a running workbench. To look at a GLB file, run mesh preview <model.glb>.', { cause: error }), { code: 'WORKBENCH_UNREACHABLE' });
       });
