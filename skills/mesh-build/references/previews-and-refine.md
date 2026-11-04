@@ -75,16 +75,22 @@ file of the source (functions are named, not numbered, because line numbers drif
 - [documented] Camera fit for a clip: one camera for the whole sheet. `scripts/blender-preview.py`: `framing` fits it once,
   before the pose loop, to the union of the figure's bounds over up to 24 evenly spaced integer frames of the clip,
   first and last frame included. The sample count does not depend on `--phases`, so `--phases 4` and `--phases 8` share
-  one camera and one scale, and a limb that swings out in one phase is not cropped. `--posed` without `--clip` fits the
-  posed state.
+  one camera and one scale. A limb that swings out in one phase is not cropped in the sampled frames; the tests find
+  no cropped cell in any rendered phase, though a pose between two sampled frames may reach slightly past them.
+  `--posed` without `--clip` fits the posed state.
 - [documented] The fit ignores the unit bone-shape sphere (`Icosphere`) that the glTF importer adds for a rigged figure.
   Blender never renders it, but the old fit counted it, so a rigged figure sat small in the frame.
-- [tested] Blender 5.2.2, body-front view: the longest-box-side fill of a small rigged figure rose from about 0.34 to
-  about 0.68, and of a biped's rest render from about 0.58 to about 0.84.
-- [documented] Every render of a rigged figure changed once, in the release that added this fit: the figure is framed
-  tighter. That covers rest renders, `--clip` and `--posed` renders, and the build's `front.png`, `side.png`,
-  `perspective.png` and `<clip>-contact.png`. Static, unrigged GLBs have no such sphere and render the same pixels as
-  before. Re-render a rigged figure before you compare it with an older image.
+- [documented] `tests/preview-framing-blender.test.ts` renders the small rigged figure of
+  `tests/helpers/preview-framing-glb.ts` (`smallFigureGlb(true)`) at 512 px, view `body-front`, in Blender 5.2.2. It
+  pins the old longest box side of 173 px and requires the new render to span at least about 327 px; the pull request
+  (#252) measured 346 px, a fill of about 0.34 rising to about 0.68.
+- [documented] The unrendered sphere no longer counts, so a rigged figure is usually framed tighter, at rest and in
+  posed renders, and the release that added this fit changed those pixels once (rest renders, `--posed`, and the build's
+  `front.png`, `side.png`, `perspective.png`). Not every render shrinks the margin: a platform under the figure can cover
+  the sphere, and a rest render of such a figure stayed pixel-identical in the tests. A clip with a wide swing is framed
+  wider than before so that no limb is cropped (one test figure's first cell fill fell from about 0.61 to about 0.45).
+  Static, unrigged GLBs have no such sphere and render the same pixels as before. Re-render a rigged figure before you
+  compare it with an older image.
 - [documented] With no `--out` the default is `preview/` beside the input, except when the input sits in a folder a build
   owns (it holds `.agent-meshes-build.json`, as `dist/` does): then the default is a sibling, so `dist/model.glb`
   previews into `dist-preview/` and the next `mesh build` still passes. Earlier versions wrote `dist/preview/`, which
