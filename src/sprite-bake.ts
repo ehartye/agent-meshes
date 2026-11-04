@@ -13,6 +13,7 @@ import { lookScript, parseBands, parseLook, type SpriteLook } from './sprite-loo
 import { CONTACT_MAX_PIXELS, composeContactSheet, contactSize } from './sprite-contact.ts';
 import { outlineCell } from './sprite-outline.ts';
 import { darkestColor, paletteManifest, readPalette, snapToPalette, type Palette } from './sprite-palette.ts';
+import { composeViewer } from './sprite-viewer.ts';
 
 /**
  * Bake one clip of a rigged GLB into a sprite sheet a 2D engine loads unchanged: `sheet.png`, an Aseprite-format
@@ -25,6 +26,8 @@ import { darkestColor, paletteManifest, readPalette, snapToPalette, type Palette
  *
  * With `pixelsPerMetre` the half extent is set from the scale (`cell / (2 * pixelsPerMetre)`, no padding) instead of fitted.
  * With `contactSheet` a fourth file, `contact.png`, is written after the three: the sheet scaled 4 times for review (see sprite-contact.ts).
+ * With `viewer` a last file, `viewer.html`, is written after `contact.png`: a page that plays the loop from `sheet.png` beside it (see sprite-viewer.ts).
+ * Neither option is recorded in the atlas or the manifest, which are the same bytes with and without them, and a `contact.png` or `viewer.html` left by an earlier bake is never removed.
  *
  * Optional passes, all off by default (a bake with none of them is the 0.37.0 output): `look` (`unlit` or `banded`)
  * replaces the room lighting before the fit; after the border check `palette` snaps every opaque pixel to the palette,
@@ -44,6 +47,7 @@ export const BAKE_PADDING = 1.25;
 const ALPHA_THRESHOLD = 128;
 const OUTPUT_NAMES = { sheet: SPRITE_ATLAS_IMAGE, atlas: 'atlas.json', manifest: 'manifest.json' } as const;
 const CONTACT_NAME = 'contact.png';
+const VIEWER_NAME = 'viewer.html';
 
 export interface BakeOptions {
   clip: string;
@@ -69,17 +73,19 @@ export interface BakeOptions {
   pixelsPerMetre?: number | string;
   /** `true` also writes `contact.png`, the sheet scaled 4 times with a grey gutter between cells, for review; `false` is the same as unset. */
   contactSheet?: boolean;
+  /** `true` also writes `viewer.html`, a page that plays the baked loop from `sheet.png` beside it, after every other file; `false` is the same as unset. */
+  viewer?: boolean;
 }
 export interface BakeSettings {
   clip: string; directions: number; phases: number; cell: number; out?: string;
   /** Each of these is set only when the matching option was given. */
-  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet'; pixelsPerMetre?: number; contactSheet?: true;
+  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet'; pixelsPerMetre?: number; contactSheet?: true; viewer?: true;
 }
 export interface BakeResult {
   /** Absolute output folder. */
   output: string;
-  /** The files, relative to `output`: the three of the bake, and `contact` only with `contactSheet`. */
-  files: { sheet: string; atlas: string; manifest: string; contact?: string };
+  /** The files, relative to `output`: the three of the bake, and `contact` only with `contactSheet` and `viewer` (after `contact`) only with `viewer`. */
+  files: { sheet: string; atlas: string; manifest: string; contact?: string; viewer?: string };
   size: { w: number; h: number };
   frames: number;
   sheetSha256: string;
@@ -143,6 +149,8 @@ export function parseBakeOptions(options: BakeOptions): BakeSettings {
       throw code(`--contact-sheet would make an image of ${width} by ${height} pixels, over the ${CONTACT_MAX_PIXELS} pixel limit (16384 by 8192). Lower --cell, --phases or --directions, or leave --contact-sheet out.`, 'CLI_ARGUMENT_ERROR');
     settings.contactSheet = true;
   }
+  if (options.viewer !== undefined && typeof options.viewer !== 'boolean') throw code(`--viewer takes no value (viewer is true or false), got ${String(options.viewer)}`, 'CLI_ARGUMENT_ERROR');
+  if (options.viewer) settings.viewer = true;
   if (options.anchor !== undefined) {
     if (options.anchor !== 'feet') throw code(`--anchor must be feet, got ${options.anchor}`, 'CLI_ARGUMENT_ERROR');
     settings.anchor = 'feet';
@@ -327,10 +335,13 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
     ...(settings.outline ? { outline: settings.outline } : {}),
     ...(pivot ? { anchor: { name: 'feet', x: pivot.x, y: pivot.y } } : {}),
   });
+  // The page is composed here, from the same atlas, manifest and sheet hash that are written, so a failure still writes nothing.
+  const viewerHtml = settings.viewer ? composeViewer(atlas, manifest, OUTPUT_NAMES.sheet, sheetSha256) : undefined;
   await mkdir(output, { recursive: true });
   await writeFile(join(output, OUTPUT_NAMES.sheet), png);
   await writeFile(join(output, OUTPUT_NAMES.atlas), atlasText);
   await writeFile(join(output, OUTPUT_NAMES.manifest), `${JSON.stringify(manifest, null, 1)}\n`);
   if (contactPng) await writeFile(join(output, CONTACT_NAME), contactPng);
-  return { output, files: { ...OUTPUT_NAMES, ...(contactPng ? { contact: CONTACT_NAME } : {}) }, size: { w: width, h: height }, frames: atlas.frames.length, sheetSha256, atlasSha256 };
+  if (viewerHtml !== undefined) await writeFile(join(output, VIEWER_NAME), viewerHtml);
+  return { output, files: { ...OUTPUT_NAMES, ...(contactPng ? { contact: CONTACT_NAME } : {}), ...(viewerHtml !== undefined ? { viewer: VIEWER_NAME } : {}) }, size: { w: width, h: height }, frames: atlas.frames.length, sheetSha256, atlasSha256 };
 }
