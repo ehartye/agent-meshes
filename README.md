@@ -371,6 +371,8 @@ node scripts/agent-meshes.mjs verify model.glb
 node scripts/agent-meshes.mjs view review
 ```
 
+`view <directory>` renders front, side and perspective PNGs (`--views` picks others) and one contact sheet per clip for the workspace project or a running workbench's, and exits 1 with `WORKBENCH_UNREACHABLE` when neither exists. `view <directory> --project model.mesh.json` renders a saved project file instead, with no workbench, workspace or running server; `--project` wins over `--workspace` and `--url`. The file is loaded before the directory is created, so a failed load creates nothing and exits 1 with the filesystem error (missing file), `INVALID_JSON`, `VALIDATION_ERROR` or `AUTHORING_ERROR`. Both routes need the built workbench and Chromium, take no GLB and print `{output, files}`; use `preview model.glb` for a GLB.
+
 GLB includes named meshes, materials, skeletons, weights and clips. The scene has one root node, an identity wrapper named after the project (`new <name>`, a recipe's name or a build config's `name`); parts are its children, nested by `parent`, and `group` parts are empty named nodes (sockets). Each glTF mesh carries its part's name (a shell's mesh the shell name, a merged mesh the project name). Export uses the rest rig, independent of the editor's current pose. Skinned mesh transforms are baked and skinned nodes placed at scene root to follow glTF semantics; the bone hierarchy and editable source project remain intact. The exported model is checked with Khronos glTF Validator; structural validity alone does not certify a convincing gait.
 
 For a repeatable build, save `build.json` beside your source project:

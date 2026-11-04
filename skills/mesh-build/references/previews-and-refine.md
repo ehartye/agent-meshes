@@ -51,7 +51,7 @@ character's face construction still takes its minute.
 
 `mesh preview` also takes a built `.glb` or `.gltf`. Use it for views and a contact sheet of a model that already
 exists (from a build, an import or a download) when you do not want to rebuild it. `mesh view` is not that
-command: it renders the workspace project and takes no GLB path.
+command: it renders a project, not a GLB (see the `view` bullets below).
 
 ```text
 mesh preview model.glb --views body --sheet --out review/
@@ -95,10 +95,17 @@ file of the source (functions are named, not numbered, because line numbers drif
   previews into `dist-preview/` and the next `mesh build` still passes. Earlier versions wrote `dist/preview/`, which
   failed the next build with `BUILD_OUTPUT_UNOWNED_FILE` (`Unexpected directory "preview"`). `--out` always wins; pass it
   to choose the place yourself.
-- [documented] `view` renders `currentProject()`, the workspace project (`src/cli.ts`: `currentProject` and the `view` command). [tested] `mesh view` run where no workspace or server exists exits 1 with the JSON error code
-  `WORKBENCH_UNREACHABLE`, naming `--workspace` and `mesh preview <model.glb>`.
-  Earlier versions failed with `fetch failed`. With no workspace,
-  `view` needs `--workspace` or a running workbench; to look at a built model, use `mesh preview <model.glb>`.
+- [documented] `mesh view <folder> --project model.mesh.json` renders a saved project file (a `*.mesh.json`, as `save` writes)
+  with no workbench, workspace or running server, and writes the same files and `{output, files}` JSON as `view` does.
+  `--project` wins over `--workspace` and `--url`, which are ignored. The file is loaded before the folder is created, so
+  a failed load creates nothing and exits 1: a missing file gives the filesystem error naming it, a file that is not JSON
+  `INVALID_JSON`, a schema failure `VALIDATION_ERROR` or `AUTHORING_ERROR`, and a valid project with no mesh geometry
+  `AUTHORING_ERROR` (`tests/view-project.test.ts`). It needs Chromium and the built
+  workbench, not Blender (`src/capture.ts`, `src/server.ts`).
+- [documented] Without `--project`, `view` renders the workspace project or a running workbench's. Run where neither exists,
+  it exits 1 with the JSON error code `WORKBENCH_UNREACHABLE`, naming `--workspace`, `running workbench` and
+  `mesh preview <model.glb>` (`tests/view-project.test.ts`, `tests/cli.test.ts`; earlier versions failed with
+  `fetch failed`). `view` takes no GLB path; to look at a built model, use `mesh preview <model.glb>`.
 - [general] This is Blender's Workbench shading of an imported glTF, not the three.js viewer's look. For the viewer's
   look, or a set compared from one camera, use the build previews or `recipes/set-sheet.mjs`.
 

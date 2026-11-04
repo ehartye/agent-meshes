@@ -29,8 +29,9 @@ adds nine donor banks, rigging tools and a protected offline demo generator.
 Load `mesh-setup` first. Commands run through the managed launcher
 (`node "<plugin-root>/scripts/run-managed.js" ...`, written `mesh` below).
 
-To look at a GLB that already exists without rebuilding it, run `mesh preview model.glb --out <folder>`; `mesh view`
-takes no GLB. Read [Preview a built GLB without rebuilding](references/previews-and-refine.md#preview-a-built-glb-without-rebuilding).
+To look at a GLB that already exists without rebuilding it, run `mesh preview model.glb --out <folder>`;
+`mesh view` takes no GLB (it renders a project: see `view --project` below). Read
+[Preview a built GLB without rebuilding](references/previews-and-refine.md#preview-a-built-glb-without-rebuilding).
 
 ## Find the relevant build guidance
 
@@ -86,6 +87,8 @@ a merged GLB has one mesh, so lint before merging (0.15.0 and later; older relea
 only). `view` renders
 front, side and perspective PNGs plus one contact sheet per clip into a directory; look at them.
 `view --views front,side,top,perspective` picks the views; the default is front, side and perspective.
+`view` renders the workspace project or a running workbench's; `view --project model.mesh.json` renders a saved
+project file with no workbench or workspace. It takes no GLB: use `mesh preview model.glb`.
 
 For a deliberate delivery review or recurring anatomy/clothing defects, use
 [mesh-quality-review](../mesh-quality-review/SKILL.md) for reference fidelity, a full orbit
