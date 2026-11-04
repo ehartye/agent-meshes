@@ -84,7 +84,7 @@ export interface BakeSettings {
 export interface BakeResult {
   /** Absolute output folder. */
   output: string;
-  /** The files, relative to `output`: the three of the bake, and `contact` only with `contactSheet` and `viewer` (after `contact`) only with `viewer`. */
+  /** The files, relative to `output`: the three of the bake, then `contact` only with `contactSheet`, then `viewer` only with `viewer`. */
   files: { sheet: string; atlas: string; manifest: string; contact?: string; viewer?: string };
   size: { w: number; h: number };
   frames: number;

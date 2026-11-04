@@ -3,7 +3,7 @@
  */
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -26,6 +26,13 @@ const sway: Clip = {
     { bone: 'shoulder', property: 'rotation', keys: times.map((time, i) => ({ time, value: aboutZ(i === KEYS ? 0 : 25 * Math.sin(2 * Math.PI * time / DURATION)) })) },
   ],
 };
+// `sway` stays inside the rest bounds; `overreach` slides the shoulder 0.6 m out, so the arm tip leaves them and the bake
+// fails BAKE_CELL_CLIPPED only after every cell is rendered, which is the failure that matters for "writes no viewer.html".
+const overreach: Clip = {
+  name: 'overreach', duration: DURATION, tracks: [
+    { bone: 'shoulder', property: 'position', keys: times.map((time, i) => ({ time, value: [i === KEYS ? 0 : 0.6 * Math.sin(Math.PI * time / DURATION), 0, 0] as [number, number, number] })) },
+  ],
+};
 
 function fixtureProject(): Project {
   let project = createProject('sprite-fixture');
@@ -40,7 +47,7 @@ function fixtureProject(): Project {
   part('nose', [0.1, 0.1, 0.25], [0, 0.95, 0.2], 'root');
   part('stub', [0.1, 0.1, 0.1], [-0.3, 0.7, 0], 'root');
   part('arm', [0.6, 0.12, 0.12], [0.55, 0.7, 0], 'shoulder');
-  return { ...project, clips: [sway] };
+  return { ...project, clips: [sway, overreach] };
 }
 
 // Records the name of every file written through node:fs/promises, in order, and passes the call on unchanged.
@@ -48,6 +55,13 @@ const written = vi.hoisted(() => [] as string[]);
 vi.mock('node:fs/promises', async importOriginal => {
   const real = await importOriginal<typeof import('node:fs/promises')>();
   return { ...real, writeFile: ((path: Parameters<typeof real.writeFile>[0], ...rest: unknown[]) => { written.push(String(path)); return (real.writeFile as (...args: unknown[]) => Promise<void>)(path, ...rest); }) as typeof real.writeFile };
+});
+
+// Wraps the page generator: it behaves as the real one unless a test turns `fail` on, and counts its calls.
+const composer = vi.hoisted(() => ({ fail: false, calls: 0 }));
+vi.mock('../src/sprite-viewer.ts', async importOriginal => {
+  const real = await importOriginal<typeof import('../src/sprite-viewer.ts')>();
+  return { ...real, composeViewer: ((...args: Parameters<typeof real.composeViewer>) => { composer.calls++; if (composer.fail) throw new Error('compose failed'); return real.composeViewer(...args); }) as typeof real.composeViewer };
 });
 
 let root: string, glbPath: string;
@@ -127,11 +141,48 @@ describe('bakeSprites with viewer', () => {
     expect((await read(dir, 'viewer.html')).equals(before)).toBe(true);
   }, 120_000);
 
-  it('writes nothing, viewer.html included, when the clip is unknown', async () => {
+  it('writes nothing, viewer.html included, when a cell clips after every cell is rendered', async () => {
     const dir = outDir();
-    await expect(bakeSprites(glbPath, { ...small, clip: 'nope', out: dir, viewer: true })).rejects.toMatchObject({ code: 'CLIP_NOT_FOUND' });
+    await expect(bakeSprites(glbPath, { ...small, phases: 4, clip: 'overreach', out: dir, viewer: true })).rejects.toMatchObject({ code: 'BAKE_CELL_CLIPPED' });
     expect(await list(dir)).toEqual([]);
   }, 120_000);
+
+  it('composes the page before it creates the folder, so a page that cannot be composed leaves no folder and no file', async () => {
+    const dir = join(outDir(), 'not-yet'), before = composer.calls;
+    written.length = 0;
+    composer.fail = true;
+    try { await expect(bakeSprites(glbPath, { ...small, out: dir, viewer: true })).rejects.toThrow('compose failed'); }
+    finally { composer.fail = false; }
+    expect(composer.calls).toBe(before + 1);
+    await expect(stat(dir)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(written.filter(path => path.startsWith(dir))).toEqual([]);
+  }, 120_000);
+
+  it('with one direction writes the page for that facing and leaves the other files as a plain bake', async () => {
+    const dir = outDir(), plain = outDir();
+    const result = await bakeSprites(glbPath, { ...small, directions: 1, out: dir, viewer: true });
+    await bakeSprites(glbPath, { ...small, directions: 1, out: plain });
+    expect(Object.keys(result.files)).toEqual(['sheet', 'atlas', 'manifest', 'viewer']);
+    expect(await list(dir)).toEqual(['atlas.json', 'manifest.json', 'sheet.png', 'viewer.html']);
+    for (const name of ['sheet.png', 'atlas.json', 'manifest.json']) expect((await read(dir, name)).equals(await read(plain, name)), name).toBe(true);
+    expect(JSON.parse((await read(dir, 'manifest.json')).toString('utf8')).directions).toBe(1);
+    expect(footerSha((await read(dir, 'viewer.html')).toString('utf8'))).toBe(result.sheetSha256.slice(0, 12));
+  }, 120_000);
+
+  it('with --anchor feet gives the page its pivot toggle and the pivot of the manifest, and a bake without the anchor has neither', async () => {
+    const dir = outDir();
+    await bakeSprites(glbPath, { ...small, out: dir, anchor: 'feet', viewer: true });
+    const page = (await read(dir, 'viewer.html')).toString('utf8');
+    const { anchor } = JSON.parse((await read(dir, 'manifest.json')).toString('utf8'));
+    expect(anchor).toMatchObject({ name: 'feet' });
+    expect(page).toContain('data-role="pivot-toggle"');
+    expect(page).toContain(`"pivot":{"x":${anchor.x},"y":${anchor.y}}`);
+    const none = outDir();
+    await bakeSprites(glbPath, { ...small, out: none, viewer: true });
+    const plainPage = (await read(none, 'viewer.html')).toString('utf8');
+    expect(plainPage).not.toContain('data-role="pivot-toggle"');
+    expect(plainPage).toContain('"pivot":null');
+  }, 180_000);
 });
 
 describe('agent-meshes bake --viewer', () => {
@@ -169,11 +220,11 @@ describe('agent-meshes bake --viewer', () => {
     expect(await list(dir)).toEqual([]);
   }, 120_000);
 
-  it('writes no viewer.html when the bake fails', async () => {
+  it('writes no viewer.html when the bake fails after every cell is rendered', async () => {
     const dir = outDir();
-    const outcome = await bake(glbPath, '--clip', 'nope', '--viewer', '--out', dir);
+    const outcome = await bake(glbPath, '--clip', 'overreach', '--directions', '2', '--phases', '4', '--cell', '16', '--viewer', '--out', dir);
     expect(outcome.code).not.toBe(0);
-    expect(outcome.stderr).toContain('CLIP_NOT_FOUND');
+    expect(outcome.stderr).toContain('BAKE_CELL_CLIPPED');
     expect(await list(dir)).toEqual([]);
   }, 120_000);
 
