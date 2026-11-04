@@ -29,7 +29,9 @@ adds nine donor banks, rigging tools and a protected offline demo generator.
 Load `mesh-setup` first. Commands run through the managed launcher
 (`node "<plugin-root>/scripts/run-managed.js" ...`, written `mesh` below).
 
-To look at a GLB that already exists without rebuilding it, run `mesh preview model.glb --out <folder>`; `mesh view` takes no GLB (it renders a project: see `view --project` below). Read [Preview a built GLB without rebuilding](references/previews-and-refine.md#preview-a-built-glb-without-rebuilding).
+To look at a GLB that already exists without rebuilding it, run `mesh preview model.glb --out <folder>`;
+`mesh view` takes no GLB (it renders a project: see `view --project` below). Read
+[Preview a built GLB without rebuilding](references/previews-and-refine.md#preview-a-built-glb-without-rebuilding).
 
 ## Find the relevant build guidance
 
