@@ -87,6 +87,18 @@ def bounds(points):
     return lo, hi
 
 
+def is_rendered(obj):
+    """True when a render shows the object: not hidden from render, in the view layer, and in a collection that renders.
+    The glTF importer's unit bone-shape sphere sits in a collection hidden from render, so it is not."""
+    if obj.hide_render or obj.name not in bpy.context.view_layer.objects: return False
+    return any(not collection.hide_render for collection in obj.users_collection)
+
+
+def rendered_only(meshes):
+    """The meshes a render shows, which is what the fit measures; all of them when none would show."""
+    return [obj for obj in meshes if is_rendered(obj)] or meshes
+
+
 def clip_samples(first, last):
     """The integer frames a clip's fit looks at: every frame of the action, or CLIP_SAMPLES evenly spaced ones when it
     runs longer, always including its first and last frame."""
@@ -283,7 +295,7 @@ def run_job(job):
         clip_start, clip_end = action.frame_range
     set_pose(meshes, {})
     # One camera for every cell: a clip is fitted over its whole frame range, any other render at the scene as it stands.
-    frames = framing(meshes, job.get('target'), clip_samples(clip_start, clip_end) if clip else None)
+    frames = framing(rendered_only(meshes), job.get('target'), clip_samples(clip_start, clip_end) if clip else None)
     wires = add_wires(meshes, frames['head'][1] * 2) if 'wire' in shadings else []
     files = []
     for pose in poses:

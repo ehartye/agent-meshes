@@ -51,3 +51,26 @@ export async function framingGlb(): Promise<Buffer> {
 /** Half the diagonal of the fixture's bounding box in metres, with the arm at rest and with it at its full reach. */
 export const restRadius = Math.hypot(2.2, 2.2, 2.2) / 2;
 export const unionRadius = Math.hypot(2.2 + REACH, 2.2, 2.2) / 2;
+
+/**
+ * A small figure that differs left to right (a long arm on +X, a stub on -X) and front to back (a nose on +Z). Rigged,
+ * its parts ride two bones and the importer adds its hidden bone-shape sphere, which is larger than the figure; static,
+ * it has no armature and so no such helper.
+ */
+export async function smallFigureGlb(rigged: boolean): Promise<Buffer> {
+  let project = createProject(rigged ? 'small-rigged' : 'small-static');
+  if (rigged) {
+    project = applyOperation(project, { op: 'bone.add', bone: { name: 'root' } });
+    project = applyOperation(project, { op: 'bone.add', bone: { name: 'shoulder', parent: 'root', position: [0.25, 0.7, 0] } });
+  }
+  const part = (name: string, size: [number, number, number], position: [number, number, number], bone: string) => {
+    project = applyOperation(project, { op: 'add', part: { name, geometry: { type: 'box', size }, position } });
+    if (rigged) project = applyOperation(project, { op: 'bind', name, binding: { type: 'rigid', bone } });
+  };
+  part('body', [0.5, 0.8, 0.3], [0, 0.4, 0], 'root');
+  part('head', [0.3, 0.3, 0.3], [0, 0.95, 0], 'root');
+  part('nose', [0.1, 0.1, 0.25], [0, 0.95, 0.2], 'root');
+  part('stub', [0.1, 0.1, 0.1], [-0.3, 0.7, 0], 'root');
+  part('arm', [0.6, 0.12, 0.12], [0.55, 0.7, 0], 'shoulder');
+  return Buffer.from(await exportGLB(project));
+}
