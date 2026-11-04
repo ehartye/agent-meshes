@@ -226,7 +226,7 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
   }
   const duration = kind === 'biped' ? 1.2 : kind === 'insectoid' ? insectoidGait.duration : spiderGait.duration;
   const samples = Math.ceil(duration * 60);
-  const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'arachnid' ? 0.003 : insectoidGait.bob) * (1 - Math.cos(4 * Math.PI * t));
+  const bob = (t: number) => (kind === 'biped' ? 0.024 : kind === 'arachnid' ? spiderGait.bob : insectoidGait.bob) * (1 - Math.cos(4 * Math.PI * t));
   /** Sample one looping clip; phaseOf overrides each leg's touchdown phase in leg order. A gait (the biped's, or a tuned insectoid or arachnid clip's) replaces the stride, lift, stance, cycle length and bob. */
   function sampleClip(name: string, phaseOf: (legIndex: number) => number, gait?: ClipGait): void {
     const clipDuration = gait?.duration ?? duration, clipSamples = Math.ceil(clipDuration * 60);
@@ -261,7 +261,7 @@ export function createCreature(kind: CreatureKind | 'quadruped' | 'strandbeest',
   /** The settings of a tuned insectoid or arachnid clip: the table with the given replacements; an untuned clip is baked from the constants as before. */
   const tunedGait = (name: string): ClipGait | undefined => {
     const given = tuned[name];
-    return given ? { name, ...(kind === 'insectoid' ? insectoidGait : { ...spiderGait, bob: 0.003 }), ...given, given } : undefined;
+    return given ? { name, ...(kind === 'insectoid' ? insectoidGait : spiderGait), ...given, given } : undefined;
   };
   if (options.legPhases) {
     if (kind !== 'insectoid') throw new Error(`Leg phases are only configurable for insectoid, not ${kind}`);

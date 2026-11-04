@@ -2,7 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import type { Quat, Vec3 } from '../core/types.ts';
 import { footPath } from './gait.ts';
 
-export const spiderGait = { stride: 0.25, lift: 0.075, stance: 0.70, duration: 1.6 } as const;
+export const spiderGait = { stride: 0.25, lift: 0.075, stance: 0.70, duration: 1.6, bob: 0.003 } as const;
 
 /** The foot path settings a tuned scuttle replaces; the module's spiderGait is never changed. */
 export interface SpiderTuning { stride: number; lift: number; stance: number }
