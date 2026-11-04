@@ -72,6 +72,19 @@ file of the source (functions are named, not numbered, because line numbers drif
   body (`scripts/blender-preview.py`: `framing`).
 - [tested] `--clip Walk --phases 4 --views body-side --sheet` wrote `Walk-p0` to `Walk-p3` PNGs and a `sheet.png` with
   one posed row per phase. `--clip` with a name the file does not have exits 1 and lists the clips it has.
+- [documented] Camera fit for a clip: one camera for the whole sheet. `scripts/blender-preview.py`: `framing` fits it once,
+  before the pose loop, to the union of the figure's bounds over up to 24 evenly spaced integer frames of the clip,
+  first and last frame included. The sample count does not depend on `--phases`, so `--phases 4` and `--phases 8` share
+  one camera and one scale, and a limb that swings out in one phase is not cropped. `--posed` without `--clip` fits the
+  posed state.
+- [documented] The fit ignores the unit bone-shape sphere (`Icosphere`) that the glTF importer adds for a rigged figure.
+  Blender never renders it, but the old fit counted it, so a rigged figure sat small in the frame.
+- [tested] Blender 5.2.2, body-front view: the longest-box-side fill of a small rigged figure rose from about 0.34 to
+  about 0.68, and of a biped's rest render from about 0.58 to about 0.84.
+- [documented] Every render of a rigged figure changed once, in the release that added this fit: the figure is framed
+  tighter. That covers rest renders, `--clip` and `--posed` renders, and the build's `front.png`, `side.png`,
+  `perspective.png` and `<clip>-contact.png`. Static, unrigged GLBs have no such sphere and render the same pixels as
+  before. Re-render a rigged figure before you compare it with an older image.
 - [documented] With no `--out` the default is `preview/` beside the input, except when the input sits in a folder a build
   owns (it holds `.agent-meshes-build.json`, as `dist/` does): then the default is a sibling, so `dist/model.glb`
   previews into `dist-preview/` and the next `mesh build` still passes. Earlier versions wrote `dist/preview/`, which
