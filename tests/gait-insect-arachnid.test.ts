@@ -92,7 +92,13 @@ it('the reach ceilings of Decision 6 build and the next 0.01 step is refused wit
   }
   // The label is the real kind, never the biped's.
   expect(() => build('insectoid', { tripod: { stride: 0.8 } })).toThrow(/Cannot build the insectoid tripod clip/);
-  expect(() => build('insectoid', { tripod: { stride: 0.8 } })).not.toThrow(/biped/i);
+});
+
+it('names the real kind in the refusal of an unreachable stride, never the biped (Decision 6)', () => {
+  // One capture of the message: an empty one (nothing thrown) fails the first check, a wrong label the second.
+  const message = (() => { try { build('insectoid', { tripod: { stride: 0.8 } }); } catch (error) { return (error as Error).message; } return ''; })();
+  expect(message).toMatch(/^Cannot build the insectoid tripod clip/);
+  expect(message).not.toMatch(/biped/i);
 });
 
 it('refuses an unknown setting, a bad value or the strandbeest before anything is built (Decisions 2, 4 and 11)', () => {

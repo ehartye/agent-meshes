@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Editor, applyOperation } from '../src/core/model.ts';
 import { applyOperations, OperationPlanError, parseOperation, planOperations, capabilities } from '../src/agent-contract.ts';
-import { Workspace } from '../src/workspace.ts';
+import { workspaceCommand } from '../src/workspace-command.ts';
 import { createCreature } from '../src/recipes/index.ts';
 import { createRecipe } from '../src/recipes/regenerate.ts';
 import type { Operation, Project } from '../src/core/types.ts';
@@ -86,26 +86,38 @@ it('refuses with RECIPE_STALE and changes nothing when the skeleton or a recipe 
   expect(() => applyOperations(missing, batch)).toThrow(expect.objectContaining({ code: 'RECIPE_STALE' }));
 });
 
-it('applies a batch atomically: a failing clip.regenerate leaves the project object and the stored workspace as they were', async () => {
-  const workspace = new Workspace(await scratch()); cleanup.push(() => workspace.close());
-  // The path the workspace batch command takes: plan inside the write transaction and replace only when the whole batch plans.
-  const failing = (project: Project, operations: object[], error: object) => {
-    workspace.transact(editor => editor.replace(project));
-    const original = structuredClone(project), state = structuredClone(workspace.read());
-    expect(() => workspace.transact(editor => editor.replace(planOperations(editor.project, operations).project))).toThrow(expect.objectContaining(error));
-    expect(project).toEqual(original);
-    expect(workspace.read()).toEqual(state);
-  };
+it('applies a batch atomically: a failing clip.regenerate changes neither the planner input nor the stored workspace', async () => {
   const saddle = { op: 'add', part: { name: 'saddle', geometry: { type: 'box', size: [0.4, 0.1, 0.4] } } };
-  // Stale: the part added before the failing step is not stored.
-  failing(apply(equine, { op: 'remove', name: 'mane' }), [saddle, regenerate('walk')], { code: 'RECIPE_STALE', operationIndex: 1 });
-  expect(workspace.read().project.parts.some(part => part.name === 'saddle')).toBe(false);
-  // Healthy: a regenerate that works on its own takes no effect when a later step of the batch fails.
   const lift = regenerate('walk', { lift: 0.15 });
-  expect(clipOf(apply(equine, lift), 'walk')).not.toEqual(clipOf(equine, 'walk'));
-  failing(equine, [lift, regenerate('gallop')], { operationIndex: 1 });
-  expect(clipOf(workspace.read().project, 'walk')).toEqual(clipOf(equine, 'walk'));
-  expect(workspace.read().project.recipe).toEqual(equine.recipe);
+  // Every project below is a copy, so a planner that wrongly edits its input cannot disturb the shared fixture.
+  const healthy = () => structuredClone(equine), stalled = () => apply(healthy(), { op: 'remove', name: 'mane' });
+  expect(clipOf(apply(healthy(), lift), 'walk')).not.toEqual(clipOf(equine, 'walk'));
+  // The planner works on its own copy: the object the caller passes in is the same afterwards, whichever step refused.
+  const project = healthy(), original = structuredClone(project);
+  expect(() => planOperations(project, [lift, regenerate('gallop')])).toThrow(expect.objectContaining({ operationIndex: 1 }));
+  expect(project).toEqual(original);
+  const stale = stalled(), staleOriginal = structuredClone(stale);
+  expect(() => planOperations(stale, [saddle, regenerate('walk')])).toThrow(expect.objectContaining({ code: 'RECIPE_STALE', operationIndex: 1 }));
+  expect(stale).toEqual(staleOriginal);
+  // The real batch command: the stored project and its revision are as they were when the batch refused.
+  const stored = (where: string) => workspaceCommand(where, 'project') as Promise<{ project: Project; revision: number }>;
+  const directory = await scratch();
+  // Stale: the part added before the failing step is not stored.
+  await workspaceCommand(directory, 'project', stalled());
+  const staleState = await stored(directory);
+  await expect(workspaceCommand(directory, 'batch', { operations: [saddle, regenerate('walk')] })).rejects.toMatchObject({ code: 'RECIPE_STALE', operationIndex: 1 });
+  const afterStale = await stored(directory);
+  expect(afterStale).toEqual(staleState);
+  expect(afterStale.project.parts.some(part => part.name === 'saddle')).toBe(false);
+  // Healthy: a regenerate that works on its own takes no effect when a later step of the batch fails.
+  await workspaceCommand(directory, 'project', healthy());
+  const state = await stored(directory);
+  await expect(workspaceCommand(directory, 'batch', { operations: [lift, regenerate('gallop')] })).rejects.toMatchObject({ operationIndex: 1 });
+  const after = await stored(directory);
+  expect(after).toEqual(state);
+  expect(after.revision).toBe(state.revision);
+  expect(clipOf(after.project, 'walk')).toEqual(clipOf(equine, 'walk'));
+  expect(after.project.recipe).toEqual(equine.recipe);
 });
 
 it('does not call additions, appearance edits or poses stale', () => {
