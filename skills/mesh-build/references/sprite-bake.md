@@ -133,16 +133,20 @@ network request. Without the sheet it shows a notice that it could not load it.
 - **Playback.** Scale 1, 2, 4 or 8 times, drawn by nearest neighbour; it starts at the largest of these that keeps the
   cell within 256 pixels. Speed 0.25, 0.5, 1 or 2 times. Backdrop neutral, green, light grey, near black or checker.
   Pause and play, and step back and forward, one frame each, wrapping at the ends. Each frame lasts its `duration` in
-  the atlas, or 150 ms when it has none.
+  the atlas, or 150 ms when it has none. The page plays when it opens, except when the system asks for reduced motion:
+  then it opens paused on frame 0, with the button reading "Play", and Play still starts it. The setting is read once,
+  when the page loads.
 - **Frame strip.** One entry per phase of the chosen facing with the current frame marked; click one to hold it. Frame
   numbers on the page count inside the facing, from 0 to phases minus 1.
-- **Loop seam.** The last two frames and the first two of the chosen facing side by side, with a mark at the loop
-  point. The step across that mark is the one that can pop.
+- **Loop seam.** The last two frames and the first two of the chosen facing side by side, with a "loop point" mark
+  directly before the first frame, also when the strip wraps onto several rows. The step across that mark is the one
+  that can pop.
 - **Pivot.** Only when the bake used `--anchor feet`: a "Show pivot" box, ticked by default, marks the pivot pixel on
   every frame, the strips and the "All facings" tiles included. Without the slice there is no box and no mark.
-- **Keys.** Space pauses and plays, the left and right arrows step, and 1 to 8 pick `dir-0` to `dir-7`. A number key
-  does nothing when the bake has fewer facings than that number. Keys are ignored while a menu or the "Show pivot" box
-  has focus and with Ctrl, Meta or Alt held. There is no key for "All facings".
+- **Keys.** Space pauses and plays, the left and right arrows step, and 1 to 8 pick `dir-0` to `dir-7`. A held Space
+  toggles once, not on every key repeat. A number key does nothing when the bake has fewer facings than that number.
+  Keys are ignored while a menu or the "Show pivot" box has focus and with Ctrl, Meta or Alt held. There is no key for
+  "All facings".
 - **Header and footer.** The header shows the clip name, the facings, the phases, the cell size and the loop length from
   the manifest. The footer shows the first 12 hex digits of the sheet's SHA-256, so you can match the page to a sheet.
   The clip name comes from the GLB and is shown as text, never as markup.
