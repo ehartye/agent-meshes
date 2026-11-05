@@ -740,6 +740,20 @@ describe('the loop point mark stays attached to the first frame of the seam', ()
     }, 60_000);
   }
 
+  for (const width of [1400, 1401]) {
+    it(`puts all four seam canvases on whole-pixel left positions at ${width} px, the mark column included`, async () => {
+      const { page, context } = await open(plain.page, { viewport: { width, height: 1200 } });
+      try {
+        await page.selectOption(role('facing'), 'dir-1');
+        const lefts = await page.locator(`${role('seam-frame')} canvas`).evaluateAll(list => list.map(e => e.getBoundingClientRect().left));
+        expect(lefts).toHaveLength(4);
+        expect(lefts.filter(left => !Number.isInteger(left)), `canvas lefts ${lefts.join(', ')}`).toEqual([]);
+        const markWidth = await page.locator(role('loop-mark')).evaluate(e => e.getBoundingClientRect().width);
+        expect(Number.isInteger(markWidth), `mark width ${markWidth}`).toBe(true);
+      } finally { await context.close(); }
+    }, 60_000);
+  }
+
   it('keeps one mark through a facing change and an All facings round trip, and none while All facings shows', async () => {
     const { page, context } = await open(plain.page);
     try {
@@ -941,7 +955,8 @@ describe('the frame readout is announced after the live region opens', () => {
   it('does the same for a clicked strip frame and for an arrow key while playing', async () => {
     const { page, context } = await open(plain.page);
     try {
-      const acts = [() => page.click(role('strip-frame') + '[data-frame="2"]'), async () => { await release(page); await page.keyboard.press('ArrowRight'); }];
+      // The strip click picks a frame other than the one showing, so the readout changes and its text write exists to be ordered.
+      const acts = [async () => { await page.click(role('strip-frame') + `[data-frame="${((await frameIndex(page)) + 2) % PHASES}"]`); }, async () => { await release(page); await page.keyboard.press('ArrowRight'); }];
       for (const act of acts) {
         if (await text(page, 'status') === 'paused') await page.click(role('play'));
         expect(await page.locator(role('counter')).getAttribute('aria-live')).toBe('off');
@@ -952,7 +967,9 @@ describe('the frame readout is announced after the live region opens', () => {
         const after = await seen(page);
         const first = after.find(r => r.kind === 'live')!;
         expect(first.value).toBe('polite');
-        for (const record of after.filter(r => r.kind === 'text' && r.batch >= first.batch)) expect(record.batch).toBeGreaterThan(first.batch);
+        const texts = after.filter(r => r.kind === 'text' && r.batch >= first.batch);
+        expect(texts.length, 'the readout text is written, so the ordering check has something to order').toBeGreaterThan(0);
+        for (const record of texts) expect(record.batch).toBeGreaterThan(first.batch);
       }
     } finally { await context.close(); }
   }, 60_000);
@@ -977,6 +994,71 @@ describe('the frame readout is announced after the live region opens', () => {
       await page.waitForTimeout(500);
       expect(await seen(page)).toEqual([]);
       expect(await page.locator(role('counter')).getAttribute('aria-live')).toBe('polite');
+    } finally { await context.close(); }
+  }, 60_000);
+});
+
+describe('a deferred frame readout writes the state of the moment it runs', () => {
+  const readout = (page: Page) => text(page, 'frame-index');
+  const shownFrame = (page: Page) => page.locator(`${role('strip-frame')}[aria-current="true"]`).getAttribute('data-frame');
+  /** Let the zero-delay timer of a pending readout write fire, without reaching the next animation frame. */
+  const settle = (page: Page) => page.clock.runFor(5);
+
+  it('holds the readout at the old text under a fake clock until the clock runs, while status, button and frame move at once', async () => {
+    const { page, context } = await open(plain.page, { clock: true });
+    try {
+      await page.clock.runFor(100);
+      expect(await readout(page)).toBe('0');
+      await page.click(role('step-forward'));
+      expect(await text(page, 'status')).toBe('paused');
+      expect(await text(page, 'play')).toBe('Play');
+      expect(await shownFrame(page)).toBe('1');
+      expect(await readout(page), 'the readout write waits for a later task').toBe('0');
+      await settle(page);
+      expect(await readout(page)).toBe('1');
+      expect(await text(page, 'frame-ms')).toBe('300');
+      expect(await text(page, 'status')).toBe('paused');
+    } finally { await context.close(); }
+  }, 60_000);
+
+  // A Playwright click moves a fake clock on by a millisecond and so runs a pending zero-delay timer; keys and a select do not.
+  // That is why the actions between the queued write and the settle below are keys and a select.
+  it('does not overwrite a Step made after a pause with the frame it was queued for', async () => {
+    const { page, context } = await open(plain.page, { clock: true });
+    try {
+      await page.clock.runFor(100);
+      await page.click(role('step-forward'));
+      expect(await readout(page)).toBe('0');
+      await page.keyboard.press('Space');
+      expect(await text(page, 'status')).toBe('playing');
+      await page.keyboard.press('Space');
+      expect(await text(page, 'status')).toBe('paused');
+      expect(await readout(page), 'the queued write has not run yet').toBe('0');
+      await page.keyboard.press('ArrowRight');
+      expect(await readout(page), 'a Step while paused writes at once').toBe('2');
+      await settle(page);
+      expect(await readout(page), 'the earlier queued write must not bring back frame 1').toBe('2');
+      expect(await shownFrame(page)).toBe('2');
+      expect(await text(page, 'frame-ms')).toBe('300');
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('shows the frame of the facing and the Step that are current when it runs, after a facing change', async () => {
+    const { page, context } = await open(plain.page, { clock: true });
+    try {
+      await page.clock.runFor(100);
+      await page.click(role('step-forward'));
+      expect(await readout(page)).toBe('0');
+      await page.selectOption(role('facing'), 'dir-4');
+      expect(await text(page, 'facing-label')).toContain('dir-4');
+      expect(await readout(page), 'a facing change writes the held frame at once').toBe('1');
+      await release(page);
+      await page.keyboard.press('ArrowRight');
+      expect(await readout(page)).toBe('2');
+      await settle(page);
+      expect(await readout(page)).toBe('2');
+      expect(await shownFrame(page)).toBe('2');
+      expect(await text(page, 'frame-count')).toBe(String(PHASES));
     } finally { await context.close(); }
   }, 60_000);
 });

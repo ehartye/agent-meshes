@@ -100,7 +100,7 @@ body[data-backdrop=checker] .cellbox{background:repeating-conic-gradient(#b4b4b4
 .seam figure{margin:0}
 .seam figure.lead{display:grid;grid-template-columns:auto auto;column-gap:10px}
 .seam figure.lead>.cellbox,.seam figure.lead>figcaption{grid-column:2}
-.loopmark{grid-column:1;grid-row:1 / span 2;display:flex;align-items:flex-end;padding-left:8px;border-left:2px solid var(--cobalt);color:var(--cobalt);font-size:11px;text-transform:uppercase;letter-spacing:.1em;writing-mode:vertical-rl}
+.loopmark{grid-column:1;grid-row:1 / span 2;display:flex;align-items:flex-end;padding-left:8px;border-left:2px solid var(--cobalt);color:var(--cobalt);font-size:11px;line-height:16px;text-transform:uppercase;letter-spacing:.1em;writing-mode:vertical-rl}
 footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 20px;margin-top:24px;padding:16px 0 28px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
 .sha{background:var(--leaf);color:#202b2a;padding:0 6px}
 @media (max-width:640px){.page{padding:0 16px}.keys{margin-left:0;flex-basis:100%}.counter{font-size:42px;height:44px;line-height:44px}.counter small{line-height:44px}h1{font-size:28px;line-height:36px}}
