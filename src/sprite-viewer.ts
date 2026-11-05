@@ -37,8 +37,9 @@ const PAGE = String.raw`<!doctype html>
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.5 var(--mono)}
-/* Whole-pixel line heights and a left-aligned page put every canvas on a whole CSS pixel, so at a whole device pixel ratio the sprites are not resampled; at a fractional ratio the browser still resamples them, and image-rendering:pixelated keeps the edges hard. */
+/* Whole-pixel line heights and a page that sits on a whole-pixel left margin put every canvas on a whole CSS pixel, so at a whole device pixel ratio the sprites are not resampled; at a fractional ratio the browser still resamples them, and image-rendering:pixelated keeps the edges hard. The page is centred by flooring half the spare width to a whole pixel (margin-inline:auto would leave a half pixel at an odd window width); a browser that cannot round() keeps the page left-aligned, which is whole-pixel too. */
 .page{max-width:1240px;margin:0;padding:0 20px}
+@supports (margin-left:round(down,1.5px,1px)){.page{margin-left:max(0px,round(down,calc((100% - 1240px) / 2),1px))}}
 .bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0;border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:10px}
 .brand svg{display:block;width:28px;height:28px}
@@ -97,7 +98,9 @@ body[data-backdrop=checker] .cellbox{background:repeating-conic-gradient(#b4b4b4
 .strip button[aria-current=true] .cellbox{outline-color:var(--cobalt)}
 .seam{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end}
 .seam figure{margin:0}
-.wrapmark{align-self:stretch;display:flex;align-items:flex-end;padding-left:8px;border-left:2px solid var(--cobalt);color:var(--cobalt);font-size:11px;text-transform:uppercase;letter-spacing:.1em;writing-mode:vertical-rl}
+.seam figure.lead{display:grid;grid-template-columns:auto auto;column-gap:10px}
+.seam figure.lead>.cellbox,.seam figure.lead>figcaption{grid-column:2}
+.loopmark{grid-column:1;grid-row:1 / span 2;display:flex;align-items:flex-end;padding-left:8px;border-left:2px solid var(--cobalt);color:var(--cobalt);font-size:11px;line-height:16px;text-transform:uppercase;letter-spacing:.1em;writing-mode:vertical-rl}
 footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 20px;margin-top:24px;padding:16px 0 28px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
 .sha{background:var(--leaf);color:#202b2a;padding:0 6px}
 @media (max-width:640px){.page{padding:0 16px}.keys{margin-left:0;flex-basis:100%}.counter{font-size:42px;height:44px;line-height:44px}.counter small{line-height:44px}h1{font-size:28px;line-height:36px}}
@@ -167,7 +170,9 @@ var clipName = manifest.clip && manifest.clip.name ? String(manifest.clip.name) 
 var SCALES = [1, 2, 4, 8];
 var scale = 1;
 SCALES.forEach(function (s) { if (cell * s <= 256) scale = s; });
-var st = { facing: tags[0].name, scale: scale, speed: 1, playing: true, t: 0, held: null, pivotOn: true };
+// A viewer who asks the system for reduced motion gets a still page on frame 0; Play still works. The signal is read once, at load.
+var reduceMotion = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+var st = { facing: tags[0].name, scale: scale, speed: 1, playing: !reduceMotion, t: 0, held: null, pivotOn: true };
 
 var facingSel = role('facing'), scaleSel = role('scale'), speedSel = role('speed'), backdropSel = role('backdrop');
 var playBtn = role('play'), sprite = role('sprite'), spriteBox = role('sprite-box'), single = role('single'), tilesBox = role('tiles');
@@ -263,8 +268,9 @@ function buildFrames() {
     stripButtons.push({ button: b, canvas: c2, index: tag.from + i, rel: i });
   }
   [n - 2, n - 1, 0, 1].forEach(function (p, k) {
-    if (k === 2) { var mark = make('div', 'wrapmark'); mark.setAttribute('aria-hidden', 'true'); mark.textContent = 'loop point'; seamBox.appendChild(mark); }
-    var rel = wrap(p, n), fig = make('figure'), box3 = make('div', 'cellbox'), c3 = make('canvas'), cap = make('figcaption');
+    var rel = wrap(p, n), fig = make('figure', k === 2 ? 'lead' : ''), box3 = make('div', 'cellbox'), c3 = make('canvas'), cap = make('figcaption');
+    // The loop point mark is a child of the figure for frame 0, so it stays directly before that frame whether the strip wraps or not.
+    if (k === 2) { var mark = make('div', 'loopmark'); mark.setAttribute('data-role', 'loop-mark'); mark.setAttribute('aria-hidden', 'true'); mark.textContent = 'loop point'; fig.appendChild(mark); }
     fig.setAttribute('data-role', 'seam-frame'); fig.setAttribute('data-frame', String(rel));
     cap.textContent = 'frame ' + rel + (k < 2 ? (k === 1 ? ' (last)' : '') : (k === 2 ? ' (first)' : ''));
     box3.appendChild(c3); fig.appendChild(box3); fig.appendChild(cap); seamBox.appendChild(fig);
@@ -274,9 +280,22 @@ function buildFrames() {
 }
 
 var shown = { rel: -1, status: '' };
+// The frame readout is a polite live region only while paused or stepping, so a screen reader hears each step but not every playing frame.
+// The attribute changes only when playback starts or stops (and once at load), never on an animation frame.
+function setLive() {
+  var want = st.playing ? 'off' : 'polite';
+  if (counterBox.getAttribute('aria-live') !== want) counterBox.setAttribute('aria-live', want);
+}
+// The deferred write reads the current state when it runs, not what was true when it was queued.
+function writeReadout() {
+  var ref = refTag(), rel = relOf(ref);
+  role('frame-index').textContent = String(rel);
+  role('frame-count').textContent = String(count(ref));
+  role('frame-ms').textContent = String(dur(frames[ref.from + rel]));
+}
 var lastIdx = -1;
-function paint() {
-  var all = st.facing === 'all', ref = refTag(), rel = relOf(ref), n = count(ref);
+function paint(deferReadout) {
+  var all = st.facing === 'all', ref = refTag(), rel = relOf(ref);
   if (all) {
     tiles.forEach(function (tile) {
       var idx = tile.tag.from + relOf(tile.tag);
@@ -292,13 +311,10 @@ function paint() {
   }
   syncPivot();
   dirty = false;
-  // The frame readout is a polite live region only while paused or stepping, so a screen reader hears each step but not every playing frame.
-  counterBox.setAttribute('aria-live', st.playing ? 'off' : 'polite');
   if (rel !== shown.rel) {
     shown.rel = rel;
-    role('frame-index').textContent = String(rel);
-    role('frame-count').textContent = String(n);
-    role('frame-ms').textContent = String(dur(frames[ref.from + rel]));
+    // A Step that ends playback opens the live region first and writes the frame in a later task, so a screen reader hears the new frame.
+    if (deferReadout) setTimeout(writeReadout, 0); else writeReadout();
     stripButtons.forEach(function (s) { if (s.rel === rel) s.button.setAttribute('aria-current', 'true'); else s.button.removeAttribute('aria-current'); });
   }
   var status = st.playing ? 'playing' : 'paused';
@@ -317,12 +333,13 @@ function setFacing(name) {
   paint();
 }
 function togglePlay() {
-  if (st.playing) { st.playing = false; paint(); return; }
+  if (st.playing) { st.playing = false; setLive(); paint(); return; }
   if (st.held !== null) { st.t = startOf(refTag(), st.held % count(refTag())); st.held = null; }
   st.playing = true;
+  setLive();
   paint();
 }
-function holdAt(rel) { st.playing = false; st.held = rel; paint(); }
+function holdAt(rel) { var wasPlaying = st.playing; st.playing = false; st.held = rel; setLive(); paint(wasPlaying); }
 function step(delta) { var ref = refTag(); holdAt(wrap(relOf(ref) + delta, count(ref))); }
 
 playBtn.addEventListener('click', togglePlay);
@@ -338,7 +355,8 @@ document.addEventListener('keydown', function (e) {
   var tagName = e.target && e.target.tagName;
   if (tagName === 'SELECT' || tagName === 'INPUT') return;
   // Only the play button handles Space itself (it clicks on keyup); on any other focus, a button included, Space toggles play.
-  if (e.code === 'Space') { if (e.target === playBtn) return; e.preventDefault(); togglePlay(); }
+  // A held key repeats keydown: the repeats only cancel the default (so the page does not scroll) and do not toggle again.
+  if (e.code === 'Space') { if (e.target === playBtn) return; e.preventDefault(); if (!e.repeat) togglePlay(); }
   else if (e.key === 'ArrowLeft') step(-1);
   else if (e.key === 'ArrowRight') step(1);
   else if (/^[1-8]$/.test(e.key) && tags[+e.key - 1]) setFacing(tags[+e.key - 1].name);
@@ -350,6 +368,7 @@ document.addEventListener('keyup', function (e) {
   if (e.code === 'Space' && e.target !== playBtn && tagName !== 'SELECT' && tagName !== 'INPUT' && !e.ctrlKey && !e.metaKey && !e.altKey) e.preventDefault();
 });
 
+setLive();
 setFacing(st.facing);
 paint();
 var last = performance.now();
