@@ -77,7 +77,7 @@ afterAll(async () => { await browser?.close(); await rm(root, { recursive: true,
 
 interface Opened { page: Page; context: BrowserContext; problems: string[]; requests: string[]; dialogs: string[] }
 /** Open a page from file:// in an offline context; collects console errors, page errors, failed requests, every request URL and dialogs. */
-async function open(file: string, options: { colorScheme?: 'dark' | 'light'; clock?: boolean } = {}): Promise<Opened> {
+async function open(file: string, options: { colorScheme?: 'dark' | 'light'; clock?: boolean; reducedMotion?: 'reduce' | 'no-preference'; viewport?: { width: number; height: number } } = {}): Promise<Opened> {
   const { clock, ...contextOptions } = options;
   const context = await browser.newContext({ offline: true, viewport: { width: 1500, height: 1200 }, deviceScaleFactor: 1, ...contextOptions });
   // A fake clock makes the page's requestAnimationFrame and performance.now advance only on page.clock.runFor, so timing is exact.
@@ -642,4 +642,341 @@ describe('the viewer is deterministic', () => {
     expect(composeViewer(plain.atlas, plain.manifest, 'sheet.png', 'f'.repeat(64))).not.toBe(plain.html);
     expect(feet.html).not.toBe(plain.html);
   });
+});
+
+describe('the viewer starts still when the system asks for reduced motion', () => {
+  const live = (page: Page) => page.locator(role('counter')).getAttribute('aria-live');
+  const dot = (page: Page) => page.locator(role('status-dot')).getAttribute('data-state');
+
+  it('opens paused on frame 0 with a polite readout, holds still for a second, and plays when asked', async () => {
+    const { page, context, problems } = await open(plain.page, { reducedMotion: 'reduce' });
+    try {
+      expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
+      expect(await text(page, 'status')).toBe('paused');
+      expect(await dot(page)).toBe('paused');
+      expect(await text(page, 'play')).toBe('Play');
+      expect(await live(page)).toBe('polite');
+      expect(await frameIndex(page)).toBe(0);
+      await page.waitForTimeout(1000);
+      expect(await frameIndex(page)).toBe(0);
+      expect(await text(page, 'status')).toBe('paused');
+
+      await page.click(role('play'));
+      expect(await text(page, 'status')).toBe('playing');
+      expect(await dot(page)).toBe('playing');
+      expect(await text(page, 'play')).toBe('Pause');
+      expect(await live(page)).toBe('off');
+      await expect.poll(() => frameIndex(page), { timeout: 3000 }).not.toBe(0);
+      expect(problems).toEqual([]);
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('steps from the still start without playing first', async () => {
+    const { page, context } = await open(plain.page, { reducedMotion: 'reduce' });
+    try {
+      await page.click(role('step-forward'));
+      expect(await frameIndex(page)).toBe(1);
+      expect(await text(page, 'status')).toBe('paused');
+      expect(await live(page)).toBe('polite');
+      await page.click(role('step-back'));
+      await page.click(role('step-back'));
+      expect(await frameIndex(page)).toBe(PHASES - 1);
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('plays at load when the system states no preference', async () => {
+    const { page, context } = await open(plain.page, { reducedMotion: 'no-preference' });
+    try {
+      expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(false);
+      expect(await text(page, 'status')).toBe('playing');
+      expect(await dot(page)).toBe('playing');
+      expect(await text(page, 'play')).toBe('Pause');
+      expect(await live(page)).toBe('off');
+      await expect.poll(() => frameIndex(page), { timeout: 3000 }).not.toBe(0);
+    } finally { await context.close(); }
+  }, 60_000);
+});
+
+describe('the loop point mark stays attached to the first frame of the seam', () => {
+  const SEAM_GAP = 14;
+
+  for (const width of [1500, 390]) {
+    it(`sits directly before the first frame inside its figure at ${width} px wide, on one row or wrapped`, async () => {
+      const { page, context } = await open(plain.page, { viewport: { width, height: 1200 } });
+      try {
+        await page.selectOption(role('facing'), 'dir-1');
+        const seen = await page.evaluate(() => {
+          const figures = [...document.querySelectorAll('[data-role="seam-frame"]')] as HTMLElement[];
+          const marks = [...document.querySelectorAll('[data-role="loop-mark"]')] as HTMLElement[];
+          const third = figures[2], mark = marks[0];
+          const box = (e: Element) => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+          return {
+            figures: figures.length, marks: marks.length,
+            hidden: mark?.getAttribute('aria-hidden'), text: mark?.textContent,
+            inThird: !!mark && third.contains(mark), inOthers: figures.filter((f, i) => i !== 2 && !!mark && f.contains(mark)).length,
+            siblings: document.querySelectorAll('.wrapmark').length,
+            tops: figures.map(f => f.getBoundingClientRect().top),
+            mark: mark ? box(mark) : null, figure: box(third), canvas: box(third.querySelector('canvas')!),
+          };
+        });
+        expect(seen.figures).toBe(4);
+        expect(seen.marks).toBe(1);
+        expect(seen.siblings).toBe(0);
+        expect(seen.hidden).toBe('true');
+        expect(seen.text).toBe('loop point');
+        expect(seen.inThird).toBe(true);
+        expect(seen.inOthers).toBe(0);
+        // The strip wraps at 390 px (four 192 px cells do not fit a row) and stays on one row at 1500.
+        if (width === 390) expect(seen.tops[0]).not.toBe(seen.tops[2]); else expect(seen.tops[0]).toBe(seen.tops[2]);
+        const mark = seen.mark!;
+        expect(mark.top).toBeGreaterThanOrEqual(seen.figure.top - 0.5);
+        expect(mark.bottom).toBeLessThanOrEqual(seen.figure.bottom + 0.5);
+        expect(mark.right).toBeLessThanOrEqual(seen.canvas.left + 0.01);
+        expect(seen.canvas.left - mark.right).toBeLessThanOrEqual(SEAM_GAP + 1);
+        expect(mark.left).toBeGreaterThanOrEqual(seen.figure.left - 0.5);
+        expect(await page.locator(role('seam-frame')).evaluateAll(list => list.map(e => e.getAttribute('data-frame')))).toEqual([String(PHASES - 2), String(PHASES - 1), '0', '1']);
+        expect(await page.locator(`${role('seam-frame')} figcaption`).allTextContents()).toEqual([`frame ${PHASES - 2}`, `frame ${PHASES - 1} (last)`, 'frame 0 (first)', 'frame 1']);
+      } finally { await context.close(); }
+    }, 60_000);
+  }
+
+  it('keeps one mark through a facing change and an All facings round trip, and none while All facings shows', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      expect(await page.locator(role('loop-mark')).count()).toBe(1);
+      await page.selectOption(role('facing'), 'all');
+      expect(await page.locator(role('loop-mark')).count()).toBe(0);
+      await page.selectOption(role('facing'), 'dir-5');
+      expect(await page.locator(role('loop-mark')).count()).toBe(1);
+      expect(await page.locator(`${role('seam-frame')}:nth-child(3) ${role('loop-mark')}`).count()).toBe(1);
+    } finally { await context.close(); }
+  }, 60_000);
+});
+
+describe('the page is centred on a wide window without blurring a whole-pixel canvas', () => {
+  const PAGE_MAX = 1240;
+  const whole = (values: number[]) => values.every(Number.isInteger);
+  /** The sheet cell of a facing and phase, each pixel repeated scale times across and down. */
+  const scaledCell = (direction: number, phase: number, scale: number) => {
+    const cell = plain.manifest.cell, image = decodePng(plain.sheet), size = cell * scale;
+    const out = Buffer.alloc(size * size * 4);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const from = (((direction * cell + Math.floor(y / scale)) * image.width) + phase * cell + Math.floor(x / scale)) * 4;
+      Buffer.from(image.rgba.subarray(from, from + 4)).copy(out, (y * size + x) * 4);
+    }
+    return out;
+  };
+  /** The element screenshot of a canvas, decoded in the page (a canvas that drew a file:// image cannot be read back). */
+  const shotOf = async (page: Page, selector: string) => {
+    const shot = (await page.locator(selector).screenshot()).toString('base64');
+    const rgb = await page.evaluate(b64 => new Promise<number[]>((done, fail) => {
+      const image = new Image();
+      image.onload = () => { const c = document.createElement('canvas'); c.width = image.width; c.height = image.height; const x = c.getContext('2d')!; x.drawImage(image, 0, 0); done([image.width, image.height, ...x.getImageData(0, 0, image.width, image.height).data]); };
+      image.onerror = () => fail(new Error('screenshot did not decode'));
+      image.src = `data:image/png;base64,${b64}`;
+    }), shot);
+    return { width: rgb[0], height: rgb[1], rgba: rgb.slice(2) };
+  };
+  const placed = (page: Page, selector: string) => page.locator(selector).evaluateAll(list => list.map(e => { const r = e.getBoundingClientRect(); return [r.left, r.top]; }).flat());
+
+  for (const width of [390, 1400, 1401, 1500]) {
+    it(`${width < PAGE_MAX ? 'starts the page at the left edge' : 'centres the page on whole pixels'} at ${width} px, with whole-pixel canvases drawn exactly`, async () => {
+      const { page, context } = await open(plain.page, { viewport: { width, height: 1200 } });
+      try {
+        const sides = await page.locator('.page').evaluate(e => { const r = e.getBoundingClientRect(); return { left: r.left, right: document.documentElement.clientWidth - r.right, width: r.width }; });
+        if (width > PAGE_MAX) {
+          expect(sides.width).toBe(PAGE_MAX);
+          expect(whole([sides.left, sides.right])).toBe(true);
+          expect(Math.abs(sides.left - sides.right)).toBeLessThanOrEqual(1);
+          expect(sides.left).toBeGreaterThan(0);
+        } else {
+          expect(sides.left).toBe(0);
+        }
+
+        // One facing: the sprite, the strip and the seam canvases sit on whole pixels, and the sprite is the scaled cell.
+        await page.selectOption(role('facing'), 'dir-3');
+        await page.click(role('strip-frame') + '[data-frame="2"]');
+        const scale = Number(await page.locator(role('scale')).inputValue()), cell = plain.manifest.cell;
+        await page.waitForFunction(([c, s]) => (document.querySelector('[data-role="sprite"]') as HTMLCanvasElement).style.width === `${c * s}px`, [cell, scale]);
+        expect(whole(await placed(page, role('sprite')))).toBe(true);
+        expect(whole(await placed(page, role('sprite-box')))).toBe(true);
+        const expected = scaledCell(3, 2, scale);
+        const wrong = async () => {
+          const got = await shotOf(page, role('sprite'));
+          if (got.width !== cell * scale || got.height !== cell * scale) return -1;
+          let count = 0;
+          for (let i = 0; i < expected.length; i += 4) {
+            const want = expected[i + 3] === 255 ? [...expected.subarray(i, i + 3)] : [230, 226, 210];
+            if (got.rgba[i] !== want[0] || got.rgba[i + 1] !== want[1] || got.rgba[i + 2] !== want[2]) count++;
+          }
+          return count;
+        };
+        // The sheet loads after the first paint, so poll until the drawn pixels settle.
+        await expect.poll(wrong, { timeout: 10_000 }).toBe(0);
+        const drawn = await shotOf(page, role('sprite'));
+        expect([drawn.width, drawn.height]).toEqual([cell * scale, cell * scale]);
+
+        // All facings: every tile canvas sits on whole pixels.
+        await page.selectOption(role('facing'), 'all');
+        await page.waitForFunction(([c, s]) => { const t = document.querySelectorAll('[data-role="facing-tile"]'); return t.length > 0 && [...t].every(e => (e as HTMLElement).style.width === `${c * s}px`); }, [cell, scale]);
+        const tiles = await placed(page, role('facing-tile'));
+        expect(tiles).toHaveLength(DIRECTIONS * 2);
+        expect(whole(tiles)).toBe(true);
+      } finally { await context.close(); }
+    }, 90_000);
+  }
+});
+
+describe('a held Space key toggles play once', () => {
+  const statusOf = (page: Page) => text(page, 'status');
+  /** Every Space keydown the document sees, after the page's own handler has run. */
+  const logKeys = (page: Page) => page.evaluate(() => {
+    const w = window as unknown as { __keys: Array<{ repeat: boolean; prevented: boolean; target: string }> };
+    w.__keys = [];
+    document.addEventListener('keydown', e => { if (e.code === 'Space') w.__keys.push({ repeat: e.repeat, prevented: e.defaultPrevented, target: (e.target as HTMLElement).getAttribute('data-role') ?? '' }); });
+  });
+  const keys = (page: Page) => page.evaluate(() => (window as unknown as { __keys: Array<{ repeat: boolean; prevented: boolean; target: string }> }).__keys);
+
+  it('ignores the auto-repeat of Space on a focused Step button, only cancels its default, and toggles again on a new press', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      await logKeys(page);
+      await page.focus(role('step-forward'));
+      expect(await statusOf(page)).toBe('playing');
+      await page.keyboard.down('Space');
+      expect(await statusOf(page)).toBe('paused');
+      const held = await frameIndex(page);
+      await page.keyboard.down('Space');
+      expect(await statusOf(page)).toBe('paused');
+      expect(await text(page, 'play')).toBe('Play');
+      await page.keyboard.up('Space');
+      expect(await statusOf(page)).toBe('paused');
+      expect(await frameIndex(page)).toBe(held);
+      expect(await keys(page)).toEqual([
+        { repeat: false, prevented: true, target: 'step-forward' },
+        { repeat: true, prevented: true, target: 'step-forward' },
+      ]);
+
+      await page.keyboard.press('Space');
+      expect(await statusOf(page)).toBe('playing');
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('ignores the auto-repeat of Space with nothing focused, so a held key toggles once', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      await release(page);
+      await page.keyboard.down('Space');
+      for (let i = 0; i < 3; i++) await page.keyboard.down('Space');
+      await page.keyboard.up('Space');
+      expect(await statusOf(page)).toBe('paused');
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('leaves the play button to the browser: one click for a held press, and another for the next press', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      await logKeys(page);
+      await page.focus(role('play'));
+      expect(await statusOf(page)).toBe('playing');
+      await page.keyboard.down('Space');
+      await page.keyboard.down('Space');
+      await page.keyboard.down('Space');
+      await page.keyboard.up('Space');
+      expect(await statusOf(page)).toBe('paused');
+      await page.keyboard.press('Space');
+      expect(await statusOf(page)).toBe('playing');
+      expect((await keys(page)).every(k => !k.prevented)).toBe(true);
+    } finally { await context.close(); }
+  }, 60_000);
+});
+
+describe('the frame readout is announced after the live region opens', () => {
+  interface Seen { kind: 'live' | 'text'; value: string | null; batch: number }
+  /** Watches the counter and records, for every mutation, its kind, the aria-live value and the callback batch it arrived in. */
+  const watch = (page: Page) => page.evaluate(() => {
+    const w = window as unknown as { __seen: Seen[] };
+    w.__seen = [];
+    let batch = 0;
+    const counter = document.querySelector('[data-role="counter"]')!;
+    new MutationObserver(list => {
+      batch++;
+      for (const record of list) w.__seen.push({ kind: record.type === 'attributes' ? 'live' : 'text', value: record.type === 'attributes' ? (record.target as Element).getAttribute('aria-live') : null, batch });
+    }).observe(counter, { attributes: true, attributeFilter: ['aria-live'], childList: true, characterData: true, subtree: true });
+  });
+  const seen = (page: Page) => page.evaluate(() => (window as unknown as { __seen: Seen[] }).__seen);
+  const clear = (page: Page) => page.evaluate(() => { (window as unknown as { __seen: Seen[] }).__seen.length = 0; });
+  const liveSeen = async (page: Page) => (await seen(page)).some(r => r.kind === 'live');
+
+  it('does not touch aria-live while playing, and on Step sets it to polite in an earlier task than the frame text', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      await watch(page);
+      await page.waitForTimeout(1000);
+      const playing = await seen(page);
+      expect(playing.filter(r => r.kind === 'live')).toEqual([]);
+      expect(playing.some(r => r.kind === 'text')).toBe(true);
+
+      await clear(page);
+      await page.click(role('step-forward'));
+      await expect.poll(() => liveSeen(page), { timeout: 5000 }).toBe(true);
+      await page.waitForTimeout(200);
+      const after = await seen(page);
+      const live = after.filter(r => r.kind === 'live');
+      expect(live.map(r => r.value)).toEqual(['polite']);
+      const first = live[0].batch;
+      const texts = after.filter(r => r.kind === 'text' && r.batch >= first);
+      expect(texts.length).toBeGreaterThan(0);
+      for (const record of texts) expect(record.batch, 'the frame text lands after the attribute, in another task').toBeGreaterThan(first);
+
+      // The final values are the held frame in a polite region, and the strip agrees with the readout.
+      expect(await page.locator(role('counter')).getAttribute('aria-live')).toBe('polite');
+      const held = await page.locator(`${role('strip-frame')}[aria-current="true"]`).getAttribute('data-frame');
+      expect(await text(page, 'frame-index')).toBe(held);
+      expect(await text(page, 'frame-count')).toBe(String(PHASES));
+      expect(await text(page, 'frame-ms')).toBe('300');
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('does the same for a clicked strip frame and for an arrow key while playing', async () => {
+    const { page, context } = await open(plain.page);
+    try {
+      const acts = [() => page.click(role('strip-frame') + '[data-frame="2"]'), async () => { await release(page); await page.keyboard.press('ArrowRight'); }];
+      for (const act of acts) {
+        if (await text(page, 'status') === 'paused') await page.click(role('play'));
+        expect(await page.locator(role('counter')).getAttribute('aria-live')).toBe('off');
+        await watch(page);
+        await act();
+        await expect.poll(() => liveSeen(page), { timeout: 5000 }).toBe(true);
+        await page.waitForTimeout(200);
+        const after = await seen(page);
+        const first = after.find(r => r.kind === 'live')!;
+        expect(first.value).toBe('polite');
+        for (const record of after.filter(r => r.kind === 'text' && r.batch >= first.batch)) expect(record.batch).toBeGreaterThan(first.batch);
+      }
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('leaves aria-live alone on a Step that is already paused', async () => {
+    const { page, context } = await open(plain.page, { reducedMotion: 'reduce' });
+    try {
+      await watch(page);
+      await page.click(role('step-forward'));
+      await page.click(role('step-forward'));
+      const after = await seen(page);
+      expect(after.filter(r => r.kind === 'live')).toEqual([]);
+      expect(after.some(r => r.kind === 'text')).toBe(true);
+      expect(await frameIndex(page)).toBe(2);
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('opens with aria-live polite under reduced motion and rewrites nothing while idle', async () => {
+    const { page, context } = await open(plain.page, { reducedMotion: 'reduce' });
+    try {
+      await watch(page);
+      await page.waitForTimeout(500);
+      expect(await seen(page)).toEqual([]);
+      expect(await page.locator(role('counter')).getAttribute('aria-live')).toBe('polite');
+    } finally { await context.close(); }
+  }, 60_000);
 });
