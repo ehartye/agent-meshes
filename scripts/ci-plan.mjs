@@ -138,6 +138,8 @@ export function localGate(paths, { root = REPO_ROOT, pathsFile = '<paths-file>',
   }
   if (plan.python) {
     const scripts = full ? workflowPythonScripts(root).python : affectedPythonTests(paths, { root });
+    // The hosted quick job's control of lane selection and shards.
+    commands.push({ command: 'python tests/geometry_scope.py' });
     for (const script of scripts) commands.push({ command: `python ${script}`, pool: script });
   }
   if (plan.recipeExamples) for (const script of workflowPythonScripts(root).examples) commands.push({ command: `python ${script}`, pool: script });
@@ -181,29 +183,42 @@ export function vitestFailures(reportFile) {
   return lines;
 }
 
-const PYTHON_POOL = 4;
+const PYTHON_POOL = 6;
+// One process runs this file's cases one after another for many minutes, so the pool runs it as interleaved shards
+// (AGENT_MESHES_TEST_SHARD, read by tests/geometry_test_scope.py). The hosted job runs it whole.
+export const PYTHON_SHARDS = { 'tests/blender_face_geometry.py': 4 };
+
+/** One task per script, or per shard of a sharded script, with the shards first so the longest work starts first. */
+export function pythonPoolTasks(scripts) {
+  const tasks = scripts.flatMap(script => PYTHON_SHARDS[script]
+    ? Array.from({ length: PYTHON_SHARDS[script] }, (_, index) => ({ script, shard: `${index + 1}/${PYTHON_SHARDS[script]}` }))
+    : [{ script }]);
+  return [...tasks.filter(task => task.shard), ...tasks.filter(task => !task.shard)];
+}
 
 /** Run `python <script>` for each script, a few at a time, keeping each one's output for the failures. Resolves to the failed scripts. */
 export async function runPythonPool(scripts, { root = process.cwd(), size = PYTHON_POOL, log = console.log, python = 'python' } = {}) {
-  const queue = [...scripts];
+  const queue = pythonPoolTasks(scripts);
   const failures = [];
   const worker = async () => {
-    for (let script = queue.shift(); script !== undefined; script = queue.shift()) {
+    for (let task = queue.shift(); task !== undefined; task = queue.shift()) {
+      const { script, shard } = task;
+      const label = shard ? `${script} [shard ${shard}]` : script;
       const started = Date.now();
       const result = await new Promise(done => {
         const chunks = [];
-        const child = spawn(python, [script], { cwd: root, env: process.env, windowsHide: true });
+        const child = spawn(python, [script], { cwd: root, env: shard ? { ...process.env, AGENT_MESHES_TEST_SHARD: shard } : process.env, windowsHide: true });
         child.stdout.on('data', chunk => chunks.push(chunk));
         child.stderr.on('data', chunk => chunks.push(chunk));
         child.on('error', error => done({ status: 1, output: String(error) }));
         child.on('close', status => done({ status, output: Buffer.concat(chunks).toString('utf8') }));
       });
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
-      if (result.status === 0) log(`ok ${script} (${seconds}s)`);
-      else { failures.push(script); log(`FAILED ${script} (${seconds}s)`); log(result.output.trimEnd()); }
+      if (result.status === 0) log(`ok ${label} (${seconds}s)`);
+      else { failures.push(script); log(`FAILED ${label} (${seconds}s)`); log(result.output.trimEnd()); }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(size, scripts.length)) }, worker));
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(size, queue.length)) }, worker));
   return scripts.filter(script => failures.includes(script));
 }
 

@@ -23,6 +23,16 @@ def select_suite(tests, deferred, lane='full'):
     return unittest.TestSuite(t for t in cases if lane=='full' or t.id() not in deferred)
 
 
+def shard_suite(tests, shard):
+    """Keep one of n interleaved slices of the cases ('2/4' is the second of four): the slices are disjoint and
+    together hold every case, so n processes can share one file's work."""
+    try:index,count=(int(part) for part in shard.split('/'))
+    except (AttributeError,ValueError):raise ValueError('shard must be i/n: '+repr(shard)) from None
+    if not 1<=index<=count:raise ValueError('shard must be i/n with 1 <= i <= n: '+repr(shard))
+    cases=sorted(flatten(tests),key=lambda t:t.id())
+    return unittest.TestSuite(t for position,t in enumerate(cases) if position%count==index-1)
+
+
 def scoped_tests(file, tests):
     lane=os.environ.get('AGENT_MESHES_TEST_LANE','full')
     manifest=json.loads(Path(__file__).with_name('geometry-sweeps.json').read_text())
@@ -31,6 +41,10 @@ def scoped_tests(file, tests):
     unknown=set(policy)-set(by_name)
     if unknown:raise ValueError('unknown deferred tests: '+', '.join(sorted(unknown)))
     selected=select_suite(unittest.TestSuite(cases),{by_name[name]:reason for name,reason in policy.items()},lane)
+    shard=os.environ.get('AGENT_MESHES_TEST_SHARD')
+    if shard:
+        whole=selected.countTestCases();selected=shard_suite(selected,shard)
+        print(f'Geometry shard {shard}: {selected.countTestCases()} of the {whole} selected cases',flush=True)
     print(f'Geometry scope: {Path(file).name} lane={lane}, {selected.countTestCases()}/{len(cases)} cases',flush=True)
     return selected
 

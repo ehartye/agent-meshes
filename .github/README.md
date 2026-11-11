@@ -110,8 +110,13 @@ dependency or configuration file. `tests/ci-plan.test.mjs` holds its negative co
 
 **Workers.** Local vitest runs use the worker count of `vitest.config.ts`; the hosted
 jobs keep `--maxWorkers=2` for two-core runners. The Python scripts are independent
-processes and run four at a time (`node scripts/ci-plan.mjs pool <scripts>`), each
-script's output shown only when it fails.
+processes and run six at a time (`node scripts/ci-plan.mjs pool <scripts>`), each
+script's output shown only when it fails. `tests/blender_face_geometry.py`, whose
+cases would otherwise run one after another in one process, runs as four interleaved
+shards: `AGENT_MESHES_TEST_SHARD=<i>/<n>` keeps every n-th case of the selected lane,
+so the shards are disjoint and together run every case (`tests/geometry_scope.py`
+checks that, and the gate runs it before any Python suite). The hosted job sets no
+shard and runs the file whole.
 
 **Failures.** Every vitest command of a `--run` also writes a JSON report beside the
 changed-paths file, outside the checkout, and a failed command prints one

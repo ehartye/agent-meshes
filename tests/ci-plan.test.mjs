@@ -8,7 +8,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { planChanges, gateFailures, pullRequestPaths, readTestingPhase, localGate, localGateMain, workflowPythonScripts, versionOnlyPaths, vitestFailures, DONE_MARKER } from '../scripts/ci-plan.mjs';
+import { planChanges, gateFailures, pullRequestPaths, readTestingPhase, localGate, localGateMain, workflowPythonScripts, versionOnlyPaths, vitestFailures, pythonPoolTasks, runPythonPool, DONE_MARKER } from '../scripts/ci-plan.mjs';
 import { affectedVitestTests, VERSION_FILES } from '../scripts/ci-affected.mjs';
 
 test('dev PRs use only quick checks even for versions, policy or unknown inputs', () => {
@@ -303,4 +303,21 @@ test('vitest failures are read from the JSON report, including a file that faile
   ] }));
   assert.deepEqual(vitestFailures(report), ['tests/a.test.ts > holds Space', 'tests/b.test.ts']);
   assert.deepEqual(vitestFailures(join(root, 'missing.json')), ['(no vitest report was written)']);
+});
+
+test('the Python pool shards the long face file, runs every script and names each failure', async t => {
+  const tasks = pythonPoolTasks(['tests/face_components.py', 'tests/blender_face_geometry.py', 'tests/lip_axis.py']);
+  assert.deepEqual(tasks.slice(0, 4), ['1/4', '2/4', '3/4', '4/4'].map(shard => ({ script: 'tests/blender_face_geometry.py', shard })));
+  assert.deepEqual(tasks.slice(4), [{ script: 'tests/face_components.py' }, { script: 'tests/lip_axis.py' }]);
+  const root = mkdtempSync(join(tmpdir(), 'mesh-python-pool-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'good.py'), 'print("fine")\n');
+  writeFileSync(join(root, 'bad.py'), 'import sys\nprint("the reason")\nsys.exit(3)\n');
+  const python = ['python', 'python3'].find(name => spawnSync(name, ['--version']).status === 0);
+  if (!python) return t.skip('no Python on PATH');
+  const lines = [];
+  assert.deepEqual(await runPythonPool(['good.py', 'bad.py', 'missing.py'], { root, python, log: line => lines.push(line) }), ['bad.py', 'missing.py']);
+  assert.ok(lines.some(line => /^ok good\.py \(/.test(line)));
+  assert.ok(lines.some(line => /^FAILED bad\.py \(/.test(line)) && lines.includes('the reason'), 'a failure shows its output');
+  assert.ok(!lines.includes('fine'), 'a pass stays quiet');
 });
