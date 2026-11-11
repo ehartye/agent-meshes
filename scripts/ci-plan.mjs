@@ -225,9 +225,9 @@ export async function runPythonPool(scripts, { root = process.cwd(), size = PYTH
 }
 
 /**
- * Run a planned gate. The Python scripts are independent of vitest, so when the plan holds both, their pool starts
- * with the first vitest command and is collected where the plan lists the scripts: the two halves of a full run
- * overlap instead of adding up. Resolves to the failed command, or null.
+ * Run a planned gate, one command after another; the Python scripts run as one pool where the plan lists them.
+ * (Starting the pool beside vitest was tried: a real-Blender test then ran past its 120 s limit.) Resolves to the
+ * failed command, or null.
  */
 export async function runLocalGate(gate, { root = REPO_ROOT, directory, log = console.log } = {}) {
   const env = { ...process.env, AGENT_MESHES_TEST_LANE: gate.testLane };
@@ -244,7 +244,7 @@ export async function runLocalGate(gate, { root = REPO_ROOT, directory, log = co
   for (const [index, entry] of gate.commands.entries()) {
     if (entry.pool) {
       if (gate.commands[index - 1]?.pool) continue;
-      log(`> ${scripts.length} Python scripts, ${PYTHON_POOL} at a time${pool ? ' (started beside vitest)' : ''}`);
+      log(`> ${scripts.length} Python scripts, ${PYTHON_POOL} at a time`);
       if (!pool) startPool();
       const status = await pool.done;
       log(readFileSync(poolLog, 'utf8').trimEnd());
@@ -252,7 +252,6 @@ export async function runLocalGate(gate, { root = REPO_ROOT, directory, log = co
       if (status !== 0) { failed = 'python scripts (see FAILED lines)'; break; }
       continue;
     }
-    if (entry.vitest && scripts.length && !pool) startPool();
     log(`> ${entry.command}`);
     // Vitest also writes a JSON report outside the checkout, so the failure list survives a truncated log.
     const report = entry.vitest ? join(directory, `vitest-${index + 1}.json`) : null;
