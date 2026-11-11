@@ -1,5 +1,6 @@
 /** @lane merge
  * @subject scripts/ci-plan.mjs
+ * @subject scripts/ci-affected.mjs
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +8,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { planChanges, gateFailures, pullRequestPaths, readTestingPhase, localGate, localGateMain, workflowPythonScripts, DONE_MARKER } from '../scripts/ci-plan.mjs';
+import { planChanges, gateFailures, pullRequestPaths, readTestingPhase, localGate, localGateMain, workflowPythonScripts, versionOnlyPaths, vitestFailures, DONE_MARKER } from '../scripts/ci-plan.mjs';
+import { affectedVitestTests, VERSION_FILES } from '../scripts/ci-affected.mjs';
 
 test('dev PRs use only quick checks even for versions, policy or unknown inputs', () => {
   const quick = { javascript: false, python: false, geometrySweeps: false, recipeExamples: false };
@@ -200,4 +202,105 @@ test('local-gate reads committed, edited and untracked paths from Git and ends w
   assert.equal(cli([]).status, 1);
   assert.equal(cli(['--base', '--run']).status, 1);
   assert.equal(cli(['--base', base]).status, 0);
+});
+
+test('local-gate runs only the vitest files that can reach a TypeScript change, at the configured worker count', () => {
+  const gate = localGate(['src/sprite-bake.ts', 'README.md']);
+  assert.equal(gate.lane, 'affected');
+  const vitest = gate.commands.filter(entry => entry.vitest).map(entry => entry.command);
+  assert.equal(vitest.length, 1, 'no capture run: capture-views cannot reach the change');
+  const files = vitest[0].split(' ').filter(word => word.startsWith('tests/'));
+  for (const file of ['tests/sprite-bake.test.ts', 'tests/sprite-bake-cli.test.ts', 'tests/cli.test.ts', 'tests/plugin-content-hygiene.test.ts']) assert.ok(files.includes(file), file);
+  for (const file of ['tests/face-rig-blender.test.ts', 'tests/face-contract.test.ts', 'tests/unreal-integration.test.ts']) assert.ok(!files.includes(file), file);
+  assert.ok(!gate.commands.some(entry => /--maxWorkers=2/.test(entry.command)), 'vitest.config.ts sets the local worker count');
+  // A Python helper reaches the tests that can start Blender, not the pure geometry tests.
+  const helper = localGate(['scripts/blender_lib/agent_meshes_digitigrade_gait.py']).commands.filter(entry => entry.vitest).map(entry => entry.command).join(' ');
+  assert.match(helper, /tests\/digitigrade-swing-blender\.test\.ts/);
+  assert.doesNotMatch(helper, /tests\/png\.test\.ts/);
+});
+
+test('local-gate treats a release bump as a version change, and any other edit to a version file as the full plan', t => {
+  const gate = localGate([...VERSION_FILES, 'README.md'], { versionOnly: VERSION_FILES });
+  assert.equal(gate.lane, 'affected');
+  assert.deepEqual(gate.plan, { javascript: true, python: false, geometrySweeps: false, recipeExamples: false });
+  const commands = gate.commands.map(entry => entry.command);
+  assert.ok(!commands.some(command => /^python tests\/(?!ci_docs)/.test(command)), 'no Python suite reads the version');
+  const vitest = commands.filter(command => command.startsWith('npm test')).join(' ');
+  for (const file of ['tests/runtime-package.test.ts', 'tests/managed-runtime.test.ts', 'tests/cli.test.ts']) assert.ok(vitest.includes(file), file);
+  assert.doesNotMatch(vitest, /face-rig|--exclude/, 'a build stamps the version, but a bump proves nothing about its geometry');
+  // Without proof that only the version changed, a version file still selects everything.
+  assert.equal(localGate([...VERSION_FILES], { versionOnly: ['package-lock.json'] }).lane, 'full');
+
+  const root = mkdtempSync(join(tmpdir(), 'mesh-version-only-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  git('init', '-q'); git('config', 'user.name', 'CI routing test'); git('config', 'user.email', 'ci-test@example.invalid');
+  const write = (version, dependency) => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'x', version, dependencies: { three: dependency } }, null, 2) + '\n');
+    writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ name: 'x', version, packages: { '': { version } } }, null, 2) + '\n');
+  };
+  write('1.0.0', '1.0.0');
+  git('add', '.'); git('commit', '-qm', 'start');
+  const base = git('rev-parse', 'HEAD');
+  write('1.1.0', '1.0.0');
+  assert.deepEqual(versionOnlyPaths(base, ['package-lock.json', 'package.json', 'README.md'], root), ['package-lock.json', 'package.json']);
+  git('commit', '-qam', 'bump');
+  assert.deepEqual(versionOnlyPaths(base, ['package-lock.json', 'package.json'], root), ['package-lock.json', 'package.json'], 'committed bumps count');
+  write('1.1.0', '2.0.0');
+  assert.deepEqual(versionOnlyPaths(base, ['package-lock.json', 'package.json'], root), ['package-lock.json'], 'a dependency edit is not a bump');
+  assert.deepEqual(versionOnlyPaths('no-such-commit', ['package.json'], root), []);
+});
+
+test('the reach graph selects by import, literal path, build output and content, and refuses what it cannot follow', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-affected-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const put = (file, text) => { mkdirSync(join(root, file, '..'), { recursive: true }); writeFileSync(join(root, file), text); };
+  put('src/a.ts', "import { b } from './b.ts';\nexport const a = b;\n");
+  put('src/b.ts', 'export const b = 1;\n');
+  put('src/cli.ts', "import './a.ts';\nconst version = 'package.json';\n");
+  put('src/lonely.ts', 'export const lonely = 1;\n');
+  put('src/author.ts', "const wrapper = new URL('../scripts/blender-author.py', import.meta.url);\n");
+  put('src/server.ts', "const web = new URL('../dist-web/', import.meta.url);\n");
+  put('src/web/main.ts', 'export {};\n');
+  put('scripts/tool.mjs', "import '../src/cli.ts';\n");
+  put('scripts/blender-author.py', '');
+  put('scripts/blender_lib/shape.py', '');
+  put('tests/fixtures/rig/one.py', '');
+  put('tests/a.test.ts', "import { a } from '../src/a.ts';\n");
+  put('tests/b.test.ts', "import { b } from '../src/b.ts';\n");
+  put('tests/cli.test.ts', "const cli = resolve('scripts/tool.mjs');\n");
+  put('tests/version.test.ts', "import '../src/cli.ts';\n");
+  put('tests/blender.test.ts',"import '../src/author.ts';\nconst fixture = name => resolve(`tests/fixtures/rig/${name}.py`);\n");
+  put('tests/web.test.ts', "import '../src/server.ts';\n");
+  put('tests/pure.test.ts', 'const nothing = 1;\n');
+  put('tests/plugin-content-hygiene.test.ts', "import '../src/b.ts';\n");
+  const select = paths => affectedVitestTests(paths, { root });
+  const always = ['tests/plugin-content-hygiene.test.ts', 'tests/pure.test.ts'];
+  const plus = (...tests) => [...always, ...tests].sort();
+  assert.deepEqual(select([]), always);
+  assert.deepEqual(select(['docs/guide.md', 'skills/x/SKILL.md']), always, 'documentation adds only the content tests');
+  assert.deepEqual(select(['src/a.ts']), plus('tests/a.test.ts', 'tests/cli.test.ts', 'tests/version.test.ts'), 'import, and a literal path to a launcher that imports it');
+  assert.deepEqual(select(['src/b.ts']), plus('tests/a.test.ts', 'tests/b.test.ts', 'tests/cli.test.ts', 'tests/version.test.ts'));
+  assert.deepEqual(select(['tests/b.test.ts']), plus('tests/b.test.ts'));
+  assert.deepEqual(select(['scripts/blender_lib/shape.py']), plus('tests/blender.test.ts'), 'a helper reaches the tests that can start Blender');
+  assert.deepEqual(select(['tests/fixtures/rig/one.py']), plus('tests/blender.test.ts'), 'a template path names its directory');
+  assert.deepEqual(select(['src/web/main.ts']), plus('tests/web.test.ts'), 'the workbench is reached through dist-web');
+  assert.deepEqual(select(['package.json']), plus('tests/version.test.ts'), 'a version file reaches a test naming a module that names one, and no deeper');
+  assert.equal(select(['src/lonely.ts']), null, 'a file nothing reaches is not trusted to be unused');
+  assert.equal(select(['src/deleted.ts']), null, 'a deleted file is not in the graph');
+  assert.equal(select(['vitest.config.ts']), null);
+  assert.equal(select(['src/a.ts', '../escape.ts']), null);
+});
+
+test('vitest failures are read from the JSON report, including a file that failed to load', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-vitest-report-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const report = join(root, 'report.json');
+  writeFileSync(report, JSON.stringify({ testResults: [
+    { name: 'C:\\checkout\\tests\\a.test.ts', status: 'failed', assertionResults: [{ status: 'passed', fullName: 'fine' }, { status: 'failed', fullName: 'holds Space' }] },
+    { name: '/checkout/tests/b.test.ts', status: 'failed', assertionResults: [] },
+    { name: '/checkout/tests/c.test.ts', status: 'passed', assertionResults: [{ status: 'passed', fullName: 'fine' }] },
+  ] }));
+  assert.deepEqual(vitestFailures(report), ['tests/a.test.ts > holds Space', 'tests/b.test.ts']);
+  assert.deepEqual(vitestFailures(join(root, 'missing.json')), ['(no vitest report was written)']);
 });

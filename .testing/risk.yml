@@ -14,7 +14,7 @@ lanes:
     runs: affected-files
     trigger: agent-edit
   merge:
-    runs: affected checks locally; quick non-blocking Linux observer on ordinary PRs
+    runs: npm run gate (ci-plan local-gate, the vitest files that can reach the diff); quick non-blocking Linux observer on ordinary PRs
     trigger: pull-request
     os: [ubuntu]
   scheduled:
@@ -65,6 +65,9 @@ areas:
   - path: scripts/ci-plan.mjs
     tier: critical
     why: Selected checks and aggregate status must fail closed.
+  - path: scripts/ci-affected.mjs
+    tier: critical
+    why: Affected-test selection must fall back to every test for anything it cannot follow.
   - path: scripts/check_docs.py
     tier: critical
     why: Replacement documentation gate and release metadata integrity.

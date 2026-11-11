@@ -1,9 +1,10 @@
 // Conservative area routing: this is not a complete per-test dependency graph.
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { affectedVitestTests, isDocumentation, VERSION_FILES } from './ci-affected.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -26,10 +27,8 @@ export function planChanges(paths, { full = false, phase = 'production' } = {}) 
   let javascript = false, python = false, recipeExamples = false;
   for (const file of paths) {
     if (typeof file !== 'string' || file.includes('..') || file.includes('\\')) return all;
-    if (/^(README\.md|AGENTS\.md|CLAUDE\.md|LICENSE|\.github\/README\.md)$/.test(file)
-      || /^skills\/.*\.md$/.test(file)
-      || /^docs\/.*\.(md|json|txt|png|jpg|jpeg|svg|webp|gif|pdf)$/.test(file)) continue;
-    if (/^src\/.*\.(ts|css|html)$/.test(file) || /^tests\/.*\.test\.ts$/.test(file)) {
+    if (isDocumentation(file)) continue;
+    if (/^src\/.*\.(ts|css|html)$/.test(file) || /^tests\/.*\.test\.ts$/.test(file) || /^tests\/helpers\/.*\.ts$/.test(file)) {
       javascript = true;
       continue;
     }
@@ -103,17 +102,23 @@ export function affectedPythonTests(paths, { root = REPO_ROOT } = {}) {
 const SKILLS_ONLY = /^skills\/[^/]+\/(SKILL\.md|references\/.*\.md)$/;
 export const SKILL_TESTS = ['tests/build-output-guidance.test.ts', 'tests/mesh-tool-selection-skill.test.ts'];
 export const DONE_MARKER = 'LOCAL-GATE-DONE';
+const CAPTURE_TEST = 'tests/capture-views.test.ts';
 
 // What to run locally for a diff. Independent of the dev phase: the dev phase silences the PR observer's runtime
-// jobs, which is why the whole gate falls on this local run. A version file, CI file or unknown input selects the
-// full plan (planChanges already treats them that way).
-export function localGate(paths, { root = REPO_ROOT, pathsFile = '<paths-file>' } = {}) {
+// jobs, which is why the whole gate falls on this local run. A dependency, CI file or unknown input selects the
+// full plan (planChanges already treats them that way). `versionOnly` names the version files whose diff is nothing
+// but the version string (a release bump): they select the tests that can read a version, not the whole plan.
+// Vitest runs only the files that can reach the diff, at the worker count of vitest.config.ts; the hosted jobs keep
+// their own lower count for two-core runners.
+export function localGate(paths, { root = REPO_ROOT, pathsFile = '<paths-file>', versionOnly = [] } = {}) {
   const docs = [
     { command: 'python tests/ci_docs.py' },
     { command: `python scripts/check_docs.py --paths-file "${pathsFile}"` },
   ];
   if (!paths.length) return { lane: 'none', plan: planChanges([], { phase: 'test' }), commands: [], testLane: 'merge' };
-  const plan = planChanges(paths, { phase: 'test' });
+  const bumped = paths.filter(file => VERSION_FILES.includes(file) && versionOnly.includes(file));
+  const plan = planChanges(paths.filter(file => !bumped.includes(file)), { phase: 'test' });
+  if (bumped.length) plan.javascript = true;
   if (paths.every(file => SKILLS_ONLY.test(file))) {
     return { lane: 'skills-only', plan, testLane: 'merge', commands: [{ command: 'npm run typecheck' }, ...docs, { command: `npx vitest run ${SKILL_TESTS.join(' ')}` }] };
   }
@@ -122,14 +127,20 @@ export function localGate(paths, { root = REPO_ROOT, pathsFile = '<paths-file>' 
   const commands = [...docs];
   if (plan.javascript) {
     const mjs = readdirSync(join(root, 'tests')).filter(name => name.endsWith('.test.mjs')).sort().map(name => `tests/${name}`);
-    commands.push({ command: 'npm run typecheck' }, { command: 'npm run build' }, { command: `node --test ${mjs.join(' ')}` },
-      { command: 'npm test -- --maxWorkers=2 --exclude tests/capture-views.test.ts' }, { command: 'npm test -- tests/capture-views.test.ts --maxWorkers=1' });
+    commands.push({ command: 'npm run typecheck' }, { command: 'npm run build' }, { command: `node --test ${mjs.join(' ')}` });
+    // Only the test files that can reach the diff; null means the diff holds something the reach graph cannot follow.
+    const affected = full ? null : affectedVitestTests(paths, { root });
+    const rest = affected?.filter(file => file !== CAPTURE_TEST);
+    if (!affected) commands.push({ command: `npm test -- --exclude ${CAPTURE_TEST}`, vitest: true });
+    else if (rest.length) commands.push({ command: `npm test -- ${rest.join(' ')}`, vitest: true });
+    // Software-GPU capture stays apart from geometry workloads.
+    if (!affected || affected.includes(CAPTURE_TEST)) commands.push({ command: `npm test -- ${CAPTURE_TEST} --maxWorkers=1`, vitest: true });
   }
   if (plan.python) {
     const scripts = full ? workflowPythonScripts(root).python : affectedPythonTests(paths, { root });
-    for (const script of scripts) commands.push({ command: `python ${script}` });
+    for (const script of scripts) commands.push({ command: `python ${script}`, pool: script });
   }
-  if (plan.recipeExamples) for (const script of workflowPythonScripts(root).examples) commands.push({ command: `python ${script}` });
+  if (plan.recipeExamples) for (const script of workflowPythonScripts(root).examples) commands.push({ command: `python ${script}`, pool: script });
   return { lane, plan, commands, testLane: plan.geometrySweeps ? 'full' : 'merge' };
 }
 
@@ -144,24 +155,95 @@ export function localPaths(base, root = REPO_ROOT) {
   ])].sort();
 }
 
+// The version files whose whole diff, committed and uncommitted, is version-string lines.
+export function versionOnlyPaths(base, paths, root = REPO_ROOT) {
+  return paths.filter(file => {
+    if (!VERSION_FILES.includes(file)) return false;
+    try {
+      const diff = execFileSync('git', ['diff', '--no-color', '-U0', base, '--', file], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'] });
+      const changed = diff.split(/\r?\n/).filter(line => /^[+-]/.test(line) && !/^(\+\+\+|---) /.test(line));
+      return changed.length > 0 && changed.every(line => /^[+-]\s*"version": "\d+\.\d+\.\d+",?$/.test(line));
+    } catch { return false; }
+  });
+}
+
+/** Failed test names from a vitest JSON report: `file > test`, or the file alone when it failed to load. */
+export function vitestFailures(reportFile) {
+  let report;
+  try { report = JSON.parse(readFileSync(reportFile, 'utf8')); } catch { return ['(no vitest report was written)']; }
+  const lines = [];
+  for (const file of report.testResults ?? []) {
+    const name = String(file.name).split('\\').join('/').replace(/^.*\/(?=tests\/)/, '');
+    const failed = (file.assertionResults ?? []).filter(test => test.status === 'failed');
+    for (const test of failed) lines.push(`${name} > ${test.fullName}`);
+    if (!failed.length && file.status === 'failed') lines.push(name);
+  }
+  return lines;
+}
+
+const PYTHON_POOL = 4;
+
+/** Run `python <script>` for each script, a few at a time, keeping each one's output for the failures. Resolves to the failed scripts. */
+export async function runPythonPool(scripts, { root = process.cwd(), size = PYTHON_POOL, log = console.log, python = 'python' } = {}) {
+  const queue = [...scripts];
+  const failures = [];
+  const worker = async () => {
+    for (let script = queue.shift(); script !== undefined; script = queue.shift()) {
+      const started = Date.now();
+      const result = await new Promise(done => {
+        const chunks = [];
+        const child = spawn(python, [script], { cwd: root, env: process.env, windowsHide: true });
+        child.stdout.on('data', chunk => chunks.push(chunk));
+        child.stderr.on('data', chunk => chunks.push(chunk));
+        child.on('error', error => done({ status: 1, output: String(error) }));
+        child.on('close', status => done({ status, output: Buffer.concat(chunks).toString('utf8') }));
+      });
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      if (result.status === 0) log(`ok ${script} (${seconds}s)`);
+      else { failures.push(script); log(`FAILED ${script} (${seconds}s)`); log(result.output.trimEnd()); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(size, scripts.length)) }, worker));
+  return scripts.filter(script => failures.includes(script));
+}
+
 export function localGateMain(args, root = REPO_ROOT, log = console.log) {
   const baseAt = args.indexOf('--base');
   const base = baseAt >= 0 ? args[baseAt + 1] : undefined;
   const paths = localPaths(base, root);
+  const versionOnly = versionOnlyPaths(base, paths, root);
   const directory = mkdtempSync(join(tmpdir(), 'meshes-local-gate-'));
   const pathsFile = join(directory, 'changed-paths.json');
   writeFileSync(pathsFile, JSON.stringify(paths) + '\n');
-  const gate = localGate(paths, { root, pathsFile });
+  const gate = localGate(paths, { root, pathsFile, versionOnly });
   log(`local-gate: base=${base}; ${paths.length} changed paths; lane=${gate.lane}; AGENT_MESHES_TEST_LANE=${gate.testLane}`);
   gate.commands.forEach((entry, index) => log(`${index + 1}. ${entry.command}`));
   if (!gate.commands.length) log('Nothing to run: no changed paths.');
   const run = args.includes('--run');
   let failed = null;
   if (run) {
-    for (const entry of gate.commands) {
+    for (const [index, entry] of gate.commands.entries()) {
+      // The Python scripts are independent processes: one pool runs each consecutive group of them side by side.
+      if (entry.pool) {
+        if (gate.commands[index - 1]?.pool) continue;
+        let end = index;
+        while (gate.commands[end]?.pool) end += 1;
+        const scripts = gate.commands.slice(index, end).map(item => item.pool);
+        log(`> ${scripts.length} Python scripts, ${PYTHON_POOL} at a time`);
+        const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'pool', ...scripts], { cwd: root, stdio: 'inherit', env: { ...process.env, AGENT_MESHES_TEST_LANE: gate.testLane } });
+        if (result.status !== 0) { failed = 'python scripts (see FAILED lines)'; break; }
+        continue;
+      }
       log(`> ${entry.command}`);
-      const result = spawnSync(entry.command, { cwd: root, shell: true, stdio: 'inherit', env: { ...process.env, AGENT_MESHES_TEST_LANE: gate.testLane } });
-      if (result.status !== 0) { failed = entry.command; break; }
+      // Vitest also writes a JSON report outside the checkout, so the failure list survives a truncated log.
+      const report = entry.vitest ? join(directory, `vitest-${index + 1}.json`) : null;
+      const command = report ? `${entry.command} --reporter=default --reporter=json --outputFile.json="${report}"` : entry.command;
+      const result = spawnSync(command, { cwd: root, shell: true, stdio: 'inherit', env: { ...process.env, AGENT_MESHES_TEST_LANE: gate.testLane } });
+      if (result.status !== 0) {
+        failed = entry.command;
+        if (report) for (const line of vitestFailures(report)) log(`FAILED ${line}`);
+        break;
+      }
     }
   }
   // One line a monitor can wait for, printed last in every outcome.
@@ -184,7 +266,7 @@ export function pullRequestPaths(event, root = process.cwd()) {
   return execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', `${base}...${head}`, '--'], { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).split('\0').filter(Boolean);
 }
 
-function main() {
+async function main() {
   const mode = process.argv[2];
   if (mode === 'plan') {
     const event = process.env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')) : {};
@@ -222,13 +304,18 @@ function main() {
     console.log('Every selected suite passed; only explicitly unselected suites were skipped.');
     return;
   }
+  if (mode === 'pool') {
+    const failures = await runPythonPool(process.argv.slice(3));
+    if (failures.length) { console.log(`FAILED ${failures.length} of ${process.argv.length - 3}: ${failures.join(' ')}`); process.exitCode = 1; }
+    return;
+  }
   if (mode === 'local-gate') {
     process.exitCode = localGateMain(process.argv.slice(3), process.cwd());
     return;
   }
-  throw new Error('Usage: node scripts/ci-plan.mjs plan|gate|local-gate --base <commit-ish> [--run]');
+  throw new Error('Usage: node scripts/ci-plan.mjs plan|gate|local-gate --base <commit-ish> [--run]|pool <python scripts>');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+  try { await main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
