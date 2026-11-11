@@ -8,9 +8,10 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CODE = /\.(ts|mts|mjs|js)$/;
 const GRAPH_ROOTS = ['src', 'scripts', 'tests', 'recipes'];
 const SKIP_DIRECTORIES = new Set(['node_modules', '__pycache__', 'reference-assets']);
-// The workbench is reached through its build output, not an import.
+// The workbench is reached through its build output, and the viewer scripts through a bundle made at run time
+// (bundleWeb in src/preview-html.ts), not through an import.
 const WORKBENCH_INPUTS = /^(src\/web\/|index\.html$|vite\.config\.ts$)/;
-const WORKBENCH_MARK = /dist-web/;
+const WORKBENCH_MARK = /dist-web|\bbundleWeb\b/;
 // Blender runs these out of process; a test reaches them through any module that names a Blender script.
 const BLENDER_PYTHON = /^(scripts\/[^/]+\.py|scripts\/blender_lib\/.*|recipes\/.*\.py)$/;
 const BLENDER_MARK = /scripts\/(blender[-_][\w-]+\.py|blender_lib)/;
@@ -37,19 +38,28 @@ function walk(root, directory, out) {
 }
 
 function resolveImport(root, from, specifier) {
-  const base = posix.normalize(posix.join(posix.dirname(from), specifier));
+  // A bundler query (`./worker.ts?worker&inline`) is not part of the path.
+  const base = posix.normalize(posix.join(posix.dirname(from), specifier.replace(/[?#].*$/, '')));
   if (base.startsWith('..')) return null;
-  for (const candidate of [base, `${base}.ts`, `${base}.mjs`, `${base}.js`, base.replace(/\.js$/, '.ts'), `${base}/index.ts`]) {
+  const candidates = [base, `${base}.ts`, `${base}.mts`, `${base}.mjs`, `${base}.js`, base.replace(/\.js$/, '.ts'), base.replace(/\.mjs$/, '.mts'),
+    `${base}/index.ts`, `${base}/index.mjs`, `${base}/index.js`];
+  for (const candidate of candidates) {
     if (existsSync(join(root, candidate)) && statSync(join(root, candidate)).isFile()) return candidate;
   }
   return null;
 }
 
-/** The files and directories one module names: relative imports, and repository paths written as string literals. */
-function references(root, file, text) {
+/**
+ * The files and directories one module names: relative imports, and repository paths written as string literals.
+ * `unresolved` collects the modules holding a relative import that matches no file: the caller cannot follow those.
+ */
+function references(root, file, text, unresolved) {
   const found = new Set();
   const add = path => { if (path && existsSync(join(root, path))) found.add(path); };
-  for (const match of text.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)) add(resolveImport(root, file, match[1]));
+  for (const match of text.matchAll(/(?:\bfrom|\bimport)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)) {
+    const target = resolveImport(root, file, match[1]);
+    if (target) found.add(target); else unresolved.add(file);
+  }
   // resolve('scripts/agent-meshes.mjs'), new URL('../scripts/blender-author.py', import.meta.url), 'tests/fixtures/x.json'
   for (const match of text.matchAll(/['"`]((?:\.\.?\/)*(?:src|scripts|tests|recipes|skills|docs)\/[\w./-]*)['"`]/g)) {
     add(match[1].replace(/^(\.\.?\/)+/, '').replace(/\/$/, ''));
@@ -60,36 +70,49 @@ function references(root, file, text) {
 }
 
 /**
- * Test files a diff can affect, or null when the diff holds anything this graph cannot follow.
+ * Test files a diff can affect, or null when the diff or the tree holds anything this graph cannot follow.
  * A test is selected when it changed, when it can reach a changed file through imports or literal repository paths,
  * or when it reaches no source at all. The content tests, which read the whole tree, always run.
- * Documentation selects nothing more; a version file selects the tests that assert a version.
+ * A source that a browser bundle contains selects every test that can reach a bundle; documentation selects the
+ * tests that name it; a version file selects the tests that assert a version.
  */
 export function affectedVitestTests(paths, { root = REPO_ROOT } = {}) {
   const files = GRAPH_ROOTS.flatMap(directory => existsSync(join(root, directory)) ? walk(root, directory, []) : []);
   const text = new Map(files.map(file => [file, readFileSync(join(root, file), 'utf8')]));
-  const edges = new Map(files.map(file => [file, references(root, file, text.get(file))]));
-  const tests = files.filter(file => /^tests\/[^/]+\.test\.ts$/.test(file)).sort();
-  const reach = new Map();
-  for (const test of tests) {
-    const seen = new Set([test]);
-    for (const queue = [test]; queue.length;) {
-      for (const next of edges.get(queue.pop()) ?? []) if (!seen.has(next)) { seen.add(next); if (edges.has(next)) queue.push(next); }
+  const unresolved = new Set();
+  const edges = new Map(files.map(file => [file, references(root, file, text.get(file), unresolved)]));
+  // Everything reachable from `start`. Naming a directory reaches the modules inside it.
+  const closure = start => {
+    const seen = new Set(start);
+    for (const queue = [...start]; queue.length;) {
+      const current = queue.pop();
+      const next = edges.has(current) ? edges.get(current) : files.filter(file => file.startsWith(`${current}/`));
+      for (const file of next) if (!seen.has(file)) { seen.add(file); queue.push(file); }
     }
-    reach.set(test, seen);
-  }
+    return seen;
+  };
+  const tests = files.filter(file => /^tests\/[^/]+\.test\.ts$/.test(file)).sort();
+  const reach = new Map(tests.map(test => [test, closure([test])]));
+  // The sources vite bundles for the browser: the workbench and the viewer scripts start from src/web.
+  const bundled = closure(files.filter(file => file.startsWith('src/web/')));
+  // An import the graph cannot resolve hides whatever lies behind it: a bundle that holds one is unknown, and a test
+  // that can reach one always runs.
+  const blind = file => unresolved.has(file);
+  if ([...bundled].some(blind)) return null;
   const reaches = (test, predicate) => [...reach.get(test)].some(predicate);
   const marked = (test, mark) => reaches(test, file => mark.test(text.get(file) ?? ''));
   const covers = path => file => path === file || path.startsWith(`${file}/`);
-  const chosen = new Set(tests.filter(test => CONTENT_TESTS.includes(test) || !reaches(test, file => file !== test && /^(src|scripts)\//.test(file))));
+  const names = path => file => (text.get(file) ?? '').includes(path);
+  const chosen = new Set(tests.filter(test => CONTENT_TESTS.includes(test) || reaches(test, blind) || !reaches(test, file => file !== test && /^(src|scripts)\//.test(file))));
   for (const path of paths) {
     if (typeof path !== 'string' || path.includes('..') || path.includes('\\')) return null;
-    if (isDocumentation(path)) continue;
+    // Prose is read only by tests that name it (the README thresholds, a skill folder); nothing else can break.
+    if (isDocumentation(path)) { tests.filter(test => reaches(test, covers(path)) || reaches(test, names(path))).forEach(test => chosen.add(test)); continue; }
     let hits;
     if (VERSION_FILES.includes(path)) hits = tests.filter(test => [test, ...edges.get(test)].some(file => VERSION_MARK.test(text.get(file) ?? '')));
     // A deleted or renamed file is no longer in the graph, so nothing can be said about who used it.
     else if (!existsSync(join(root, path))) return null;
-    else if (WORKBENCH_INPUTS.test(path)) hits = tests.filter(test => marked(test, WORKBENCH_MARK) || reaches(test, covers(path)));
+    else if (WORKBENCH_INPUTS.test(path) || bundled.has(path)) hits = tests.filter(test => marked(test, WORKBENCH_MARK) || reaches(test, covers(path)));
     else if (BLENDER_PYTHON.test(path)) hits = tests.filter(test => marked(test, BLENDER_MARK) || reaches(test, covers(path)));
     else if (/^(src|scripts|tests|recipes)\//.test(path)) hits = tests.filter(test => reaches(test, covers(path)));
     else return null;

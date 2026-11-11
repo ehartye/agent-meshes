@@ -103,10 +103,13 @@ at the first failure). It selects:
 and the directory of a template path. A test file runs when it changed, when it can
 reach a changed file, or when it reaches no source at all; the three content tests
 (hygiene and the two skill tests) always run. A Blender helper or recipe selects the
-tests that can reach a module naming a Blender script, and a workbench source the tests
-that can reach `dist-web`. The graph answers "every file" for anything it cannot
-follow: a deleted or renamed file, a file no test reaches, a fixture no test names, a
-dependency or configuration file. `tests/ci-plan.test.mjs` holds its negative controls.
+tests that can reach a module naming a Blender script. Any source that a browser
+bundle contains (everything `src/web` imports, wherever it lives) selects the tests
+that can reach `dist-web` or the run-time viewer bundle. Documentation selects the
+tests that name it. The graph answers "every file" for anything it cannot follow: a
+deleted or renamed file, a file no test reaches, a fixture no test names, a dependency
+or configuration file; and a test that can reach a module with an import the graph
+cannot resolve always runs. `tests/ci-plan.test.mjs` holds its negative controls.
 
 **Workers.** Local vitest runs use the worker count of `vitest.config.ts`; the hosted
 jobs keep `--maxWorkers=2` for two-core runners. The Python scripts are independent

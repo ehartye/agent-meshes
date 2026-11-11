@@ -1,7 +1,7 @@
 // KNOWN RED, declared as an expected failure: the stylized character's face contract reports 29 failures
 // (mouth-skin intersections among them). The strict assertion lives in its own `it.fails` test below, so the suite is
 // green while the defect stands and turns red the day the contract passes, which is the signal to make it a plain test.
-// The count is ratcheted in the build test: it may fall, never rise.
+// The failures are ratcheted per contract check in the build test: a count may fall, never rise, and no new check may fail.
 // Owner: the face programme (wiki item stylized-character-face-contract).
 // Expiry: 2026-12-31. Fix it or re-justify it by then; do not loosen the assertion.
 import { afterEach, expect, it } from 'vitest';
@@ -46,7 +46,10 @@ maybe('a face on a body skeleton (head under spine, add_eye_bones) builds and pa
   expect(report.measurements.chinDropRatio).toBeGreaterThanOrEqual(0.1);
 }, 600000);
 
-const KNOWN_RED_CHARACTER_FAILURES = 29;
+// The known-red failures by contract check (29 in all; the verifier lists at most 20 mouth-skin examples).
+const KNOWN_RED_CHARACTER_FAILURES: Record<string, number> = {
+  inversion: 2, 'attached-parts': 2, 'lid-penetration': 2, 'exposed-teeth': 1, 'head-binding': 1, 'mouth-parts': 1, 'mouth-skin-intersection': 20,
+};
 let characterFaceFailures: string[] | undefined;
 
 maybe('a stylized character with face=arkit walks and jogs with a living face on its head bone', async () => {
@@ -57,8 +60,10 @@ maybe('a stylized character with face=arkit walks and jogs with a living face on
   const bytes = await readFile(join(built.output, 'model.glb'));
   const report = await verifyFaceContract(bytes);
   characterFaceFailures = report.failures;
-  // Ratchet for the known-red contract (see the header): no new failure may join the 29.
-  expect(report.failures.length).toBeLessThanOrEqual(KNOWN_RED_CHARACTER_FAILURES);
+  // Ratchet for the known-red contract (see the header): no check may fail that did not, and none may fail more often.
+  const failing: Record<string, number> = {};
+  for (const check of report.checks) if (check.problems.length) failing[check.id] = check.problems.length;
+  for (const [id, count] of Object.entries(failing)) expect(count, `contract check ${id}`).toBeLessThanOrEqual(KNOWN_RED_CHARACTER_FAILURES[id] ?? 0);
   expect(report.checks.find(c => c.id === 'skeleton')!.message).toMatch(/head under rig-neck/);
   const { json } = readGLB(bytes);
   const parent = (name: string) => json.nodes!.find(n => n.children?.some(c => json.nodes![c].name === name))?.name;

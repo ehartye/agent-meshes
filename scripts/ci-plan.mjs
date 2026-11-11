@@ -207,7 +207,9 @@ export async function runPythonPool(scripts, { root = process.cwd(), size = PYTH
       const started = Date.now();
       const result = await new Promise(done => {
         const chunks = [];
-        const child = spawn(python, [script], { cwd: root, env: shard ? { ...process.env, AGENT_MESHES_TEST_SHARD: shard } : process.env, windowsHide: true });
+        // A shard variable left in the shell must not thin out the scripts that run whole.
+        const { AGENT_MESHES_TEST_SHARD: _inherited, ...env } = process.env;
+        const child = spawn(python, [script], { cwd: root, env: shard ? { ...env, AGENT_MESHES_TEST_SHARD: shard } : env, windowsHide: true });
         child.stdout.on('data', chunk => chunks.push(chunk));
         child.stderr.on('data', chunk => chunks.push(chunk));
         child.on('error', error => done({ status: 1, output: String(error) }));

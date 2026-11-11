@@ -321,3 +321,57 @@ test('the Python pool shards the long face file, runs every script and names eac
   assert.ok(lines.some(line => /^FAILED bad\.py \(/.test(line)) && lines.includes('the reason'), 'a failure shows its output');
   assert.ok(!lines.includes('fine'), 'a pass stays quiet');
 });
+
+test('the reach graph follows browser bundles, named prose and directories, and never trusts an import it cannot resolve', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-affected-bundles-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const put = (file, text) => { mkdirSync(join(root, file, '..'), { recursive: true }); writeFileSync(join(root, file), text); };
+  put('README.md', 'thresholds\n');
+  put('src/render/stage.ts', 'export const stage = 1;\n');
+  put('src/render/pure.ts', 'export const pure = 1;\n');
+  put('src/web/viewer.ts', "import { stage } from '../render/stage.ts';\nimport Worker from './worker.ts?worker&inline';\n");
+  put('src/web/worker.ts', 'export {};\n');
+  put('src/preview-html.ts', "const script = () => bundleWeb('./web/viewer.ts');\n");
+  put('src/server.ts', "const web = new URL('../dist-web/', import.meta.url);\n");
+  put('src/tool/index.ts', "import '../render/pure.ts';\n");
+  put('src/blind.ts', "import './generated/missing.ts';\n");
+  put('tests/stage.test.ts', "import '../src/render/stage.ts';\n");
+  put('tests/pure.test.ts', "import '../src/render/pure.ts';\n");
+  put('tests/viewer-script.test.ts', "import '../src/preview-html.ts';\n");
+  put('tests/workbench.test.ts', "import '../src/server.ts';\n");
+  put('tests/readme.test.ts', "import '../src/render/pure.ts';\nconst readme = readFileSync('README.md', 'utf8');\n");
+  put('tests/tool.test.ts', "const tool = resolve('src/tool');\n");
+  put('tests/blind.test.ts', "import '../src/blind.ts';\n");
+  put('tests/plugin-content-hygiene.test.ts', "import '../src/render/pure.ts';\n");
+  const select = paths => affectedVitestTests(paths, { root });
+  const always = ['tests/blind.test.ts', 'tests/plugin-content-hygiene.test.ts'];
+  const plus = (...tests) => [...always, ...tests].sort();
+  assert.deepEqual(select([]), always, 'a test that can reach an unresolvable import always runs');
+  const bundles = ['tests/viewer-script.test.ts', 'tests/workbench.test.ts'];
+  assert.deepEqual(select(['src/web/viewer.ts']), plus(...bundles), 'a bundle entry reaches the tests of the run-time bundle and of dist-web');
+  assert.deepEqual(select(['src/render/stage.ts']), plus(...bundles, 'tests/stage.test.ts'), 'a source inside a bundle reaches the bundle tests, not only its own');
+  assert.deepEqual(select(['src/web/worker.ts']), plus(...bundles), 'a bundler query is not part of the import path');
+  assert.deepEqual(select(['src/render/pure.ts']), plus('tests/pure.test.ts', 'tests/readme.test.ts', 'tests/tool.test.ts'), 'naming a directory reaches what its modules import');
+  assert.deepEqual(select(['README.md']), plus('tests/readme.test.ts'), 'prose selects the tests that name it');
+  // An unresolvable import inside a bundle leaves the bundle unknown.
+  put('src/web/viewer.ts', "import './gone.ts';\n");
+  assert.equal(select(['src/render/pure.ts']), null);
+});
+
+test('the three face-rig files own every fixture exactly once', () => {
+  const helper = readFileSync('tests/helpers/face-rig-fixture.ts', 'utf8');
+  const all = /FACE_RIG_FIXTURES = \[([^\]]+)\]/.exec(helper)[1].match(/test_\w+/g);
+  const owned = ['heads', 'frog', 'lips-frog'].flatMap(name => readFileSync(`tests/face-rig-${name}-blender.test.ts`, 'utf8').match(/'test_\w+'/g).map(word => word.slice(1, -1)));
+  assert.deepEqual([...owned].sort(), [...all].sort());
+  assert.equal(new Set(owned).size, owned.length);
+});
+
+test('a shard variable left in the shell does not reach a script that runs whole', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-python-shard-'));
+  t.after(() => { rmSync(root, { recursive: true, force: true }); delete process.env.AGENT_MESHES_TEST_SHARD; });
+  writeFileSync(join(root, 'whole.py'), 'import os, sys\nsys.exit(1 if "AGENT_MESHES_TEST_SHARD" in os.environ else 0)\n');
+  const python = ['python', 'python3'].find(name => spawnSync(name, ['--version']).status === 0);
+  if (!python) return t.skip('no Python on PATH');
+  process.env.AGENT_MESHES_TEST_SHARD = '1/4';
+  assert.deepEqual(await runPythonPool(['whole.py'], { root, python, log: () => {} }), []);
+});
