@@ -1,6 +1,6 @@
 // Conservative area routing: this is not a complete per-test dependency graph.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -224,6 +224,56 @@ export async function runPythonPool(scripts, { root = process.cwd(), size = PYTH
   return scripts.filter(script => failures.includes(script));
 }
 
+/**
+ * Run a planned gate. The Python scripts are independent of vitest, so when the plan holds both, their pool starts
+ * with the first vitest command and is collected where the plan lists the scripts: the two halves of a full run
+ * overlap instead of adding up. Resolves to the failed command, or null.
+ */
+export async function runLocalGate(gate, { root = REPO_ROOT, directory, log = console.log } = {}) {
+  const env = { ...process.env, AGENT_MESHES_TEST_LANE: gate.testLane };
+  const scripts = gate.commands.filter(entry => entry.pool).map(entry => entry.pool);
+  const poolLog = join(directory, 'python-pool.log');
+  let pool = null;
+  const startPool = () => {
+    const out = openSync(poolLog, 'w');
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), 'pool', ...scripts], { cwd: root, env, stdio: ['ignore', out, out], windowsHide: true });
+    closeSync(out);
+    pool = { child, done: new Promise(done => { child.on('error', () => done(1)); child.on('close', status => done(status ?? 1)); }) };
+  };
+  let failed = null;
+  for (const [index, entry] of gate.commands.entries()) {
+    if (entry.pool) {
+      if (gate.commands[index - 1]?.pool) continue;
+      log(`> ${scripts.length} Python scripts, ${PYTHON_POOL} at a time${pool ? ' (started beside vitest)' : ''}`);
+      if (!pool) startPool();
+      const status = await pool.done;
+      log(readFileSync(poolLog, 'utf8').trimEnd());
+      pool = null;
+      if (status !== 0) { failed = 'python scripts (see FAILED lines)'; break; }
+      continue;
+    }
+    if (entry.vitest && scripts.length && !pool) startPool();
+    log(`> ${entry.command}`);
+    // Vitest also writes a JSON report outside the checkout, so the failure list survives a truncated log.
+    const report = entry.vitest ? join(directory, `vitest-${index + 1}.json`) : null;
+    const command = report ? `${entry.command} --reporter=default --reporter=json --outputFile.json="${report}"` : entry.command;
+    const status = await new Promise(done => {
+      const child = spawn(command, { cwd: root, shell: true, stdio: 'inherit', env });
+      child.on('error', () => done(1));
+      child.on('close', code => done(code ?? 1));
+    });
+    if (status !== 0) {
+      failed = entry.command;
+      if (report) for (const line of vitestFailures(report)) log(`FAILED ${line}`);
+      break;
+    }
+  }
+  // A failure elsewhere ends the run: do not leave the pool working behind it.
+  if (pool) { pool.child.kill(); await pool.done; }
+  return failed;
+}
+
+/** Plan the gate for the diff since `--base`; with `--run`, run it too (then the result is a promise of the exit code). */
 export function localGateMain(args, root = REPO_ROOT, log = console.log) {
   const baseAt = args.indexOf('--base');
   const base = baseAt >= 0 ? args[baseAt + 1] : undefined;
@@ -237,35 +287,12 @@ export function localGateMain(args, root = REPO_ROOT, log = console.log) {
   gate.commands.forEach((entry, index) => log(`${index + 1}. ${entry.command}`));
   if (!gate.commands.length) log('Nothing to run: no changed paths.');
   const run = args.includes('--run');
-  let failed = null;
-  if (run) {
-    for (const [index, entry] of gate.commands.entries()) {
-      // The Python scripts are independent processes: one pool runs each consecutive group of them side by side.
-      if (entry.pool) {
-        if (gate.commands[index - 1]?.pool) continue;
-        let end = index;
-        while (gate.commands[end]?.pool) end += 1;
-        const scripts = gate.commands.slice(index, end).map(item => item.pool);
-        log(`> ${scripts.length} Python scripts, ${PYTHON_POOL} at a time`);
-        const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url), 'pool', ...scripts], { cwd: root, stdio: 'inherit', env: { ...process.env, AGENT_MESHES_TEST_LANE: gate.testLane } });
-        if (result.status !== 0) { failed = 'python scripts (see FAILED lines)'; break; }
-        continue;
-      }
-      log(`> ${entry.command}`);
-      // Vitest also writes a JSON report outside the checkout, so the failure list survives a truncated log.
-      const report = entry.vitest ? join(directory, `vitest-${index + 1}.json`) : null;
-      const command = report ? `${entry.command} --reporter=default --reporter=json --outputFile.json="${report}"` : entry.command;
-      const result = spawnSync(command, { cwd: root, shell: true, stdio: 'inherit', env: { ...process.env, AGENT_MESHES_TEST_LANE: gate.testLane } });
-      if (result.status !== 0) {
-        failed = entry.command;
-        if (report) for (const line of vitestFailures(report)) log(`FAILED ${line}`);
-        break;
-      }
-    }
-  }
   // One line a monitor can wait for, printed last in every outcome.
-  log(`${DONE_MARKER} lane=${gate.lane} status=${run ? (failed ? 'fail' : 'pass') : 'planned'} commands=${gate.commands.length}${failed ? ` failed=${JSON.stringify(failed)}` : ''}`);
-  return failed ? 1 : 0;
+  const finish = failed => {
+    log(`${DONE_MARKER} lane=${gate.lane} status=${run ? (failed ? 'fail' : 'pass') : 'planned'} commands=${gate.commands.length}${failed ? ` failed=${JSON.stringify(failed)}` : ''}`);
+    return failed ? 1 : 0;
+  };
+  return run ? runLocalGate(gate, { root, directory, log }).then(finish) : finish(null);
 }
 
 export function gateFailures(plan, results) {
@@ -327,7 +354,7 @@ async function main() {
     return;
   }
   if (mode === 'local-gate') {
-    process.exitCode = localGateMain(process.argv.slice(3), process.cwd());
+    process.exitCode = await localGateMain(process.argv.slice(3), process.cwd());
     return;
   }
   throw new Error('Usage: node scripts/ci-plan.mjs plan|gate|local-gate --base <commit-ish> [--run]|pool <python scripts>');

@@ -3103,31 +3103,45 @@ ATTACH_TOLERANCE = .0005
 
 
 def _closest_on_triangle(p, a, b, c):
-    """The point of triangle abc nearest to p and its barycentric weights (wa, wb, wc)."""
-    ab, ac, ap = _sub(b, a), _sub(c, a), _sub(p, a)
-    d1, d2 = _dot(ab, ap), _dot(ac, ap)
+    """The point of triangle abc nearest to p and its barycentric weights (wa, wb, wc).
+
+    This is the innermost loop of every skin query, so the vector arithmetic is written out on plain floats. Each
+    expression keeps the operation order of the _sub/_dot/_add/_mul form it replaces, and a dot product is still
+    a `sum` (which newer Pythons compensate for rounding), so the results are the same to the last bit.
+    """
+    ax, ay, az = a
+    bx, by, bz = b
+    cx, cy, cz = c
+    px, py, pz = p
+    abx, aby, abz = bx - ax, by - ay, bz - az
+    acx, acy, acz = cx - ax, cy - ay, cz - az
+    apx, apy, apz = px - ax, py - ay, pz - az
+    d1 = sum((abx * apx, aby * apy, abz * apz))
+    d2 = sum((acx * apx, acy * apy, acz * apz))
     if d1 <= 0 and d2 <= 0: return a, (1.0, 0.0, 0.0)
-    bp = _sub(p, b)
-    d3, d4 = _dot(ab, bp), _dot(ac, bp)
+    bpx, bpy, bpz = px - bx, py - by, pz - bz
+    d3 = sum((abx * bpx, aby * bpy, abz * bpz))
+    d4 = sum((acx * bpx, acy * bpy, acz * bpz))
     if d3 >= 0 and d4 <= d3: return b, (0.0, 1.0, 0.0)
     vc = d1 * d4 - d3 * d2
     if vc <= 0 and d1 >= 0 and d3 <= 0:
         v = d1 / (d1 - d3)
-        return _add(a, _mul(ab, v)), (1 - v, v, 0.0)
-    cp = _sub(p, c)
-    d5, d6 = _dot(ab, cp), _dot(ac, cp)
+        return (ax + abx * v, ay + aby * v, az + abz * v), (1 - v, v, 0.0)
+    cpx, cpy, cpz = px - cx, py - cy, pz - cz
+    d5 = sum((abx * cpx, aby * cpy, abz * cpz))
+    d6 = sum((acx * cpx, acy * cpy, acz * cpz))
     if d6 >= 0 and d5 <= d6: return c, (0.0, 0.0, 1.0)
     vb = d5 * d2 - d1 * d6
     if vb <= 0 and d2 >= 0 and d6 <= 0:
         w = d2 / (d2 - d6)
-        return _add(a, _mul(ac, w)), (1 - w, 0.0, w)
+        return (ax + acx * w, ay + acy * w, az + acz * w), (1 - w, 0.0, w)
     va = d3 * d6 - d5 * d4
     if va <= 0 and d4 - d3 >= 0 and d5 - d6 >= 0:
         w = (d4 - d3) / ((d4 - d3) + (d5 - d6))
-        return _add(b, _mul(_sub(c, b), w)), (0.0, 1 - w, w)
+        return (bx + (cx - bx) * w, by + (cy - by) * w, bz + (cz - bz) * w), (0.0, 1 - w, w)
     denominator = 1 / (va + vb + vc)
     v, w = vb * denominator, vc * denominator
-    return _add(a, _add(_mul(ab, v), _mul(ac, w))), (1 - v - w, v, w)
+    return (ax + (abx * v + acx * w), ay + (aby * v + acy * w), az + (abz * v + acz * w)), (1 - v - w, v, w)
 
 
 class _SkinIndex:
@@ -3138,6 +3152,8 @@ class _SkinIndex:
         self.cell = cell
         bounds = getattr(near, 'bounds', None)
         self.triangles, self.normals, self.grid = [], [], {}
+        # A sphere round each triangle: a query skips a triangle whose sphere is already farther than the best hit.
+        self.centers, self.radii = [], []
         for face in faces:
             for k in range(1, len(face) - 1):
                 tri = (face[0], face[k], face[k + 1])
@@ -3152,6 +3168,10 @@ class _SkinIndex:
                 index = len(self.triangles)
                 self.triangles.append(tri)
                 self.normals.append(_mul(normal, 1 / length))
+                middle = tuple((min(p[k] for p in points) + max(p[k] for p in points)) / 2 for k in range(3))
+                self.centers.append(middle)
+                # Padded far beyond rounding error, so the bound below never excludes the true nearest triangle.
+                self.radii.append(max(math.dist(middle, p) for p in points) + 1e-9)
                 lo = [math.floor(min(p[k] for p in points) / cell) for k in range(3)]
                 hi = [math.floor(max(p[k] for p in points) / cell) for k in range(3)]
                 if grid_bounds is not None:
@@ -3166,22 +3186,24 @@ class _SkinIndex:
 
     def nearest(self, point, limit=.012):
         """(signed distance, nearest point, triangle, barycentric weights), or None beyond `limit`."""
-        vertices = self.vertices
+        vertices, triangles, centers, radii, grid, dist = self.vertices, self.triangles, self.centers, self.radii, self.grid, math.dist
         c = [math.floor(point[k] / self.cell) for k in range(3)]
-        best, seen = None, set()
+        best, seen, nearest = None, set(), math.inf
         for ring in range(int(limit / self.cell) + 2):
             if best is not None and best[0] <= (ring - 1) * self.cell: break
             for i in range(c[0] - ring, c[0] + ring + 1):
                 for j in range(c[1] - ring, c[1] + ring + 1):
                     edge = abs(i - c[0]) == ring or abs(j - c[1]) == ring
                     for k in (range(c[2] - ring, c[2] + ring + 1) if edge else (c[2] - ring, c[2] + ring)):
-                        for index in self.grid.get((i, j, k), ()):
+                        for index in grid.get((i, j, k), ()):
                             if index in seen: continue
                             seen.add(index)
-                            a, b, cc = (vertices[v] for v in self.triangles[index])
-                            q, weights = _closest_on_triangle(point, a, b, cc)
-                            d = math.dist(point, q)
-                            if best is None or d < best[0]: best = (d, q, index, weights)
+                            # No point of the triangle is nearer than its sphere: it cannot beat the best hit.
+                            if dist(point, centers[index]) - radii[index] > nearest: continue
+                            ia, ib, ic = triangles[index]
+                            q, weights = _closest_on_triangle(point, vertices[ia], vertices[ib], vertices[ic])
+                            d = dist(point, q)
+                            if best is None or d < nearest: best = (d, q, index, weights); nearest = d
         if best is None or best[0] > limit: return None
         d, q, index, weights = best
         return (-d if _dot(_sub(point, q), self.normals[index]) < 0 else d), q, index, weights
