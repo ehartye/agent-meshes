@@ -166,12 +166,11 @@ def face_layout(values=None, head=None, *, recipe=_LEGACY_RECIPE):
 
 def teeth_layout(layout):
     """Where the tooth rows sit for a face layout (`face_layout`): per row ('upper', 'lower') the arch's front middle at
-    the gum line (`center`), `half_width`, `depth` and tooth `height`. The upper row's edge sits just above the lip line,
-    behind the upper lip, so nothing shows through the resting lips' crack and the open jaw (which lifts the upper lip)
-    shows it. Pure."""
+    the gum line (`center`), `half_width`, `depth` and tooth `height`. The upper row's edge sits just under the lip line,
+    so the closed lips hide it and the open jaw (which lifts the upper lip) shows it. Pure."""
     from agent_meshes_hm08 import UPPER_GUM
     k, hw, mz, front = layout['scale'], layout['mouth_half_width'], layout['mouth_z'], layout['mouth_front']
-    return {'upper': dict(center=(0.0, front + .0065 * k, mz + UPPER_GUM * k), half_width=.72 * hw, depth=.01 * k, height=(UPPER_GUM - .0012) * k),
+    return {'upper': dict(center=(0.0, front + .0065 * k, mz + UPPER_GUM * k), half_width=.72 * hw, depth=.01 * k, height=(UPPER_GUM + .0008) * k),
             'lower': dict(center=(0.0, front + .011 * k, mz - .0075 * k), half_width=.6 * hw, depth=.01 * k, height=.005 * k)}
 
 
