@@ -4,7 +4,7 @@ import io
 import json
 from pathlib import Path
 import unittest
-from geometry_test_scope import select_suite, MeshFixtures
+from geometry_test_scope import select_suite, shard_suite, MeshFixtures
 
 class Selection(unittest.TestCase):
     def cases(self):
@@ -24,6 +24,15 @@ class Selection(unittest.TestCase):
     def test_unknown_policy_or_lane_fails_instead_of_silently_losing_coverage(self):
         with self.assertRaisesRegex(ValueError,'unknown'):select_suite(self.cases(),{'missing':'matrix'},lane='merge')
         with self.assertRaisesRegex(ValueError,'lane'):select_suite(self.cases(),{},lane='typo')
+
+    def test_shards_are_disjoint_and_together_hold_every_case(self):
+        ids=sorted(t.id() for t in self.cases())
+        for count in (1,2,3,5):
+            slices=[[t.id() for t in shard_suite(self.cases(),f'{index}/{count}')] for index in range(1,count+1)]
+            self.assertEqual(sorted(i for part in slices for i in part),ids,count)
+        self.assertEqual([len(part) for part in slices],[1,1,1,0,0],'more shards than cases leaves empty shards, never a lost case')
+        for bad in ('0/2','3/2','2','a/b','1/0',None):
+            with self.assertRaisesRegex(ValueError,'shard'):shard_suite(self.cases(),bad)
 
     def test_manifest_names_real_test_methods(self):
         root=Path(__file__).parent

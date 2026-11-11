@@ -1,5 +1,6 @@
 /** @lane merge
  * @subject scripts/ci-plan.mjs
+ * @subject scripts/ci-affected.mjs
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +8,8 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { planChanges, gateFailures, pullRequestPaths, readTestingPhase, localGate, localGateMain, workflowPythonScripts, DONE_MARKER } from '../scripts/ci-plan.mjs';
+import { planChanges, gateFailures, pullRequestPaths, readTestingPhase, localGate, localGateMain, workflowPythonScripts, versionOnlyPaths, vitestFailures, pythonPoolTasks, runPythonPool, DONE_MARKER } from '../scripts/ci-plan.mjs';
+import { affectedVitestTests, VERSION_FILES } from '../scripts/ci-affected.mjs';
 
 test('dev PRs use only quick checks even for versions, policy or unknown inputs', () => {
   const quick = { javascript: false, python: false, geometrySweeps: false, recipeExamples: false };
@@ -200,4 +202,176 @@ test('local-gate reads committed, edited and untracked paths from Git and ends w
   assert.equal(cli([]).status, 1);
   assert.equal(cli(['--base', '--run']).status, 1);
   assert.equal(cli(['--base', base]).status, 0);
+});
+
+test('local-gate runs only the vitest files that can reach a TypeScript change, at the configured worker count', () => {
+  const gate = localGate(['src/sprite-bake.ts', 'README.md']);
+  assert.equal(gate.lane, 'affected');
+  const vitest = gate.commands.filter(entry => entry.vitest).map(entry => entry.command);
+  assert.equal(vitest.length, 1, 'no capture run: capture-views cannot reach the change');
+  const files = vitest[0].split(' ').filter(word => word.startsWith('tests/'));
+  for (const file of ['tests/sprite-bake.test.ts', 'tests/sprite-bake-cli.test.ts', 'tests/cli.test.ts', 'tests/plugin-content-hygiene.test.ts']) assert.ok(files.includes(file), file);
+  for (const file of ['tests/face-rig-blender.test.ts', 'tests/face-contract.test.ts', 'tests/unreal-integration.test.ts']) assert.ok(!files.includes(file), file);
+  assert.ok(!gate.commands.some(entry => /--maxWorkers=2/.test(entry.command)), 'vitest.config.ts sets the local worker count');
+  // A Python helper reaches the tests that can start Blender, not the pure geometry tests.
+  const helper = localGate(['scripts/blender_lib/agent_meshes_digitigrade_gait.py']).commands.filter(entry => entry.vitest).map(entry => entry.command).join(' ');
+  assert.match(helper, /tests\/digitigrade-swing-blender\.test\.ts/);
+  assert.doesNotMatch(helper, /tests\/png\.test\.ts/);
+});
+
+test('local-gate treats a release bump as a version change, and any other edit to a version file as the full plan', t => {
+  const gate = localGate([...VERSION_FILES, 'README.md'], { versionOnly: VERSION_FILES });
+  assert.equal(gate.lane, 'affected');
+  assert.deepEqual(gate.plan, { javascript: true, python: false, geometrySweeps: false, recipeExamples: false });
+  const commands = gate.commands.map(entry => entry.command);
+  assert.ok(!commands.some(command => /^python tests\/(?!ci_docs)/.test(command)), 'no Python suite reads the version');
+  const vitest = commands.filter(command => command.startsWith('npm test')).join(' ');
+  for (const file of ['tests/runtime-package.test.ts', 'tests/managed-runtime.test.ts', 'tests/cli.test.ts']) assert.ok(vitest.includes(file), file);
+  assert.doesNotMatch(vitest, /face-rig|--exclude/, 'a build stamps the version, but a bump proves nothing about its geometry');
+  // Without proof that only the version changed, a version file still selects everything.
+  assert.equal(localGate([...VERSION_FILES], { versionOnly: ['package-lock.json'] }).lane, 'full');
+
+  const root = mkdtempSync(join(tmpdir(), 'mesh-version-only-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
+  git('init', '-q'); git('config', 'user.name', 'CI routing test'); git('config', 'user.email', 'ci-test@example.invalid');
+  const write = (version, dependency) => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'x', version, dependencies: { three: dependency } }, null, 2) + '\n');
+    writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ name: 'x', version, packages: { '': { version } } }, null, 2) + '\n');
+  };
+  write('1.0.0', '1.0.0');
+  git('add', '.'); git('commit', '-qm', 'start');
+  const base = git('rev-parse', 'HEAD');
+  write('1.1.0', '1.0.0');
+  assert.deepEqual(versionOnlyPaths(base, ['package-lock.json', 'package.json', 'README.md'], root), ['package-lock.json', 'package.json']);
+  git('commit', '-qam', 'bump');
+  assert.deepEqual(versionOnlyPaths(base, ['package-lock.json', 'package.json'], root), ['package-lock.json', 'package.json'], 'committed bumps count');
+  write('1.1.0', '2.0.0');
+  assert.deepEqual(versionOnlyPaths(base, ['package-lock.json', 'package.json'], root), ['package-lock.json'], 'a dependency edit is not a bump');
+  assert.deepEqual(versionOnlyPaths('no-such-commit', ['package.json'], root), []);
+});
+
+test('the reach graph selects by import, literal path, build output and content, and refuses what it cannot follow', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-affected-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const put = (file, text) => { mkdirSync(join(root, file, '..'), { recursive: true }); writeFileSync(join(root, file), text); };
+  put('src/a.ts', "import { b } from './b.ts';\nexport const a = b;\n");
+  put('src/b.ts', 'export const b = 1;\n');
+  put('src/cli.ts', "import './a.ts';\nconst version = 'package.json';\n");
+  put('src/lonely.ts', 'export const lonely = 1;\n');
+  put('src/author.ts', "const wrapper = new URL('../scripts/blender-author.py', import.meta.url);\n");
+  put('src/server.ts', "const web = new URL('../dist-web/', import.meta.url);\n");
+  put('src/web/main.ts', 'export {};\n');
+  put('scripts/tool.mjs', "import '../src/cli.ts';\n");
+  put('scripts/blender-author.py', '');
+  put('scripts/blender_lib/shape.py', '');
+  put('tests/fixtures/rig/one.py', '');
+  put('tests/a.test.ts', "import { a } from '../src/a.ts';\n");
+  put('tests/b.test.ts', "import { b } from '../src/b.ts';\n");
+  put('tests/cli.test.ts', "const cli = resolve('scripts/tool.mjs');\n");
+  put('tests/version.test.ts', "import '../src/cli.ts';\n");
+  put('tests/blender.test.ts',"import '../src/author.ts';\nconst fixture = name => resolve(`tests/fixtures/rig/${name}.py`);\n");
+  put('tests/web.test.ts', "import '../src/server.ts';\n");
+  put('tests/pure.test.ts', 'const nothing = 1;\n');
+  put('tests/plugin-content-hygiene.test.ts', "import '../src/b.ts';\n");
+  const select = paths => affectedVitestTests(paths, { root });
+  const always = ['tests/plugin-content-hygiene.test.ts', 'tests/pure.test.ts'];
+  const plus = (...tests) => [...always, ...tests].sort();
+  assert.deepEqual(select([]), always);
+  assert.deepEqual(select(['docs/guide.md', 'skills/x/SKILL.md']), always, 'documentation adds only the content tests');
+  assert.deepEqual(select(['src/a.ts']), plus('tests/a.test.ts', 'tests/cli.test.ts', 'tests/version.test.ts'), 'import, and a literal path to a launcher that imports it');
+  assert.deepEqual(select(['src/b.ts']), plus('tests/a.test.ts', 'tests/b.test.ts', 'tests/cli.test.ts', 'tests/version.test.ts'));
+  assert.deepEqual(select(['tests/b.test.ts']), plus('tests/b.test.ts'));
+  assert.deepEqual(select(['scripts/blender_lib/shape.py']), plus('tests/blender.test.ts'), 'a helper reaches the tests that can start Blender');
+  assert.deepEqual(select(['tests/fixtures/rig/one.py']), plus('tests/blender.test.ts'), 'a template path names its directory');
+  assert.deepEqual(select(['src/web/main.ts']), plus('tests/web.test.ts'), 'the workbench is reached through dist-web');
+  assert.deepEqual(select(['package.json']), plus('tests/version.test.ts'), 'a version file reaches a test naming a module that names one, and no deeper');
+  assert.equal(select(['src/lonely.ts']), null, 'a file nothing reaches is not trusted to be unused');
+  assert.equal(select(['src/deleted.ts']), null, 'a deleted file is not in the graph');
+  assert.equal(select(['vitest.config.ts']), null);
+  assert.equal(select(['src/a.ts', '../escape.ts']), null);
+});
+
+test('vitest failures are read from the JSON report, including a file that failed to load', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-vitest-report-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const report = join(root, 'report.json');
+  writeFileSync(report, JSON.stringify({ testResults: [
+    { name: 'C:\\checkout\\tests\\a.test.ts', status: 'failed', assertionResults: [{ status: 'passed', fullName: 'fine' }, { status: 'failed', fullName: 'holds Space' }] },
+    { name: '/checkout/tests/b.test.ts', status: 'failed', assertionResults: [] },
+    { name: '/checkout/tests/c.test.ts', status: 'passed', assertionResults: [{ status: 'passed', fullName: 'fine' }] },
+  ] }));
+  assert.deepEqual(vitestFailures(report), ['tests/a.test.ts > holds Space', 'tests/b.test.ts']);
+  assert.deepEqual(vitestFailures(join(root, 'missing.json')), ['(no vitest report was written)']);
+});
+
+test('the Python pool shards the long face file, runs every script and names each failure', async t => {
+  const tasks = pythonPoolTasks(['tests/face_components.py', 'tests/blender_face_geometry.py', 'tests/lip_axis.py']);
+  assert.deepEqual(tasks.slice(0, 4), ['1/4', '2/4', '3/4', '4/4'].map(shard => ({ script: 'tests/blender_face_geometry.py', shard })));
+  assert.deepEqual(tasks.slice(4), [{ script: 'tests/face_components.py' }, { script: 'tests/lip_axis.py' }]);
+  const root = mkdtempSync(join(tmpdir(), 'mesh-python-pool-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, 'good.py'), 'print("fine")\n');
+  writeFileSync(join(root, 'bad.py'), 'import sys\nprint("the reason")\nsys.exit(3)\n');
+  const python = ['python', 'python3'].find(name => spawnSync(name, ['--version']).status === 0);
+  if (!python) return t.skip('no Python on PATH');
+  const lines = [];
+  assert.deepEqual(await runPythonPool(['good.py', 'bad.py', 'missing.py'], { root, python, log: line => lines.push(line) }), ['bad.py', 'missing.py']);
+  assert.ok(lines.some(line => /^ok good\.py \(/.test(line)));
+  assert.ok(lines.some(line => /^FAILED bad\.py \(/.test(line)) && lines.includes('the reason'), 'a failure shows its output');
+  assert.ok(!lines.includes('fine'), 'a pass stays quiet');
+});
+
+test('the reach graph follows browser bundles, named prose and directories, and never trusts an import it cannot resolve', t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-affected-bundles-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const put = (file, text) => { mkdirSync(join(root, file, '..'), { recursive: true }); writeFileSync(join(root, file), text); };
+  put('README.md', 'thresholds\n');
+  put('src/render/stage.ts', 'export const stage = 1;\n');
+  put('src/render/pure.ts', 'export const pure = 1;\n');
+  put('src/web/viewer.ts', "import { stage } from '../render/stage.ts';\nimport Worker from './worker.ts?worker&inline';\n");
+  put('src/web/worker.ts', 'export {};\n');
+  put('src/preview-html.ts', "const script = () => bundleWeb('./web/viewer.ts');\n");
+  put('src/server.ts', "const web = new URL('../dist-web/', import.meta.url);\n");
+  put('src/tool/index.ts', "import '../render/pure.ts';\n");
+  put('src/blind.ts', "import './generated/missing.ts';\n");
+  put('tests/stage.test.ts', "import '../src/render/stage.ts';\n");
+  put('tests/pure.test.ts', "import '../src/render/pure.ts';\n");
+  put('tests/viewer-script.test.ts', "import '../src/preview-html.ts';\n");
+  put('tests/workbench.test.ts', "import '../src/server.ts';\n");
+  put('tests/readme.test.ts', "import '../src/render/pure.ts';\nconst readme = readFileSync('README.md', 'utf8');\n");
+  put('tests/tool.test.ts', "const tool = resolve('src/tool');\n");
+  put('tests/blind.test.ts', "import '../src/blind.ts';\n");
+  put('tests/plugin-content-hygiene.test.ts', "import '../src/render/pure.ts';\n");
+  const select = paths => affectedVitestTests(paths, { root });
+  const always = ['tests/blind.test.ts', 'tests/plugin-content-hygiene.test.ts'];
+  const plus = (...tests) => [...always, ...tests].sort();
+  assert.deepEqual(select([]), always, 'a test that can reach an unresolvable import always runs');
+  const bundles = ['tests/viewer-script.test.ts', 'tests/workbench.test.ts'];
+  assert.deepEqual(select(['src/web/viewer.ts']), plus(...bundles), 'a bundle entry reaches the tests of the run-time bundle and of dist-web');
+  assert.deepEqual(select(['src/render/stage.ts']), plus(...bundles, 'tests/stage.test.ts'), 'a source inside a bundle reaches the bundle tests, not only its own');
+  assert.deepEqual(select(['src/web/worker.ts']), plus(...bundles), 'a bundler query is not part of the import path');
+  assert.deepEqual(select(['src/render/pure.ts']), plus('tests/pure.test.ts', 'tests/readme.test.ts', 'tests/tool.test.ts'), 'naming a directory reaches what its modules import');
+  assert.deepEqual(select(['README.md']), plus('tests/readme.test.ts'), 'prose selects the tests that name it');
+  // An unresolvable import inside a bundle leaves the bundle unknown.
+  put('src/web/viewer.ts', "import './gone.ts';\n");
+  assert.equal(select(['src/render/pure.ts']), null);
+});
+
+test('the three face-rig files own every fixture exactly once', () => {
+  const helper = readFileSync('tests/helpers/face-rig-fixture.ts', 'utf8');
+  const all = /FACE_RIG_FIXTURES = \[([^\]]+)\]/.exec(helper)[1].match(/test_\w+/g);
+  const owned = ['heads', 'frog', 'lips-frog'].flatMap(name => readFileSync(`tests/face-rig-${name}-blender.test.ts`, 'utf8').match(/'test_\w+'/g).map(word => word.slice(1, -1)));
+  assert.deepEqual([...owned].sort(), [...all].sort());
+  assert.equal(new Set(owned).size, owned.length);
+});
+
+test('a shard variable left in the shell does not reach a script that runs whole', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'mesh-python-shard-'));
+  t.after(() => { rmSync(root, { recursive: true, force: true }); delete process.env.AGENT_MESHES_TEST_SHARD; });
+  writeFileSync(join(root, 'whole.py'), 'import os, sys\nsys.exit(1 if "AGENT_MESHES_TEST_SHARD" in os.environ else 0)\n');
+  const python = ['python', 'python3'].find(name => spawnSync(name, ['--version']).status === 0);
+  if (!python) return t.skip('no Python on PATH');
+  process.env.AGENT_MESHES_TEST_SHARD = '1/4';
+  assert.deepEqual(await runPythonPool(['whole.py'], { root, python, log: () => {} }), []);
 });

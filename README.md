@@ -310,10 +310,13 @@ rigging work; use the commands above for affected TypeScript and workbench code.
 `npm test` runs vitest, which includes only `tests/**/*.test.ts`. The `.mjs` tests
 (`tests/ci-plan.test.mjs`, `tests/release-candidate.test.mjs`,
 `tests/botanical-kit.test.mjs`) run with `node --test tests/*.test.mjs`. To have the
-planner choose the checks for your diff, run
-`node scripts/ci-plan.mjs local-gate --base <sha>`; it prints the commands and a final
-`LOCAL-GATE-DONE` line (`--run` runs them). A change that touches only skill Markdown
-selects a short skills-only lane. See [.github/README.md](.github/README.md).
+planner choose the checks for your diff and run them, use `npm run gate`
+(`node scripts/ci-plan.mjs local-gate --base origin/main --run`; without `--run` it only
+prints the commands). It runs the vitest files that can reach the diff, not the whole
+suite, prints a `FAILED` line per failed test and ends with a `LOCAL-GATE-DONE` line.
+A change that touches only skill Markdown selects a short skills-only lane, and a
+dependency, CI or unknown file selects everything. See [.github/README.md](.github/README.md)
+and [AGENTS.md](AGENTS.md).
 
 Independent review and normal pull-request merges still apply.
 

@@ -12,6 +12,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "gate": "node scripts/ci-plan.mjs local-gate --base origin/main --run",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "start": "node src/cli.ts serve",

@@ -91,8 +91,40 @@ at the first failure). It selects:
 | --- | --- |
 | Only `skills/*/SKILL.md` and `skills/*/references/*.md` | `skills-only`: typecheck, `ci_docs.py`, `check_docs.py` and the skill vitest files |
 | Docs and named root documents | `docs-only`: `ci_docs.py` and `check_docs.py` |
-| TypeScript, helper modules, recipes or Python tests | `affected`: typecheck, build, the `.mjs` tests, vitest, and the Python scripts that read the changed helper (read from `check.yml`) |
-| A version file, dependency, fixture, CI file or unknown path | `full`: every script of the workflow |
+| TypeScript, helper modules, recipes or Python tests | `affected`: typecheck, build, the `.mjs` tests, the vitest files that can reach the diff, and the Python scripts that read the changed helper (read from `check.yml`) |
+| The four version files with only their version strings changed (a release bump), with or without docs | `affected`: the same checks, with the vitest files that assert a version and no Python suite |
+| A dependency, any other edit to a version file, a fixture, CI file or unknown path | `full`: every vitest file and every script of the workflow |
+
+`npm run gate` is `local-gate --base origin/main --run`.
+
+**Affected vitest files.** `scripts/ci-affected.mjs` builds a reach graph from each
+`tests/*.test.ts`: relative imports, repository paths written as string literals
+(`resolve('scripts/agent-meshes.mjs')`, `new URL('../scripts/blender-author.py', ...)`)
+and the directory of a template path. A test file runs when it changed, when it can
+reach a changed file, or when it reaches no source at all; the three content tests
+(hygiene and the two skill tests) always run. A Blender helper or recipe selects the
+tests that can reach a module naming a Blender script. Any source that a browser
+bundle contains (everything `src/web` imports, wherever it lives) selects the tests
+that can reach `dist-web` or the run-time viewer bundle. Documentation selects the
+tests that name it. The graph answers "every file" for anything it cannot follow: a
+deleted or renamed file, a file no test reaches, a fixture no test names, a dependency
+or configuration file; and a test that can reach a module with an import the graph
+cannot resolve always runs. `tests/ci-plan.test.mjs` holds its negative controls.
+
+**Workers.** Local vitest runs use the worker count of `vitest.config.ts`; the hosted
+jobs keep `--maxWorkers=2` for two-core runners. The Python scripts are independent
+processes and run six at a time (`node scripts/ci-plan.mjs pool <scripts>`), each
+script's output shown only when it fails. `tests/blender_face_geometry.py`, whose
+cases would otherwise run one after another in one process, runs as four interleaved
+shards: `AGENT_MESHES_TEST_SHARD=<i>/<n>` keeps every n-th case of the selected lane,
+so the shards are disjoint and together run every case (`tests/geometry_scope.py`
+checks that, and the gate runs it before any Python suite). The hosted job sets no
+shard and runs the file whole.
+
+**Failures.** Every vitest command of a `--run` also writes a JSON report beside the
+changed-paths file, outside the checkout, and a failed command prints one
+`FAILED tests/<file> > <test name>` line per failed test before the done marker, so
+the list survives a truncated log.
 
 A change to `agent_meshes_digitigrade_gait.py` selects `digitigrade_gait.py` and
 `digitigrade_body_timing.py`. The last line is always
