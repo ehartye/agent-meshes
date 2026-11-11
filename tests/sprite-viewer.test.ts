@@ -95,7 +95,16 @@ async function open(file: string, options: { colorScheme?: 'dark' | 'light'; clo
 }
 const role = (name: string) => `[data-role="${name}"]`;
 const text = (page: Page, name: string) => page.locator(role(name)).first().textContent();
+// A Step that ends playback writes the readout in a later task (setTimeout 0), so a read straight after the click can
+// see the frame before the step. Timers of one delay run in the order they were queued: once this one has run, any
+// readout write queued before the read has landed.
+// Use steppedFrame for a read straight after such a click on a page with the real clock (a page with an installed
+// clock never runs the timer).
 const frameIndex = async (page: Page) => Number(await text(page, 'frame-index'));
+const steppedFrame = async (page: Page) => {
+  await page.evaluate(() => new Promise(done => setTimeout(done, 0)));
+  return frameIndex(page);
+};
 const sizeOf = (page: Page, selector: string) => page.locator(selector).evaluateAll(elements => elements.map(element => { const r = element.getBoundingClientRect(); return [r.width, r.height]; }));
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 
@@ -323,7 +332,7 @@ describe('the viewer answers the keyboard', () => {
       await page.click(role('step-forward'));
       expect(await focused(page)).toBe('step-forward');
       expect(await status(page)).toBe('paused');
-      const stepped = await frameIndex(page);
+      const stepped = await steppedFrame(page);
       await page.keyboard.press('Space');
       expect(await status(page)).toBe('playing');
       await page.keyboard.press('Space');
@@ -338,7 +347,7 @@ describe('the viewer answers the keyboard', () => {
       await page.click(role('step-back'));
       expect(await focused(page)).toBe('step-back');
       expect(await status(page)).toBe('paused');
-      const held = await frameIndex(page);
+      const held = await steppedFrame(page);
       await page.keyboard.press('Space');
       expect(await status(page)).toBe('playing');
       await page.keyboard.press('Space');
