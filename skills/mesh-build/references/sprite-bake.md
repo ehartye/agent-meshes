@@ -15,6 +15,7 @@ mesh bake knight.glb --clip walk --directions 4 --phases 6 --cell 64 --out art/k
 mesh bake knight.glb --clip walk --palette art/dawnbringer16.hex --outline auto --look banded --anchor feet
 mesh bake knight.glb --clip walk --cell 64 --pixels-per-metre 32 --anchor feet --contact-sheet
 mesh bake knight.glb --clip walk --viewer
+mesh bake knight.glb --clip walk --elevation 30 --pixels-per-metre 32 --cell 64 --anchor feet
 ```
 
 The README section "Sprite bake" lists the flags, defaults, ranges, output files and error codes; `mesh bake --help`
@@ -23,7 +24,8 @@ is the authority. The success line is one JSON line: `output`, `files`, `size`, 
 it, at 1x and enlarged, or add `--contact-sheet` and review the whole bake in one image. A walk cycle is judged in
 motion, so add `--viewer` and play the loop.
 
-Three flags answer common requests. `--pixels-per-metre` gives a whole cast one sprite scale ("Sprite scale" below).
+Four flags answer common requests. `--elevation` matches the camera to the game's ground ("Camera elevation" below).
+`--pixels-per-metre` gives a whole cast one sprite scale ("Sprite scale" below).
 `--contact-sheet` writes `contact.png`, the sheet enlarged 4 times for review ("Contact sheet" below). `--viewer`
 writes `viewer.html`, a page that plays the baked loop ("Viewer" below).
 
@@ -66,6 +68,29 @@ environment, and the manifest differs only in `pluginVersion`.
   palette file or a bad palette line (named by line number), `--bands` without `--look banded`, `--outline auto`
   without `--palette`, an `--outline` colour not in the palette, or an `--anchor` other than `feet`.
 
+## Camera elevation
+
+`--elevation <degrees>` sets how high the camera sits above the horizon. The default, 15, is a side-on view that suits a
+platformer or a flat backdrop. A game that draws its ground from above needs the sprites baked from the same angle, or
+they look as if they stand more upright than the floor they walk on.
+
+- **Value.** A number from 0 to 89, decimals allowed (`26.565`); plain digits with an optional fraction, as for
+  `--pixels-per-metre`. Anything else is `CLI_ARGUMENT_ERROR` with `--elevation must be a number of degrees from 0 to
+  89, got <value>`, raised before Chromium starts, with nothing written. Straight down (90) is not accepted.
+- **Choosing it.** A camera at elevation `e` draws a metre of ground depth `sin(e)` as tall as a metre of width. Read
+  the ratio off the game's floor tile: a 2:1 isometric (dimetric) diamond, 64 by 32 pixels, is `sin(e) = 0.5`, so
+  `--elevation 30`. A 3:2 floor is about 42, and true isometric is 35.264.
+- **Height.** A metre of height is drawn `cos(e)` as tall: 0.966 at 15, 0.866 at 30, 0.707 at 45. Use that factor, not
+  0.966, in the arithmetic of "Sprite scale" when the elevation is set.
+- **Fit and pivot.** The fit, every cell and the `--anchor feet` pivot use the set elevation. A steeper camera sees more
+  of the top of the model, so a fitted frame and the pivot row both change; bake a cast with one elevation.
+- **Manifest.** `camera.elevationDeg` records the value; the key was already there holding 15, so no key is added and
+  `--elevation 15` gives the same three files as no flag.
+- **Directions.** Azimuths are unchanged: direction `k` is still `k * 360 / directions` degrees from +Z. For a diamond
+  floor, bake 8 directions and map the row to the screen heading in the game.
+- **Not reviewed.** The `banded` key light stays fixed to the camera, up and to the left, at every elevation; how its
+  bands read from a steep camera has not been judged.
+
 ## Sprite scale
 
 `--pixels-per-metre <n>` sets the scale of the sprite instead of fitting the camera to each model. Use it when a cast
@@ -81,7 +106,8 @@ padding) whatever its size; the silhouette itself can be smaller.
   --pixels-per-metre 40` and `--cell 32 --pixels-per-metre 20` both give `halfExtentM` 0.8. The centre, camera distance,
   near and far planes are computed as before.
 - **Vertical metre.** The scale is exact across the frame, in horizontal metres. A metre of height is drawn
-  `cos(15 degrees)`, about 0.966, as tall, so a game that reads the value as a height scale is off by about 3.4 percent.
+  `cos(15 degrees)`, about 0.966, as tall (the cosine of `--elevation` when that is set), so a game that reads the value
+  as a height scale is off by about 3.4 percent at the default.
 - **No padding.** The 1.25 padding is not applied, so a model that fills its cell touches the border. The manifest
   still records `padding` 1.25; the real frame is `halfExtentM`.
 - **With `--cell`.** `--cell` fixes how many pixels the frame has and the scale fixes how many metres they cover.
@@ -158,7 +184,7 @@ network request. Without the sheet it shows a notice that it could not load it.
 
 ## Fit and reduction
 
-- The camera is orthographic at 15 degrees elevation. It is fitted once, to the rest pose, as the largest square frame
+- The camera is orthographic at 15 degrees elevation, or at `--elevation` degrees. It is fitted once, to the rest pose, as the largest square frame
   over every direction with 1.25 padding, and never refitted per pose, so the scale is the same in every cell. With
   `--pixels-per-metre` nothing is fitted: the frame is set from the scale as in "Sprite scale", and it is still the same
   in every cell.
@@ -223,7 +249,7 @@ Every bake error is a JSON error with a `code`:
   message names the set scale and says to lower it or raise `--cell`. Nothing is written.
 - `BAKE_ANCHOR_OUTSIDE`: the `--anchor feet` pivot falls outside the cell. Raise `--cell` or leave `--anchor` out.
 - `CLI_ARGUMENT_ERROR`: a bad flag value, checked before Chromium starts; see "Argument errors" above. It also covers a
-  `--pixels-per-metre` outside 1 to 1024 or not a number, a `--contact-sheet` image over 134,217,728 pixels, and a value
+  `--pixels-per-metre` outside 1 to 1024 or not a number, an `--elevation` outside 0 to 89 or not a number, a `--contact-sheet` image over 134,217,728 pixels, and a value
   given to `--viewer`.
 
 ## What is guaranteed

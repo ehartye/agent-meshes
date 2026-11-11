@@ -27,6 +27,9 @@ import { composeViewer } from './sprite-viewer.ts';
  * With `pixelsPerMetre` the half extent is set from the scale (`cell / (2 * pixelsPerMetre)`, no padding) instead of fitted.
  * With `contactSheet` a fourth file, `contact.png`, is written after the three: the sheet scaled 4 times for review (see sprite-contact.ts).
  * With `viewer` a last file, `viewer.html`, is written after `contact.png`: a page that plays the loop from `sheet.png` beside it (see sprite-viewer.ts).
+ * With `elevation` the camera sits that many degrees above the horizon instead of 15: the fit, every cell and the feet pivot use it, and the manifest
+ * records it as `camera.elevationDeg`, the key that already held 15. A vertical metre is drawn `cos(elevation)` as tall and a metre of ground depth
+ * `sin(elevation)` as tall, so 30 degrees matches a 2:1 isometric floor.
  * Neither option is recorded in the atlas or the manifest, which are the same bytes with and without them, and a `contact.png` or `viewer.html` left by an earlier bake is never removed.
  *
  * Optional passes, all off by default (a bake with none of them is the 0.37.0 output): `look` (`unlit` or `banded`)
@@ -40,8 +43,10 @@ export const BAKE_LIMITS = { directions: [1, 32], phases: [1, 64], cell: [8, 256
 export const BAKE_PIXELS_PER_METRE_LIMITS = [1, 1024] as const;
 /** Render size over cell size: each cell pixel is the centre of an 8 by 8 block. */
 export const BAKE_SUPERSAMPLE = 8;
-/** Camera height above the horizon, in degrees. */
+/** Default camera height above the horizon, in degrees; `elevation` replaces it for one bake. */
 export const BAKE_ELEVATION_DEG = 15;
+/** Inclusive range of `elevation` in degrees: 0 is level with the model; 90 (straight down) has no defined up direction, so the range stops at 89. */
+export const BAKE_ELEVATION_LIMITS = [0, 89] as const;
 /** Margin of the rest fit: the frame is this much larger than the rest bounds need. */
 export const BAKE_PADDING = 1.25;
 const ALPHA_THRESHOLD = 128;
@@ -71,6 +76,8 @@ export interface BakeOptions {
   anchor?: string;
   /** Sets the sprite scale instead of fitting the camera: a number (or numeric text) from 1 to 1024; default none (fitted). */
   pixelsPerMetre?: number | string;
+  /** Camera height above the horizon in degrees: a number (or numeric text) from 0 to 89; default 15. */
+  elevation?: number | string;
   /** `true` also writes `contact.png`, the sheet scaled 4 times with a grey gutter between cells, for review; `false` is the same as unset. */
   contactSheet?: boolean;
   /** `true` also writes `viewer.html`, a page that plays the baked loop from `sheet.png` beside it, after every other file; `false` is the same as unset. */
@@ -79,7 +86,7 @@ export interface BakeOptions {
 export interface BakeSettings {
   clip: string; directions: number; phases: number; cell: number; out?: string;
   /** Each of these is set only when the matching option was given. */
-  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet'; pixelsPerMetre?: number; contactSheet?: true; viewer?: true;
+  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet'; pixelsPerMetre?: number; elevation?: number; contactSheet?: true; viewer?: true;
 }
 export interface BakeResult {
   /** Absolute output folder. */
@@ -108,6 +115,14 @@ function pixelsPerMetreOption(value: unknown): number {
   const [min, max] = BAKE_PIXELS_PER_METRE_LIMITS;
   const number = typeof value === 'number' ? value : typeof value === 'string' && /^\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : Number.NaN;
   if (!(number >= min && number <= max)) throw code(`--pixels-per-metre must be a number from ${min} to ${max}, got ${String(value)}`, 'CLI_ARGUMENT_ERROR');
+  return number;
+}
+
+/** The camera elevation as a number of degrees: a finite number, or text of digits with an optional fraction ("30", "26.565"), from 0 to 89. */
+function elevationOption(value: unknown): number {
+  const [min, max] = BAKE_ELEVATION_LIMITS;
+  const number = typeof value === 'number' ? value : typeof value === 'string' && /^\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : Number.NaN;
+  if (!(number >= min && number <= max)) throw code(`--elevation must be a number of degrees from ${min} to ${max}, got ${String(value)}`, 'CLI_ARGUMENT_ERROR');
   return number;
 }
 
@@ -142,6 +157,7 @@ export function parseBakeOptions(options: BakeOptions): BakeSettings {
     settings.outlineColor = [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
   }
   if (options.pixelsPerMetre !== undefined) settings.pixelsPerMetre = pixelsPerMetreOption(options.pixelsPerMetre);
+  if (options.elevation !== undefined) settings.elevation = elevationOption(options.elevation);
   if (options.contactSheet !== undefined && typeof options.contactSheet !== 'boolean') throw code(`--contact-sheet takes no value (contactSheet is true or false), got ${String(options.contactSheet)}`, 'CLI_ARGUMENT_ERROR');
   if (options.contactSheet) {
     const { width, height } = contactSize(settings);
@@ -243,6 +259,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   assertSheetSpec({ cell, directions, phases, clipDurationMs: nodeDuration * 1000 });
   const output = resolve(settings.out ?? join(dirname(source), `${basename(source, extname(source))}-sprites`));
   const render = cell * BAKE_SUPERSAMPLE;
+  const elevation = settings.elevation ?? BAKE_ELEVATION_DEG;
 
   const work = await mkdtemp(join(tmpdir(), 'agent-meshes-bake-'));
   let cells: Buffer[] = [];
@@ -280,7 +297,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
         camera.near = distance * 0.05; camera.far = distance * 3;
         camera.updateProjectionMatrix();
         return { centre: c as [number, number, number], distance, half, groundY: box.min.y, durationSeconds: 0 };
-      }, { directions, elevation: BAKE_ELEVATION_DEG, padding: BAKE_PADDING, setHalf });
+      }, { directions, elevation, padding: BAKE_PADDING, setHalf });
       fit.durationSeconds = await page.evaluate(name => { const v = (window as unknown as { viewer: ViewerLike }).viewer; v.play(name); v.pause(); return v.duration; }, clip);
       if (!(fit.durationSeconds > 0)) throw code(`Clip ${clip} has zero duration, so there are no phases to bake`, 'BAKE_CLIP_EMPTY');
       cells = [];
@@ -291,7 +308,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
           v.seek(v.duration * p / phases);
           v.view({ position: [centre[0] + Math.sin(az) * Math.cos(el) * distance, centre[1] + Math.sin(el) * distance, centre[2] + Math.cos(az) * Math.cos(el) * distance], target: centre });
           return v.screenshot();
-        }, { d, p, directions, phases, elevation: BAKE_ELEVATION_DEG, centre: fit.centre, distance: fit.distance });
+        }, { d, p, directions, phases, elevation, centre: fit.centre, distance: fit.distance });
         const image = decodePng(Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'));
         if (image.width !== render || image.height !== render) throw code(`The render for direction ${d}, phase ${p} is ${image.width} by ${image.height}, not ${render} by ${render}`, 'BAKE_RENDER_FAILED');
         const reduced = reduceCell(image.rgba, cell);
@@ -310,7 +327,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const spec: SheetSpec = { cell, directions, phases, clipDurationMs: Number((fit.durationSeconds * 1000).toFixed(3)) };
   const round = (value: number) => Math.round(value * 1e6) / 1e6;
   // The pivot comes from the same rounded numbers the manifest records, so it can be recomputed from the manifest alone.
-  const pivot = settings.anchor ? feetPivot({ cell, elevationDeg: BAKE_ELEVATION_DEG, halfExtentM: round(fit.half), centreYM: round(fit.centre[1]), groundYM: round(fit.groundY) }) : undefined;
+  const pivot = settings.anchor ? feetPivot({ cell, elevationDeg: elevation, halfExtentM: round(fit.half), centreYM: round(fit.centre[1]), groundYM: round(fit.groundY) }) : undefined;
   const atlas = buildAtlas(spec, pivot);
   const width = phases * cell, height = directions * cell, sheet = Buffer.alloc(width * height * 4);
   cells.forEach((pixels, i) => {
@@ -327,7 +344,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   const manifest = buildManifest({
     model: { sha256: sha256(glb) }, clip: { name: clip, durationMs: spec.clipDurationMs }, directions, phases, cell,
-    camera: { projection: 'orthographic', elevationDeg: BAKE_ELEVATION_DEG, padding: BAKE_PADDING, supersample: BAKE_SUPERSAMPLE, halfExtentM: round(fit.half), distanceM: round(fit.distance), centreM: fit.centre.map(round), ...(settings.pixelsPerMetre !== undefined ? { pixelsPerMetre: settings.pixelsPerMetre } : {}), ...(pivot ? { groundYM: round(fit.groundY) } : {}) },
+    camera: { projection: 'orthographic', elevationDeg: elevation, padding: BAKE_PADDING, supersample: BAKE_SUPERSAMPLE, halfExtentM: round(fit.half), distanceM: round(fit.distance), centreM: fit.centre.map(round), ...(settings.pixelsPerMetre !== undefined ? { pixelsPerMetre: settings.pixelsPerMetre } : {}), ...(pivot ? { groundYM: round(fit.groundY) } : {}) },
     sheetSha256, atlasSha256, pluginVersion: version,
     ...(settings.look !== undefined ? { look: settings.look } : {}),
     ...(settings.bands !== undefined ? { bands: settings.bands } : {}),

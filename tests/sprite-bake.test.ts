@@ -694,3 +694,74 @@ describe('a bake with a contact sheet', () => {
     expect(await files(dir)).toEqual([]);
   }, 120_000);
 });
+
+// The elevation option: the camera height above the horizon, 15 degrees unless set. The value checks are pure; three small
+// bakes carry the manifest, pixel and pivot checks.
+describe('the elevation option is checked before Chromium starts', () => {
+  const accepted: [number | string, number][] = [[0, 0], ['0', 0], [15, 15], ['30', 30], [' 26.565 ', 26.565], ['045', 45], [89, 89], ['89', 89]];
+  for (const [value, expected] of accepted)
+    it(`accepts ${JSON.stringify(value)} as ${expected}`, () => {
+      expect(parseBakeOptions({ clip: 'sway', elevation: value }).elevation).toBe(expected);
+    });
+
+  const refused: unknown[] = [-1, '-5', '+5', '.5', '5.', 89.5, '89.5', 90, '90', 180, Number.NaN, Number.POSITIVE_INFINITY, '', '  ', 'steep', '1e1', '0x10', '3,5', true, null, {}];
+  for (const [index, value] of refused.entries())
+    it(`refuses the bad elevation ${index} (${typeof value} ${JSON.stringify(value) ?? String(value)}) with CLI_ARGUMENT_ERROR`, () => {
+      expect(() => parseBakeOptions({ clip: 'sway', elevation: value as number })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/--elevation must be a number of degrees from 0 to 89, got /) }));
+    });
+
+  it('leaves the key out of the settings when the option is unset', () => {
+    expect(Object.keys(parseBakeOptions({ clip: 'sway' }))).not.toContain('elevation');
+    expect(Object.keys(parseBakeOptions({ clip: 'sway', elevation: undefined }))).not.toContain('elevation');
+  });
+
+  it('rejects a bad elevation from bakeSprites, writes nothing and never launches the browser', async () => {
+    const launch = vi.spyOn(chromium, 'launch'), dir = outDir();
+    try {
+      await expect(bakeSprites(glbPath, { clip: 'sway', out: dir, elevation: 90 })).rejects.toMatchObject({ code: 'CLI_ARGUMENT_ERROR', message: '--elevation must be a number of degrees from 0 to 89, got 90' });
+      expect(launch).not.toHaveBeenCalled();
+      expect(await files(dir)).toEqual([]);
+    } finally { launch.mockRestore(); }
+  });
+});
+
+describe('a bake with a set elevation', () => {
+  const OPTIONS = { clip: 'sway', ...SMALL, cell: 64, pixelsPerMetre: 40, anchor: 'feet' } as const;
+  const bakeAt = async (elevation: number | undefined) => {
+    const dir = outDir();
+    await bakeSprites(glbPath, { ...OPTIONS, out: dir, elevation });
+    const out = await read(dir);
+    return { ...out, image: decodePng(out.sheet), parsed: JSON.parse(out.manifest.toString('utf8')), atlasJson: JSON.parse(out.atlas.toString('utf8')) as Atlas };
+  };
+  /** Rows of the first cell (direction 0, phase 0) that hold an opaque pixel: the figure's height on screen. */
+  const extentY = (image: { rgba: Uint8Array; width: number }, cell: number) => {
+    let low = cell, high = -1;
+    for (let y = 0; y < cell; y++) for (let x = 0; x < cell; x++) if (image.rgba[(y * image.width + x) * 4 + 3] === 255) { low = Math.min(low, y); high = Math.max(high, y); }
+    return high - low + 1;
+  };
+
+  it('gives the same three files for 15 as for no option, records a set value under the existing key, and draws a steeper view shorter', async () => {
+    const plain = await bakeAt(undefined), fifteen = await bakeAt(15), steep = await bakeAt(60);
+    expect(fifteen.sheet.equals(plain.sheet)).toBe(true);
+    expect(fifteen.atlas.equals(plain.atlas)).toBe(true);
+    expect(fifteen.manifest.equals(plain.manifest)).toBe(true);
+    expect(plain.parsed.camera.elevationDeg).toBe(15);
+    expect(steep.parsed.camera.elevationDeg).toBe(60);
+    expect(Object.keys(steep.parsed.camera)).toEqual(Object.keys(plain.parsed.camera));
+    expect(steep.parsed.camera).toMatchObject({ halfExtentM: 0.8, centreM: plain.parsed.camera.centreM, distanceM: plain.parsed.camera.distanceM });
+    // The 1.1 m figure is 0.3 m deep: height * cos(e) + depth * sin(e) falls from about 46 pixels at 15 degrees to about 32 at 60.
+    const low = extentY(plain.image, 64), high = extentY(steep.image, 64);
+    expect(low).toBeGreaterThan(40);
+    expect(high).toBeLessThan(low - 8);
+    expect(high).toBeGreaterThan(20);
+  }, 120_000);
+
+  it('places the feet pivot where an independent projection at that elevation puts the ground point', async () => {
+    const steep = await bakeAt(60), plain = await bakeAt(undefined);
+    const expected = projectedGroundPixel(steep.parsed);
+    expect(steep.parsed.anchor).toEqual({ name: 'feet', ...expected });
+    expect(steep.atlasJson.meta.slices![0].keys[0].pivot).toEqual(expected);
+    expect(expected.y).toBe(Math.floor(32 + (steep.parsed.camera.centreM[1] - steep.parsed.camera.groundYM) * Math.cos(60 * Math.PI / 180) * 40));
+    expect(expected.y).toBeLessThan(plain.parsed.anchor.y);
+  }, 120_000);
+});

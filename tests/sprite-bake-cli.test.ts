@@ -417,3 +417,32 @@ describe('agent-meshes bake with --contact-sheet', () => {
     for (const text of ['--contact-sheet', 'contact.png', '4 times', '4-pixel', 'transparent', 'There are no labels', '134217728', 'before Chromium starts', 'same bytes with and without it']) expect(help).toContain(text);
   });
 });
+
+// The flag --elevation, through the real entry point.
+describe('agent-meshes bake with --elevation', () => {
+  it('reaches the camera: the manifest records the elevation', async () => {
+    const dir = outDir();
+    const outcome = await bake(glbPath, '--clip', 'sway', '--directions', '2', '--phases', '2', '--elevation', '30', '--out', dir);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(Object.keys(JSON.parse(outcome.stdout))).toEqual(['output', 'files', 'size', 'frames', 'sheetSha256', 'atlasSha256']);
+    expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')).camera).toMatchObject({ elevationDeg: 30 });
+  }, 120_000);
+
+  it('refuses an elevation outside 0 to 89 before Chromium starts and writes nothing', async () => {
+    for (const value of ['90', 'steep']) {
+      const dir = outDir(), started = Date.now();
+      const outcome = await bake(glbPath, '--clip', 'sway', '--elevation', value, '--out', dir);
+      expect(outcome.code).toBe(1);
+      expect(outcome.stdout).toBe('');
+      expect(failure(outcome).error.code).toBe('CLI_ARGUMENT_ERROR');
+      expect(failure(outcome).error.message).toBe(`--elevation must be a number of degrees from 0 to 89, got ${value}`);
+      expect(await list(dir)).toEqual([]);
+      expect(Date.now() - started).toBeLessThan(30_000);
+    }
+  }, 120_000);
+
+  it('states the option, its range, its default and the early check in its help', async () => {
+    const help = (await run(process.execPath, [script, 'bake', '--help'], { windowsHide: true })).stdout.replace(/\s+/g, ' ');
+    for (const text of ['--elevation <degrees>', 'from 0 to 89', '(default: 15)', 'camera.elevationDeg', '2:1 isometric', 'an --elevation outside 0 to 89']) expect(help).toContain(text);
+  });
+});
