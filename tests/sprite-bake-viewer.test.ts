@@ -84,6 +84,9 @@ const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('he
 const small = { clip: 'sway', directions: 2, phases: 3, cell: 16 };
 const smallArgs = ['--clip', 'sway', '--directions', '2', '--phases', '3', '--cell', '16'];
 const footerSha = (html: string) => /data-role="footer-sha"[^>]*>([0-9a-f]+)</.exec(html)?.[1];
+/** One small bake with the viewer and no other option, shared by the tests that only read its output. A failed bake rejects for each of them. */
+let viewerBaked: Promise<{ dir: string; result: Awaited<ReturnType<typeof bakeSprites>> }> | undefined;
+const viewerBake = () => viewerBaked ??= (async () => { const dir = outDir(); return { dir, result: await bakeSprites(glbPath, { ...small, out: dir, viewer: true }) }; })();
 
 describe('the viewer option is checked before Chromium starts', () => {
   for (const value of ['yes', 'true', 1, 0, null, {}])
@@ -100,9 +103,9 @@ describe('the viewer option is checked before Chromium starts', () => {
 
 describe('bakeSprites with viewer', () => {
   it('writes viewer.html last, lists it after contact, and leaves the other files as they are without the option', async () => {
-    const plain = outDir(), withViewer = outDir(), both = outDir(), off = outDir();
+    const plain = outDir(), both = outDir(), off = outDir();
     const without = await bakeSprites(glbPath, { ...small, out: plain });
-    const result = await bakeSprites(glbPath, { ...small, out: withViewer, viewer: true });
+    const { dir: withViewer, result } = await viewerBake();
     const bothResult = await bakeSprites(glbPath, { ...small, out: both, contactSheet: true, viewer: true });
     const offResult = await bakeSprites(glbPath, { ...small, out: off, viewer: false });
     expect(Object.keys(without.files)).toEqual(['sheet', 'atlas', 'manifest']);
@@ -177,8 +180,7 @@ describe('bakeSprites with viewer', () => {
     expect(anchor).toMatchObject({ name: 'feet' });
     expect(page).toContain('data-role="pivot-toggle"');
     expect(page).toContain(`"pivot":{"x":${anchor.x},"y":${anchor.y}}`);
-    const none = outDir();
-    await bakeSprites(glbPath, { ...small, out: none, viewer: true });
+    const { dir: none } = await viewerBake();
     const plainPage = (await read(none, 'viewer.html')).toString('utf8');
     expect(plainPage).not.toContain('data-role="pivot-toggle"');
     expect(plainPage).toContain('"pivot":null');
@@ -198,18 +200,9 @@ describe('agent-meshes bake --viewer', () => {
     expect(footerSha((await read(dir, 'viewer.html')).toString('utf8'))).toBe(result.sheetSha256.slice(0, 12));
   }, 120_000);
 
-  it('with --contact-sheet as well lists both, viewer after contact, and the three fixed files match a bake without either flag', async () => {
-    const both = outDir(), plain = outDir();
-    const outcome = await bake(glbPath, ...smallArgs, '--contact-sheet', '--viewer', '--out', both);
-    expect(outcome.code, outcome.stderr).toBe(0);
-    const plainOutcome = await bake(glbPath, ...smallArgs, '--out', plain);
-    expect(plainOutcome.code, plainOutcome.stderr).toBe(0);
-    expect(await list(both)).toEqual(['atlas.json', 'contact.png', 'manifest.json', 'sheet.png', 'viewer.html']);
-    expect(Object.keys(JSON.parse(outcome.stdout).files)).toEqual(['sheet', 'atlas', 'manifest', 'contact', 'viewer']);
-    expect(await list(plain)).toEqual(['atlas.json', 'manifest.json', 'sheet.png']);
-    expect(Object.keys(JSON.parse(plainOutcome.stdout).files)).toEqual(['sheet', 'atlas', 'manifest']);
-    for (const name of ['sheet.png', 'atlas.json', 'manifest.json']) expect((await read(both, name)).equals(await read(plain, name)), name).toBe(true);
-  }, 180_000);
+  // Both flags together (viewer after contact, the three fixed files as a plain bake) and the failed bake that writes no
+  // viewer.html are asserted on the function above; tests/sprite-bake-cli.test.ts carries --contact-sheet and the
+  // BAKE_CELL_CLIPPED failure through the command.
 
   it('takes no value: a stray value is rejected by the command parser and nothing is written', async () => {
     const dir = outDir();
@@ -217,14 +210,6 @@ describe('agent-meshes bake --viewer', () => {
     expect(outcome.code).not.toBe(0);
     expect(outcome.stdout).toBe('');
     expect(outcome.stderr).toMatch(/too many arguments/i);
-    expect(await list(dir)).toEqual([]);
-  }, 120_000);
-
-  it('writes no viewer.html when the bake fails after every cell is rendered', async () => {
-    const dir = outDir();
-    const outcome = await bake(glbPath, '--clip', 'overreach', '--directions', '2', '--phases', '4', '--cell', '16', '--viewer', '--out', dir);
-    expect(outcome.code).not.toBe(0);
-    expect(outcome.stderr).toContain('BAKE_CELL_CLIPPED');
     expect(await list(dir)).toEqual([]);
   }, 120_000);
 

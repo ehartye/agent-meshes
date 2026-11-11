@@ -72,10 +72,19 @@ function centroidX(rgba: Uint8Array, width: number, cell: number, direction: num
   return sum / count - (cell - 1) / 2;
 }
 
+/** One bake at the defaults, shared by the tests that only read its output. A failed bake rejects for each of them. */
+let defaults: Promise<{ dir: string; result: Awaited<ReturnType<typeof bakeSprites>> }> | undefined;
+const defaultBake = () => defaults ??= (async () => { const dir = outDir(); return { dir, result: await bakeSprites(glbPath, { clip: 'sway', out: dir }) }; })();
+/** The bake that clips (`overreach` leaves the rest bounds), shared by the tests that read its error and its empty folder. */
+let clipped: Promise<{ dir: string; error: unknown }> | undefined;
+const clippedBake = () => clipped ??= (async () => {
+  const dir = outDir();
+  return { dir, error: await bakeSprites(glbPath, { clip: 'overreach', out: dir, directions: 2, phases: 4, cell: 16 }).then(() => undefined, (caught: unknown) => caught) };
+})();
+
 describe('bake the asymmetric fixture at the defaults', () => {
   it('writes the three files, with the same bytes on a second run in this environment', async () => {
-    const first = outDir(), second = outDir();
-    const a = await bakeSprites(glbPath, { clip: 'sway', out: first });
+    const { dir: first, result: a } = await defaultBake(), second = outDir();
     const b = await bakeSprites(glbPath, { clip: 'sway', out: second });
     expect(await files(first)).toEqual(['atlas.json', 'manifest.json', 'sheet.png']);
     const x = await read(first), y = await read(second);
@@ -87,8 +96,7 @@ describe('bake the asymmetric fixture at the defaults', () => {
   }, 120_000);
 
   it('makes a 384 by 384 sheet, an atlas of 64 frames with dir-0 to dir-7 tags, and a manifest that records the bake', async () => {
-    const dir = outDir();
-    await bakeSprites(glbPath, { clip: 'sway', out: dir });
+    const { dir } = await defaultBake();
     const { sheet, atlas: atlasBytes, manifest: manifestBytes } = await read(dir);
     const image = decodePng(sheet);
     expect([image.width, image.height]).toEqual([384, 384]);
@@ -113,8 +121,7 @@ describe('bake the asymmetric fixture at the defaults', () => {
   }, 120_000);
 
   it('gives every pixel alpha 0 or 255 and the colour 0, 0, 0 to every transparent pixel', async () => {
-    const dir = outDir();
-    await bakeSprites(glbPath, { clip: 'sway', out: dir });
+    const { dir } = await defaultBake();
     const { rgba } = decodePng(await readFile(join(dir, 'sheet.png')));
     let opaque = 0, clear = 0;
     for (let i = 0; i < rgba.length; i += 4) {
@@ -128,8 +135,7 @@ describe('bake the asymmetric fixture at the defaults', () => {
   }, 120_000);
 
   it('orders the directions by azimuth from +Z: dir-0 and dir-4 mirror left to right, and dir-2 and dir-6 differ', async () => {
-    const dir = outDir();
-    await bakeSprites(glbPath, { clip: 'sway', out: dir });
+    const { dir } = await defaultBake();
     const { rgba, width } = decodePng(await readFile(join(dir, 'sheet.png')));
     const at = (direction: number) => centroidX(rgba, width, 48, direction, 0);
     // The arm reaches toward +X, and the frame is centred on the rest bounds, so the body mass sits left of centre when
@@ -214,8 +220,8 @@ describe('bake without a browser', () => {
   });
 
   it('refuses a clip that swings past the rest bounds, naming the direction, phase and clip, and writes nothing', async () => {
-    const dir = outDir();
-    await expect(bakeSprites(glbPath, { clip: 'overreach', out: dir, directions: 2, phases: 4, cell: 16 })).rejects.toMatchObject({
+    const { dir, error } = await clippedBake();
+    expect(error).toMatchObject({
       code: 'BAKE_CELL_CLIPPED', message: expect.stringMatching(/direction 0 \(dir-0.*phase 1, clip overreach/),
     });
     expect(await files(dir)).toEqual([]);
@@ -276,10 +282,23 @@ async function tipFixture(): Promise<Buffer> {
   return Buffer.from(await exportGLB({ ...project, clips: [turn] }));
 }
 
+const baked = new Map<string, Promise<{ dir: string; sheet: ReturnType<typeof decodePng>; manifest: any; atlas: Atlas }>>();
+/** One bake per distinct option set, shared by the tests below that only read its output. A failed bake rejects for each of them. */
+const bakeWith = (key: string, options: Record<string, unknown>) => {
+  if (!baked.has(key)) baked.set(key, (async () => {
+    const dir = outDir();
+    await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, ...options });
+    const out = await read(dir);
+    return { dir, sheet: decodePng(out.sheet), manifest: JSON.parse(out.manifest.toString('utf8')), atlas: JSON.parse(out.atlas.toString('utf8')) as Atlas };
+  })());
+  return baked.get(key)!;
+};
+/** The bake with `SMALL` and no other option: the reference every option below is compared with. */
+const plainBake = () => bakeWith('plain', {});
+
 describe('a bake with none of the 0.38.0 options is the 0.37.0 bake', () => {
   it('keeps the 0.37.0 key lists: no slices, no look, palette, outline or anchor, no extra camera value', async () => {
-    const dir = outDir();
-    await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL });
+    const { dir } = await plainBake();
     const { atlas, manifest } = await read(dir);
     expect(Object.keys((JSON.parse(atlas.toString('utf8')) as Atlas).meta)).toEqual(['app', 'image', 'format', 'size', 'scale', 'frameTags']);
     const parsed = JSON.parse(manifest.toString('utf8'));
@@ -288,8 +307,7 @@ describe('a bake with none of the 0.38.0 options is the 0.37.0 bake', () => {
   }, 120_000);
 
   it('gives the same sheet, atlas and manifest bytes when every new option is passed as unset', async () => {
-    const plain = outDir(), unset = outDir();
-    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL });
+    const { dir: plain } = await plainBake(), unset = outDir();
     await bakeSprites(glbPath, { clip: 'sway', out: unset, ...SMALL, palette: undefined, outline: undefined, look: undefined, bands: undefined, anchor: undefined });
     const a = await read(plain), b = await read(unset);
     expect(b.sheet.equals(a.sheet)).toBe(true);
@@ -298,8 +316,7 @@ describe('a bake with none of the 0.38.0 options is the 0.37.0 bake', () => {
   }, 120_000);
 
   it('renders --look lit exactly as the default and records only the look in the manifest', async () => {
-    const plain = outDir(), lit = outDir();
-    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL });
+    const { dir: plain } = await plainBake(), lit = outDir();
     await bakeSprites(glbPath, { clip: 'sway', out: lit, ...SMALL, look: 'lit' });
     const a = await read(plain), b = await read(lit);
     expect(b.sheet.equals(a.sheet)).toBe(true);
@@ -392,8 +409,7 @@ describe('palette, outline, look and anchor on the asymmetric fixture', () => {
   }, 120_000);
 
   it('outlines the silhouette in a hex colour with no palette: every edge pixel is the outline colour, and the model is untouched inside', async () => {
-    const plain = outDir(), dir = outDir();
-    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL });
+    const { dir: plain } = await plainBake(), dir = outDir();
     await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, outline: '#ff00ff' });
     const before = cellsOf(await sheetOf(plain), CELL), after = cellsOf(await sheetOf(dir), CELL);
     for (const [i, pixels] of after.entries()) {
@@ -473,8 +489,7 @@ describe('palette, outline, look and anchor on the asymmetric fixture', () => {
   }, 120_000);
 
   it('renders --look unlit and --look banded differently from lit and from each other, and records them', async () => {
-    const dirs = { lit: outDir(), unlit: outDir(), banded: outDir() };
-    await bakeSprites(glbPath, { clip: 'sway', out: dirs.lit, ...SMALL });
+    const dirs = { lit: (await plainBake()).dir, unlit: outDir(), banded: outDir() };
     await bakeSprites(glbPath, { clip: 'sway', out: dirs.unlit, ...SMALL, look: 'unlit' });
     await bakeSprites(glbPath, { clip: 'sway', out: dirs.banded, ...SMALL, look: 'banded', bands: 4 });
     const sheets = { lit: await readFile(join(dirs.lit, 'sheet.png')), unlit: await readFile(join(dirs.unlit, 'sheet.png')), banded: await readFile(join(dirs.banded, 'sheet.png')) };
@@ -539,17 +554,6 @@ describe('the feet pivot follows a set scale', () => {
 });
 
 describe('a bake with a set scale', () => {
-  const baked = new Map<string, Promise<{ dir: string; sheet: ReturnType<typeof decodePng>; manifest: any; atlas: Atlas }>>();
-  /** One bake per distinct option set, shared by the tests below that only read its output. */
-  const bakeWith = (key: string, options: Record<string, unknown>) => {
-    if (!baked.has(key)) baked.set(key, (async () => {
-      const dir = outDir();
-      await bakeSprites(glbPath, { clip: 'sway', out: dir, ...SMALL, ...options });
-      const out = await read(dir);
-      return { dir, sheet: decodePng(out.sheet), manifest: JSON.parse(out.manifest.toString('utf8')), atlas: JSON.parse(out.atlas.toString('utf8')) as Atlas };
-    })());
-    return baked.get(key)!;
-  };
   /** Opaque pixel extent across the first cell (direction 0, phase 0): the largest column minus the smallest, plus one. */
   const extentX = (image: { rgba: Uint8Array; width: number }, cell: number) => {
     let low = cell, high = -1;
@@ -558,7 +562,7 @@ describe('a bake with a set scale', () => {
   };
 
   it('replaces the fitted half extent by cell / (2 * scale) and keeps the centre and distance, recording the scale between padding and projection', async () => {
-    const plain = await bakeWith('plain', {}), a = await bakeWith('c64-p40', { cell: 64, pixelsPerMetre: 40 }), b = await bakeWith('c32-p20', { cell: 32, pixelsPerMetre: 20 });
+    const plain = await plainBake(), a = await bakeWith('c64-p40', { cell: 64, pixelsPerMetre: 40 }), b = await bakeWith('c32-p20', { cell: 32, pixelsPerMetre: 20 });
     expect(a.manifest.camera).toMatchObject({ pixelsPerMetre: 40, halfExtentM: 0.8, padding: 1.25, distanceM: plain.manifest.camera.distanceM, centreM: plain.manifest.camera.centreM });
     expect(Object.keys(a.manifest.camera)).toEqual(['centreM', 'distanceM', 'elevationDeg', 'halfExtentM', 'padding', 'pixelsPerMetre', 'projection', 'supersample']);
     expect(b.manifest.camera.halfExtentM).toBe(0.8);
@@ -584,8 +588,7 @@ describe('a bake with a set scale', () => {
   }, 120_000);
 
   it('gives the same bytes as no option when the scale is passed as unset', async () => {
-    const plain = outDir(), unset = outDir();
-    await bakeSprites(glbPath, { clip: 'sway', out: plain, ...SMALL });
+    const { dir: plain } = await plainBake(), unset = outDir();
     await bakeSprites(glbPath, { clip: 'sway', out: unset, ...SMALL, pixelsPerMetre: undefined });
     const a = await read(plain), b = await read(unset);
     expect(b.sheet.equals(a.sheet)).toBe(true);
@@ -603,8 +606,8 @@ describe('a bake with a set scale', () => {
   }, 120_000);
 
   it('keeps the fitted wording of the clipped-cell message when no scale is set', async () => {
-    const dir = outDir();
-    const error = await bakeSprites(glbPath, { clip: 'overreach', out: dir, directions: 2, phases: 4, cell: 16 }).catch((e: Error) => e);
+    const { dir, error } = await clippedBake();
+    expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('Cell for direction 0 (dir-0, 0 degrees), phase 1, clip overreach has opaque pixels on its border, so the model reaches outside the frame fitted to its rest pose. Keep the clip inside the rest bounds, or raise --cell if it only grazes the border. Nothing was written.');
     expect((error as Error).message).not.toContain('--pixels-per-metre');
     expect(await files(dir)).toEqual([]);
@@ -727,11 +730,16 @@ describe('the elevation option is checked before Chromium starts', () => {
 
 describe('a bake with a set elevation', () => {
   const OPTIONS = { clip: 'sway', ...SMALL, cell: 64, pixelsPerMetre: 40, anchor: 'feet' } as const;
-  const bakeAt = async (elevation: number | undefined) => {
-    const dir = outDir();
-    await bakeSprites(glbPath, { ...OPTIONS, out: dir, elevation });
-    const out = await read(dir);
-    return { ...out, image: decodePng(out.sheet), parsed: JSON.parse(out.manifest.toString('utf8')), atlasJson: JSON.parse(out.atlas.toString('utf8')) as Atlas };
+  const bakedAt = new Map<number | undefined, Promise<{ sheet: Buffer; atlas: Buffer; manifest: Buffer; image: ReturnType<typeof decodePng>; parsed: any; atlasJson: Atlas }>>();
+  /** One bake per elevation, shared by the two tests below, which only read its output. A failed bake rejects for both. */
+  const bakeAt = (elevation: number | undefined) => {
+    if (!bakedAt.has(elevation)) bakedAt.set(elevation, (async () => {
+      const dir = outDir();
+      await bakeSprites(glbPath, { ...OPTIONS, out: dir, elevation });
+      const out = await read(dir);
+      return { ...out, image: decodePng(out.sheet), parsed: JSON.parse(out.manifest.toString('utf8')), atlasJson: JSON.parse(out.atlas.toString('utf8')) as Atlas };
+    })());
+    return bakedAt.get(elevation)!;
   };
   /** Rows of the first cell (direction 0, phase 0) that hold an opaque pixel: the figure's height on screen. */
   const extentY = (image: { rgba: Uint8Array; width: number }, cell: number) => {

@@ -349,7 +349,8 @@ def add_face(objects, values=None, head=None, *, recipe=_LEGACY_RECIPE):
     head = mesh_from_geometry('head_skin', {'vertices': [tuple(v) for v in V], 'faces': [[int(i) for i in f if i >= 0] for f in F],
                                             'material_indices': indices}, [skin, dark])
     for name, targets in face['morphs'].items(): shape_key(head, name, [tuple(v) for v in targets])
-    # The body's neck rises inside the head, where only the open mouth sees it: that part is the mouth's dark too.
+    # The body's neck rises inside the head. Nothing sees that part (the mouth's pocket is closed and stays in front of
+    # it), so it is cut away a little above the head's lower edge, leaving an overlap the head's turn never opens.
     from agent_meshes_hm08 import boundary_loops
     rim = min(boundary_loops(F), key=lambda loop: float(np.mean(V[loop, 2])))
     inside_from = float(V[rim, 2].max())
@@ -362,11 +363,15 @@ def add_face(objects, values=None, head=None, *, recipe=_LEGACY_RECIPE):
         cut = local @ Vector((0.0, 0.0, inside_from))
         normal = (local.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
         bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=cut, plane_no=normal)
-        obj.data.materials.append(dark)
-        slot = len(obj.data.materials) - 1
-        for f in bm.faces:
-            if min((obj.matrix_world @ v.co).z for v in f.verts) > inside_from - 1e-6: f.material_index = slot
+        overlap = cut + normal * (.012 * d['s'])
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=overlap, plane_no=normal)
+        top = inside_from + .012 * d['s']
+        hidden = [f for f in bm.faces if min((obj.matrix_world @ v.co).z for v in f.verts) > top - 1e-6]
+        bmesh.ops.delete(bm, geom=hidden, context='FACES')
         bm.to_mesh(obj.data); bm.free()
+        # The neck is the body's: no vertex of it is the face's, whatever share of the head bone it rides.
+        from agent_meshes_face_blender import mark_face_region
+        mark_face_region(obj, [])
 
     # Paint: warm cheeks, tinted lips and a darker lash line.
     base = linear_color(skin_hex)

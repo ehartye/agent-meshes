@@ -1,7 +1,11 @@
-// KNOWN RED, declared as an expected failure: the stylized character's face contract reports 29 failures
-// (mouth-skin intersections among them). The strict assertion lives in its own `it.fails` test below, so the suite is
-// green while the defect stands and turns red the day the contract passes, which is the signal to make it a plain test.
-// The failures are ratcheted per contract check in the build test: a count may fall, never rise, and no new check may fail.
+// KNOWN RED, declared as an expected failure: the stylized character's face contract reports 7 failures, down from 29.
+// What remains: the lids pass through each other from three quarters of a blink on (lid-penetration, one per eye:
+// the hm08 lids overlap when closed and roll at one distance from the eye), the upper teeth's edge shows through the
+// resting lips' crack (exposed-teeth), and the pocket's wall crosses the lip at full mouthFunnel
+// (mouth-skin-intersection, 4). Each repair changes how the face looks and waits on the owner's choice.
+// The strict assertion lives in its own `it.fails` test below, so the suite is green while the defects stand and
+// turns red the day the contract passes, which is the signal to make it a plain test. The failures are ratcheted per
+// contract check in the build test: a count may fall, never rise, and no other check may fail.
 // Owner: the face programme (wiki item stylized-character-face-contract).
 // Expiry: 2026-12-31. Fix it or re-justify it by then; do not loosen the assertion.
 import { afterEach, expect, it } from 'vitest';
@@ -46,10 +50,9 @@ maybe('a face on a body skeleton (head under spine, add_eye_bones) builds and pa
   expect(report.measurements.chinDropRatio).toBeGreaterThanOrEqual(0.1);
 }, 600000);
 
-// The known-red failures by contract check (29 in all; the verifier lists at most 20 mouth-skin examples).
-const KNOWN_RED_CHARACTER_FAILURES: Record<string, number> = {
-  inversion: 2, 'attached-parts': 2, 'lid-penetration': 2, 'exposed-teeth': 1, 'head-binding': 1, 'mouth-parts': 1, 'mouth-skin-intersection': 20,
-};
+// The known-red failures by contract check. The inversion, attached-parts, head-binding and mouth-parts failures and
+// 16 of the 20 mouth crossings that stood beside them are repaired and may not come back.
+const KNOWN_RED_CHARACTER_FAILURES: Record<string, number> = { 'lid-penetration': 2, 'exposed-teeth': 1, 'mouth-skin-intersection': 4 };
 let characterFaceFailures: string[] | undefined;
 
 maybe('a stylized character with face=arkit walks and jogs with a living face on its head bone', async () => {

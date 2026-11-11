@@ -1241,6 +1241,14 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     cx0 = abs(marks['mouth_corner_L'][0])
     t = np.clip((mouth_z - .002 * scale[2] - P[:, 2]) / (.006 * scale[2]), 0, 1)
     bag = (P[:, 1] > marks['stomion'][1] + .008 * scale[1]) & (np.abs(P[:, 0]) < 1.4 * cx0)         & (np.hypot(P[:, 0], P[:, 1] - center[1]) < 1.2 * (neck[0] if neck is not None else radii[0]))
+    if neck is not None:
+        # The bag hangs inside the neck. The head's own neck skin stands in the same column: the rows the neck graft
+        # eased onto the body's neck ellipse, and behind the head's axis the nape. They are not the bag and stay with
+        # the head (swung with the jaw, the nape would open with the mouth). The bag's front rows, behind the lips
+        # and chin, are in front of the graft and swing.
+        level = np.hypot(P[:, 0] / neck[0], (P[:, 1] - center[1]) / neck[1])
+        grafted = _neck_graft_weight(P, neck_z, marks, scale[2]) > .05 if neck_z is not None else np.zeros(len(P), dtype=bool)
+        bag &= ~((level > .9) & (grafted | (P[:, 1] > center[1])))
     w = np.where(bag, t * t * (3 - 2 * t), 0.0)[:, None]
     swung = np.array([rigid.move(p) for p in P])
     morphs['jawOpen'] = morphs['jawOpen'] * (1 - w) + swung * w
@@ -1259,6 +1267,7 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     morphs['jawOpen'][:, 2] += LIP_LIFT * scale[2] * rise
 
     # Crop at the neck, keeping the mouth's bag (it hangs down inside the neck).
+    crop_z = neck_z
     if neck_z is not None:
         cx0 = abs(marks['mouth_corner_L'][0])
         def kept(f):
@@ -1328,6 +1337,9 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
     inner = np.unique(faces[inside | gap][faces[inside | gap] >= 0])
     # (the dark inside leaves out the lips' own faces the front sees at rest: a closed mouth's corners show no notches)
     inside |= gap & (behind > .0005 * scale[1])
+    # The pocket is one piece. A patch of faces the pocket wholly surrounds (the cheeks' inner walls, past the width
+    # the search above covers) is the pocket's too, and a stray dark patch that joins the pocket nowhere is skin.
+    inside = _one_pocket(corners, inside)
     edges = edges_of(faces)
     for name in morphs:
         if name == 'jawOpen' or name.startswith(('eye', 'mouthSmile', 'mouthFrown')): continue
@@ -1347,23 +1359,46 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
         cap = np.array([[b, a, hub, -1] for a, b in zip(loop, loop[1:] + loop[:1])])
         faces = np.vstack([faces, cap])
         inside = np.append(inside, np.ones(len(cap), dtype=bool))
-    # With the jaw open, the pocket below the mouth stays in front of the body's neck (which rises inside the head: its
-    # front wall would show through the open mouth, under the head's cropped edge): the open pocket's depth is squashed
-    # (smoothly, so nothing folds) to end short of the neck's front. At rest nothing sees it, and it stays as it is.
-    if neck is not None:
-        seen = set(np.unique(faces[~inside][faces[~inside] >= 0]).tolist())
-        deep = np.array(sorted(set(np.unique(faces[inside][faces[inside] >= 0]).tolist()) - seen), dtype=np.int64)
-        # (only the pocket's far end is squashed, into the last 1.5 cm before the neck: nearer, it lies just behind
-        # the lips and chin, and pulling it forward would push it through them)
-        limit = center[1] - neck[1] - .006 * scale[1]
-        start = limit - .015 * scale[1]
-        if len(deep):
-            t = np.clip((mouth_z - .002 * scale[2] - V[deep, 2]) / (.01 * scale[2]), 0, 1)
-            w = t * t * (3 - 2 * t)
-            Q = morphs['jawOpen']
-            f = min(1.0, (limit - start) / max(float(Q[deep, 1].max()) - start, 1e-9))
-            y = Q[deep, 1]
-            Q[deep, 1] = np.where(y > start, y + w * (f - 1) * (y - start), y)
+    # Where the pocket lies close to the skin it moves as that skin does: the pocket swings with the jaw as one piece,
+    # but the skin beside it moves less and less toward the neck, and a wall that outruns the skin next to it passes
+    # through it. Only the pocket's own vertices move (the lips' edge is the skin's already). The body's neck needs no
+    # room made for it: a recipe cuts away the part of the neck that rises inside the head.
+    seen = np.unique(faces[~inside][faces[~inside] >= 0])
+    own = np.setdiff1d(np.unique(faces[inside][faces[inside] >= 0]), seen)
+    # First the pocket's lower part stands clear of the head's neck skin at rest. The neck graft eased every vertex
+    # there onto the body's neck ellipse, the pocket's walls with the skin, so they lay on each other: the walls keep
+    # to four fifths of the ellipse where the graft is full, easing to no limit where it ends. Every morph moves with
+    # the rest shape, so nothing but the hidden wall's place changes.
+    if neck is not None and len(own):
+        grafted = _neck_graft_weight(V[own], crop_z, marks, scale[2])
+        level = np.hypot(V[own, 0] / neck[0], (V[own, 1] - center[1]) / neck[1])
+        cap = 1 - .2 * grafted
+        squeeze = np.where((grafted > 0) & (level > cap), cap / np.maximum(level, 1e-9), 1.0)
+        shift = np.zeros_like(V)
+        shift[own, 0] = V[own, 0] * (squeeze - 1)
+        shift[own, 1] = (V[own, 1] - center[1]) * (squeeze - 1)
+        V = V + shift
+        morphs = {name: target + shift for name, target in morphs.items()}
+    if len(own) and len(seen):
+        gap_to_skin = np.linalg.norm(V[own][:, None, :] - V[seen][None, :, :], axis=2)
+        nearest = np.argsort(gap_to_skin, axis=1)[:, :8]
+        distance = np.take_along_axis(gap_to_skin, nearest, axis=1)
+        share = 1 / np.maximum(distance, 1e-9) ** 2
+        share /= share.sum(1, keepdims=True)
+        t = np.clip((.016 * scale[2] - distance[:, 0]) / (.011 * scale[2]), 0, 1)
+        # (only the pocket's lower part, well behind the lips: just inside them the lower lip's own rows carry the
+        # whole drop, and following the upper lip beside them would close the open mouth toward its corners)
+        back = np.clip((V[own, 1] - marks['stomion'][1] - .010 * scale[1]) / (.010 * scale[1]), 0, 1)
+        below = np.clip((mouth_z - .004 * scale[2] - V[own, 2]) / (.006 * scale[2]), 0, 1)
+        t = t * back * below
+        follow_skin = (t * t * (3 - 2 * t))[:, None]
+        jaw_delta = morphs['jawOpen'] - V
+        beside = (jaw_delta[seen][nearest] * share[:, :, None]).sum(1)
+        jaw_delta[own] = jaw_delta[own] * (1 - follow_skin) + beside * follow_skin
+        # (eased over the pocket, so the walls between the followed rim and the swung middle do not kink)
+        eased = smooth_deltas(jaw_delta, edges_of(faces), iterations=6)
+        jaw_delta[own] = eased[own] * (1 - follow_skin) + jaw_delta[own] * follow_skin
+        morphs['jawOpen'] = V + jaw_delta
 
     # Triangles, split along each quad's flatter diagonal: the morph checks below hold for exactly the triangles the
     # GLB carries (an exporter's own split of a folded quad at the lips' corners can turn over).
@@ -1425,6 +1460,41 @@ def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z
             'mouth_box': box, 'lash': sorted(lash), 'jaw': rigid, 'scale': scale}
 
 
+def _one_pocket(corners, inside):
+    """The mouth's inside as one edge-connected pocket: its largest piece, plus every patch of other faces whose
+    whole border is that pocket; smaller dark pieces go back to the skin. `corners` are each face's vertex ids."""
+    inside = np.array(inside, dtype=bool)
+    if not inside.any(): return inside
+    by_edge = {}
+    for k, cs in enumerate(corners):
+        for a, b in zip(cs, cs[1:] + cs[:1]): by_edge.setdefault((min(a, b), max(a, b)), []).append(k)
+
+    def pieces(mask):
+        seen, out = set(), []
+        for start in np.nonzero(mask)[0].tolist():
+            if start in seen: continue
+            piece, stack = [], [start]
+            seen.add(start)
+            while stack:
+                k = stack.pop()
+                piece.append(k)
+                cs = corners[k]
+                for a, b in zip(cs, cs[1:] + cs[:1]):
+                    for n in by_edge[(min(a, b), max(a, b))]:
+                        if mask[n] and n not in seen: seen.add(n); stack.append(n)
+            out.append(piece)
+        return sorted(out, key=len, reverse=True)
+    dark = pieces(inside)
+    for piece in dark[1:]: inside[piece] = False
+    for piece in pieces(~inside)[1:]:
+        members = set(piece)
+        border = [n for k in piece for a, b in zip(corners[k], corners[k][1:] + corners[k][:1])
+                  for n in by_edge[(min(a, b), max(a, b))] if n not in members]
+        open_edge = any(len(by_edge[(min(a, b), max(a, b))]) == 1 for k in piece for a, b in zip(corners[k], corners[k][1:] + corners[k][:1]))
+        if border and not open_edge and all(inside[n] for n in border): inside[piece] = True
+    return inside
+
+
 def _cranium_inside(P, marks, center, radii, fill=.975):
     """Moves that bring the cranium (above the brows, and behind the face) inside `fill` of the envelope, easing in
     from the brows up and fading to nothing on the face."""
@@ -1440,14 +1510,20 @@ def _cranium_inside(P, marks, center, radii, fill=.975):
     return (c + rel / over[:, None] * r - P) * w[:, None]
 
 
+def _neck_graft_weight(P, neck_z, marks, scale=1.0):
+    """How much of the neck graft each point takes: 1 at the crop behind the chin, 0 above the chin's bottom rows and
+    in front of the chin."""
+    top = marks['menton'][2] + .03 * scale
+    w = np.clip((top - P[:, 2]) / max(1e-6, top - neck_z), 0, 1) ** 1.5
+    behind = np.clip((P[:, 1] - marks['menton'][1] - .005 * scale) / (.02 * scale), 0, 1)
+    return w * behind * behind * (3 - 2 * behind)
+
+
 def _neck_graft(P, neck_z, neck, marks, scale=1.0):
     """Moves that ease the neck's rows (behind the chin, from a little above the chin's bottom down to the crop) onto
     the body's neck ellipse, 0.5 mm out."""
     ax, ay = neck
-    top = marks['menton'][2] + .03 * scale
-    w = np.clip((top - P[:, 2]) / max(1e-6, top - neck_z), 0, 1) ** 1.5
-    behind = np.clip((P[:, 1] - marks['menton'][1] - .005 * scale) / (.02 * scale), 0, 1)
-    w = w * behind * behind * (3 - 2 * behind)
+    w = _neck_graft_weight(P, neck_z, marks, scale)
     x, y = P[:, 0], P[:, 1]
     level = np.sqrt((x / ax) ** 2 + (y / ay) ** 2)
     target = (1 + .0005 / min(ax, ay)) / np.maximum(level, 1e-9)

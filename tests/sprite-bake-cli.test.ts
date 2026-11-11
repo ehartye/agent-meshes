@@ -86,6 +86,8 @@ describe('agent-meshes bake', () => {
     expect(lines).toHaveLength(1);
     const result = JSON.parse(lines[0]);
     expect(result).toMatchObject({ files: { sheet: 'sheet.png', atlas: 'atlas.json', manifest: 'manifest.json' }, size: { w: 384, h: 384 }, frames: 64 });
+    // Without --contact-sheet or --viewer the printed files are exactly these three.
+    expect(result.files).toEqual({ sheet: 'sheet.png', atlas: 'atlas.json', manifest: 'manifest.json' });
     expect(result.sheetSha256).toBe(sha(await readFile(join(dir, 'sheet.png'))));
     expect(result.atlasSha256).toBe(sha(await readFile(join(dir, 'atlas.json'))));
     const atlas = JSON.parse(await readFile(join(dir, 'atlas.json'), 'utf8'));
@@ -238,20 +240,11 @@ describe('agent-meshes bake with --palette, --outline, --look, --bands and --anc
     expect(b.manifest.equals(a.manifest)).toBe(true);
   }, 120_000);
 
-  it('renders --look unlit and --look banded --bands 4 differently from the lit sheet, and --look lit like no flag', async () => {
-    const lit = await baked('lit', () => ['--phases', '2']), litFlag = await baked('lit-flag', () => ['--phases', '2', '--look', 'lit']);
-    const unlit = await baked('unlit', () => ['--phases', '2', '--look', 'unlit']), banded = await baked('banded', () => ['--phases', '2', '--look', 'banded', '--bands', '4']);
-    for (const { outcome } of [lit, litFlag, unlit, banded]) expect(outcome.code, outcome.stderr).toBe(0);
-    const sheet = (dir: string) => readFile(join(dir, 'sheet.png'));
-    const reference = await sheet(lit.dir);
-    expect((await sheet(litFlag.dir)).equals(reference)).toBe(true);
-    expect((await sheet(unlit.dir)).equals(reference)).toBe(false);
-    expect((await sheet(banded.dir)).equals(reference)).toBe(false);
-    expect((await sheet(banded.dir)).equals(await sheet(unlit.dir))).toBe(false);
-  }, 120_000);
-
+  // How each look renders (lit like no flag, unlit and banded unlike lit and each other) is asserted on the function in
+  // tests/sprite-bake.test.ts; the bake with every flag above shows --look and --bands reach it.
   it('leaves the manifest of a bake without the flags free of the new keys', async () => {
-    const { dir } = await baked('lit', () => ['--phases', '2']);
+    const { dir, outcome } = await baked('lit', () => ['--phases', '2']);
+    expect(outcome.code, outcome.stderr).toBe(0);
     const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')), atlas = JSON.parse(await readFile(join(dir, 'atlas.json'), 'utf8'));
     for (const key of ['look', 'bands', 'palette', 'outline', 'anchor']) expect(manifest).not.toHaveProperty(key);
     expect(manifest.camera).not.toHaveProperty('groundYM');
@@ -388,17 +381,8 @@ describe('agent-meshes bake with --contact-sheet', () => {
     }
   }, 120_000);
 
-  it('leaves sheet.png, atlas.json and manifest.json byte-identical to the same bake without the flag, with neither key in the manifest or atlas', async () => {
-    const withFlag = outDir(), without = outDir(), args = ['--clip', 'sway', '--directions', '2', '--phases', '2', '--cell', '16'];
-    expect((await bake(glbPath, ...args, '--contact-sheet', '--out', withFlag)).code).toBe(0);
-    const plain = await bake(glbPath, ...args, '--out', without);
-    expect(plain.code, plain.stderr).toBe(0);
-    expect(await list(without)).toEqual(['atlas.json', 'manifest.json', 'sheet.png']);
-    expect(JSON.parse(plain.stdout).files).toEqual({ sheet: 'sheet.png', atlas: 'atlas.json', manifest: 'manifest.json' });
-    const a = await readOutput(withFlag), b = await readOutput(without);
-    expect(a.sheet.equals(b.sheet) && a.atlas.equals(b.atlas) && a.manifest.equals(b.manifest)).toBe(true);
-    for (const text of [a.atlas.toString('utf8'), a.manifest.toString('utf8')]) { expect(text).not.toContain('contact'); expect(text).not.toContain('pixelsPerMetre'); }
-  }, 120_000);
+  // That the three fixed files are the same bytes with and without the flag, and name neither key, is asserted on the
+  // function in tests/sprite-bake.test.ts ('a bake with a contact sheet').
 
   it('refuses a contact sheet over the bound before Chromium starts and writes nothing', async () => {
     const dir = outDir(), started = Date.now();

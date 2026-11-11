@@ -8,11 +8,14 @@ async function report(mutate?: (head: SynthHead) => void) {
   return verifyFaceContract(encodeHead(head));
 }
 const failed = (result: Awaited<ReturnType<typeof report>>) => result.checks.filter(c => !c.ok).map(c => c.id);
+/** One verification of the unmutated passing head, shared by the tests that only read its report. A rejection fails each of them. */
+let passing: ReturnType<typeof report> | undefined;
+const baseline = () => passing ??= report();
 
 // The machine may be busy (Blender builds, CI): each verification runs the whole contract, so allow 30 s.
 describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
   it('passes a head that meets every computable clause and reports its measurements', async () => {
-    const result = await report();
+    const result = await baseline();
     expect(result.failures).toEqual([]);
     expect(result.ok).toBe(true);
     expect(result.contract).toBe('arkit-face/1');
@@ -72,22 +75,15 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
     ['morph-names', 'a morph name repeated across glTF meshes (Unreal then drops every name)', head => { head.groups!.face = head.groups!.face.filter(n => n !== 'teeth_lower'); }],
     ['rest-weights', 'a nonzero rest weight', head => { const face = mesh(head, 'face'); face.weights = REQUIRED.map((_, i) => i === 3 ? 0.2 : 0); }],
     ['morph-motion', 'a dead morph', head => { const face = mesh(head, 'face'); const t = face.targets.find(x => x.name === 'browInnerUp')!; t.positions = face.positions.map(p => [p[0], p[1], p[2] + 0.0004] as Vec3); }],
-    ['inversion', 'a morph that flips triangles', head => { const face = mesh(head, 'face'); const t = face.targets.find(x => x.name === 'mouthFunnel')!; t.positions = face.positions.map(p => Math.hypot(p[0], p[1] + 0.045) < 0.02 ? [-p[0], p[1], p[2]] as Vec3 : p); }],
     ['lid-clearance', 'lids that cut the eyeball mid-blink', head => { const lid = mesh(head, 'lids_L'); const c = EYES.L; const scale = (p: Vec3): Vec3 => [c[0] + (p[0] - c[0]) * 0.84, c[1] + (p[1] - c[1]) * 0.84, c[2] + (p[2] - c[2]) * 0.84]; lid.positions = lid.positions.map(scale); for (const t of lid.targets) t.positions = t.positions.map(scale); }],
-    ['eye-coverage', 'shutter blades too short for blink 1 + squint 1 (the round-2 sliver under the lower blade)', head => shutterEye(head, 'L', 1.3, 0.08)],
     ['eye-coverage', 'lids that do not meet at blink 1 (a slit of eyeball stays open)', head => relid(head, 'R', { ...LID_SWEEPS, upper: { ...LID_SWEEPS.upper, blink: -30 } })],
     ['eye-coverage', 'a blink that drops the lower lid (eyeball shows over the lid mid-blink)', head => relid(head, 'L', { ...LID_SWEEPS, lower: { ...LID_SWEEPS.lower, blink: -20 } })],
     ['eye-coverage', 'lids that part at blink 1 + wide 1 (surprised plus an idle blink)', head => relid(head, 'L', { upper: { ...LID_SWEEPS.upper, blink: -42, wide: 12 }, lower: { ...LID_SWEEPS.lower, blink: 24 } })],
-    ['eye-oblique', "lids that stop short of the skin's eye hole over a dark socket (the round-3 black hole beside the eye)", head => socketGap(head, 'L')],
-    ['lid-follow', 'lid follow up too small to see (the round-3 defaults: eyeWide .25 of a small lift)', head => { head.rootExtras = { arkitFace: { ...extras(), lidFollow: { down: 0.35, up: 0.25 } } }; }],
     ['lid-follow', 'lid follow down too small to see', head => { head.rootExtras = { arkitFace: { ...extras(), lidFollow: { down: 0.02, up: 1 } } }; }],
     ['materials', 'lids with an alpha-blended material (they render see-through while the verifier counts them closed)', head => { head.materialProps = { lid: { alphaMode: 'BLEND' } }; }],
     ['materials', 'skin with an alpha-masked material', head => { head.materialProps = { skin: { alphaMode: 'MASK', alphaCutoff: 0.5 } }; }],
     ['materials', 'transmissive teeth', head => { head.materialProps = { teeth_upper: { extensions: { KHR_materials_transmission: { transmissionFactor: 1 } } } }; }],
     ['eye-coverage', 'transparent lids at blink 1 (they occlude nothing)', head => { head.materialProps = { lid: { alphaMode: 'BLEND', pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 0] } } }; }],
-    ['attached-parts', 'a brow bar standing 3 mm off the skin (the round-4 floating brow ridge)', head => browBar(head, 0.003)],
-    ['attached-parts', 'a brow that browInnerUp lifts off the skin', head => browBar(head, -0.0002, 0.003)],
-    ['attached-parts', 'a nostril that noseSneer buries as the skin swells over it (a part that does not carry the skin shape)', head => nostril(head, false)],
     ['attached-parts', 'an ear hovering 2 mm off the side of the head', head => ear(head, 0.004)],
     ['extras', 'missing extras', head => { head.rootExtras = undefined; }],
     ['extras', 'a wrong contract version', head => { head.rootExtras = { arkitFace: { ...extras(), contract: 'arkit-face/2' } }; }],
@@ -95,18 +91,12 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
     ['extras', 'an emotion curve that is not ARKit', head => { const e = extras(); (e.emotions as Record<string, Record<string, number>>).happy.grin = 1; head.rootExtras = { arkitFace: e }; }],
     ['exposed-teeth', 'upper teeth pushed through a closed face at rest with exposedTeeth []', head => { const upper = mesh(head, 'teeth_upper'); upper.positions = upper.positions.map(p => [p[0], p[1], p[2] + 0.02] as Vec3); }],
     ['exposed-teeth', 'undeclared exposed teeth', head => { const e = extras(); delete e.exposedTeeth; head.rootExtras = { arkitFace: e }; }],
-    ['exposed-teeth', 'the whole upper row poking through the lips while exposedTeeth names teeth_upper (round 3 could not tell it from buck teeth)', head => {
-      const upper = mesh(head, 'teeth_upper'); upper.positions = upper.positions.map(p => [p[0], p[1], p[2] + 0.02] as Vec3);
-      head.rootExtras = { arkitFace: { ...extras(), exposedTeeth: ['teeth_upper'] } };
-    }],
     ['exposed-teeth', 'exposedTeeth naming a part the file does not have', head => { head.rootExtras = { arkitFace: { ...extras(), exposedTeeth: ['fangs'] } }; }],
     ['teeth', 'upper teeth moved by jawOpen', head => { const upper = mesh(head, 'teeth_upper'); upper.targets = [{ name: 'jawOpen', positions: upper.positions.map(p => [p[0], p[1] - 0.01, p[2]] as Vec3) }]; }],
     ['teeth', 'lower teeth that stay put', head => { const lower = mesh(head, 'teeth_lower'); lower.targets = []; }],
     ['teeth', 'no teeth named by the convention', head => { mesh(head, 'teeth_upper').material = 'enamel'; }],
     ['mouth-parts', 'a tongue left behind by the jaw', head => { mesh(head, 'tongue').targets = []; }],
-    ['head-binding', 'a skull bound to an eye bone', head => { const m = mesh(head, 'skull'); m.bones = m.bones!.map(() => 'eye_L'); }],
     ['head-binding', 'upper teeth bound to an eye bone', head => { const m = mesh(head, 'teeth_upper'); m.bones = m.bones!.map(() => 'eye_R'); }],
-    ['puppet-jaw', 'a hole opening in a fixed face (only a lip band drops; the chin stays)', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; jaw.positions = face.positions.map((p, i) => jaw.positions[i][1] < p[1] && p[1] > MOUTH_Y - 0.0151 ? [p[0], p[1] - 0.01, p[2]] as Vec3 : p); }],
     ['upper-lip', 'skin above the mouth line dropping with the jaw', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; jaw.positions = face.positions.map((p, i) => p[1] >= MOUTH_Y && p[1] <= MOUTH_Y + 0.0151 && Math.abs(p[0]) <= 0.03 ? [p[0], p[1] - 0.006, p[2]] as Vec3 : jaw.positions[i]); }],
     ['mouth-open', 'an upper-lip seam carried by the jaw (the lip hangs like a curtain over the open mouth)', head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; for (const i of upperSeam()) jaw.positions[i] = [face.positions[i][0], face.positions[i][1] - JAW_DROP, face.positions[i][2]]; }],
     ['mouth-open', 'a light, skin-coloured mouth cavity (an open mouth must read as a dark hole)', head => { head.materialProps = { mouth_cavity: { pbrMetallicRoughness: { baseColorFactor: [0.8, 0.6, 0.5, 1], metallicFactor: 0, roughnessFactor: 1 } } }; }],
@@ -125,6 +115,8 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
   it('says where triangles flip: their rest centroids in mm and the face region, with the spots in the measurements', async () => {
     // mouthFunnel mirrors the skin within 20 mm of (0, -45) mm across x: the triangles there flip (and collapse at 0.5).
     const result = await report(head => { const face = mesh(head, 'face'); const t = face.targets.find(x => x.name === 'mouthFunnel')!; t.positions = face.positions.map(p => Math.hypot(p[0], p[1] + 0.045) < 0.02 ? [-p[0], p[1], p[2]] as Vec3 : p); });
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('inversion');
     const failure = result.failures.find(f => f.startsWith('inversion: mouthFunnel=1 '))!;
     expect(failure).toMatch(/^inversion: mouthFunnel=1 flips \d+ triangle\(s\) on face\[skin\] at \(-?\d+\.\d, -?\d+\.\d, -?\d+\.\d\) mm \([a-z ]+\)/);
     const spots = [...failure.matchAll(/\((-?\d+\.\d), (-?\d+\.\d), (-?\d+\.\d)\) mm/g)].map(m => m.slice(1).map(Number));
@@ -139,7 +131,7 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
   });
 
   it('counts at most one fold above and below a plain lid eye, and fails a terraced socket of stacked bands', async () => {
-    const plain = await report();
+    const plain = await baseline();
     const crease = plain.measurements.eyes.L!.crease!;
     expect(crease.above).toBeLessThanOrEqual(1);
     expect(crease.below).toBeLessThanOrEqual(1);
@@ -158,7 +150,7 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
   });
 
   it('judges lid penetration in the contract poses of each eye and reports what it measured', async () => {
-    const result = await report();
+    const result = await baseline();
     expect(result.failures.filter(f => f.startsWith('lid-penetration'))).toEqual([]);
     for (const side of ['L', 'R'] as const) {
       const penetration = result.measurements.eyes[side]!.penetration!;
@@ -214,6 +206,8 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
 
   it('names the eye, the state and the uncovered heights when a closed blink leaves eyeball showing', async () => {
     const result = await report(head => shutterEye(head, 'L', 1.3, 0.08));
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('eye-coverage');
     const failure = result.failures.find(f => f.startsWith('eye-coverage: eyeBlinkLeft=1 + eyeSquintLeft=1:'))!;
     expect(failure).toMatch(/front rays reach eyeball_L/);
     // The bare crescent runs from the bottom of the eyeball up to where the short lower blade stops (-0.853 r).
@@ -271,6 +265,8 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
       const upper = mesh(head, 'teeth_upper'); upper.positions = upper.positions.map(p => [p[0], p[1], p[2] + 0.02] as Vec3);
       head.rootExtras = { arkitFace: { ...extras(), exposedTeeth: ['teeth_upper'] } };
     });
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('exposed-teeth');
     const failure = result.failures.find(f => f.startsWith('exposed-teeth: '))!;
     expect(failure).toMatch(/face\[teeth_upper\]/);
     expect(failure).toMatch(/teeth_exposed/);
@@ -278,6 +274,8 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
 
   it('finds the socket beside the eye in 3/4 view that the front rays miss, and names the fix', async () => {
     const result = await report(head => socketGap(head, 'L'));
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('eye-oblique');
     expect(failed(result)).not.toContain('eye-coverage');
     const failure = result.failures.find(f => f.startsWith('eye-oblique: '))!;
     expect(failure).toMatch(/eye_socket/);
@@ -290,6 +288,8 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
 
   it('reports how far lid follow moves the upper lid and fails a lift under 1.5 mm', async () => {
     const result = await report(head => { head.rootExtras = { arkitFace: { ...extras(), lidFollow: { down: 0.35, up: 0.25 } } }; });
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('lid-follow');
     const failure = result.failures.find(f => f.startsWith('lid-follow: '))!;
     expect(failure).toMatch(/eyeLookUpLeft=1/);
     expect(failure).toMatch(/lidFollow\.up/);
@@ -318,6 +318,8 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
 
   it('names the bone a skull is bound to instead of calling it a misplaced eyeball', async () => {
     const result = await report(head => { const m = mesh(head, 'skull'); m.bones = m.bones!.map(() => 'eye_L'); });
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('head-binding');
     expect(result.failures).toContain("head-binding: skull is bound to eye_L, not head: the skull, gums, upper teeth and every morph-bearing part must be bound 100% to head (bind_rigid(obj, rig, 'head'))");
     expect(result.failures.filter(f => f.startsWith('eyes: '))).toEqual(["eyes: skull is bound 100% to eye_L but reaches 203.92 mm from the eye center, too far for an eyeball: only the eyeball belongs to eye_L; bind the skull to head"]);
     expect(result.measurements.eyes.L!.eyeballs).toEqual(['eyeball_L']);
@@ -325,6 +327,8 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
 
   it('measures the puppet jaw at the lowest face point and reports the lower lip separately', async () => {
     const result = await report(head => { const face = mesh(head, 'face'); const jaw = face.targets.find(t => t.name === 'jawOpen')!; jaw.positions = face.positions.map((p, i) => jaw.positions[i][1] < p[1] && p[1] > MOUTH_Y - 0.0151 ? [p[0], p[1] - 0.01, p[2]] as Vec3 : p); });
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('puppet-jaw');
     expect(result.measurements.chinDrop).toBe(0);
     expect(result.failures).toContain("puppet-jaw: jawOpen=1 drops the face's lowest point (the chin) by only 0.00 mm, 0.0% of the 220.00 mm face height (needs a drop of >= 10%, 22.00 mm): the chin and lower face outline must drop with the jaw, not only the lips; hinge the jaw by the ears (JawHinge.ear)");
   });
@@ -338,7 +342,7 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
   });
 
   it('finds teeth and mouth parts as material primitives of the one face mesh', async () => {
-    const result = await report();
+    const result = await baseline();
     expect(result.checks.find(c => c.id === 'mouth-parts')!.message).toBe('jawOpen carries face[tongue], face[mouth_cavity]');
     expect(result.measurements.eyes.L!.eyeballs).toEqual(['eyeball_L']);
   });
@@ -449,6 +453,8 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
 
   it('names the floating part, where it floats and by how much', async () => {
     const result = await report(head => browBar(head, 0.003));
+    expect(result.ok).toBe(false);
+    expect(failed(result)).toContain('attached-parts');
     const failure = result.failures.find(f => f.startsWith('attached-parts: '))!;
     expect(failure).toMatch(/face\[brow\]/);
     expect(failure).toMatch(/at rest/);
@@ -458,10 +464,12 @@ describe('arkit-face/1 verifier', { timeout: 120_000 }, () => {
   });
 
   it('names the morph that lifts a part off the skin or buries it', async () => {
-    const lifted = (await report(head => browBar(head, -0.0002, 0.003))).failures.find(f => f.startsWith('attached-parts: '))!;
+    const liftedResult = await report(head => browBar(head, -0.0002, 0.003)), buriedResult = await report(head => nostril(head, false));
+    for (const result of [liftedResult, buriedResult]) { expect(result.ok).toBe(false); expect(failed(result)).toContain('attached-parts'); }
+    const lifted = liftedResult.failures.find(f => f.startsWith('attached-parts: '))!;
     expect(lifted).toMatch(/browInnerUp=1/);
     expect(lifted).not.toMatch(/at rest/);
-    const buried = (await report(head => nostril(head, false))).failures.find(f => f.startsWith('attached-parts: '))!;
+    const buried = buriedResult.failures.find(f => f.startsWith('attached-parts: '))!;
     expect(buried).toMatch(/noseSneerLeft=1/);
     expect(buried).toMatch(/sinks|buries/);
   });
