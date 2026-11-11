@@ -166,11 +166,12 @@ def face_layout(values=None, head=None, *, recipe=_LEGACY_RECIPE):
 
 def teeth_layout(layout):
     """Where the tooth rows sit for a face layout (`face_layout`): per row ('upper', 'lower') the arch's front middle at
-    the gum line (`center`), `half_width`, `depth` and tooth `height`. The upper row's edge sits just under the lip line,
-    so the closed lips hide it and the open jaw (which lifts the upper lip) shows it. Pure."""
+    the gum line (`center`), `half_width`, `depth` and tooth `height`. The upper row's edge sits just above the lip line,
+    behind the upper lip, so nothing shows through the resting lips' crack and the open jaw (which lifts the upper lip)
+    shows it. Pure."""
     from agent_meshes_hm08 import UPPER_GUM
     k, hw, mz, front = layout['scale'], layout['mouth_half_width'], layout['mouth_z'], layout['mouth_front']
-    return {'upper': dict(center=(0.0, front + .0065 * k, mz + UPPER_GUM * k), half_width=.72 * hw, depth=.01 * k, height=(UPPER_GUM + .0008) * k),
+    return {'upper': dict(center=(0.0, front + .0065 * k, mz + UPPER_GUM * k), half_width=.72 * hw, depth=.01 * k, height=(UPPER_GUM - .0012) * k),
             'lower': dict(center=(0.0, front + .011 * k, mz - .0075 * k), half_width=.6 * hw, depth=.01 * k, height=.005 * k)}
 
 
@@ -349,7 +350,8 @@ def add_face(objects, values=None, head=None, *, recipe=_LEGACY_RECIPE):
     head = mesh_from_geometry('head_skin', {'vertices': [tuple(v) for v in V], 'faces': [[int(i) for i in f if i >= 0] for f in F],
                                             'material_indices': indices}, [skin, dark])
     for name, targets in face['morphs'].items(): shape_key(head, name, [tuple(v) for v in targets])
-    # The body's neck rises inside the head, where only the open mouth sees it: that part is the mouth's dark too.
+    # The body's neck rises inside the head. Nothing sees that part (the mouth's pocket is closed and stays in front of
+    # it), so it is cut away a little above the head's lower edge, leaving an overlap the head's turn never opens.
     from agent_meshes_hm08 import boundary_loops
     rim = min(boundary_loops(F), key=lambda loop: float(np.mean(V[loop, 2])))
     inside_from = float(V[rim, 2].max())
@@ -362,11 +364,15 @@ def add_face(objects, values=None, head=None, *, recipe=_LEGACY_RECIPE):
         cut = local @ Vector((0.0, 0.0, inside_from))
         normal = (local.to_3x3() @ Vector((0.0, 0.0, 1.0))).normalized()
         bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=cut, plane_no=normal)
-        obj.data.materials.append(dark)
-        slot = len(obj.data.materials) - 1
-        for f in bm.faces:
-            if min((obj.matrix_world @ v.co).z for v in f.verts) > inside_from - 1e-6: f.material_index = slot
+        overlap = cut + normal * (.012 * d['s'])
+        bmesh.ops.bisect_plane(bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:], plane_co=overlap, plane_no=normal)
+        top = inside_from + .012 * d['s']
+        hidden = [f for f in bm.faces if min((obj.matrix_world @ v.co).z for v in f.verts) > top - 1e-6]
+        bmesh.ops.delete(bm, geom=hidden, context='FACES')
         bm.to_mesh(obj.data); bm.free()
+        # The neck is the body's: no vertex of it is the face's, whatever share of the head bone it rides.
+        from agent_meshes_face_blender import mark_face_region
+        mark_face_region(obj, [])
 
     # Paint: warm cheeks, tinted lips and a darker lash line.
     base = linear_color(skin_hex)
