@@ -73,13 +73,11 @@ views, with an optional skeleton overlay. Compare skeletons first to find retarg
 A matching phase aligns clips of the same cycle; it does not match footfalls between different animations. Fewer than two or
 more than four models, no clip name, or a clip missing from a model stops it with a message.
 
-## Character recipes with a rig
+## Reference heads
 
-`recipes/` is in the plugin root, not in the managed runtime; copy a file beside the authored source.
-`stylized_character.py` builds a named, metre-scale character (`build_character`); `stylized_walk.py` rigs it with
-`rig_character(objects, landmarks(definition), duration=1.1, jog_duration=.75)` and bakes an in-place `walk`, and a `jog` when
-`jog_duration` is given, at 60 Hz with identical loop endpoints (durations 0.6 to 3 s; 20 bones, all but `head` prefixed `rig-`).
-`face_project.py` with `face-project.build.json` adds the living `arkit-face/1` head to that rig (see
-[arkit-face](arkit-face.md)). Their bindings are specific to the recipe's own part names. Details and tests are in
-`recipes/README.md`. These Blender scripts take neither `recipe --gait-params` nor `clip.regenerate`, which work on
-a project made by the `recipe` command.
+`recipes/` is in the plugin root, not in the managed runtime; copy a head's folder beside the authored source.
+`recipes/heads/pip`, `bolt` and `mossjaw` each hold one Blender source and a `build.json`. A head has no body clips: it
+carries the `arkit-face/1` morphs, eye bones and a puppet jaw (see [arkit-face](arkit-face.md)), and is driven by morph
+weights and gaze. Check one with `agent-meshes verify <glb> --contract arkit-face/1`; the known failures of the three
+shipped heads are listed in `recipes/README.md`. These Blender scripts take neither `recipe --gait-params` nor
+`clip.regenerate`, which work on a project made by the `recipe` command.

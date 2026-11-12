@@ -113,8 +113,8 @@ test('gate CLI fails closed for absent planning output and failed selected jobs'
 });
 
 test('ordinary Python edits keep merge checks while full sweeps require a full input or explicit run', () => {
-  for (const file of ['recipes/stylized_character.py', 'scripts/blender_lib/agent_meshes_face.py', 'tests/stylized_costume.py']) {
-    assert.deepEqual(planChanges([file]), { javascript: true, python: true, geometrySweeps: false, recipeExamples: file.startsWith('recipes/') || file.startsWith('tests/stylized_') });
+  for (const file of ['recipes/heads/pip/pip_head.py', 'scripts/blender_lib/agent_meshes_face.py', 'tests/reference_heads.py']) {
+    assert.deepEqual(planChanges([file]), { javascript: true, python: true, geometrySweeps: false, recipeExamples: file.startsWith('recipes/') || file === 'tests/reference_heads.py' });
     assert.deepEqual(planChanges([file], { full: true }), { javascript: true, python: true, geometrySweeps: true, recipeExamples: true });
     assert.deepEqual(planChanges([file, 'package.json']), { javascript: true, python: true, geometrySweeps: true, recipeExamples: true });
   }
@@ -125,7 +125,7 @@ test('ordinary Python edits keep merge checks while full sweeps require a full i
 
 test('shared helper contracts gate merges independently of recipe examples', () => {
   assert.deepEqual(planChanges(['scripts/blender_lib/agent_meshes_face_geometry.py']), { javascript: true, python: true, geometrySweeps: false, recipeExamples: false });
-  for (const file of ['recipes/stylized_character.py', 'recipes/stylized_face.py', 'tests/stylized_face.py', 'tests/face_recipe_parity.py']) {
+  for (const file of ['recipes/heads/pip/pip_head.py', 'recipes/heads/bolt/bolt_head.py', 'recipes/heads/mossjaw/mossjaw_head.py', 'tests/reference_heads.py']) {
     assert.equal(planChanges([file]).recipeExamples, true, file);
   }
   const plan = { javascript: true, python: true, geometrySweeps: false, recipeExamples: true };

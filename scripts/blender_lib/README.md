@@ -717,13 +717,13 @@ no MPFB or GPL code.
   lids are rebuilt by `lid_morphs`, the jaw by `RigidJaw`, and `unfold_morphs` removes flips. It also returns the
   eyes, landmarks, mouth-interior faces and jaw.
 
-`recipes/stylized_face.py` is the consumer. The design is `docs/design/parametric-head.md`.
+No shipped recipe uses it. The design is `docs/design/parametric-head.md`.
 
 ## Composing face operations
 
 Choose the motion and consumer contract before a head construction. A static
 face, a rigid robot, a few custom expressions and an ARKit head can use different
-subsets. The optional hm08 character recipe is one example, not a face topology
+subsets. The [reference heads](../../recipes/README.md#reference-heads) are three worked examples, not a face topology
 or style requirement. See [face design and failure diagnosis](../../skills/mesh-rigging/references/face-design.md).
 
 `agent_meshes_face` remains the compatible import facade, also reexported by

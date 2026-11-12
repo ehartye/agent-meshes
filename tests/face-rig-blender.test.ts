@@ -1,12 +1,13 @@
-// KNOWN RED, declared as an expected failure: the stylized character's face contract reports 7 failures, down from 29.
-// What remains: the lids pass through each other from three quarters of a blink on (lid-penetration, one per eye:
-// the hm08 lids overlap when closed and roll at one distance from the eye), the upper teeth's edge shows through the
-// resting lips' crack (exposed-teeth), and the pocket's wall crosses the lip at full mouthFunnel
-// (mouth-skin-intersection, 4). Each repair changes how the face looks and waits on the owner's choice.
+// KNOWN RED, declared as an expected failure: the three reference heads (recipes/heads) were written for shell lids and
+// an earlier contract, and report failures under checks added since.
+// What remains: pip and mossjaw's shell lids stack a second fold above the eye (eye-crease) and pass through each other
+// in blink, squint and wide mixes (lid-penetration); pip's front teeth cross the lip at mouthFunnel
+// (mouth-skin-intersection); bolt's trim stands off the can (attached-parts) and its mouth box crosses the chin plate
+// (mouth-skin-intersection). Each repair changes how a head looks and waits on the owner's choice.
 // The strict assertion lives in its own `it.fails` test below, so the suite is green while the defects stand and
-// turns red the day the contract passes, which is the signal to make it a plain test. The failures are ratcheted per
-// contract check in the build test: a count may fall, never rise, and no other check may fail.
-// Owner: the face programme (wiki item stylized-character-face-contract).
+// turns red the day every head passes, which is the signal to make it a plain test. The failures are ratcheted per
+// head and contract check in the build test: a count may fall, never rise, and no other check may fail.
+// Owner: the face programme.
 // Expiry: 2026-12-31. Fix it or re-justify it by then; do not loosen the assertion.
 import { afterEach, expect, it } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -50,50 +51,40 @@ maybe('a face on a body skeleton (head under spine, add_eye_bones) builds and pa
   expect(report.measurements.chinDropRatio).toBeGreaterThanOrEqual(0.1);
 }, 600000);
 
-// The known-red failures by contract check. The inversion, attached-parts, head-binding and mouth-parts failures and
-// 16 of the 20 mouth crossings that stood beside them are repaired and may not come back.
-const KNOWN_RED_CHARACTER_FAILURES: Record<string, number> = { 'lid-penetration': 2, 'exposed-teeth': 1, 'mouth-skin-intersection': 4 };
-let characterFaceFailures: string[] | undefined;
+// The known-red failures by head and contract check (see the header).
+const KNOWN_RED_HEAD_FAILURES: Record<string, Record<string, number>> = {
+  pip: { 'eye-crease': 2, 'lid-penetration': 2, 'mouth-skin-intersection': 20 },
+  bolt: { 'attached-parts': 24, 'mouth-skin-intersection': 20 },
+  mossjaw: { 'eye-crease': 2, 'lid-penetration': 2 },
+};
+const headFailures: Record<string, string[]> = {};
 
-maybe('a stylized character with face=arkit walks and jogs with a living face on its head bone', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'mesh-face-character-')); directories.push(directory);
-  const config = join(directory, 'build.json');
-  await writeFile(config, JSON.stringify({ version: 1, name: 'test_character_face', blender: { script: resolve('tests/fixtures/face-rig/test_character_face.py') }, output: 'generated' }));
-  const built = await buildAsset(config);
-  const bytes = await readFile(join(built.output, 'model.glb'));
-  const report = await verifyFaceContract(bytes);
-  characterFaceFailures = report.failures;
-  // Ratchet for the known-red contract (see the header): no check may fail that did not, and none may fail more often.
-  const failing: Record<string, number> = {};
-  for (const check of report.checks) if (check.problems.length) failing[check.id] = check.problems.length;
-  for (const [id, count] of Object.entries(failing)) expect(count, `contract check ${id}`).toBeLessThanOrEqual(KNOWN_RED_CHARACTER_FAILURES[id] ?? 0);
-  expect(report.checks.find(c => c.id === 'skeleton')!.message).toMatch(/head under rig-neck/);
-  const { json } = readGLB(bytes);
-  const parent = (name: string) => json.nodes!.find(n => n.children?.some(c => json.nodes![c].name === name))?.name;
-  expect([parent('eye_L'), parent('eye_R'), parent('head')]).toEqual(['head', 'head', 'rig-neck']);
-  // The walk and jog clips still turn the head (the face rides it); they hold the eye bones at rest, so gaze is free.
-  type Clip = { name?: string; channels: { sampler: number; target: { node?: number; path: string } }[]; samplers: { output: number }[] };
-  const animations = (json as { animations?: Clip[] }).animations ?? [];
-  expect(animations.map(a => a.name).sort()).toEqual(['jog', 'walk']);
-  const doc = readGLB(bytes);
-  const head = json.nodes!.findIndex(n => n.name === 'head'), eyes = ['eye_L', 'eye_R'].map(n => json.nodes!.findIndex(x => x.name === n));
-  for (const clip of animations) {
-    expect(clip.channels.some(c => c.target.node === head)).toBe(true);
-    for (const channel of clip.channels.filter(c => eyes.includes(c.target.node!) && c.target.path === 'rotation')) {
-      const values = readAccessor(doc, clip.samplers[channel.sampler].output).data;
-      for (let i = 0; i < values.length; i += 4) expect(Math.abs(values[i + 3])).toBeCloseTo(1, 5);
-    }
-  }
-  // One morph mesh, the face, bound to the one body skin.
-  expect(json.meshes!.filter(m => Array.isArray(m.extras?.targetNames)).map(m => m.name)).toEqual(['face']);
-  expect(json.skins).toHaveLength(1);
-}, 900000);
+for (const id of Object.keys(KNOWN_RED_HEAD_FAILURES)) {
+  maybe(`the reference head ${id} builds from recipes/heads with an arkit-face/1 rig`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), `mesh-head-${id}-`)); directories.push(directory);
+    const config = join(directory, 'build.json');
+    await writeFile(config, JSON.stringify({ version: 1, name: id, blender: { script: resolve(`recipes/heads/${id}/${id}_head.py`) }, output: 'generated' }));
+    const built = await buildAsset(config);
+    const bytes = await readFile(join(built.output, 'model.glb'));
+    const report = await verifyFaceContract(bytes);
+    headFailures[id] = report.failures;
+    // Ratchet for the known-red contract: no check may fail that did not, and none may fail more often.
+    const failing: Record<string, number> = {};
+    for (const check of report.checks) if (check.problems.length) failing[check.id] = check.problems.length;
+    for (const [check, count] of Object.entries(failing)) expect(count, `${id}: contract check ${check}`).toBeLessThanOrEqual(KNOWN_RED_HEAD_FAILURES[id][check] ?? 0);
+    const { json } = readGLB(bytes);
+    const parent = (name: string) => json.nodes!.find(n => n.children?.some(c => json.nodes![c].name === name))?.name;
+    expect([parent('eye_L'), parent('eye_R')]).toEqual(['head', 'head']);
+    // One morph mesh, the face.
+    expect(json.meshes!.filter(m => Array.isArray(m.extras?.targetNames)).map(m => m.name)).toEqual(['face']);
+  }, 900000);
+}
 
-// The strict contract, known red (see the header). It reads the report of the build test above, which fails on its
-// own if the build breaks, so this expected failure can only mean "the contract still reports failures".
-(blender ? it.fails : it.skip)('known red until 2026-12-31: the stylized character with face=arkit passes arkit-face/1 with no failure', () => {
-  expect(characterFaceFailures, 'the build test above must have produced a report').toBeDefined();
-  expect(characterFaceFailures).toEqual([]);
+// The strict contract, known red (see the header). It reads the reports of the build tests above, which fail on their
+// own if a build breaks, so this expected failure can only mean "the contract still reports failures".
+(blender ? it.fails : it.skip)('known red until 2026-12-31: every reference head passes arkit-face/1 with no failure', () => {
+  expect(Object.keys(headFailures).sort(), 'the build tests above must have produced reports').toEqual(Object.keys(KNOWN_RED_HEAD_FAILURES).sort());
+  expect(Object.values(headFailures).flat()).toEqual([]);
 });
 
 maybe('the face-rig wrappers validate, join and export inside real Blender', async () => {

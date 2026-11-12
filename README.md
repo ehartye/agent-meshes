@@ -146,9 +146,8 @@ lessons from several consuming projects.
 The [face design guide](skills/mesh-rigging/references/face-design.md) starts from
 required motion and the consumer contract. Use selected geometry/Blender helpers;
 choose the optional ARKit profile only when needed. Existing face imports remain
-available behind a smaller facade. The editable
-[project entrypoint](recipes/face_project.py) demonstrates explicit composition
-for the hm08 character example. Keep shape choices, palette and acceptance images
+available behind a smaller facade. The three
+[reference heads](recipes/README.md#reference-heads) are complete worked examples built only from those helpers. Keep shape choices, palette and acceptance images
 in the project; the app consumes GLB output. Native builds can declare imported
 inputs and pin reviewed helper/tool identities; see
 [native build identity](skills/mesh-build/references/native-build-identity.md) for

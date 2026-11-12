@@ -131,13 +131,13 @@ will render wrong: fix it before exporting.
 
 ## Recipes
 
-A request for a stylized human or alien character, with or without a suit or helmet, and for walk and jog
-clips, starts from `recipes/stylized_character.py` and `recipes/stylized_walk.py`, before the
-`biped` kind below. `build_character(values=None, layout=None)` makes the named, metre-scale character (height 0.7 to 2.5 m, adult or
-child, `vacuum: True` for the suit and glass helmet); `rig_character(...)` gives it a 20-bone rig and an in-place
-`walk` clip, plus a `jog` clip when `jog_duration` is given. They are Blender scripts you copy from the source
-checkout and build through the managed launcher, not CLI commands
-([recipes and Blender helpers](references/recipes.md)).
+A request for a talking head (a face with lids, gaze, a jaw and expressions) starts from the reference heads in
+`recipes/heads/`: Pip (organic, one continuous skin), Bolt (rigid mechanical parts) and Mossjaw (a wide creature with a
+puppet jaw). Each is one Blender source built only from the shared face helpers, with a build config beside it. They
+are Blender scripts you copy from the source checkout and build through the managed launcher, not CLI commands
+([recipes and Blender helpers](references/recipes.md)). No recipe ships a full humanoid body: for a body and walk or
+run clips use the `biped` kind below, or a mannequin as a rig and motion donor
+([mannequin library](../../scripts/blender_lib/references/mannequin-library.md)).
 
 `recipe <kind>` replaces the workspace project with a rigged, animated creature to edit further.
 Pick the kind by body plan: a person, robot or figure is `biped`; a horse, deer, donkey, cow or
@@ -156,7 +156,7 @@ model, `save <name>.mesh.json` from the workspace and point `build.json` at it w
 `recipe: {kind, options}`, which `clip.regenerate` uses to rebuild one clip; an earlier plugin version cannot open
 a saved file that holds `recipe`, and deleting that key makes it readable.
 
-The `recipes/` files (`stylized_character.py`, `stylized_walk.py`, `stylized_face.py`, `face_project.py`,
+The `recipes/` files (the three `heads/`,
 `botanical_kit.mjs`, `set-stats.mjs`, `set-sheet.mjs`) are listed with one line each in
 [recipes and Blender helpers](references/recipes.md), which also links the hanging cloth flap helper
 (`agent_meshes_cloth_flap`).
@@ -174,8 +174,8 @@ from a concept sheet (or linear tuples) and can glow (lens glass, a bulb). **Gla
 default; `transmission=1` for KHR_materials_transmission); in the operation model it is
 `material: {opacity, transmission, ior, doubleSided}` ([operations](references/operations.md)). A glow is
 `material: {emissive, emissiveStrength}` in the operation model and `emission=` in Blender sources.
-The character recipe's vacuum suit shows the pattern: a helmet fitted to the head it holds
-(`helmet_fit`), clear glass over a living face, an opaque shell and rims (recipes/README.md).
+A glass helmet follows the pattern: a bubble fitted to the head it holds, clear glass over a living face, an
+opaque shell and rims, and the glass declaring what it encloses (see mesh-build).
 
 `new`, `recipe`, `op`, `batch`, `open`, `undo`, `redo`, `save` and `state` print the whole project by
 default (a recipe is a few hundred kilobytes of JSON on one line). Add `--quiet` to any of them to

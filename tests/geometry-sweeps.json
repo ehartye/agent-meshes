@@ -29,14 +29,5 @@
     "LipTests.test_the_lip_grid_has_no_slivers_or_fans": "Multi-head lip shading/refinement/preset matrix; canonical sculpted lips, lining topology/motion and malformed input rejection stay in merge.",
     "LipTests.test_the_mouth_line_is_one_row_of_vertices_from_corner_to_corner": "Multi-head lip shading/refinement/preset matrix; canonical sculpted lips, lining topology/motion and malformed input rejection stay in merge.",
     "LipTests.test_no_face_folds_at_any_preset_with_the_jaw_open": "Multi-head lip shading/refinement/preset matrix; canonical sculpted lips, lining topology/motion and malformed input rejection stay in merge."
-  },
-  "stylized_character.py": {
-    "CharacterContract.test_variants": "Eight-way species/age/vacuum matrix; direct parameter rejection, repeatability/ground contact and helmet contracts stay in merge.",
-    "VacuumHelmetContract.test_head_clears_the_whole_bubble_glass_and_shell": "Full cast shell-triangle clearance matrix; actual glass-triangle clearance and head containment stay in merge."
-  },
-  "stylized_costume.py": {
-    "GarmentLayers.test_every_layer_is_seated_on_the_body": "Every layer/vertex across the cast; direct closed-slab seating and garment construction stay in merge.",
-    "GarmentRig.test_layers_ride_the_body_through_walk_and_jog": "Full cast/layer/16-phase deformation matrix; direct bone weights, garment seams and posed-vertex checks stay in merge.",
-    "GarmentRig.test_swinging_hands_clear_the_tool_pouches": "Dense hand/pouch 32-phase proximity matrix; attachment/strap, pouch and gait contracts stay in merge."
   }
 }

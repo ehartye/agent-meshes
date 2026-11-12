@@ -113,8 +113,8 @@ are in [operations](../mesh-authoring/references/operations.md#clips).
   a gallop) and `duration` (seconds per cycle, 0.3 to 4); the rest keep their table values. The key is the clip name: `walk`
   or `run` for the biped, `walk`, `trot` or `gallop` for the quadrupeds, `tripod` (or a `--leg-phases` key) for the insectoid,
   `scuttle` for the arachnid. `bob` is an amplitude, so the trunk rises by twice it. Design travel speed is
-  `stride / (stance × duration)`. The biped refuses `duration` (`--speed` sets its cycle time) and the strandbeest and the
-  Blender `stylized_walk.py` character do not take `--gait-params`. On the insectoid a `stance` below 0.5 stops the
+  `stride / (stance × duration)`. The biped refuses `duration` (`--speed` sets its cycle time) and the strandbeest
+  does not take `--gait-params`. On the insectoid a `stance` below 0.5 stops the
   0/0.5 tripod phasing from keeping three feet down.
 - A leg that cannot reach is refused, naming `gait-params <gait>.<setting>`. With the other settings at their table values
   the largest `stride` is about 0.86 (biped walk and run), 0.72 (equine walk) and 0.54 (vulpine walk). The limit moves with
@@ -149,9 +149,8 @@ Details, options, defaults and error codes are in [clip checks](references/clip-
 
 `recipe biped|equine|vulpine|insectoid|arachnid|strandbeest` produces a complete rig with
 clips. Edit the result with batches rather than building a walk from nothing; a fox with a
-different head is a `vulpine` recipe plus a few `update` and `add` operations. For a stylized
-human or alien, copy `recipes/stylized_character.py` and `recipes/stylized_walk.py` (walk and jog clips) and,
-for a living face, `recipes/face_project.py`; see [clip checks](references/clip-checks.md#character-recipes-with-a-rig).
+different head is a `vulpine` recipe plus a few `update` and `add` operations. For a talking head, copy one of
+the reference heads in `recipes/heads/`; see [clip checks](references/clip-checks.md#reference-heads).
 
 A rigged clip can be baked into a sprite sheet for a 2D engine with `agent-meshes bake <glb> --clip <name>`; the options
 and errors are in the [sprite-bake reference](../mesh-build/references/sprite-bake.md).
