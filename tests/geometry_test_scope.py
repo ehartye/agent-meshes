@@ -60,13 +60,3 @@ class MeshFixtures:
             if len(self.prepared)>self.capacity:self.prepared.popitem(last=False)
         self.prepared.move_to_end(key)
         return deepcopy(self.prepared[key])
-
-
-def _character(config):
-    recipes=str(Path(__file__).resolve().parents[1]/'recipes')
-    if recipes not in sys.path:sys.path.insert(0,recipes)
-    import stylized_character as character
-    meshes=character.Meshes();character.geometry(config,meshes)
-    return meshes.parts,meshes.lofts
-
-character_fixtures=MeshFixtures(_character)

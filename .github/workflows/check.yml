@@ -133,8 +133,6 @@ jobs:
       - if: matrix.suite == 'face'
         run: python tests/face_components.py
       - if: matrix.suite == 'face'
-        run: python tests/face_composition.py
-      - if: matrix.suite == 'face'
         run: python tests/blender_face_geometry.py
       - if: matrix.suite == 'face'
         run: python tests/lip_axis.py
@@ -210,7 +208,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [character, costume, face]
+        suite: [heads]
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -221,16 +219,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install numpy
-      - if: matrix.suite == 'character'
-        run: python tests/stylized_character.py
-      - if: matrix.suite == 'character'
-        run: python tests/stylized_walk.py
-      - if: matrix.suite == 'costume'
-        run: python tests/stylized_costume.py
-      - if: matrix.suite == 'face'
-        run: python tests/stylized_face.py
-      - if: matrix.suite == 'face'
-        run: python tests/face_recipe_parity.py
+      - if: matrix.suite == 'heads'
+        run: python tests/reference_heads.py
 
   required:
     name: CI required

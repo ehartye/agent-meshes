@@ -832,7 +832,7 @@ def fit_to_envelope(points, marks, center, radii, eye_drop=.036):
 
 # ---------------------------------------------------------------- a living face on the stylized head
 
-# The face units a stylized character's face carries (the arkit-face/1 required set and the optional ones hm08 moves;
+# The face units a character face carries (the arkit-face/1 required set and the optional ones hm08 moves;
 # gaze turns the eye bones, and tongueOut needs a tongue of the head's own).
 FACE_UNITS = ('eyeBlinkLeft', 'eyeBlinkRight', 'eyeSquintLeft', 'eyeSquintRight', 'eyeWideLeft', 'eyeWideRight', 'jawOpen',
               'mouthSmileLeft', 'mouthSmileRight', 'mouthFrownLeft', 'mouthFrownRight', 'mouthStretchLeft', 'mouthStretchRight',
@@ -1082,7 +1082,7 @@ def stylized_mouth(P, marks, eye_radius, edges=None):
 
 def character_face(years, gender, center, radii, shape=None, stylize=1.0, neck_z=None, neck=None, races=None, units=FACE_UNITS,
                    almond=.6, eye_scale=.95, cartoon=0.0):
-    """A stylized character's living face on the hm08 head in Blender's frame: the head fitted to the envelope
+    """A character's living face on the hm08 head in Blender's frame: the head fitted to the envelope
     (center, radii (x, y, z)) and cropped at `neck_z`, with its face-unit morphs (lids refitted to the stylized eyes).
 
     `neck` (the body neck's half width and depth at `neck_z`, centered on the head's axis) grafts the cropped neck onto

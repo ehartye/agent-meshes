@@ -33,11 +33,11 @@ engine-specific representation and mutation limits.
 | Make a mechanical face | shutter/plate geometry and rigid bindings | recessed eyes and explicit pivots; suitable clearance | parts remain rigid and clear each other through motion |
 | Make a talking jaw | `JawHinge`, mouth cavity and attachment helpers | meaningful hinge, mouth surface and parts that follow it | chin motion, lip seam and teeth/cavity intersections |
 | Deliver an ARKit-compatible head | [arkit-face/1 profile](arkit-face.md) | its named morphs, eye bones and extras | selected contract verifier plus consumer renders |
-| Adapt the hm08 stylized character example | project-owned `stylized_face` recipe | hm08 head and the example's parameter/landmark vocabulary | explicit composition and exported old/new comparison |
+| Start from a worked example | a reference head in `recipes/heads/` (organic, mechanical or creature) | copy the whole folder; its shell-lid eyes predate the continuous-lid checks | the contract verifier, expecting the listed known failures |
 
-The first operations do not imply the last two. The hm08 example's age/presentation
-defaults, head envelope, beard choices and neck fit are not requirements for a
-different sculpt or a nonhuman head.
+The first operations do not imply the last two. A reference head's proportions,
+palette and emotion tuning are its own character, not requirements for a
+different head.
 
 ## Diagnose the cause before selecting a helper
 

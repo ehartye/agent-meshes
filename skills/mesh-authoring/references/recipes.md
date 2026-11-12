@@ -4,12 +4,16 @@ The `recipes/` folder of the source checkout holds editable starting points; the
 [recipes/README.md](../../../recipes/README.md). Copy a recipe from the source checkout into the project's authored
 inputs and build it through the managed launcher; recipes are not in the managed runtime and are not CLI commands.
 
-## Character and face (Blender)
+## Reference heads (Blender)
 
-- `stylized_character.py`: `build_character(values=None, layout=None)` makes a named, metre-scale human or alien character (height 0.7 to 2.5 m, adult or child, female or male, optional `vacuum` suit and glass helmet); `geometry(values=None, meshes=None, layout=None)` is the same shape without Blender.
-- `stylized_walk.py`: `rig_character(...)` adds a 20-bone rig and an in-place `walk` clip, and a `jog` clip when `jog_duration` is given, to that character.
-- `stylized_face.py`: `add_face(...)` gives the rigged character an `arkit-face/1` face on the MakeHuman hm08 head (`face: 'arkit'`, shaped by `face_shape`).
-- `face_project.py` with `face-project.build.json`: an editable project entrypoint that composes the three modules above with an explicit `recipe=`; copy all of them together.
+Each is one source and a `build.json` in its own folder, built only from `agent_meshes_author` and `agent_meshes_face`,
+declaring `arkit-face/1`. Copy the folder and set the config's `output`.
+
+- `heads/pip/pip_head.py`: an organic head on one continuous skin, with sculpted cheeks, soft lips, ears, brows laid on the skin and hair.
+- `heads/bolt/bolt_head.py`: a rigid mechanical head with shutter-blade eyes, brow plates and one rubber mouth aperture.
+- `heads/mossjaw/mossjaw_head.py`: a wide creature head with slit-pupil eyes, a brow ridge, tooth rows and a low-hinged puppet jaw.
+
+All three report known `arkit-face/1` failures under newer checks; [recipes/README.md](../../../recipes/README.md#reference-heads) lists them.
 
 ## Operations and sets (Node)
 
