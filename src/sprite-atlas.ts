@@ -73,13 +73,20 @@ export function sheetLayout(spec: SheetSpec): SheetLayout {
 /**
  * The Aseprite-format atlas: array frames named by decimal index and one forward tag per direction. With a `pivot`
  * it also carries one slice named `pivot` whose single key sits at frame 0, spans the whole cell and holds the pivot.
+ * A list of pivots, one per direction, writes one key at the first frame of each direction whose pivot differs from the
+ * one before it (a slice key holds until the next key), so a list of equal pivots is the same atlas as the single pivot.
  */
-export function buildAtlas(spec: SheetSpec, pivot?: SlicePivot): Atlas {
+export function buildAtlas(spec: SheetSpec, pivots?: SlicePivot | SlicePivot[]): Atlas {
   const layout = sheetLayout(spec);
   const duration = Math.round(spec.clipDurationMs / spec.phases);
   const { cell } = spec;
-  if (pivot && (!Number.isInteger(pivot.x) || !Number.isInteger(pivot.y) || pivot.x < 0 || pivot.y < 0 || pivot.x >= cell || pivot.y >= cell))
-    throw sheetError(`The pivot must be an integer pixel inside the ${cell} by ${cell} cell, got ${pivot.x}, ${pivot.y}`);
+  const list = pivots === undefined ? [] : Array.isArray(pivots) ? pivots : [pivots];
+  if (Array.isArray(pivots) && pivots.length !== spec.directions) throw sheetError(`A list of pivots needs one per direction (${spec.directions}), got ${pivots.length}`);
+  for (const pivot of list)
+    if (!Number.isInteger(pivot.x) || !Number.isInteger(pivot.y) || pivot.x < 0 || pivot.y < 0 || pivot.x >= cell || pivot.y >= cell)
+      throw sheetError(`The pivot must be an integer pixel inside the ${cell} by ${cell} cell, got ${pivot.x}, ${pivot.y}`);
+  const keys = list.flatMap((pivot, k) => (k > 0 && pivot.x === list[k - 1].x && pivot.y === list[k - 1].y ? []
+    : [{ frame: k * spec.phases, bounds: { x: 0, y: 0, w: cell, h: cell }, pivot: { x: pivot.x, y: pivot.y } }]));
   return {
     frames: layout.frames.map(f => ({
       filename: String(f.index),
@@ -99,11 +106,7 @@ export function buildAtlas(spec: SheetSpec, pivot?: SlicePivot): Atlas {
       frameTags: Array.from({ length: spec.directions }, (_, k) => ({
         name: `dir-${k}`, from: k * spec.phases, to: k * spec.phases + spec.phases - 1, direction: 'forward' as const,
       })),
-      ...(pivot ? { slices: [{
-        name: SPRITE_PIVOT_SLICE,
-        color: PIVOT_SLICE_COLOR,
-        keys: [{ frame: 0, bounds: { x: 0, y: 0, w: cell, h: cell }, pivot: { x: pivot.x, y: pivot.y } }],
-      }] } : {}),
+      ...(keys.length ? { slices: [{ name: SPRITE_PIVOT_SLICE, color: PIVOT_SLICE_COLOR, keys }] } : {}),
     },
   };
 }
@@ -129,7 +132,8 @@ export interface ManifestInput {
   bands?: number;
   palette?: { colors: number; sha256: string };
   outline?: string;
-  anchor?: { name: string; x: number; y: number };
+  /** `byDirection` lists the pivot of every direction as `[x, y]`, and is written only when they are not all the same. */
+  anchor?: { name: string; x: number; y: number; byDirection?: number[][] };
 }
 export interface SpriteManifest {
   format: typeof SPRITE_MANIFEST_FORMAT;
@@ -146,7 +150,8 @@ export interface SpriteManifest {
   bands?: number;
   palette?: { colors: number; sha256: string };
   outline?: string;
-  anchor?: { name: string; x: number; y: number };
+  /** `byDirection` lists the pivot of every direction as `[x, y]`, and is written only when they are not all the same. */
+  anchor?: { name: string; x: number; y: number; byDirection?: number[][] };
 }
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -173,7 +178,7 @@ export function buildManifest(input: ManifestInput): SpriteManifest {
     ...(input.bands !== undefined ? { bands: input.bands } : {}),
     ...(input.palette !== undefined ? { palette: { colors: input.palette.colors, sha256: input.palette.sha256 } } : {}),
     ...(input.outline !== undefined ? { outline: input.outline } : {}),
-    ...(input.anchor !== undefined ? { anchor: { name: input.anchor.name, x: input.anchor.x, y: input.anchor.y } } : {}),
+    ...(input.anchor !== undefined ? { anchor: { name: input.anchor.name, x: input.anchor.x, y: input.anchor.y, ...(input.anchor.byDirection ? { byDirection: input.anchor.byDirection.map(([x, y]) => [x, y]) } : {}) } } : {}),
   };
 }
 

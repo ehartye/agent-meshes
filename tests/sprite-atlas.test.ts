@@ -188,6 +188,16 @@ describe('pivot slice', () => {
     expect(JSON.parse(serializeAtlas(atlas))).toEqual(atlas);
   });
 
+  it('writes one key per direction whose pivot differs from the one before, and the single-pivot atlas when they all agree', () => {
+    // spec has `phases` frames per direction, so direction k starts at frame k * phases.
+    const pivots = Array.from({ length: pivotSpec.directions }, (_, k) => ({ x: 24 + Math.min(k, 2), y: 40 }));
+    const atlas = buildAtlas(pivotSpec, pivots);
+    expect(checkAtlasContract(atlas)).toEqual([]);
+    expect(atlas.meta.slices![0].keys.map(key => [key.frame, key.pivot.x])).toEqual([[0, 24], [pivotSpec.phases, 25], [2 * pivotSpec.phases, 26]]);
+    expect(buildAtlas(pivotSpec, pivots.map(() => ({ x: 24, y: 40 })))).toEqual(withPivot());
+    expect(() => buildAtlas(pivotSpec, pivots.slice(1))).toThrowError(expect.objectContaining({ code: 'SPRITE_SHEET_INVALID', message: expect.stringMatching(/one per direction/) }));
+  });
+
   it('omits slices entirely, not as an empty list, without a pivot', () => {
     for (const atlas of [fresh(), buildAtlas(spec, undefined)]) {
       expect('slices' in atlas.meta).toBe(false);

@@ -12,7 +12,7 @@ import type { Clip, Project } from '../src/core/types.ts';
 import { exportGLB } from '../src/export.ts';
 import { readGLB } from '../src/gltf-read.ts';
 import { decodePng } from '../src/png.ts';
-import { bakeClipInfo, bakeSprites, feetPivot, harness, parseBakeOptions, reduceCell, touchesBorder } from '../src/sprite-bake.ts';
+import { anchorPivot, bakeClipInfo, bakeSprites, feetPivot, harness, parseBakeOptions, reduceCell, touchesBorder } from '../src/sprite-bake.ts';
 import { checkAtlasContract, type Atlas } from '../src/sprite-atlas.ts';
 
 // The fixture is a small rigged figure that differs left to right (a long arm on +X, a stub on -X) and front to back
@@ -185,9 +185,9 @@ describe('bake without a browser', () => {
 
   it('checks the flag ranges and defaults', () => {
     expect(parseBakeOptions({ clip: 'sway' })).toMatchObject({ directions: 8, phases: 8, cell: 48 });
-    expect(parseBakeOptions({ clip: 'sway', directions: '32', phases: '64', cell: '256' })).toMatchObject({ directions: 32, phases: 64, cell: 256 });
+    expect(parseBakeOptions({ clip: 'sway', directions: '32', phases: '64', cell: '512' })).toMatchObject({ directions: 32, phases: 64, cell: 512 });
     expect(parseBakeOptions({ clip: 'sway', directions: 1, phases: 1, cell: 8 })).toMatchObject({ directions: 1, phases: 1, cell: 8 });
-    for (const bad of [{ directions: 0 }, { directions: 33 }, { directions: '2.5' }, { phases: 0 }, { phases: 65 }, { cell: 7 }, { cell: 4 }, { cell: 257 }, { cell: 'big' }, { cell: '-8' }, { cell: Number.NaN }])
+    for (const bad of [{ directions: 0 }, { directions: 33 }, { directions: '2.5' }, { phases: 0 }, { phases: 65 }, { cell: 7 }, { cell: 4 }, { cell: 513 }, { cell: 'big' }, { cell: '-8' }, { cell: Number.NaN }])
       expect(() => parseBakeOptions({ clip: 'sway', ...bad }), JSON.stringify(bad)).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR' }));
     expect(() => parseBakeOptions({ clip: '' })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR' }));
   });
@@ -360,7 +360,7 @@ describe('the 0.38.0 options are checked before Chromium starts', () => {
     { name: 'a missing palette file', options: () => ({ palette: join(root, 'missing.hex') }), message: /Cannot read the palette file/ },
     { name: 'an invalid palette line', options: () => ({ palette: palettes['broken.hex'] }), message: /line 3/ },
     { name: 'a palette with no colours', options: () => ({ palette: palettes['empty.hex'] }), message: /holds no colours/ },
-    { name: '--anchor head', options: () => ({ anchor: 'head' }), message: /--anchor must be feet, got head/ },
+    { name: '--anchor head', options: () => ({ anchor: 'head' }), message: /--anchor must be feet or origin, got head/ },
   ];
   for (const { name, options, message } of cases) {
     it(`rejects ${name} with CLI_ARGUMENT_ERROR, writes nothing and never launches the browser`, async () => {
@@ -772,4 +772,148 @@ describe('a bake with a set elevation', () => {
     expect(expected.y).toBe(Math.floor(32 + (steep.parsed.camera.centreM[1] - steep.parsed.camera.groundYM) * Math.cos(60 * Math.PI / 180) * 40));
     expect(expected.y).toBeLessThan(plain.parsed.anchor.y);
   }, 120_000);
+});
+
+describe('the azimuth, oblique and origin options are checked before Chromium starts', () => {
+  it('accepts a start azimuth from -360 to 360 as a number or numeric text and refuses anything else', () => {
+    for (const [value, expected] of [[0, 0], ['270', 270], [' -90 ', -90], ['22.5', 22.5], [360, 360], [-360, -360]] as const)
+      expect(parseBakeOptions({ clip: 'sway', azimuth: value }).azimuth, JSON.stringify(value)).toBe(expected);
+    for (const value of [361, '-361', '+90', 'north', '', '1e2', '90,0', Number.NaN, true, null, {}])
+      expect(() => parseBakeOptions({ clip: 'sway', azimuth: value as number }), JSON.stringify(value) ?? String(value)).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/^--azimuth must be a number of degrees from -360 to 360, got /) }));
+    expect(Object.keys(parseBakeOptions({ clip: 'sway' }))).not.toContain('azimuth');
+  });
+
+  it('accepts an oblique view as angle,ratio text or as two numbers and refuses a value outside either range', () => {
+    expect(parseBakeOptions({ clip: 'sway', oblique: '45,0.5' }).oblique).toEqual({ angleDeg: 45, ratio: 0.5 });
+    expect(parseBakeOptions({ clip: 'sway', oblique: ' 30,1 ' }).oblique).toEqual({ angleDeg: 30, ratio: 1 });
+    expect(parseBakeOptions({ clip: 'sway', oblique: { angleDeg: 135, ratio: 2 } }).oblique).toEqual({ angleDeg: 135, ratio: 2 });
+    for (const value of ['45', '45,', ',0.5', '45,0', '45,2.5', '361,0.5', '-45,0.5', '45;0.5', 'cabinet', '', { angleDeg: 45 }, { angleDeg: '45', ratio: 0.5 }, 45, true, null])
+      expect(() => parseBakeOptions({ clip: 'sway', oblique: value as string }), JSON.stringify(value)).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/^--oblique must be <angle>,<ratio>/) }));
+    expect(Object.keys(parseBakeOptions({ clip: 'sway' }))).not.toContain('oblique');
+  });
+
+  it('refuses an oblique view together with an elevation, because an oblique view is drawn from level', () => {
+    expect(() => parseBakeOptions({ clip: 'sway', oblique: '45,0.5', elevation: 30 })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/cannot be combined with --elevation \(got --elevation 30\)/) }));
+  });
+
+  it('accepts feet and origin as the anchor and names both when it refuses another', () => {
+    expect(parseBakeOptions({ clip: 'sway', anchor: 'origin' }).anchor).toBe('origin');
+    expect(parseBakeOptions({ clip: 'sway', anchor: 'feet' }).anchor).toBe('feet');
+    expect(() => parseBakeOptions({ clip: 'sway', anchor: 'head' })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: '--anchor must be feet or origin, got head' }));
+  });
+});
+
+describe('where a model point lands in a cell', () => {
+  const frame = { cell: 64, halfExtentM: 0.8, centreM: [0.1, 0.55, 0.05] };
+
+  it('agrees with the feet pivot for the ground point under the centre, at any elevation and azimuth', () => {
+    for (const elevationDeg of [0, 15, 60]) for (const azimuthDeg of [0, 90, 215])
+      expect(anchorPivot({ ...frame, elevationDeg, azimuthDeg, pointM: [0.1, 0, 0.05] }), `${elevationDeg} ${azimuthDeg}`)
+        .toEqual(feetPivot({ cell: 64, elevationDeg, halfExtentM: 0.8, centreYM: 0.55, groundYM: 0 }));
+  });
+
+  it('moves a point behind the centre along the oblique angle by the ratio, and follows the frame centre', () => {
+    // Seen from +Z (azimuth 0), a point 0.4 m behind the centre (z = -0.4) and level with it, at 45 degrees and ratio 0.5:
+    // 0.4 * 0.5 * cos 45 across and the same up, 0.141 m each, which is 5.66 pixels at 40 pixels a metre.
+    const centred = { cell: 64, halfExtentM: 0.8, elevationDeg: 0, azimuthDeg: 0, centreM: [0, 0, 0], oblique: { angleDeg: 45, ratio: 0.5 } };
+    expect(anchorPivot({ ...centred, pointM: [0, 0, 0] })).toEqual({ x: 32, y: 32 });
+    expect(anchorPivot({ ...centred, pointM: [0, 0, -0.4] })).toEqual({ x: 37, y: 26 });
+    expect(anchorPivot({ ...centred, pointM: [0, 0, -0.4], frameCentreM: [0.1, -0.1] })).toEqual({ x: 33, y: 22 });
+    // From -X (azimuth 270) the screen's right is +Z and behind is +X.
+    expect(anchorPivot({ ...centred, azimuthDeg: 270, pointM: [0.4, 0, 0.25] })).toEqual({ x: 47, y: 26 });
+  });
+
+  it('raises BAKE_ANCHOR_OUTSIDE, naming the anchor, for a point outside the cell', () => {
+    expect(() => anchorPivot({ ...frame, elevationDeg: 15, azimuthDeg: 0, pointM: [5, 0, 0], name: 'origin' })).toThrow(expect.objectContaining({ code: 'BAKE_ANCHOR_OUTSIDE', message: expect.stringMatching(/^The origin pivot falls at .* so --anchor origin cannot place it/) }));
+  });
+});
+
+describe('a bake turned by a start azimuth', () => {
+  it('draws direction 0 at azimuth 90 exactly as a quarter-turn bake draws its direction 1, and records the azimuth only when given', async () => {
+    const ring = outDir(), single = outDir();
+    const options = { clip: 'sway', phases: 2, cell: 64, pixelsPerMetre: 40 } as const;
+    await bakeSprites(glbPath, { ...options, out: ring, directions: 4 });
+    await bakeSprites(glbPath, { ...options, out: single, directions: 1, azimuth: 90 });
+    const a = decodePng((await read(ring)).sheet), b = decodePng((await read(single)).sheet);
+    expect([b.width, b.height]).toEqual([128, 64]);
+    const row = (image: { rgba: Uint8Array; width: number }, direction: number) => Buffer.from(image.rgba.subarray(direction * 64 * image.width * 4, (direction + 1) * 64 * image.width * 4));
+    expect(row(b, 0).equals(row(a, 1))).toBe(true);
+    expect(row(b, 0).equals(row(a, 0))).toBe(false);
+    expect(JSON.parse((await read(single)).manifest.toString('utf8')).camera.azimuthDeg).toBe(90);
+    expect(Object.keys(JSON.parse((await read(ring)).manifest.toString('utf8')).camera)).not.toContain('azimuthDeg');
+  }, 120_000);
+});
+
+describe('an oblique bake', () => {
+  const OPTIONS = { clip: 'sway', directions: 2, phases: 2, cell: 64, pixelsPerMetre: 40 } as const;
+  /** Columns and rows of one cell that hold an opaque pixel. */
+  const extent = (image: { rgba: Uint8Array; width: number }, direction: number) => {
+    let x0 = 64, x1 = -1, y0 = 64, y1 = -1;
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) if (image.rgba[((direction * 64 + y) * image.width + x) * 4 + 3] === 255) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    return { x0, x1, y0, y1, width: x1 - x0 + 1, height: y1 - y0 + 1 };
+  };
+  let baked: Promise<{ level: ReturnType<typeof decodePng>; oblique: ReturnType<typeof decodePng>; manifest: any; atlas: Atlas }> | undefined;
+  const bakes = () => baked ??= (async () => {
+    const level = outDir(), oblique = outDir();
+    await bakeSprites(glbPath, { ...OPTIONS, out: level, elevation: 0 });
+    await bakeSprites(glbPath, { ...OPTIONS, out: oblique, oblique: '45,1', anchor: 'origin' });
+    const out = await read(oblique);
+    return { level: decodePng((await read(level)).sheet), oblique: decodePng(out.sheet), manifest: JSON.parse(out.manifest.toString('utf8')), atlas: JSON.parse(out.atlas.toString('utf8')) as Atlas };
+  })();
+
+  it('keeps the plane facing the camera square on and runs depth off up and to the right, so each part grows by its own depth', async () => {
+    const { level, oblique } = await bakes();
+    // Direction 0 looks from +Z, and a level camera shows no depth at all. At ratio 1 and 45 degrees a part d metres deep is
+    // drawn d * cos 45 wider and taller. The picture is as wide as the arm and the stub, which are 0.12 m deep (3.4 pixels at
+    // 40 pixels a metre), and as tall as the body and head, which are 0.3 m deep (8.5 pixels).
+    const flat = extent(level, 0), sheared = extent(oblique, 0);
+    expect(sheared.width - flat.width).toBeGreaterThanOrEqual(2);
+    expect(sheared.width - flat.width).toBeLessThanOrEqual(5);
+    expect(sheared.height - flat.height).toBeGreaterThanOrEqual(7);
+    expect(sheared.height - flat.height).toBeLessThanOrEqual(10);
+  }, 120_000);
+
+  it('centres each direction of the frame on the picture of the model, and records the view in the manifest', async () => {
+    const { oblique, manifest } = await bakes();
+    expect(manifest.camera).toMatchObject({ projection: 'oblique', elevationDeg: 0, obliqueAngleDeg: 45, obliqueRatio: 1, halfExtentM: 0.8 });
+    expect(manifest.camera.frameCentreM).toHaveLength(4);
+    for (const direction of [0, 1]) {
+      const { x0, x1, y0, y1 } = extent(oblique, direction);
+      // The margins left and right, and top and bottom, differ by at most a pixel of rounding and the sway of the clip.
+      expect(Math.abs(x0 - (63 - x1)), `direction ${direction} across`).toBeLessThanOrEqual(3);
+      expect(Math.abs(y0 - (63 - y1)), `direction ${direction} up`).toBeLessThanOrEqual(3);
+    }
+  }, 120_000);
+
+  it('writes the origin pivot of each direction where an independent projection puts the model origin, on the model\'s base', async () => {
+    const { oblique, manifest, atlas } = await bakes();
+    const { centreM, halfExtentM, frameCentreM } = manifest.camera;
+    const expected = [0, 1].map(direction => {
+      const az = direction * Math.PI, v = [-centreM[0], -centreM[1], -centreM[2]];
+      const behind = -(v[0] * Math.sin(az) + v[2] * Math.cos(az)), shear = Math.SQRT1_2;
+      const across = v[0] * Math.cos(az) - v[2] * Math.sin(az) + behind * shear - frameCentreM[direction * 2], up = v[1] + behind * shear - frameCentreM[direction * 2 + 1];
+      return [Math.floor(32 * (1 + across / halfExtentM)), Math.floor(32 * (1 - up / halfExtentM))];
+    });
+    expect(manifest.anchor).toEqual({ name: 'origin', x: expected[0][0], y: expected[0][1], byDirection: expected });
+    expect(atlas.meta.slices![0].keys.map(key => [key.frame, key.pivot.x, key.pivot.y])).toEqual([[0, ...expected[0]], [2, ...expected[1]]]);
+    expect(expected[0]).not.toEqual(expected[1]);
+    // The origin is the middle of the body's base: the pixel two rows above it is body, in both directions.
+    for (const direction of [0, 1]) {
+      const [x, y] = expected[direction];
+      expect(oblique.rgba[((direction * 64 + y - 2) * oblique.width + x) * 4 + 3], `direction ${direction}`).toBe(255);
+    }
+  }, 120_000);
+});
+
+describe('a bake at the largest cell', () => {
+  it('renders a 512 pixel cell (a 4096 pixel render) with the model inside it', async () => {
+    const dir = outDir();
+    const result = await bakeSprites(glbPath, { clip: 'sway', out: dir, directions: 1, phases: 1, cell: 512 });
+    expect(result.size).toEqual({ w: 512, h: 512 });
+    const image = decodePng((await read(dir)).sheet);
+    let opaque = 0;
+    for (let i = 3; i < image.rgba.length; i += 4) if (image.rgba[i] === 255) opaque++;
+    // Fitted with 1.25 padding, the figure covers a good part of the cell and never its border (the bake would have refused).
+    expect(opaque).toBeGreaterThan(512 * 512 * 0.1);
+  }, 180_000);
 });
