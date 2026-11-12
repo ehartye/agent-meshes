@@ -16,6 +16,7 @@ mesh bake knight.glb --clip walk --palette art/dawnbringer16.hex --outline auto 
 mesh bake knight.glb --clip walk --cell 64 --pixels-per-metre 32 --anchor feet --contact-sheet
 mesh bake knight.glb --clip walk --viewer
 mesh bake knight.glb --clip walk --elevation 30 --pixels-per-metre 32 --cell 64 --anchor feet
+mesh bake house.glb --clip idle --directions 1 --azimuth 270 --oblique 45,0.5 --pixels-per-metre 20 --cell 512 --anchor origin
 ```
 
 The README section "Sprite bake" lists the flags, defaults, ranges, output files and error codes; `mesh bake --help`
@@ -41,7 +42,7 @@ environment, and the manifest differs only in `pluginVersion`.
 | `--outline <#rrggbb\|auto>` | a hex colour, or `auto` for the palette's darkest colour (needs `--palette`) | none |
 | `--look <lit\|unlit\|banded>` | room lighting, flat colour, hard-banded key light | `lit` |
 | `--bands <count>` | integer 2 to 8, only with `--look banded` | 3 |
-| `--anchor <feet>` | only `feet` | none |
+| `--anchor <feet\|origin>` | `feet` or `origin` | none |
 
 - **Order per cell.** Render under the look, reduce, check the border, snap the palette, then outline. The border check
   sees the model's silhouette before the outline, so `BAKE_CELL_CLIPPED` keeps its meaning and the outline may sit on
@@ -66,7 +67,7 @@ environment, and the manifest differs only in `pluginVersion`.
   colour) and `anchor` appear only when their flag is used.
 - **Argument errors.** `CLI_ARGUMENT_ERROR` before Chromium starts and nothing written: a bad value, an unreadable
   palette file or a bad palette line (named by line number), `--bands` without `--look banded`, `--outline auto`
-  without `--palette`, an `--outline` colour not in the palette, or an `--anchor` other than `feet`.
+  without `--palette`, an `--outline` colour not in the palette, or an `--anchor` other than `feet` or `origin`.
 
 ## Camera elevation
 
@@ -90,6 +91,38 @@ they look as if they stand more upright than the floor they walk on.
   floor, bake 8 directions and map the row to the screen heading in the game.
 - **Not reviewed.** The `banded` key light stays fixed to the camera, up and to the left, at every elevation; how its
   bands read from a steep camera has not been judged.
+
+## Oblique view, start azimuth, origin pivot and large cells
+
+Use these when a 2D game draws its world in an oblique projection (walls square on, the ground running off at a slant),
+when it needs one chosen facing, or when a building is larger than a character cell.
+
+| Flag | Values | Default |
+| --- | --- | --- |
+| `--oblique <angle,ratio>` | angle 0 to 360 degrees, ratio 0.01 to 2; not with `--elevation` | none |
+| `--azimuth <degrees>` | -360 to 360, from +Z toward +X | 0 |
+| `--anchor origin` | the model origin (0, 0, 0) as the pivot | none |
+| `--cell <pixels>` | 8 to 512 | 48 |
+
+- **Oblique.** The camera is level. The plane facing it is drawn square on, verticals stay vertical, and a metre of depth
+  behind the centre is drawn `ratio` metres long at `angle` degrees on screen (0 right, 90 up): `45,0.5` is a cabinet
+  view, `45,1` a cavalier one. To match a game, take the game's screen vector for one metre of depth: its direction is the
+  angle and its length, in metres at the sprite scale, the ratio. Do not fake the view by scaling or shearing a root bone:
+  that shears the normals, so the banded light lands on the wrong faces, and it leaves the picture off centre.
+- **Frame.** Each direction's frame is centred on the picture of the model at rest, so a model that is tall at one end
+  still uses the whole cell. `camera.frameCentreM` in the manifest holds, for each direction, where the middle of the
+  frame sits across and up from the picture of `camera.centreM`.
+- **Azimuth.** Direction `k` looks from `azimuth + k * 360 / directions` degrees. For one facing use `--directions 1`
+  and the azimuth of the side the camera stands on: 0 is +Z, 90 is +X, 180 is -Z, 270 is -X.
+- **Origin pivot.** `--anchor origin` gives the pixel of the model origin, which is what a game uses when it places a
+  building by the point it was modelled around. Off the centre axis the pixel differs per direction: read the slice key
+  of that direction's first frame, or `anchor.byDirection` in the manifest. With `--oblique`, `--anchor feet` is also
+  per direction.
+- **Large cells.** A cell renders at 8 times its edge, so `--cell 512` is a 4096 pixel render and takes about four times
+  as long as 256. At 20 pixels a metre a 512 cell holds a picture 25.6 m across. Prefer the smallest cell the largest
+  model of a set fits, with one `--pixels-per-metre` for the whole set.
+- **Not verified.** An oblique bake of a skinned character through a whole walk cycle, and `--oblique` with `--look lit`
+  (the room lighting), were not looked at: only rigid models under the banded look were.
 
 ## Sprite scale
 
@@ -247,7 +280,7 @@ Every bake error is a JSON error with a `code`:
   with keys that span time.
 - `BAKE_CELL_CLIPPED`: an opaque pixel touches a cell border; see "A clipped cell". With `--pixels-per-metre` the
   message names the set scale and says to lower it or raise `--cell`. Nothing is written.
-- `BAKE_ANCHOR_OUTSIDE`: the `--anchor feet` pivot falls outside the cell. Raise `--cell` or leave `--anchor` out.
+- `BAKE_ANCHOR_OUTSIDE`: the `--anchor` pivot falls outside the cell. Raise `--cell` or leave `--anchor` out.
 - `CLI_ARGUMENT_ERROR`: a bad flag value, checked before Chromium starts; see "Argument errors" above. It also covers a
   `--pixels-per-metre` outside 1 to 1024 or not a number, an `--elevation` outside 0 to 89 or not a number, a `--contact-sheet` image over 134,217,728 pixels, and a value
   given to `--viewer`.

@@ -128,7 +128,7 @@ describe('agent-meshes bake failures exit 1 and write nothing', () => {
   const cases: { name: string; args: string[]; code: string; message: RegExp }[] = [
     { name: 'an unknown clip', args: ['--clip', 'run'], code: 'CLIP_NOT_FOUND', message: /No clip named run; clips: sway, overreach, still/ },
     { name: 'a zero-length clip', args: ['--clip', 'still'], code: 'BAKE_CLIP_EMPTY', message: /still/ },
-    { name: '--cell 4', args: ['--clip', 'sway', '--cell', '4'], code: 'CLI_ARGUMENT_ERROR', message: /--cell must be an integer from 8 to 256, got 4/ },
+    { name: '--cell 4', args: ['--clip', 'sway', '--cell', '4'], code: 'CLI_ARGUMENT_ERROR', message: /--cell must be an integer from 8 to 512, got 4/ },
     { name: '--directions 0', args: ['--clip', 'sway', '--directions', '0'], code: 'CLI_ARGUMENT_ERROR', message: /--directions must be an integer from 1 to 32, got 0/ },
     { name: '--phases 65', args: ['--clip', 'sway', '--phases', '65'], code: 'CLI_ARGUMENT_ERROR', message: /--phases must be an integer from 1 to 64/ },
     { name: 'a missing --clip', args: [], code: 'CLI_ARGUMENT_ERROR', message: /--clip/ },
@@ -266,7 +266,7 @@ describe('agent-meshes bake rejects bad 0.38.0 flags before Chromium starts and 
     { name: '--outline #112233 with a palette that lacks it', args: () => ['--palette', dawn, '--outline', '#112233'], message: /--outline #112233 is not a colour of the palette/ },
     { name: 'a missing palette file', args: () => ['--palette', join(root, 'no-such-palette.hex')], message: /Cannot read the palette file/ },
     { name: 'an invalid palette line', args: () => ['--palette', broken], message: /line 3/ },
-    { name: '--anchor head', args: () => ['--anchor', 'head'], message: /--anchor must be feet, got head/ },
+    { name: '--anchor head', args: () => ['--anchor', 'head'], message: /--anchor must be feet or origin, got head/ },
     { name: '--look dark', args: () => ['--look', 'dark'], message: /--look must be one of lit, unlit, banded/ },
   ];
   for (const { name, args, message } of cases) {
@@ -400,6 +400,32 @@ describe('agent-meshes bake with --contact-sheet', () => {
     const help = (await run(process.execPath, [script, 'bake', '--help'], { windowsHide: true })).stdout.replace(/\s+/g, ' ');
     for (const text of ['--contact-sheet', 'contact.png', '4 times', '4-pixel', 'transparent', 'There are no labels', '134217728', 'before Chromium starts', 'same bytes with and without it']) expect(help).toContain(text);
   });
+});
+
+// The flags --oblique, --azimuth and --anchor origin, through the real entry point.
+describe('agent-meshes bake with --oblique, --azimuth and --anchor origin', () => {
+  it('reaches the camera: the manifest records the oblique view, the start azimuth and the origin pivot', async () => {
+    const dir = outDir();
+    const outcome = await bake(glbPath, '--clip', 'sway', '--directions', '1', '--phases', '2', '--azimuth', '270', '--oblique', '45,0.5', '--anchor', 'origin', '--out', dir);
+    expect(outcome.code, outcome.stderr || outcome.stdout).toBe(0);
+    const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'));
+    expect(manifest.camera).toMatchObject({ projection: 'oblique', elevationDeg: 0, azimuthDeg: 270, obliqueAngleDeg: 45, obliqueRatio: 0.5 });
+    expect(manifest.anchor).toMatchObject({ name: 'origin' });
+  }, 120_000);
+
+  it('refuses --oblique with --elevation before Chromium starts and writes nothing', async () => {
+    const dir = outDir();
+    const outcome = await bake(glbPath, '--clip', 'sway', '--oblique', '45,0.5', '--elevation', '30', '--out', dir);
+    expect(outcome.code).toBe(1);
+    expect(failure(outcome).error.code).toBe('CLI_ARGUMENT_ERROR');
+    expect(failure(outcome).error.message).toMatch(/--oblique draws the model from level, so it cannot be combined with --elevation/);
+    expect(await readdir(dir).catch(() => [])).toEqual([]);
+  }, 60_000);
+
+  it('documents the three in --help', async () => {
+    const help = (await run(process.execPath, [script, 'bake', '--help'])).stdout.replace(/\s+/g, ' ');
+    for (const text of ['--azimuth <degrees>', 'from -360 to 360', '--oblique <angle,ratio>', 'cabinet view', 'camera.obliqueAngleDeg', 'Not valid with --elevation', 'or origin, the model origin', 'an integer from 8 to 512']) expect(help).toContain(text);
+  }, 60_000);
 });
 
 // The flag --elevation, through the real entry point.

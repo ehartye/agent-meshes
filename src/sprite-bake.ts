@@ -30,7 +30,11 @@ import { composeViewer } from './sprite-viewer.ts';
  * With `elevation` the camera sits that many degrees above the horizon instead of 15: the fit, every cell and the feet pivot use it, and the manifest
  * records it as `camera.elevationDeg`, the key that already held 15. A vertical metre is drawn `cos(elevation)` as tall and a metre of ground depth
  * `sin(elevation)` as tall, so 30 degrees matches a 2:1 isometric floor.
- * Neither option is recorded in the atlas or the manifest, which are the same bytes with and without them, and a `contact.png` or `viewer.html` left by an earlier bake is never removed.
+ * With `oblique` the camera is level and depth is drawn by a shear in the projection (a cabinet or cavalier view): the frame of each direction is
+ * centred on the picture of the model at rest, and the manifest records `camera.projection: 'oblique'`, the angle, the ratio and `camera.frameCentreM`.
+ * With `azimuth` direction 0 looks from that many degrees from +Z toward +X. `anchor: 'origin'` writes the model origin as the pivot, one slice key
+ * per direction when the directions disagree.
+ * Neither `contactSheet` nor `viewer` is recorded in the atlas or the manifest, which are the same bytes with and without them, and a `contact.png` or `viewer.html` left by an earlier bake is never removed.
  *
  * Optional passes, all off by default (a bake with none of them is the 0.37.0 output): `look` (`unlit` or `banded`)
  * replaces the room lighting before the fit; after the border check `palette` snaps every opaque pixel to the palette,
@@ -38,7 +42,7 @@ import { composeViewer } from './sprite-viewer.ts';
  * checked before the browser starts and any fault raises `CLI_ARGUMENT_ERROR`.
  */
 export const BAKE_DEFAULTS = { directions: 8, phases: 8, cell: 48 } as const;
-export const BAKE_LIMITS = { directions: [1, 32], phases: [1, 64], cell: [8, 256] } as const;
+export const BAKE_LIMITS = { directions: [1, 32], phases: [1, 64], cell: [8, 512] } as const;
 /** Inclusive range of `pixelsPerMetre`: below 1 the frame is wider than `cell` metres and the sprite would be a few pixels. */
 export const BAKE_PIXELS_PER_METRE_LIMITS = [1, 1024] as const;
 /** Render size over cell size: each cell pixel is the centre of an 8 by 8 block. */
@@ -47,6 +51,14 @@ export const BAKE_SUPERSAMPLE = 8;
 export const BAKE_ELEVATION_DEG = 15;
 /** Inclusive range of `elevation` in degrees: 0 is level with the model; 90 (straight down) has no defined up direction, so the range stops at 89. */
 export const BAKE_ELEVATION_LIMITS = [0, 89] as const;
+/** Inclusive range of `azimuth` in degrees: where direction 0 looks from, measured from +Z toward +X. */
+export const BAKE_AZIMUTH_LIMITS = [-360, 360] as const;
+/** Ranges of the two numbers of `oblique`: the screen angle of the depth axis in degrees, and the length a metre of depth is drawn at. */
+export const BAKE_OBLIQUE_LIMITS = { angle: [0, 360], ratio: [0.01, 2] } as const;
+export const BAKE_ANCHORS = ['feet', 'origin'] as const;
+export type BakeAnchor = (typeof BAKE_ANCHORS)[number];
+/** An oblique view: the plane facing the camera is drawn square on, and depth runs off at `angleDeg` on screen, `ratio` as long. */
+export interface BakeOblique { angleDeg: number; ratio: number }
 /** Margin of the rest fit: the frame is this much larger than the rest bounds need. */
 export const BAKE_PADDING = 1.25;
 const ALPHA_THRESHOLD = 128;
@@ -60,7 +72,7 @@ export interface BakeOptions {
   directions?: number | string;
   /** Integer 1 to 64; default 8. */
   phases?: number | string;
-  /** Cell edge in pixels, an integer 8 to 256; default 48. */
+  /** Cell edge in pixels, an integer 8 to 512; default 48. */
   cell?: number | string;
   /** Output folder; default `<glb stem>-sprites` beside the GLB. */
   out?: string;
@@ -72,12 +84,16 @@ export interface BakeOptions {
   look?: string;
   /** Light steps of `banded`, an integer 2 to 8, default 3; valid only with `look: 'banded'`. */
   bands?: number | string;
-  /** `feet` writes the ground point of the rest bounds as the atlas pivot slice. */
+  /** `feet` writes the ground point under the centre of the rest bounds as the atlas pivot slice; `origin` writes the model's origin (0, 0, 0), one key per direction when they differ. */
   anchor?: string;
   /** Sets the sprite scale instead of fitting the camera: a number (or numeric text) from 1 to 1024; default none (fitted). */
   pixelsPerMetre?: number | string;
   /** Camera height above the horizon in degrees: a number (or numeric text) from 0 to 89; default 15. */
   elevation?: number | string;
+  /** Where direction 0 looks from, in degrees from +Z toward +X: a number (or numeric text) from -360 to 360; default 0. The other directions follow it evenly. */
+  azimuth?: number | string;
+  /** An oblique view as `"<angle>,<ratio>"` (or the two numbers): the camera is level, the plane facing it is drawn square on, and a metre of depth is drawn `ratio` long at `angle` degrees on screen (0 right, 90 up). Not valid with `elevation`. */
+  oblique?: string | BakeOblique;
   /** `true` also writes `contact.png`, the sheet scaled 4 times with a grey gutter between cells, for review; `false` is the same as unset. */
   contactSheet?: boolean;
   /** `true` also writes `viewer.html`, a page that plays the baked loop from `sheet.png` beside it, after every other file; `false` is the same as unset. */
@@ -86,7 +102,7 @@ export interface BakeOptions {
 export interface BakeSettings {
   clip: string; directions: number; phases: number; cell: number; out?: string;
   /** Each of these is set only when the matching option was given. */
-  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: 'feet'; pixelsPerMetre?: number; elevation?: number; contactSheet?: true; viewer?: true;
+  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: BakeAnchor; pixelsPerMetre?: number; elevation?: number; azimuth?: number; oblique?: BakeOblique; contactSheet?: true; viewer?: true;
 }
 export interface BakeResult {
   /** Absolute output folder. */
@@ -126,6 +142,30 @@ function elevationOption(value: unknown): number {
   return number;
 }
 
+/** The start azimuth as a number of degrees: a finite number, or text of an optional sign, digits and an optional fraction, from -360 to 360. */
+function azimuthOption(value: unknown): number {
+  const [min, max] = BAKE_AZIMUTH_LIMITS;
+  const number = typeof value === 'number' ? value : typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : Number.NaN;
+  if (!(number >= min && number <= max)) throw code(`--azimuth must be a number of degrees from ${min} to ${max}, got ${String(value)}`, 'CLI_ARGUMENT_ERROR');
+  return number;
+}
+
+/** The oblique view as two numbers: text `"<angle>,<ratio>"` or an object, the angle from 0 to 360 degrees and the ratio from 0.01 to 2. */
+function obliqueOption(value: unknown): BakeOblique {
+  const { angle: [angleMin, angleMax], ratio: [ratioMin, ratioMax] } = BAKE_OBLIQUE_LIMITS;
+  let angleDeg = Number.NaN, ratio = Number.NaN;
+  if (typeof value === 'string') {
+    const match = /^(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)$/.exec(value.trim());
+    if (match) { angleDeg = Number(match[1]); ratio = Number(match[2]); }
+  } else if (value && typeof value === 'object') {
+    const given = value as { angleDeg?: unknown; ratio?: unknown };
+    if (typeof given.angleDeg === 'number' && typeof given.ratio === 'number') { angleDeg = given.angleDeg; ratio = given.ratio; }
+  }
+  if (!(angleDeg >= angleMin && angleDeg <= angleMax && ratio >= ratioMin && ratio <= ratioMax))
+    throw code(`--oblique must be <angle>,<ratio>: the screen angle of the depth axis in degrees from ${angleMin} to ${angleMax} and the drawn length of a metre of depth from ${ratioMin} to ${ratioMax} (45,0.5 is a cabinet view), got ${typeof value === 'string' ? value : JSON.stringify(value) ?? String(value)}`, 'CLI_ARGUMENT_ERROR');
+  return { angleDeg, ratio };
+}
+
 /** Check the command's options before any file or browser is touched. Raises `CLI_ARGUMENT_ERROR`. */
 export function parseBakeOptions(options: BakeOptions): BakeSettings {
   if (typeof options.clip !== 'string' || !options.clip) throw code('--clip <name> is required', 'CLI_ARGUMENT_ERROR');
@@ -158,6 +198,11 @@ export function parseBakeOptions(options: BakeOptions): BakeSettings {
   }
   if (options.pixelsPerMetre !== undefined) settings.pixelsPerMetre = pixelsPerMetreOption(options.pixelsPerMetre);
   if (options.elevation !== undefined) settings.elevation = elevationOption(options.elevation);
+  if (options.azimuth !== undefined) settings.azimuth = azimuthOption(options.azimuth);
+  if (options.oblique !== undefined) {
+    settings.oblique = obliqueOption(options.oblique);
+    if (settings.elevation !== undefined) throw code(`--oblique draws the model from level, so it cannot be combined with --elevation (got --elevation ${settings.elevation}). Leave --elevation out; the oblique angle and ratio place the depth axis.`, 'CLI_ARGUMENT_ERROR');
+  }
   if (options.contactSheet !== undefined && typeof options.contactSheet !== 'boolean') throw code(`--contact-sheet takes no value (contactSheet is true or false), got ${String(options.contactSheet)}`, 'CLI_ARGUMENT_ERROR');
   if (options.contactSheet) {
     const { width, height } = contactSize(settings);
@@ -168,8 +213,8 @@ export function parseBakeOptions(options: BakeOptions): BakeSettings {
   if (options.viewer !== undefined && typeof options.viewer !== 'boolean') throw code(`--viewer takes no value (viewer is true or false), got ${String(options.viewer)}`, 'CLI_ARGUMENT_ERROR');
   if (options.viewer) settings.viewer = true;
   if (options.anchor !== undefined) {
-    if (options.anchor !== 'feet') throw code(`--anchor must be feet, got ${options.anchor}`, 'CLI_ARGUMENT_ERROR');
-    settings.anchor = 'feet';
+    if (!(BAKE_ANCHORS as readonly string[]).includes(options.anchor)) throw code(`--anchor must be feet or origin, got ${options.anchor}`, 'CLI_ARGUMENT_ERROR');
+    settings.anchor = options.anchor as BakeAnchor;
   }
   return settings;
 }
@@ -189,6 +234,34 @@ export function feetPivot(input: { cell: number; elevationDeg: number; halfExten
   const x = Math.floor(cell / 2), y = Math.floor(cell / 2 * (1 + down / halfExtentM));
   if (!(x >= 0 && x < cell && y >= 0 && y < cell))
     throw code(`The feet pivot falls at ${x}, ${y}, outside the ${cell} by ${cell} cell, so --anchor feet cannot place it. Raise --cell or leave --anchor out.`, 'BAKE_ANCHOR_OUTSIDE');
+  return { x, y };
+}
+
+/**
+ * Where a point of the model lands in a cell, for any camera the bake can set: `pointM` and `centreM` in metres, the camera
+ * looking at `centreM` from `azimuthDeg` (from +Z toward +X). With `oblique` the camera is level and a metre of depth behind
+ * the centre moves the point `ratio` metres along the screen angle; otherwise the camera sits `elevationDeg` above the horizon.
+ * `frameCentreM` is where the middle of the frame sits, across and up from the picture of `centreM` (an oblique bake centres
+ * the frame on the picture of the model; default 0, 0).
+ * The pixel is the one whose sample is nearest, as in `feetPivot`. Raises `BAKE_ANCHOR_OUTSIDE` when it is outside the cell.
+ */
+export function anchorPivot(input: { cell: number; halfExtentM: number; elevationDeg: number; azimuthDeg: number; oblique?: BakeOblique; centreM: readonly number[]; pointM: readonly number[]; frameCentreM?: readonly number[]; name?: string }): SlicePivot {
+  const { cell, halfExtentM, centreM, pointM } = input;
+  const az = input.azimuthDeg * Math.PI / 180, el = input.elevationDeg * Math.PI / 180;
+  const v = [pointM[0] - centreM[0], pointM[1] - centreM[1], pointM[2] - centreM[2]];
+  const right = v[0] * Math.cos(az) - v[2] * Math.sin(az);
+  // How far the point is behind the centre, along the level direction the camera looks in.
+  const behind = -(v[0] * Math.sin(az) + v[2] * Math.cos(az));
+  let across = right, up: number;
+  if (input.oblique) {
+    const angle = input.oblique.angleDeg * Math.PI / 180;
+    across += behind * input.oblique.ratio * Math.cos(angle);
+    up = v[1] + behind * input.oblique.ratio * Math.sin(angle);
+  } else up = v[1] * Math.cos(el) + behind * Math.sin(el);
+  const [frameX, frameY] = input.frameCentreM ?? [0, 0];
+  const x = Math.floor(cell / 2 * (1 + (across - frameX) / halfExtentM)), y = Math.floor(cell / 2 * (1 - (up - frameY) / halfExtentM));
+  if (!(x >= 0 && x < cell && y >= 0 && y < cell))
+    throw code(`The ${input.name ?? 'anchor'} pivot falls at ${x}, ${y}, outside the ${cell} by ${cell} cell, so --anchor ${input.name ?? 'origin'} cannot place it. Raise --cell or leave --anchor out.`, 'BAKE_ANCHOR_OUTSIDE');
   return { x, y };
 }
 
@@ -228,12 +301,20 @@ export function touchesBorder(cellRgba: Uint8Array, cell: number): boolean {
   return false;
 }
 
-interface Fit { centre: [number, number, number]; distance: number; half: number; groundY: number; durationSeconds: number }
+/** `frames` is set by an oblique bake only: for each direction, where the middle of the frame sits across and up from the picture of `centre`. */
+interface Fit { centre: [number, number, number]; distance: number; half: number; groundY: number; durationSeconds: number; frames?: [number, number][] }
+interface MatrixLike { clone(): MatrixLike; set(...values: number[]): MatrixLike; multiply(other: MatrixLike): MatrixLike; copy(other: MatrixLike): MatrixLike; invert(): MatrixLike }
+interface VectorLike { x: number; y: number; z: number; applyMatrix4(matrix: unknown): VectorLike }
+interface MeshLike { isMesh?: boolean; visible: boolean; matrixWorld: unknown; geometry?: { attributes: { position?: { count: number } } }; getVertexPosition(index: number, target: VectorLike): VectorLike }
 interface ViewerLike {
   duration: number;
-  bounds(): { min: { y: number; distanceTo(v: unknown): number; clone(): unknown }; max: unknown; getCenter(target: unknown): { toArray(): number[] } };
-  camera: { top: number; bottom: number; left: number; right: number; zoom: number; near: number; far: number; updateProjectionMatrix(): void };
+  bounds(): { min: { y: number; distanceTo(v: unknown): number; clone(): VectorLike; toArray(): number[] }; max: { toArray(): number[] }; getCenter(target: unknown): { toArray(): number[] } };
+  camera: {
+    top: number; bottom: number; left: number; right: number; zoom: number; near: number; far: number; updateProjectionMatrix(): void;
+    projectionMatrix: MatrixLike; projectionMatrixInverse: MatrixLike;
+  };
   view(spec: { position: number[]; target: number[] }): void;
+  scene: { updateMatrixWorld(force?: boolean): void; traverse(visit: (object: MeshLike) => void): void };
   frame(padding: number): void;
   play(name: string): void; pause(): void; seek(time: number): void;
   screenshot(): string;
@@ -259,7 +340,10 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   assertSheetSpec({ cell, directions, phases, clipDurationMs: nodeDuration * 1000 });
   const output = resolve(settings.out ?? join(dirname(source), `${basename(source, extname(source))}-sprites`));
   const render = cell * BAKE_SUPERSAMPLE;
-  const elevation = settings.elevation ?? BAKE_ELEVATION_DEG;
+  // An oblique view is drawn from level: the depth axis is placed by the shear, not by raising the camera.
+  const oblique = settings.oblique ?? null;
+  const elevation = oblique ? 0 : settings.elevation ?? BAKE_ELEVATION_DEG;
+  const azimuth = settings.azimuth ?? 0;
 
   const work = await mkdtemp(join(tmpdir(), 'agent-meshes-bake-'));
   let cells: Buffer[] = [];
@@ -279,36 +363,75 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
       // Fit once, at rest: the largest square half extent over every direction, with the camera a fixed distance out.
       // With a set scale the half extent is not fitted: the frame spans `cell` pixels at `pixelsPerMetre`, with no padding.
       const setHalf = settings.pixelsPerMetre === undefined ? null : cell / (2 * settings.pixelsPerMetre);
-      fit = await page.evaluate(({ directions, elevation, padding, setHalf }) => {
+      fit = await page.evaluate(({ directions, elevation, azimuth, oblique, padding, setHalf }) => {
         const v = (window as unknown as { viewer: ViewerLike }).viewer;
         const box = v.bounds(), centre = box.getCenter(box.min.clone());
         const diagonal = Math.max(box.min.distanceTo(box.max), 1e-3), distance = diagonal * 2, c = centre.toArray();
-        const el = elevation * Math.PI / 180;
+        const el = elevation * Math.PI / 180, start = azimuth * Math.PI / 180;
+        const shearX = oblique ? oblique.ratio * Math.cos(oblique.angleDeg * Math.PI / 180) : 0, shearY = oblique ? oblique.ratio * Math.sin(oblique.angleDeg * Math.PI / 180) : 0;
         let half = 0;
-        for (let k = 0; setHalf === null && k < directions; k++) {
-          const az = k / directions * 2 * Math.PI;
-          v.view({ position: [c[0] + Math.sin(az) * Math.cos(el) * distance, c[1] + Math.sin(el) * distance, c[2] + Math.cos(az) * Math.cos(el) * distance], target: c });
-          v.frame(padding);
-          half = Math.max(half, v.camera.top);
+        // An oblique picture is not centred on the picture of the box centre: a tall part at one end pulls it to a side.
+        // So the frame of each direction is centred on the picture of the model itself at rest, vertex by vertex.
+        const frames: [number, number][] = [];
+        const points: number[] = [];
+        if (oblique) {
+          const at = box.min.clone();
+          v.scene.updateMatrixWorld(true);
+          v.scene.traverse(object => {
+            const count = object.isMesh && object.visible ? object.geometry?.attributes.position?.count ?? 0 : 0;
+            for (let i = 0; i < count; i++) { object.getVertexPosition(i, at).applyMatrix4(object.matrixWorld); points.push(at.x - c[0], at.y - c[1], at.z - c[2]); }
+          });
+        }
+        for (let k = 0; k < directions && (oblique || setHalf === null); k++) {
+          const az = start + k / directions * 2 * Math.PI;
+          if (oblique) {
+            let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+            for (let i = 0; i < points.length; i += 3) {
+              const behind = -(points[i] * Math.sin(az) + points[i + 2] * Math.cos(az));
+              const across = points[i] * Math.cos(az) - points[i + 2] * Math.sin(az) + behind * shearX, up = points[i + 1] + behind * shearY;
+              x0 = Math.min(x0, across); x1 = Math.max(x1, across); y0 = Math.min(y0, up); y1 = Math.max(y1, up);
+            }
+            if (!points.length) x0 = x1 = y0 = y1 = 0;
+            frames.push([Math.round((x0 + x1) / 2 * 1e6) / 1e6, Math.round((y0 + y1) / 2 * 1e6) / 1e6]);
+            if (setHalf === null) half = Math.max(half, (x1 - x0) / 2 * padding, (y1 - y0) / 2 * padding, 1e-3);
+          } else {
+            v.view({ position: [c[0] + Math.sin(az) * Math.cos(el) * distance, c[1] + Math.sin(el) * distance, c[2] + Math.cos(az) * Math.cos(el) * distance], target: c });
+            v.frame(padding);
+            half = Math.max(half, v.camera.top);
+          }
         }
         if (setHalf !== null) half = setHalf;
         const camera = v.camera;
         camera.zoom = 1; camera.top = half; camera.bottom = -half; camera.left = -half; camera.right = half;
         camera.near = distance * 0.05; camera.far = distance * 3;
         camera.updateProjectionMatrix();
-        return { centre: c as [number, number, number], distance, half, groundY: box.min.y, durationSeconds: 0 };
-      }, { directions, elevation, padding: BAKE_PADDING, setHalf });
+        if (oblique) {
+          // Shear view space about the plane through the centre (z = -distance): a point `d` behind it moves d * ratio along
+          // the screen angle. The shear is part of the projection, so normals, and with them the lighting, are untouched.
+          const refresh = camera.updateProjectionMatrix.bind(camera);
+          const shear = camera.projectionMatrix.clone().set(1, 0, -shearX, -shearX * distance, 0, 1, -shearY, -shearY * distance, 0, 0, 1, 0, 0, 0, 0, 1);
+          const apply = () => { refresh(); camera.projectionMatrix.multiply(shear); camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert(); };
+          camera.updateProjectionMatrix = apply;
+          apply();
+        }
+        return { centre: c as [number, number, number], distance, half, groundY: box.min.y, durationSeconds: 0, ...(oblique ? { frames } : {}) };
+      }, { directions, elevation, azimuth, oblique, padding: BAKE_PADDING, setHalf });
       fit.durationSeconds = await page.evaluate(name => { const v = (window as unknown as { viewer: ViewerLike }).viewer; v.play(name); v.pause(); return v.duration; }, clip);
       if (!(fit.durationSeconds > 0)) throw code(`Clip ${clip} has zero duration, so there are no phases to bake`, 'BAKE_CLIP_EMPTY');
       cells = [];
       for (let d = 0; d < directions; d++) for (let p = 0; p < phases; p++) {
-        const url = await page.evaluate(({ d, p, directions, phases, elevation, centre, distance }) => {
+        const url = await page.evaluate(({ d, p, directions, phases, elevation, azimuth, centre, distance, half, frame }) => {
           const v = (window as unknown as { viewer: ViewerLike }).viewer;
-          const az = d / directions * 2 * Math.PI, el = elevation * Math.PI / 180;
+          const az = azimuth * Math.PI / 180 + d / directions * 2 * Math.PI, el = elevation * Math.PI / 180;
+          if (frame) {
+            const camera = v.camera;
+            camera.left = frame[0] - half; camera.right = frame[0] + half; camera.bottom = frame[1] - half; camera.top = frame[1] + half;
+            camera.updateProjectionMatrix();
+          }
           v.seek(v.duration * p / phases);
           v.view({ position: [centre[0] + Math.sin(az) * Math.cos(el) * distance, centre[1] + Math.sin(el) * distance, centre[2] + Math.cos(az) * Math.cos(el) * distance], target: centre });
           return v.screenshot();
-        }, { d, p, directions, phases, elevation, centre: fit.centre, distance: fit.distance });
+        }, { d, p, directions, phases, elevation, azimuth, centre: fit.centre, distance: fit.distance, half: fit.half, frame: fit.frames?.[d] ?? null });
         const image = decodePng(Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'));
         if (image.width !== render || image.height !== render) throw code(`The render for direction ${d}, phase ${p} is ${image.width} by ${image.height}, not ${render} by ${render}`, 'BAKE_RENDER_FAILED');
         const reduced = reduceCell(image.rgba, cell);
@@ -327,8 +450,16 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const spec: SheetSpec = { cell, directions, phases, clipDurationMs: Number((fit.durationSeconds * 1000).toFixed(3)) };
   const round = (value: number) => Math.round(value * 1e6) / 1e6;
   // The pivot comes from the same rounded numbers the manifest records, so it can be recomputed from the manifest alone.
-  const pivot = settings.anchor ? feetPivot({ cell, elevationDeg: elevation, halfExtentM: round(fit.half), centreYM: round(fit.centre[1]), groundYM: round(fit.groundY) }) : undefined;
-  const atlas = buildAtlas(spec, pivot);
+  // With the camera on the vertical axis through the centre, the feet are the same pixel in every direction. The origin is
+  // not on that axis, and an oblique frame is centred per direction, so those pivots are worked out for each direction.
+  const centreM = fit.centre.map(round), perDirection = settings.anchor === 'origin' || (settings.anchor === 'feet' && oblique !== null);
+  const feet = settings.anchor === 'feet' && !oblique ? feetPivot({ cell, elevationDeg: elevation, halfExtentM: round(fit.half), centreYM: centreM[1], groundYM: round(fit.groundY) }) : undefined;
+  const each = perDirection ? Array.from({ length: directions }, (_, k) => anchorPivot({
+    cell, halfExtentM: round(fit.half), elevationDeg: elevation, azimuthDeg: azimuth + k * 360 / directions, oblique: oblique ?? undefined, centreM, frameCentreM: fit.frames?.[k],
+    pointM: settings.anchor === 'origin' ? [0, 0, 0] : [centreM[0], round(fit.groundY), centreM[2]], name: settings.anchor,
+  })) : undefined;
+  const pivot = feet ?? each?.[0];
+  const atlas = buildAtlas(spec, each ?? feet);
   const width = phases * cell, height = directions * cell, sheet = Buffer.alloc(width * height * 4);
   cells.forEach((pixels, i) => {
     const row = Math.floor(i / phases), column = i % phases;
@@ -344,13 +475,13 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   const manifest = buildManifest({
     model: { sha256: sha256(glb) }, clip: { name: clip, durationMs: spec.clipDurationMs }, directions, phases, cell,
-    camera: { projection: 'orthographic', elevationDeg: elevation, padding: BAKE_PADDING, supersample: BAKE_SUPERSAMPLE, halfExtentM: round(fit.half), distanceM: round(fit.distance), centreM: fit.centre.map(round), ...(settings.pixelsPerMetre !== undefined ? { pixelsPerMetre: settings.pixelsPerMetre } : {}), ...(pivot ? { groundYM: round(fit.groundY) } : {}) },
+    camera: { projection: oblique ? 'oblique' : 'orthographic', elevationDeg: elevation, ...(settings.azimuth !== undefined ? { azimuthDeg: azimuth } : {}), ...(oblique ? { obliqueAngleDeg: oblique.angleDeg, obliqueRatio: oblique.ratio, frameCentreM: (fit.frames ?? []).flat() } : {}), padding: BAKE_PADDING, supersample: BAKE_SUPERSAMPLE, halfExtentM: round(fit.half), distanceM: round(fit.distance), centreM: fit.centre.map(round), ...(settings.pixelsPerMetre !== undefined ? { pixelsPerMetre: settings.pixelsPerMetre } : {}), ...(settings.anchor === 'feet' ? { groundYM: round(fit.groundY) } : {}) },
     sheetSha256, atlasSha256, pluginVersion: version,
     ...(settings.look !== undefined ? { look: settings.look } : {}),
     ...(settings.bands !== undefined ? { bands: settings.bands } : {}),
     ...(settings.palette ? { palette: paletteManifest(settings.palette) } : {}),
     ...(settings.outline ? { outline: settings.outline } : {}),
-    ...(pivot ? { anchor: { name: 'feet', x: pivot.x, y: pivot.y } } : {}),
+    ...(pivot && settings.anchor ? { anchor: { name: settings.anchor, x: pivot.x, y: pivot.y, ...(each && each.some(o => o.x !== pivot.x || o.y !== pivot.y) ? { byDirection: each.map(o => [o.x, o.y]) } : {}) } } : {}),
   });
   // The page is composed here, from the same atlas, manifest and sheet hash that are written, so a failure still writes nothing.
   const viewerHtml = settings.viewer ? composeViewer(atlas, manifest, OUTPUT_NAMES.sheet, sheetSha256) : undefined;

@@ -217,6 +217,18 @@ function startOf(tag, rel) { var s = 0; for (var i = 0; i < rel; i++) s += dur(f
 var relOf = function (tag) { return st.held !== null ? st.held % count(tag) : relAt(tag, st.t); };
 var wrap = function (i, n) { return ((i % n) + n) % n; };
 
+// A slice key holds from its frame until the next key, so a bake that anchors each direction separately has one key per
+// direction and the pivot shown follows the facing.
+var pivotKeys = (function () {
+  var slices = (atlas.meta && atlas.meta.slices) || [], slice = slices.filter(function (s) { return s.name === 'pivot'; })[0] || slices[0];
+  return ((slice && slice.keys) || []).filter(function (k) { return k && k.pivot && isFinite(k.pivot.x) && isFinite(k.pivot.y); }).sort(function (a, b) { return a.frame - b.frame; });
+})();
+function pivotFor(index) {
+  var found = pivot;
+  for (var i = 0; i < pivotKeys.length; i++) if (pivotKeys[i].frame <= index) found = pivotKeys[i].pivot;
+  return found;
+}
+
 function drawCell(canvas, index, overlayPivot) {
   var f = frames[index];
   if (!f) return;
@@ -227,6 +239,7 @@ function drawCell(canvas, index, overlayPivot) {
   x.clearRect(0, 0, w, h);
   x.imageSmoothingEnabled = false;
   if (ready) x.drawImage(img, fr.x, fr.y, fr.w, fr.h, 0, 0, w, h);
+  var pivot = pivotFor(index);
   if (overlayPivot && pivot && st.pivotOn) {
     x.fillStyle = '#d8e7a1'; x.fillRect(pivot.x * st.scale - 1, pivot.y * st.scale - 1, st.scale + 2, st.scale + 2);
     x.fillStyle = '#2e4be8'; x.fillRect(pivot.x * st.scale, pivot.y * st.scale, st.scale, st.scale);
@@ -235,6 +248,7 @@ function drawCell(canvas, index, overlayPivot) {
 
 var pivotEl = null;
 function syncPivot() {
+  var pivot = pivotFor(refTag().from);
   var want = pivot && st.pivotOn && st.facing !== 'all';
   if (!want) { if (pivotEl) { pivotEl.remove(); pivotEl = null; } return; }
   if (!pivotEl) { pivotEl = make('span', 'pivot'); pivotEl.setAttribute('data-role', 'pivot'); pivotEl.setAttribute('aria-hidden', 'true'); spriteBox.appendChild(pivotEl); }

@@ -13,7 +13,7 @@ import { applyOperation, createProject } from '../src/core/model.ts';
 import type { Clip, Project } from '../src/core/types.ts';
 import { exportGLB } from '../src/export.ts';
 import { decodePng } from '../src/png.ts';
-import type { Atlas, SpriteManifest } from '../src/sprite-atlas.ts';
+import { buildAtlas, type Atlas, type SpriteManifest } from '../src/sprite-atlas.ts';
 import { bakeSprites } from '../src/sprite-bake.ts';
 import { composeViewer, jsonForScript } from '../src/sprite-viewer.ts';
 
@@ -254,6 +254,22 @@ describe('the viewer plays a baked loop from file://', () => {
       await page.selectOption(role('facing'), 'dir-0');
       expect(await page.locator(role('strips')).isVisible()).toBe(true);
       expect(await page.locator(role('facing-tile')).count()).toBe(0);
+    } finally { await context.close(); }
+  }, 60_000);
+
+  it('follows the facing when the pivot slice has a key for each direction', async () => {
+    // The plain bake's sheet under an atlas whose pivot moves one pixel right with every direction, as --anchor origin writes it.
+    const { cell, directions, phases } = plain.manifest;
+    const pivots = Array.from({ length: directions }, (_, k) => ({ x: 10 + k, y: 20 }));
+    const atlas = buildAtlas({ cell, directions, phases, clipDurationMs: plain.manifest.clip.durationMs }, pivots);
+    const shown = await writeShown(join(root, 'page-turning'), composeViewer(atlas, plain.manifest, 'sheet.png', plain.sheetSha256), join(plain.dir, 'sheet.png'));
+    const { page, context } = await open(shown);
+    try {
+      for (const k of [0, 5, 7]) {
+        await page.selectOption(role('facing'), `dir-${k}`);
+        await page.waitForFunction(x => document.querySelector('[data-role="pivot"]')?.getAttribute('data-x') === String(x), 10 + k);
+        expect(await page.locator(role('pivot')).getAttribute('data-y')).toBe('20');
+      }
     } finally { await context.close(); }
   }, 60_000);
 
