@@ -422,9 +422,40 @@ describe('agent-meshes bake with --oblique, --azimuth and --anchor origin', () =
     expect(await readdir(dir).catch(() => [])).toEqual([]);
   }, 60_000);
 
+  it('takes an azimuth past a full turn and a negative one, and records the wrapped angle', async () => {
+    for (const [value, wrapped] of [['432', 72], ['-90', 270]] as const) {
+      const dir = outDir();
+      const outcome = await bake(glbPath, '--clip', 'sway', '--directions', '1', '--phases', '1', '--azimuth', value, '--out', dir);
+      expect(outcome.code, outcome.stderr || outcome.stdout).toBe(0);
+      expect(JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8')).camera.azimuthDeg, value).toBe(wrapped);
+    }
+  }, 120_000);
+
+  it('bakes a --yaws list as one row for each angle, with no --directions given', async () => {
+    const dir = outDir();
+    const outcome = await bake(glbPath, '--clip', 'sway', '--phases', '2', '--cell', '32', '--yaws', '-90,0,45', '--out', dir);
+    expect(outcome.code, outcome.stderr || outcome.stdout).toBe(0);
+    expect(JSON.parse(outcome.stdout)).toMatchObject({ size: { w: 64, h: 96 }, frames: 6 });
+    const manifest = JSON.parse(await readFile(join(dir, 'manifest.json'), 'utf8'));
+    expect(manifest).toMatchObject({ directions: 3, camera: { yawsDeg: [270, 0, 45] } });
+    const sheet = decodePng(await readFile(join(dir, 'sheet.png')));
+    expect([sheet.width, sheet.height]).toEqual([64, 96]);
+  }, 120_000);
+
+  it('refuses --yaws with --directions or --azimuth, and a list that is not angles, before Chromium starts', async () => {
+    for (const [extra, message] of [[['--yaws', '0,90', '--directions', '2'], /cannot be combined with --directions \(got --directions 2\)/], [['--yaws', '0,90', '--azimuth', '10'], /cannot be combined with --azimuth/], [['--yaws', '0,north'], /^--yaws must be a comma-separated list of 1 to 32 finite numbers of degrees/]] as const) {
+      const dir = outDir();
+      const outcome = await bake(glbPath, '--clip', 'sway', ...extra, '--out', dir);
+      expect(outcome.code).toBe(1);
+      expect(failure(outcome).error.code).toBe('CLI_ARGUMENT_ERROR');
+      expect(failure(outcome).error.message).toMatch(message);
+      expect(await list(dir)).toEqual([]);
+    }
+  }, 120_000);
+
   it('documents the three in --help', async () => {
     const help = (await run(process.execPath, [script, 'bake', '--help'])).stdout.replace(/\s+/g, ' ');
-    for (const text of ['--azimuth <degrees>', 'from -360 to 360', '--oblique <angle,ratio>', 'cabinet view', 'camera.obliqueAngleDeg', 'Not valid with --elevation', 'or origin, the model origin', 'an integer from 8 to 512']) expect(help).toContain(text);
+    for (const text of ['--azimuth <degrees>', 'wrapped into 0 to 360, so 432 is 72', '--yaws <list>', 'camera.yawsDeg', 'Not valid with --directions or --azimuth', '--oblique <angle,ratio>', 'cabinet view', 'camera.obliqueAngleDeg', 'Not valid with --elevation', 'or origin, the model origin', 'an integer from 8 to 512']) expect(help).toContain(text);
   }, 60_000);
 });
 

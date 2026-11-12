@@ -17,6 +17,8 @@ mesh bake knight.glb --clip walk --cell 64 --pixels-per-metre 32 --anchor feet -
 mesh bake knight.glb --clip walk --viewer
 mesh bake knight.glb --clip walk --elevation 30 --pixels-per-metre 32 --cell 64 --anchor feet
 mesh bake house.glb --clip idle --directions 1 --azimuth 270 --oblique 45,0.5 --pixels-per-metre 20 --cell 512 --anchor origin
+mesh bake cart.glb --clip idle --yaws 0,270,315 --oblique 45,0.5 --anchor origin
+mesh bake-batch art/bakes.json
 ```
 
 The README section "Sprite bake" lists the flags, defaults, ranges, output files and error codes; `mesh bake --help`
@@ -92,15 +94,16 @@ they look as if they stand more upright than the floor they walk on.
 - **Not reviewed.** The `banded` key light stays fixed to the camera, up and to the left, at every elevation; how its
   bands read from a steep camera has not been judged.
 
-## Oblique view, start azimuth, origin pivot and large cells
+## Oblique view, start azimuth, chosen yaws, origin pivot and large cells
 
 Use these when a 2D game draws its world in an oblique projection (walls square on, the ground running off at a slant),
-when it needs one chosen facing, or when a building is larger than a character cell.
+when it needs one chosen facing or a few uneven ones, or when a building is larger than a character cell.
 
 | Flag | Values | Default |
 | --- | --- | --- |
 | `--oblique <angle,ratio>` | angle 0 to 360 degrees, ratio 0.01 to 2; not with `--elevation` | none |
-| `--azimuth <degrees>` | -360 to 360, from +Z toward +X | 0 |
+| `--azimuth <degrees>` | any finite angle from +Z toward +X, wrapped into 0 to 360 | 0 |
+| `--yaws <list>` | 1 to 32 different angles separated by commas; not with `--directions` or `--azimuth` | none |
 | `--anchor origin` | the model origin (0, 0, 0) as the pivot | none |
 | `--cell <pixels>` | 8 to 512 | 48 |
 
@@ -113,7 +116,15 @@ when it needs one chosen facing, or when a building is larger than a character c
   still uses the whole cell. `camera.frameCentreM` in the manifest holds, for each direction, where the middle of the
   frame sits across and up from the picture of `camera.centreM`.
 - **Azimuth.** Direction `k` looks from `azimuth + k * 360 / directions` degrees. For one facing use `--directions 1`
-  and the azimuth of the side the camera stands on: 0 is +Z, 90 is +X, 180 is -Z, 270 is -X.
+  and the azimuth of the side the camera stands on: 0 is +Z, 90 is +X, 180 is -Z, 270 is -X. Any finite angle is taken
+  and wrapped into 0 to 360, so an angle computed from a placement (`270 - heading`, which can pass 360 or go below 0)
+  needs no wrapping by the caller: `432` bakes as 72 and `-90` as 270, and `camera.azimuthDeg` records the wrapped
+  angle.
+- **Yaws.** `--yaws 0,270,315` bakes a chosen list of directions as the rows of one sheet, for a game that needs a
+  few unrelated facings and not an even ring. Row `k` and tag `dir-k` are the `k`-th angle; the camera is fitted once
+  over the listed directions, so the rows share one scale. Each angle is wrapped into 0 to 360 and the same direction
+  twice is refused. The manifest records `camera.yawsDeg` and `directions` as the length of the list. Do not also pass
+  `--directions` or `--azimuth`.
 - **Origin pivot.** `--anchor origin` gives the pixel of the model origin, which is what a game uses when it places a
   building by the point it was modelled around. Off the centre axis the pixel differs per direction: read the slice key
   of that direction's first frame, or `anchor.byDirection` in the manifest. With `--oblique`, `--anchor feet` is also
@@ -121,8 +132,60 @@ when it needs one chosen facing, or when a building is larger than a character c
 - **Large cells.** A cell renders at 8 times its edge, so `--cell 512` is a 4096 pixel render and takes about four times
   as long as 256. At 20 pixels a metre a 512 cell holds a picture 25.6 m across. Prefer the smallest cell the largest
   model of a set fits, with one `--pixels-per-metre` for the whole set.
-- **Not verified.** An oblique bake of a skinned character through a whole walk cycle, and `--oblique` with `--look lit`
-  (the room lighting), were not looked at: only rigid models under the banded look were.
+- **Skinned characters and the room lighting.** An oblique bake of a skinned character through a walk cycle and
+  `--oblique` with `--look lit` are both covered by tests and were looked at: the skin is sheared with the rest of the
+  picture in every phase, and `lit` gives the same silhouettes as `unlit` with the room's shading. Under `lit` the
+  shading is that of the level camera the oblique view is drawn from; the shear moves pixels and does not turn the light.
+- **Not built.** Cells are square: a wide, low model still pays for a square cell. A straight-down view (90 degrees)
+  is refused.
+
+## Bake many models in one run
+
+`bake-batch <list.json>` bakes a list of models in one process and one browser. Use it whenever a project bakes more
+than a handful of sheets: every `bake` command starts Node and Chromium and bundles the viewer script, and a long loop
+of them can outlast a shell time limit. Each entry writes exactly the files `bake` writes for the same model and
+options, byte for byte, as soon as it finishes.
+
+```json
+{
+  "version": 1,
+  "defaults": { "cell": 96, "look": "banded", "pixelsPerMetre": 24, "anchor": "feet" },
+  "bakes": [
+    { "glb": "models/knight.glb", "clip": "walk", "out": "sprites/knight-walk" },
+    { "glb": "models/knight.glb", "clip": "attack", "out": "sprites/knight-attack", "phases": 12 },
+    { "glb": "models/cart.glb", "clip": "idle", "out": "sprites/cart", "yaws": [0, 270, 315], "anchor": "origin" }
+  ]
+}
+```
+
+- **Names.** An entry takes `glb`, `clip`, `out` and the options of `bake` in camel case: `directions`, `phases`,
+  `cell`, `palette`, `outline`, `look`, `bands`, `anchor`, `pixelsPerMetre`, `elevation`, `azimuth`, `yaws`,
+  `oblique`, `contactSheet`, `viewer`. An unknown key is refused, so a misspelt option cannot be silently ignored.
+- **Defaults.** `defaults` fills in what an entry leaves out. An entry sets an option to `null` to drop a default:
+  an entry with `yaws` under defaults that set `directions` writes `"directions": null`, and an entry with
+  `elevation` under defaults that set `oblique` writes `"oblique": null`.
+- **Paths.** `glb`, `out` and `palette` are read from the folder of the list file. `out` defaults to
+  `<glb name>-sprites` beside the GLB, and two entries may not write to one folder, so give every clip of a model its
+  own `out`.
+- **Before the browser.** The list and every entry's options are checked first. `BAKE_LIST_INVALID` (the list) or
+  `CLI_ARGUMENT_ERROR` (an option, with the entry named) refuses the whole list and nothing is baked.
+- **A failed entry.** A missing GLB, `CLIP_NOT_FOUND`, `BAKE_CELL_CLIPPED` and the other bake errors are recorded
+  for that entry, which writes nothing; the rest still run and the command exits 1. Read `bakes[].error` in the
+  summary, fix those entries and run the same command again.
+- **Resume.** An entry is skipped when its folder already holds the same bake: a manifest written by this plugin
+  version for a model with the same SHA-256 and the same options, with a sheet and atlas that still match the hashes
+  it records. Run the same command again after a time-out and it carries on where it stopped; change a model or an
+  option and only those entries bake. `--force` bakes everything. Do not write a resume of your own around it. After
+  a plugin update every entry bakes once more, because the manifest records the version.
+- **Output.** One JSON line per finished entry on stderr (`bake`, `of`, `status`, `glb`, `clip`, `output`, `ms`,
+  and `error` when it failed) and one summary line on stdout (`ok`, `total`, `baked`, `skipped`, `failed`, `ms`,
+  `bakes`). In a shell with a time limit, run it in the background or run it again until `failed` is 0 and `baked`
+  is 0.
+- **Measured.** Twelve bakes of a 36-part skinned character (one direction, four phases, 96 pixel cells) took 46 s as
+  twelve `bake` commands and 27 s as one batch on one machine: 3.8 s against 2.2 s a model. The saving is a fixed
+  start-up cost per model, so it is largest for many small bakes and small for a few 512 pixel ones.
+- **Still looking.** A batch does not replace looking at the sheets. Set `"contactSheet": true` in `defaults` and
+  read the contact sheets of at least the models that changed.
 
 ## Sprite scale
 
@@ -283,7 +346,10 @@ Every bake error is a JSON error with a `code`:
 - `BAKE_ANCHOR_OUTSIDE`: the `--anchor` pivot falls outside the cell. Raise `--cell` or leave `--anchor` out.
 - `CLI_ARGUMENT_ERROR`: a bad flag value, checked before Chromium starts; see "Argument errors" above. It also covers a
   `--pixels-per-metre` outside 1 to 1024 or not a number, an `--elevation` outside 0 to 89 or not a number, a `--contact-sheet` image over 134,217,728 pixels, and a value
-  given to `--viewer`.
+  given to `--viewer`, an `--azimuth` that is not a finite number, and a `--yaws` list that is not 1 to 32 different
+  angles or is combined with `--directions` or `--azimuth`.
+- `BAKE_LIST_INVALID`: the list file of `bake-batch` is not JSON, has the wrong `version` or an unknown key, has an
+  entry with no `glb`, or has two entries that write to one folder. Nothing is baked.
 
 ## What is guaranteed
 

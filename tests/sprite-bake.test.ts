@@ -12,7 +12,7 @@ import type { Clip, Project } from '../src/core/types.ts';
 import { exportGLB } from '../src/export.ts';
 import { readGLB } from '../src/gltf-read.ts';
 import { decodePng } from '../src/png.ts';
-import { anchorPivot, bakeClipInfo, bakeSprites, feetPivot, harness, parseBakeOptions, reduceCell, touchesBorder } from '../src/sprite-bake.ts';
+import { anchorPivot, bakeClipInfo, bakeFingerprint, bakeSprites, feetPivot, harness, manifestFingerprint, parseBakeOptions, reduceCell, touchesBorder, wrapDegrees } from '../src/sprite-bake.ts';
 import { checkAtlasContract, type Atlas } from '../src/sprite-atlas.ts';
 
 // The fixture is a small rigged figure that differs left to right (a long arm on +X, a stub on -X) and front to back
@@ -775,12 +775,49 @@ describe('a bake with a set elevation', () => {
 });
 
 describe('the azimuth, oblique and origin options are checked before Chromium starts', () => {
-  it('accepts a start azimuth from -360 to 360 as a number or numeric text and refuses anything else', () => {
-    for (const [value, expected] of [[0, 0], ['270', 270], [' -90 ', -90], ['22.5', 22.5], [360, 360], [-360, -360]] as const)
+  it('accepts any finite start azimuth as a number or numeric text, wraps it into 0 to 360 and refuses anything else', () => {
+    for (const [value, expected] of [[0, 0], ['270', 270], [' -90 ', 270], ['22.5', 22.5], [360, 0], [-360, 0], [432, 72], ['432', 72], [-162, 198], ['-1080', 0], [1e6, 280], [359.5, 359.5]] as const)
       expect(parseBakeOptions({ clip: 'sway', azimuth: value }).azimuth, JSON.stringify(value)).toBe(expected);
-    for (const value of [361, '-361', '+90', 'north', '', '1e2', '90,0', Number.NaN, true, null, {}])
-      expect(() => parseBakeOptions({ clip: 'sway', azimuth: value as number }), JSON.stringify(value) ?? String(value)).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/^--azimuth must be a number of degrees from -360 to 360, got /) }));
+    // A wrapped angle is never negative zero or 360, so the manifest never records either.
+    for (const value of [-0, -360, 720, -1e-20]) expect(Object.is(wrapDegrees(value), 0), String(value)).toBe(true);
+    for (const value of ['+90', 'north', '', '1e2', '90,0', Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, true, null, {}])
+      expect(() => parseBakeOptions({ clip: 'sway', azimuth: value as number }), JSON.stringify(value) ?? String(value)).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/^--azimuth must be a finite number of degrees \(any angle; it is wrapped into 0 to 360\), got /) }));
     expect(Object.keys(parseBakeOptions({ clip: 'sway' }))).not.toContain('azimuth');
+  });
+
+  it('accepts a list of yaws as text or numbers, wraps each, counts them as the directions and refuses a bad list', () => {
+    expect(parseBakeOptions({ clip: 'sway', yaws: '0,270,315' })).toMatchObject({ yaws: [0, 270, 315], directions: 3 });
+    expect(parseBakeOptions({ clip: 'sway', yaws: ' 432, -90 ,22.5' })).toMatchObject({ yaws: [72, 270, 22.5], directions: 3 });
+    expect(parseBakeOptions({ clip: 'sway', yaws: [180] })).toMatchObject({ yaws: [180], directions: 1 });
+    expect(parseBakeOptions({ clip: 'sway', yaws: Array.from({ length: 32 }, (_, k) => k) }).directions).toBe(32);
+    for (const value of ['', '0,,90', '0,north', '0;90', '1e2', [], [0, Number.NaN], [0, Number.POSITIVE_INFINITY], [0, '90x'], Array.from({ length: 33 }, (_, k) => k), 90, true, null, {}])
+      expect(() => parseBakeOptions({ clip: 'sway', yaws: value as string }), JSON.stringify(value) ?? String(value)).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/^--yaws must be a comma-separated list of 1 to 32 finite numbers of degrees/) }));
+    // The same direction twice is refused after wrapping, naming the rows.
+    expect(() => parseBakeOptions({ clip: 'sway', yaws: '0,90,360' })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/^--yaws lists the azimuth 0 twice \(rows 0 and 2 after wrapping/) }));
+    expect(() => parseBakeOptions({ clip: 'sway', yaws: [270, -90] })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/lists the azimuth 270 twice/) }));
+    expect(Object.keys(parseBakeOptions({ clip: 'sway' }))).not.toContain('yaws');
+  });
+
+  it('refuses a list of yaws together with a direction count or a start azimuth', () => {
+    expect(() => parseBakeOptions({ clip: 'sway', yaws: '0,90', directions: 2 })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/cannot be combined with --directions \(got --directions 2\)/) }));
+    expect(() => parseBakeOptions({ clip: 'sway', yaws: '0,90', azimuth: 45 })).toThrow(expect.objectContaining({ code: 'CLI_ARGUMENT_ERROR', message: expect.stringMatching(/cannot be combined with --azimuth \(got --azimuth 45\)/) }));
+  });
+
+  it('gives a bake a fingerprint that a manifest of the same model, version and options returns, and no other', () => {
+    const settings = parseBakeOptions({ clip: 'sway', yaws: '0,270', cell: 64, look: 'banded', anchor: 'origin', oblique: '45,0.5', pixelsPerMetre: 40 });
+    const print = bakeFingerprint(settings, 'a'.repeat(64), '1.2.3');
+    // A manifest as the bake writes it: the option values plus the fitted camera values, which are not part of the fingerprint.
+    const manifest = {
+      format: 'agent-meshes/sprite-bake/1', pluginVersion: '1.2.3', model: { sha256: 'a'.repeat(64) }, clip: { name: 'sway', durationMs: 1200 }, directions: 2, phases: 8, cell: 64,
+      camera: { centreM: [0, 0.5, 0], distanceM: 3, elevationDeg: 0, frameCentreM: [0, 0, 0, 0], halfExtentM: 0.8, obliqueAngleDeg: 45, obliqueRatio: 0.5, padding: 1.25, pixelsPerMetre: 40, projection: 'oblique', supersample: 8, yawsDeg: [0, 270] },
+      sheet: { file: 'sheet.png', width: 512, height: 128, sha256: 'b'.repeat(64) }, atlas: { file: 'atlas.json', frames: 16, sha256: 'c'.repeat(64) }, look: 'banded', bands: 3, anchor: { name: 'origin', x: 1, y: 2 },
+    } as Parameters<typeof manifestFingerprint>[0];
+    expect(manifestFingerprint(manifest)).toBe(print);
+    expect(bakeFingerprint(settings, 'd'.repeat(64), '1.2.3')).not.toBe(print);
+    expect(bakeFingerprint(settings, 'a'.repeat(64), '1.2.4')).not.toBe(print);
+    for (const change of [{ yaws: '0,271' }, { cell: 65 }, { look: 'unlit' }, { anchor: 'feet' }, { oblique: '45,0.6' }, { pixelsPerMetre: 41 }, { phases: 4 }, { clip: 'overreach' }])
+      expect(bakeFingerprint(parseBakeOptions({ clip: 'sway', yaws: '0,270', cell: 64, look: 'banded', anchor: 'origin', oblique: '45,0.5', pixelsPerMetre: 40, ...change }), 'a'.repeat(64), '1.2.3'), JSON.stringify(change)).not.toBe(print);
+    expect(manifestFingerprint({} as Parameters<typeof manifestFingerprint>[0])).not.toBe(print);
   });
 
   it('accepts an oblique view as angle,ratio text or as two numbers and refuses a value outside either range', () => {
@@ -841,6 +878,46 @@ describe('a bake turned by a start azimuth', () => {
     expect(row(b, 0).equals(row(a, 0))).toBe(false);
     expect(JSON.parse((await read(single)).manifest.toString('utf8')).camera.azimuthDeg).toBe(90);
     expect(Object.keys(JSON.parse((await read(ring)).manifest.toString('utf8')).camera)).not.toContain('azimuthDeg');
+  }, 120_000);
+
+  it('bakes an azimuth past a full turn as the angle it wraps to: 432 gives the three files of 72', async () => {
+    const wide = outDir(), wrapped = outDir();
+    const options = { clip: 'sway', directions: 1, phases: 2, cell: 64, anchor: 'origin' } as const;
+    await bakeSprites(glbPath, { ...options, out: wide, azimuth: 432 });
+    await bakeSprites(glbPath, { ...options, out: wrapped, azimuth: '72' });
+    const a = await read(wide), b = await read(wrapped);
+    expect(a.sheet.equals(b.sheet) && a.atlas.equals(b.atlas) && a.manifest.equals(b.manifest)).toBe(true);
+    expect(JSON.parse(a.manifest.toString('utf8')).camera.azimuthDeg).toBe(72);
+  }, 120_000);
+});
+
+describe('a bake of a list of yaws', () => {
+  it('draws each row from its listed angle, in the listed order, and records the list', async () => {
+    const ring = outDir(), listed = outDir();
+    const options = { clip: 'sway', phases: 2, cell: 64, pixelsPerMetre: 40 } as const;
+    await bakeSprites(glbPath, { ...options, out: ring, directions: 4 });
+    // 270 then 0 then 450 (which is 90): an uneven list, out of order, that no even ring gives.
+    const result = await bakeSprites(glbPath, { ...options, out: listed, yaws: '270,0,450', anchor: 'origin' });
+    expect(result).toMatchObject({ size: { w: 128, h: 192 }, frames: 6 });
+    const a = decodePng((await read(ring)).sheet), b = decodePng((await read(listed)).sheet);
+    const row = (image: { rgba: Uint8Array; width: number }, direction: number) => Buffer.from(image.rgba.subarray(direction * 64 * image.width * 4, (direction + 1) * 64 * image.width * 4));
+    expect(row(b, 0).equals(row(a, 3))).toBe(true);
+    expect(row(b, 1).equals(row(a, 0))).toBe(true);
+    expect(row(b, 2).equals(row(a, 1))).toBe(true);
+    const out = await read(listed), manifest = JSON.parse(out.manifest.toString('utf8')), atlas = JSON.parse(out.atlas.toString('utf8')) as Atlas;
+    expect(manifest).toMatchObject({ directions: 3, camera: { yawsDeg: [270, 0, 90] } });
+    expect(Object.keys(manifest.camera)).not.toContain('azimuthDeg');
+    expect(atlas.meta.frameTags.map(tag => [tag.name, tag.from, tag.to])).toEqual([['dir-0', 0, 1], ['dir-1', 2, 3], ['dir-2', 4, 5]]);
+    expect(checkAtlasContract(atlas, { sheet: { width: 128, height: 192 }, expectedTags: ['dir-0', 'dir-1', 'dir-2'] })).toEqual([]);
+    // The origin pivot of each row is where an independent projection from that row's angle puts the model origin.
+    const { halfExtentM, centreM } = manifest.camera;
+    expect(manifest.anchor.byDirection).toEqual([270, 0, 90].map(azimuthDeg => { const p = anchorPivot({ cell: 64, halfExtentM, elevationDeg: 15, azimuthDeg, centreM, pointM: [0, 0, 0] }); return [p.x, p.y]; }));
+  }, 120_000);
+
+  it('fits the camera over the listed angles only and names the listed angle of a clipped cell', async () => {
+    const dir = outDir();
+    await expect(bakeSprites(glbPath, { clip: 'overreach', phases: 4, cell: 48, yaws: [200, 0], out: dir })).rejects.toMatchObject({ code: 'BAKE_CELL_CLIPPED', message: expect.stringMatching(/^Cell for direction \d \(dir-(0, 200|1, 0) degrees\), phase \d, clip overreach /) });
+    expect(await files(dir)).toEqual([]);
   }, 120_000);
 });
 

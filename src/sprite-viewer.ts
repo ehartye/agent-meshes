@@ -178,7 +178,13 @@ var facingSel = role('facing'), scaleSel = role('scale'), speedSel = role('speed
 var playBtn = role('play'), sprite = role('sprite'), spriteBox = role('sprite-box'), single = role('single'), tilesBox = role('tiles');
 var stripsBox = role('strips'), stripBox = role('strip'), seamBox = role('seam'), notice = role('notice'), allNote = role('all-note');
 var pivotToggle = role('pivot-toggle'), counterBox = role('counter');
-var degrees = function (k) { return Math.round(k * 3600 / tags.length) / 10; };
+// The azimuth of each facing: the listed one of a --yaws bake, else the even ring turned by the start azimuth.
+var bakeCamera = manifest.camera || {};
+var yaws = Array.isArray(bakeCamera.yawsDeg) && bakeCamera.yawsDeg.length === tags.length ? bakeCamera.yawsDeg : null;
+var degrees = function (k) {
+  var a = yaws ? Number(yaws[k]) || 0 : (Number(bakeCamera.azimuthDeg) || 0) + k * 360 / tags.length;
+  return Math.round((((a % 360) + 360) % 360) * 10) / 10;
+};
 var tagLabel = function (t, k) { return t.name + ' (' + degrees(k) + ' deg)'; };
 
 role('clip-name').textContent = clipName;

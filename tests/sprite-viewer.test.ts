@@ -520,6 +520,22 @@ describe('the viewer takes an atlas of any shape', () => {
     } finally { await context.close(); }
   }, 60_000);
 
+  it('labels each facing with the angle it was baked from: the listed yaw, or the even ring turned by the start azimuth', async () => {
+    const labels = async (file: string) => {
+      const { page, context, problems } = await open(file, { clock: true });
+      try {
+        const shown = await page.locator(`${role('facing')} option`).evaluateAll(list => list.map(o => (o as HTMLOptionElement).textContent));
+        expect(problems).toEqual([]);
+        return shown.slice(1);
+      } finally { await context.close(); }
+    };
+    const ring = Array.from({ length: DIRECTIONS }, (_, k) => `dir-${k} (${k * 45} deg)`);
+    expect(await labels(await pageFor('labels-ring', () => {}))).toEqual(ring);
+    expect(await labels(await pageFor('labels-azimuth', (_, manifest) => { manifest.camera.azimuthDeg = 350; }))).toEqual(Array.from({ length: DIRECTIONS }, (_, k) => `dir-${k} (${(350 + k * 45) % 360} deg)`));
+    const yaws = [0, 270, 315, 22.5, 90, 180, 200, 10];
+    expect(await labels(await pageFor('labels-yaws', (_, manifest) => { manifest.camera.yawsDeg = yaws; }))).toEqual(yaws.map((yaw, k) => `dir-${k} (${yaw} deg)`));
+  }, 60_000);
+
   it('plays an atlas with no frameTags as one facing over every frame', async () => {
     const file = await pageFor('no-tags', atlas => { delete (atlas.meta as Partial<typeof atlas.meta>).frameTags; });
     const { page, context, problems } = await open(file, { clock: true });

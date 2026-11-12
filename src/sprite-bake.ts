@@ -3,12 +3,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { chromium } from 'playwright';
+import { chromium, type Browser } from 'playwright';
 import { browserLaunchOptions } from './browser.ts';
 import { readAccessor, readGLB } from './gltf-read.ts';
 import { decodePng, encodePng } from './png.ts';
 import { viewerScript } from './preview-html.ts';
-import { assertSheetSpec, buildAtlas, buildManifest, checkAtlasContract, serializeAtlas, SPRITE_ATLAS_IMAGE, type SheetSpec, type SlicePivot } from './sprite-atlas.ts';
+import { assertSheetSpec, buildAtlas, buildManifest, checkAtlasContract, serializeAtlas, SPRITE_ATLAS_IMAGE, SPRITE_MANIFEST_FORMAT, type SheetSpec, type SlicePivot, type SpriteManifest } from './sprite-atlas.ts';
 import { lookScript, parseBands, parseLook, type SpriteLook } from './sprite-look.ts';
 import { CONTACT_MAX_PIXELS, composeContactSheet, contactSize } from './sprite-contact.ts';
 import { outlineCell } from './sprite-outline.ts';
@@ -32,8 +32,10 @@ import { composeViewer } from './sprite-viewer.ts';
  * `sin(elevation)` as tall, so 30 degrees matches a 2:1 isometric floor.
  * With `oblique` the camera is level and depth is drawn by a shear in the projection (a cabinet or cavalier view): the frame of each direction is
  * centred on the picture of the model at rest, and the manifest records `camera.projection: 'oblique'`, the angle, the ratio and `camera.frameCentreM`.
- * With `azimuth` direction 0 looks from that many degrees from +Z toward +X. `anchor: 'origin'` writes the model origin as the pivot, one slice key
- * per direction when the directions disagree.
+ * With `azimuth` direction 0 looks from that many degrees from +Z toward +X; any finite angle is taken and wrapped into 0 to 360.
+ * With `yaws` the rows are a list of chosen azimuths instead of an even ring, recorded as `camera.yawsDeg`.
+ * `anchor: 'origin'` writes the model origin as the pivot, one slice key per direction when the directions disagree.
+ * A third argument shares one running browser between bakes (see sprite-bake-batch.ts); the files are the same bytes either way.
  * Neither `contactSheet` nor `viewer` is recorded in the atlas or the manifest, which are the same bytes with and without them, and a `contact.png` or `viewer.html` left by an earlier bake is never removed.
  *
  * Optional passes, all off by default (a bake with none of them is the 0.37.0 output): `look` (`unlit` or `banded`)
@@ -51,8 +53,8 @@ export const BAKE_SUPERSAMPLE = 8;
 export const BAKE_ELEVATION_DEG = 15;
 /** Inclusive range of `elevation` in degrees: 0 is level with the model; 90 (straight down) has no defined up direction, so the range stops at 89. */
 export const BAKE_ELEVATION_LIMITS = [0, 89] as const;
-/** Inclusive range of `azimuth` in degrees: where direction 0 looks from, measured from +Z toward +X. */
-export const BAKE_AZIMUTH_LIMITS = [-360, 360] as const;
+/** An angle in degrees wrapped into 0 (included) to 360 (excluded): 432 is 72, -90 is 270 and 360 is 0. */
+export const wrapDegrees = (degrees: number): number => ((degrees % 360) + 360) % 360;
 /** Ranges of the two numbers of `oblique`: the screen angle of the depth axis in degrees, and the length a metre of depth is drawn at. */
 export const BAKE_OBLIQUE_LIMITS = { angle: [0, 360], ratio: [0.01, 2] } as const;
 export const BAKE_ANCHORS = ['feet', 'origin'] as const;
@@ -90,8 +92,10 @@ export interface BakeOptions {
   pixelsPerMetre?: number | string;
   /** Camera height above the horizon in degrees: a number (or numeric text) from 0 to 89; default 15. */
   elevation?: number | string;
-  /** Where direction 0 looks from, in degrees from +Z toward +X: a number (or numeric text) from -360 to 360; default 0. The other directions follow it evenly. */
+  /** Where direction 0 looks from, in degrees from +Z toward +X: any finite number (or numeric text), wrapped into 0 to 360; default 0. The other directions follow it evenly. */
   azimuth?: number | string;
+  /** The azimuth of every row, as `"0,270,315"` or a list of numbers: 1 to 32 finite angles, each wrapped into 0 to 360, no two the same. Row k is tag `dir-k`. It replaces the even ring, so it is not valid with `directions` or `azimuth`. */
+  yaws?: string | readonly number[];
   /** An oblique view as `"<angle>,<ratio>"` (or the two numbers): the camera is level, the plane facing it is drawn square on, and a metre of depth is drawn `ratio` long at `angle` degrees on screen (0 right, 90 up). Not valid with `elevation`. */
   oblique?: string | BakeOblique;
   /** `true` also writes `contact.png`, the sheet scaled 4 times with a grey gutter between cells, for review; `false` is the same as unset. */
@@ -102,7 +106,7 @@ export interface BakeOptions {
 export interface BakeSettings {
   clip: string; directions: number; phases: number; cell: number; out?: string;
   /** Each of these is set only when the matching option was given. */
-  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: BakeAnchor; pixelsPerMetre?: number; elevation?: number; azimuth?: number; oblique?: BakeOblique; contactSheet?: true; viewer?: true;
+  look?: SpriteLook; bands?: number; palette?: Palette; paletteFile?: string; outline?: string; outlineColor?: [number, number, number]; anchor?: BakeAnchor; pixelsPerMetre?: number; elevation?: number; azimuth?: number; yaws?: number[]; oblique?: BakeOblique; contactSheet?: true; viewer?: true;
 }
 export interface BakeResult {
   /** Absolute output folder. */
@@ -142,12 +146,31 @@ function elevationOption(value: unknown): number {
   return number;
 }
 
-/** The start azimuth as a number of degrees: a finite number, or text of an optional sign, digits and an optional fraction, from -360 to 360. */
-function azimuthOption(value: unknown): number {
-  const [min, max] = BAKE_AZIMUTH_LIMITS;
+/** An angle as a finite number, or text of an optional minus sign, digits and an optional fraction; anything else is NaN. */
+const angleValue = (value: unknown): number => {
   const number = typeof value === 'number' ? value : typeof value === 'string' && /^-?\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : Number.NaN;
-  if (!(number >= min && number <= max)) throw code(`--azimuth must be a number of degrees from ${min} to ${max}, got ${String(value)}`, 'CLI_ARGUMENT_ERROR');
-  return number;
+  return Number.isFinite(number) ? number : Number.NaN;
+};
+
+/** The start azimuth as a number of degrees: any finite number, or text of an optional minus sign, digits and an optional fraction, wrapped into 0 to 360. */
+function azimuthOption(value: unknown): number {
+  const number = angleValue(value);
+  if (Number.isNaN(number)) throw code(`--azimuth must be a finite number of degrees (any angle; it is wrapped into 0 to 360), got ${String(value)}`, 'CLI_ARGUMENT_ERROR');
+  return wrapDegrees(number);
+}
+
+/** The row azimuths as numbers of degrees: text `"0,270,315"` or a list, 1 to 32 finite angles, each wrapped into 0 to 360, no two the same. */
+function yawsOption(value: unknown): number[] {
+  const [min, max] = BAKE_LIMITS.directions;
+  const shown = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value);
+  const parts: unknown[] = typeof value === 'string' ? value.split(',') : Array.isArray(value) ? value : [];
+  const yaws = parts.map(part => angleValue(part));
+  if (yaws.length < min || yaws.length > max || yaws.some(Number.isNaN))
+    throw code(`--yaws must be a comma-separated list of ${min} to ${max} finite numbers of degrees (any angle; each is wrapped into 0 to 360), for example 0,270,315, got ${shown}`, 'CLI_ARGUMENT_ERROR');
+  const wrapped = yaws.map(wrapDegrees);
+  const repeat = wrapped.findIndex((yaw, k) => wrapped.indexOf(yaw) !== k);
+  if (repeat >= 0) throw code(`--yaws lists the azimuth ${wrapped[repeat]} twice (rows ${wrapped.indexOf(wrapped[repeat])} and ${repeat} after wrapping into 0 to 360), got ${shown}. Each row must be a different direction.`, 'CLI_ARGUMENT_ERROR');
+  return wrapped;
 }
 
 /** The oblique view as two numbers: text `"<angle>,<ratio>"` or an object, the angle from 0 to 360 degrees and the ratio from 0.01 to 2. */
@@ -171,6 +194,12 @@ export function parseBakeOptions(options: BakeOptions): BakeSettings {
   if (typeof options.clip !== 'string' || !options.clip) throw code('--clip <name> is required', 'CLI_ARGUMENT_ERROR');
   if (options.out !== undefined && (typeof options.out !== 'string' || !options.out)) throw code('--out must be a folder path', 'CLI_ARGUMENT_ERROR');
   const settings: BakeSettings = { clip: options.clip, directions: integerOption('directions', options.directions), phases: integerOption('phases', options.phases), cell: integerOption('cell', options.cell), out: options.out };
+  if (options.yaws !== undefined) {
+    settings.yaws = yawsOption(options.yaws);
+    if (options.directions !== undefined) throw code(`--yaws lists the directions itself, one row for each angle, so it cannot be combined with --directions (got --directions ${options.directions}). Leave --directions out.`, 'CLI_ARGUMENT_ERROR');
+    if (options.azimuth !== undefined) throw code(`--yaws gives the azimuth of every row, so it cannot be combined with --azimuth (got --azimuth ${options.azimuth}). Leave --azimuth out and put the angle in the list.`, 'CLI_ARGUMENT_ERROR');
+    settings.directions = settings.yaws.length;
+  }
   if (options.palette !== undefined) {
     if (typeof options.palette !== 'string' || !options.palette) throw code('--palette must be a palette file path', 'CLI_ARGUMENT_ERROR');
     settings.palette = readPalette(options.palette);
@@ -330,8 +359,49 @@ const clippedAdvice = (settings: BakeSettings) => settings.pixelsPerMetre === un
   ? 'fitted to its rest pose. Keep the clip inside the rest bounds, or raise --cell if it only grazes the border. Nothing was written.'
   : `set by --pixels-per-metre ${settings.pixelsPerMetre} at --cell ${settings.cell}. Lower --pixels-per-metre or raise --cell to widen the frame. Nothing was written.`;
 
-/** Bake one clip of a rigged GLB. See the module comment for the pipeline and the error codes. */
-export async function bakeSprites(glbPath: string, options: BakeOptions): Promise<BakeResult> {
+/** The camera values a bake takes from its options alone, as the manifest records them; the fitted values are added by the bake. */
+function cameraSettings(settings: BakeSettings): Record<string, number | string | number[]> {
+  const oblique = settings.oblique;
+  return {
+    projection: oblique ? 'oblique' : 'orthographic', elevationDeg: oblique ? 0 : settings.elevation ?? BAKE_ELEVATION_DEG,
+    ...(settings.azimuth !== undefined ? { azimuthDeg: settings.azimuth } : {}), ...(settings.yaws ? { yawsDeg: [...settings.yaws] } : {}),
+    ...(oblique ? { obliqueAngleDeg: oblique.angleDeg, obliqueRatio: oblique.ratio } : {}), padding: BAKE_PADDING, supersample: BAKE_SUPERSAMPLE,
+    ...(settings.pixelsPerMetre !== undefined ? { pixelsPerMetre: settings.pixelsPerMetre } : {}),
+  };
+}
+/** Camera keys of the manifest that come from fitting the model, not from the options. */
+const FITTED_CAMERA_KEYS = ['halfExtentM', 'distanceM', 'centreM', 'frameCentreM', 'groundYM'];
+const sorted = (record: Record<string, unknown>) => Object.fromEntries(Object.entries(record).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+
+/**
+ * Everything that decides the bytes of a bake, apart from the code itself: the model, the plugin version and the options.
+ * `manifestFingerprint` reads the same value back from a written manifest, so two equal strings mean that manifest was
+ * written for this model with these options by this version.
+ */
+export function bakeFingerprint(settings: BakeSettings, modelSha256: string, version: string): string {
+  return JSON.stringify({
+    format: SPRITE_MANIFEST_FORMAT, pluginVersion: version, model: modelSha256, clip: settings.clip, directions: settings.directions, phases: settings.phases, cell: settings.cell,
+    camera: sorted(cameraSettings(settings)), look: settings.look ?? null, bands: settings.bands ?? null, palette: settings.palette ? sorted(paletteManifest(settings.palette)) : null,
+    outline: settings.outline ?? null, anchor: settings.anchor ?? null,
+  });
+}
+/** The fingerprint of the bake that wrote `manifest`; see `bakeFingerprint`. A value that is not a bake manifest gives a string no bake has. */
+export function manifestFingerprint(manifest: SpriteManifest): string {
+  const camera = manifest?.camera && typeof manifest.camera === 'object' ? manifest.camera : {};
+  return JSON.stringify({
+    format: manifest?.format, pluginVersion: manifest?.pluginVersion, model: manifest?.model?.sha256, clip: manifest?.clip?.name, directions: manifest?.directions, phases: manifest?.phases, cell: manifest?.cell,
+    camera: sorted(Object.fromEntries(Object.entries(camera).filter(([key]) => !FITTED_CAMERA_KEYS.includes(key)))), look: manifest?.look ?? null, bands: manifest?.bands ?? null,
+    palette: manifest?.palette ? sorted(manifest.palette) : null, outline: manifest?.outline ?? null, anchor: manifest?.anchor?.name ?? null,
+  });
+}
+/** The version of this package, which every manifest records. */
+export const pluginVersion = async (): Promise<string> => (JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+
+/** A running browser that several bakes share. Each bake opens its own context in it and closes that context; the owner closes the browser. */
+export interface BakeSession { browser: Browser }
+
+/** Bake one clip of a rigged GLB. See the module comment for the pipeline and the error codes. With a `session` the bake renders in its browser instead of starting one. */
+export async function bakeSprites(glbPath: string, options: BakeOptions, session?: BakeSession): Promise<BakeResult> {
   const settings = parseBakeOptions(options);
   const { clip, directions, phases, cell } = settings;
   const source = resolve(glbPath);
@@ -344,6 +414,10 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const oblique = settings.oblique ?? null;
   const elevation = oblique ? 0 : settings.elevation ?? BAKE_ELEVATION_DEG;
   const azimuth = settings.azimuth ?? 0;
+  // The azimuth of every row, in degrees for the pivots and messages and in radians for the camera. The even ring keeps the
+  // arithmetic it has always had, so its pixels do not move.
+  const azimuthsDeg = settings.yaws ?? Array.from({ length: directions }, (_, k) => azimuth + k * 360 / directions);
+  const azimuths = settings.yaws ? settings.yaws.map(yaw => yaw * Math.PI / 180) : Array.from({ length: directions }, (_, k) => azimuth * Math.PI / 180 + k / directions * 2 * Math.PI);
 
   const work = await mkdtemp(join(tmpdir(), 'agent-meshes-bake-'));
   let cells: Buffer[] = [];
@@ -351,9 +425,10 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   try {
     await writeFile(join(work, 'mesh-viewer.js'), await viewerScript());
     await writeFile(join(work, 'harness.html'), harness(render).replace('@GLB@', () => glb.toString('base64')));
-    const browser = await chromium.launch({ headless: true, ...browserLaunchOptions() });
+    const browser = session?.browser ?? await chromium.launch({ headless: true, ...browserLaunchOptions() });
+    let context: Awaited<ReturnType<Browser['newContext']>> | undefined;
     try {
-      const context = await browser.newContext({ offline: true, viewport: { width: render, height: render }, deviceScaleFactor: 1 });
+      context = await browser.newContext({ offline: true, viewport: { width: render, height: render }, deviceScaleFactor: 1 });
       const page = await context.newPage();
       await page.goto(pathToFileURL(join(work, 'harness.html')).href, { waitUntil: 'load' });
       await page.evaluate(() => (window as unknown as { ready: Promise<unknown> }).ready);
@@ -363,11 +438,11 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
       // Fit once, at rest: the largest square half extent over every direction, with the camera a fixed distance out.
       // With a set scale the half extent is not fitted: the frame spans `cell` pixels at `pixelsPerMetre`, with no padding.
       const setHalf = settings.pixelsPerMetre === undefined ? null : cell / (2 * settings.pixelsPerMetre);
-      fit = await page.evaluate(({ directions, elevation, azimuth, oblique, padding, setHalf }) => {
+      fit = await page.evaluate(({ azimuths, elevation, oblique, padding, setHalf }) => {
         const v = (window as unknown as { viewer: ViewerLike }).viewer;
         const box = v.bounds(), centre = box.getCenter(box.min.clone());
         const diagonal = Math.max(box.min.distanceTo(box.max), 1e-3), distance = diagonal * 2, c = centre.toArray();
-        const el = elevation * Math.PI / 180, start = azimuth * Math.PI / 180;
+        const el = elevation * Math.PI / 180, directions = azimuths.length;
         const shearX = oblique ? oblique.ratio * Math.cos(oblique.angleDeg * Math.PI / 180) : 0, shearY = oblique ? oblique.ratio * Math.sin(oblique.angleDeg * Math.PI / 180) : 0;
         let half = 0;
         // An oblique picture is not centred on the picture of the box centre: a tall part at one end pulls it to a side.
@@ -383,7 +458,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
           });
         }
         for (let k = 0; k < directions && (oblique || setHalf === null); k++) {
-          const az = start + k / directions * 2 * Math.PI;
+          const az = azimuths[k];
           if (oblique) {
             let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
             for (let i = 0; i < points.length; i += 3) {
@@ -415,14 +490,14 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
           apply();
         }
         return { centre: c as [number, number, number], distance, half, groundY: box.min.y, durationSeconds: 0, ...(oblique ? { frames } : {}) };
-      }, { directions, elevation, azimuth, oblique, padding: BAKE_PADDING, setHalf });
+      }, { azimuths, elevation, oblique, padding: BAKE_PADDING, setHalf });
       fit.durationSeconds = await page.evaluate(name => { const v = (window as unknown as { viewer: ViewerLike }).viewer; v.play(name); v.pause(); return v.duration; }, clip);
       if (!(fit.durationSeconds > 0)) throw code(`Clip ${clip} has zero duration, so there are no phases to bake`, 'BAKE_CLIP_EMPTY');
       cells = [];
       for (let d = 0; d < directions; d++) for (let p = 0; p < phases; p++) {
-        const url = await page.evaluate(({ d, p, directions, phases, elevation, azimuth, centre, distance, half, frame }) => {
+        const url = await page.evaluate(({ p, phases, elevation, az, centre, distance, half, frame }) => {
           const v = (window as unknown as { viewer: ViewerLike }).viewer;
-          const az = azimuth * Math.PI / 180 + d / directions * 2 * Math.PI, el = elevation * Math.PI / 180;
+          const el = elevation * Math.PI / 180;
           if (frame) {
             const camera = v.camera;
             camera.left = frame[0] - half; camera.right = frame[0] + half; camera.bottom = frame[1] - half; camera.top = frame[1] + half;
@@ -431,19 +506,19 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
           v.seek(v.duration * p / phases);
           v.view({ position: [centre[0] + Math.sin(az) * Math.cos(el) * distance, centre[1] + Math.sin(el) * distance, centre[2] + Math.cos(az) * Math.cos(el) * distance], target: centre });
           return v.screenshot();
-        }, { d, p, directions, phases, elevation, azimuth, centre: fit.centre, distance: fit.distance, half: fit.half, frame: fit.frames?.[d] ?? null });
+        }, { p, phases, elevation, az: azimuths[d], centre: fit.centre, distance: fit.distance, half: fit.half, frame: fit.frames?.[d] ?? null });
         const image = decodePng(Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'));
         if (image.width !== render || image.height !== render) throw code(`The render for direction ${d}, phase ${p} is ${image.width} by ${image.height}, not ${render} by ${render}`, 'BAKE_RENDER_FAILED');
         const reduced = reduceCell(image.rgba, cell);
         if (touchesBorder(reduced, cell))
-          throw code(`Cell for direction ${d} (dir-${d}, ${+(d * 360 / directions).toFixed(3)} degrees), phase ${p}, clip ${clip} has opaque pixels on its border, so the model reaches outside the frame ${clippedAdvice(settings)}`, 'BAKE_CELL_CLIPPED');
+          throw code(`Cell for direction ${d} (dir-${d}, ${+wrapDegrees(azimuthsDeg[d]).toFixed(3)} degrees), phase ${p}, clip ${clip} has opaque pixels on its border, so the model reaches outside the frame ${clippedAdvice(settings)}`, 'BAKE_CELL_CLIPPED');
         // The border check is on the model alone; the palette snap and the outline come after it.
         let finished = reduced;
         if (settings.palette) finished = snapToPalette(finished, settings.palette);
         if (settings.outlineColor) finished = outlineCell(finished, cell, settings.outlineColor);
         cells.push(finished);
       }
-    } finally { await browser.close(); }
+    } finally { if (session) await context?.close().catch(() => undefined); else await browser.close(); }
   } finally { await rm(work, { recursive: true, force: true }); }
 
   // Everything is in memory and every cell passed: pack the sheet and write.
@@ -455,7 +530,7 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const centreM = fit.centre.map(round), perDirection = settings.anchor === 'origin' || (settings.anchor === 'feet' && oblique !== null);
   const feet = settings.anchor === 'feet' && !oblique ? feetPivot({ cell, elevationDeg: elevation, halfExtentM: round(fit.half), centreYM: centreM[1], groundYM: round(fit.groundY) }) : undefined;
   const each = perDirection ? Array.from({ length: directions }, (_, k) => anchorPivot({
-    cell, halfExtentM: round(fit.half), elevationDeg: elevation, azimuthDeg: azimuth + k * 360 / directions, oblique: oblique ?? undefined, centreM, frameCentreM: fit.frames?.[k],
+    cell, halfExtentM: round(fit.half), elevationDeg: elevation, azimuthDeg: azimuthsDeg[k], oblique: oblique ?? undefined, centreM, frameCentreM: fit.frames?.[k],
     pointM: settings.anchor === 'origin' ? [0, 0, 0] : [centreM[0], round(fit.groundY), centreM[2]], name: settings.anchor,
   })) : undefined;
   const pivot = feet ?? each?.[0];
@@ -472,10 +547,10 @@ export async function bakeSprites(glbPath: string, options: BakeOptions): Promis
   const contact = settings.contactSheet ? composeContactSheet(sheet, { cell, directions, phases }) : undefined;
   const contactPng = contact ? encodePng(contact.width, contact.height, contact.rgba) : undefined;
   const sheetSha256 = sha256(png), atlasSha256 = sha256(atlasText);
-  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  const version = await pluginVersion();
   const manifest = buildManifest({
     model: { sha256: sha256(glb) }, clip: { name: clip, durationMs: spec.clipDurationMs }, directions, phases, cell,
-    camera: { projection: oblique ? 'oblique' : 'orthographic', elevationDeg: elevation, ...(settings.azimuth !== undefined ? { azimuthDeg: azimuth } : {}), ...(oblique ? { obliqueAngleDeg: oblique.angleDeg, obliqueRatio: oblique.ratio, frameCentreM: (fit.frames ?? []).flat() } : {}), padding: BAKE_PADDING, supersample: BAKE_SUPERSAMPLE, halfExtentM: round(fit.half), distanceM: round(fit.distance), centreM: fit.centre.map(round), ...(settings.pixelsPerMetre !== undefined ? { pixelsPerMetre: settings.pixelsPerMetre } : {}), ...(settings.anchor === 'feet' ? { groundYM: round(fit.groundY) } : {}) },
+    camera: { ...cameraSettings(settings), ...(oblique ? { frameCentreM: (fit.frames ?? []).flat() } : {}), halfExtentM: round(fit.half), distanceM: round(fit.distance), centreM: fit.centre.map(round), ...(settings.anchor === 'feet' ? { groundYM: round(fit.groundY) } : {}) },
     sheetSha256, atlasSha256, pluginVersion: version,
     ...(settings.look !== undefined ? { look: settings.look } : {}),
     ...(settings.bands !== undefined ? { bands: settings.bands } : {}),
