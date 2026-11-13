@@ -25,6 +25,7 @@ No blanket CC0 claim applies to this mixed-source code/assets collection.
 
 Local raw Adobe Mixamo, CMU/rancidmilk and legacy lossy Mesh2Motion FBX exports
 are inventoried with source paths, hashes and available clip IDs, not bundled.
+A user's own Mixamo downloads live in the local folder that `scripts/mixamo-library.mjs` registers; none is tracked here.
 Original CMU sample readme points to `https://rancidmilk.itch.io/free-character-animations`.
 Keep that third-party provenance and applicable original terms distinct from
 Mesh2Motion's art statement. Derived local NPZ motion and cached rig experiments
