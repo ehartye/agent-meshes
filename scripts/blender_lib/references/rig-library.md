@@ -143,7 +143,8 @@ The [inventory](../../rigging/rig-tools/inventory.json) records source paths, pi
 roles, bytes/hashes, tracked-at-pin flags and local-only artifacts. The
 [provenance record](../../reference-assets/rigs/PROVENANCE.md) separates CC0 GLBs,
 application/helper code, Adobe Mixamo and CMU/third-party FBX. The latter are
-inventoried with clip IDs and original paths and are not bundled as CC0. Local FBX
+inventoried with clip IDs and original paths and are not bundled as CC0. A machine keeps its own Mixamo downloads in the
+[local Mixamo folder and registry](mixamo-library.md). Local FBX
 import uses the retained `extract_mixamo.py` with explicit `FBX`/`OUT_NPZ` and a
 caller-supplied Blender environment; see module notes before using its time base.
 
