@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// A local folder of Adobe Mixamo downloads and a registry of what is in it. The FBX files stay on the machine that
-// downloaded them: this script never copies one into a package, a project or version control.
+// A folder of Adobe Mixamo downloads and a registry of what is in it. The folder can be any directory the owner keeps
+// them in, such as a private repository cloned on each of their machines. Nothing here copies an FBX into agent-meshes.
 import { createHash } from 'node:crypto';
-import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateRawSync, inflateSync } from 'node:zlib';
 
-export const REGISTRY_SCHEMA = 'agent-meshes/mixamo-registry/1';
-export const REGISTRY_FILE = 'registry.json';
-export const TERMS = 'Adobe Mixamo files are licensed to the Adobe account that downloaded them. Use them in your own work; do not redistribute the files or commit them to a repository.';
+export const REGISTRY_SCHEMA = 'agent-meshes/mixamo-registry/2';
+export const REGISTRY_FILE = 'mixamo-registry.json';
+export const TERMS = 'Adobe Mixamo files are licensed to the Adobe account that downloaded them. Use them in your own work; do not redistribute the files or commit them to agent-meshes.';
 const KTIME_PER_SECOND = 46186158000;
 
 /** The folder: AGENT_MESHES_MIXAMO_DIR, else `mixamo` in the managed home (AGENT_MESHES_HOME, else ~/.agent-meshes). */
@@ -103,41 +103,72 @@ export function unzipFbx(bytes) {
   return out;
 }
 
-async function fbxFiles(folder, base = folder) {
+const POINTER = 'version https://git-lfs.github.com/spec/';
+/** Bone-name prefixes of Mixamo's own skeleton: `mixamorig`, and `mixamorig1`, `mixamorig2` ... on later downloads. */
+export const MIXAMO_SKELETON = /^mixamorig\d*$/;
+
+/** Every FBX under the folder with its size and modification time, skipping dot folders such as `.git`, and node_modules. */
+export async function fbxFiles(folder, base = folder) {
   const found = [];
   for (const entry of (await readdir(folder, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
     const path = join(folder, entry.name);
-    if (entry.isDirectory()) found.push(...await fbxFiles(path, base));
-    else if (entry.isFile() && extname(entry.name).toLowerCase() === '.fbx') found.push(relative(base, path).split(sep).join('/'));
+    if (entry.isDirectory()) { if (!entry.name.startsWith('.') && entry.name !== 'node_modules') found.push(...await fbxFiles(path, base)); }
+    else if (entry.isFile() && extname(entry.name).toLowerCase() === '.fbx') {
+      const info = await stat(path, { bigint: true });
+      found.push({ file: relative(base, path).split(sep).join('/'), bytes: Number(info.size), mtimeMs: Number(info.mtimeNs / 1000000n) });
+    }
   }
   return found;
 }
 
-/** Read every FBX under the folder and write registry.json beside them. Identical files are listed once. */
-export async function scanMixamo(directory = mixamoDir()) {
+/** The managed home: AGENT_MESHES_HOME, else ~/.agent-meshes. */
+const managedHome = env => env.AGENT_MESHES_HOME ? resolve(env.AGENT_MESHES_HOME) : join(homedir(), '.agent-meshes');
+/** The registry lives in the managed home, never inside the folder, so the folder can be any directory, a repository included. */
+export const registryFile = (env = process.env) => join(managedHome(env), REGISTRY_FILE);
+const facts = ({ fbxVersion, creator, skeleton, bones, hasMesh, clips }) => ({ fbxVersion, creator, skeleton, bones, hasMesh, clips });
+
+/** Read every FBX under the folder and write the registry. Identical files are listed once, and files that are not on
+ *  Mixamo's skeleton are skipped with the reason. `reuse` is an earlier registry of the same folder: a file whose size
+ *  and modification time are unchanged keeps what that registry read, without being read again. */
+export async function scanMixamo(directory, env = process.env, { reuse = null } = {}) {
+  directory = resolve(directory ?? mixamoDir(env));
   await mkdir(directory, { recursive: true });
+  const known = new Map((reuse?.directory === directory ? [...reuse.entries, ...reuse.skipped] : []).map(item => [item.file, item]));
   const entries = [], skipped = [], seen = new Map(), ids = new Set();
-  for (const file of await fbxFiles(directory)) {
-    const bytes = await readFile(join(directory, file)), hash = sha256(bytes);
-    if (seen.has(hash)) { skipped.push({ file, reason: `the same bytes as ${seen.get(hash)}` }); continue; }
-    let facts;
-    try { facts = describeFbx(bytes); } catch (error) { skipped.push({ file, reason: error.message }); continue; }
+  for (const stamp of await fbxFiles(directory)) {
+    const { file } = stamp, old = known.get(file);
+    let hash, read = null, problem = null;
+    if (old && old.bytes === stamp.bytes && old.mtimeMs === stamp.mtimeMs) {
+      hash = old.sha256; problem = old.problem ?? null; read = problem ? null : facts(old);
+    } else {
+      const bytes = await readFile(join(directory, file)); hash = sha256(bytes);
+      if (bytes.subarray(0, POINTER.length).toString('latin1') === POINTER) problem = 'a Git LFS pointer, not the file: run "git lfs pull" in its repository';
+      else try { read = describeFbx(bytes); } catch (error) { problem = error.message; }
+    }
+    if (!problem && !MIXAMO_SKELETON.test(read.skeleton ?? '')) problem = `not on the Mixamo skeleton (bone prefix: ${read.skeleton ?? 'none'})`;
+    // Skipped files keep what was read, so an unchanged one is not read again on the next scan.
+    if (problem) { skipped.push({ ...stamp, sha256: hash, reason: problem, problem, ...(read ?? {}) }); continue; }
+    if (seen.has(hash)) { skipped.push({ ...stamp, sha256: hash, reason: `the same bytes as ${seen.get(hash)}`, ...read }); continue; }
     seen.set(hash, file);
     let id = slug(basename(file)) || 'clip';
     // A second file of the same name is told apart by its folder, then by a number.
     if (ids.has(id) && dirname(file) !== '.') id = `${slug(dirname(file))}-${id}`;
     for (let n = 2, stem = id; ids.has(id); n++) id = `${stem}-${n}`;
     ids.add(id);
-    entries.push({ id, file, sha256: hash, bytes: bytes.length, ...facts });
+    entries.push({ id, ...stamp, sha256: hash, ...read });
   }
   entries.sort((a, b) => a.id.localeCompare(b.id));
-  const registry = { schema: REGISTRY_SCHEMA, source: 'Adobe Mixamo', terms: TERMS, entries };
-  await writeFile(join(directory, REGISTRY_FILE), `${JSON.stringify(registry, null, 1)}\n`);
-  return { directory, registry: join(directory, REGISTRY_FILE), entries: entries.length, skipped };
+  const registry = { schema: REGISTRY_SCHEMA, source: 'Adobe Mixamo', terms: TERMS, directory, entries, skipped };
+  const target = registryFile(env), staging = `${target}.${process.pid}.tmp`;
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(staging, `${JSON.stringify(registry, null, 1)}\n`);
+  await rename(staging, target);
+  return { directory, registry: target, entries: entries.length, skipped: skipped.map(({ file, reason }) => ({ file, reason })) };
 }
 
 /** Copy downloads (FBX files, zip archives or folders of them) into the folder, then rescan. Sources are left alone. */
-export async function addMixamo(sources, directory = mixamoDir()) {
+export async function addMixamo(sources, directory, env = process.env) {
+  directory = resolve(directory ?? mixamoDir(env));
   if (!sources.length) throw new Error('add <file.fbx | pack.zip | folder> ...');
   await mkdir(directory, { recursive: true });
   const copied = [];
@@ -147,26 +178,43 @@ export async function addMixamo(sources, directory = mixamoDir()) {
   };
   for (const source of sources.map(path => resolve(path))) {
     const info = await stat(source), kind = extname(source).toLowerCase();
-    if (info.isDirectory()) for (const file of await fbxFiles(source)) await place(join(directory, basename(source), file), target => copyFile(join(source, file), target));
+    if (info.isDirectory()) for (const { file } of await fbxFiles(source)) await place(join(directory, basename(source), file), target => copyFile(join(source, file), target));
     else if (kind === '.fbx') await place(join(directory, basename(source)), target => copyFile(source, target));
     else if (kind === '.zip') for (const member of unzipFbx(await readFile(source))) await place(join(directory, basename(source, extname(source)), member.name), target => writeFile(target, member.bytes));
     else throw new Error(`${source}: expected an .fbx file, a .zip archive or a folder`);
   }
-  return { copied, ...await scanMixamo(directory) };
+  return { copied, ...await scanMixamo(directory, env, { reuse: await readRegistry(env) }) };
 }
 
-export async function mixamoRegistry(directory = mixamoDir()) {
-  let text;
-  try { text = await readFile(join(directory, REGISTRY_FILE), 'utf8'); }
-  catch (error) { if (error.code === 'ENOENT') throw new Error(`No Mixamo registry in ${directory}: add downloads with "mixamo-library.mjs add <file>" or run "scan"`); throw error; }
-  const registry = JSON.parse(text);
-  if (registry.schema !== REGISTRY_SCHEMA) throw new Error(`${join(directory, REGISTRY_FILE)}: expected schema ${REGISTRY_SCHEMA}; run "scan"`);
-  return registry;
+async function readRegistry(env) {
+  let registry;
+  try { registry = JSON.parse(await readFile(registryFile(env), 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  return registry.schema === REGISTRY_SCHEMA ? registry : null;
+}
+
+/** The registry of the folder. When the folder's FBX files differ from it (after a pull, an add or a copy by hand),
+ *  or it describes another folder, the folder is scanned again first; unchanged files are not read again. */
+export async function mixamoRegistry(directory, env = process.env) {
+  directory = resolve(directory ?? mixamoDir(env));
+  try { await stat(directory); } catch (error) {
+    if (error.code === 'ENOENT') throw new Error(`No Mixamo folder at ${directory}: set AGENT_MESHES_MIXAMO_DIR, or add downloads with "mixamo-library.mjs add <file>"`);
+    throw error;
+  }
+  const registry = await readRegistry(env);
+  if (registry?.directory === directory) {
+    const listed = new Map([...registry.entries, ...registry.skipped].map(item => [item.file, `${item.bytes}:${item.mtimeMs}`]));
+    const files = await fbxFiles(directory);
+    if (files.length === listed.size && files.every(item => listed.get(item.file) === `${item.bytes}:${item.mtimeMs}`)) return registry;
+  }
+  await scanMixamo(directory, env, { reuse: registry });
+  return readRegistry(env);
 }
 
 /** The absolute path of one registered file, after checking its bytes still match the registry. */
-export async function mixamoPath(id, directory = mixamoDir()) {
-  const entry = (await mixamoRegistry(directory)).entries.find(item => item.id === id);
+export async function mixamoPath(id, directory, env = process.env) {
+  directory = resolve(directory ?? mixamoDir(env));
+  const entry = (await mixamoRegistry(directory, env)).entries.find(item => item.id === id);
   if (!entry) throw new Error(`Unknown Mixamo entry: ${id} (see "list")`);
   const path = resolve(directory, entry.file);
   if (sha256(await readFile(path)) !== entry.sha256) throw new Error(`${entry.file} changed since it was registered; run "scan"`);
@@ -176,6 +224,11 @@ export async function mixamoPath(id, directory = mixamoDir()) {
 async function main() {
   const [command = 'list', ...args] = process.argv.slice(2), json = args.includes('--json'), rest = args.filter(arg => arg !== '--json');
   if (command === 'dir') console.log(mixamoDir());
+  else if (command === 'registry') console.log(registryFile());
+  else if (command === 'refresh') {
+    const registry = await mixamoRegistry();
+    console.log(JSON.stringify({ directory: registry.directory, registry: registryFile(), entries: registry.entries.length, skipped: registry.skipped.length }, null, 2));
+  }
   else if (command === 'scan') console.log(JSON.stringify(await scanMixamo(), null, 2));
   else if (command === 'add') console.log(JSON.stringify(await addMixamo(rest), null, 2));
   else if (command === 'path') console.log(await mixamoPath(rest[0] ?? ''));
@@ -183,7 +236,7 @@ async function main() {
     const registry = await mixamoRegistry();
     if (json) console.log(JSON.stringify(registry, null, 2));
     else for (const entry of registry.entries) console.log([entry.id, entry.clips.map(clip => `${clip.seconds ?? '?'}s`).join(',') || 'no clip', `${entry.bones} bones`, entry.hasMesh ? 'mesh' : 'motion only', entry.file].join('\t'));
-  } else throw new Error('Usage: node scripts/mixamo-library.mjs dir | add <file.fbx | pack.zip | folder> ... | scan | list [--json] | path <id>');
+  } else throw new Error('Usage: node scripts/mixamo-library.mjs dir | registry | refresh | add <file.fbx | pack.zip | folder> ... | scan | list [--json] | path <id>');
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { await main(); } catch (error) { console.error(error.message); process.exitCode = 1; }

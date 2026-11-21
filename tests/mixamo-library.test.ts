@@ -1,10 +1,13 @@
+/** @lane merge
+ * @subject scripts/blender_lib/agent_meshes_mixamo.py
+ */
 import { afterEach, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { deflateRawSync } from 'node:zlib';
-import { addMixamo, describeFbx, mixamoDir, mixamoPath, mixamoRegistry, scanMixamo, slug, unzipFbx, REGISTRY_SCHEMA } from '../scripts/mixamo-library.mjs';
+import { addMixamo, describeFbx, mixamoDir, mixamoPath, mixamoRegistry, registryFile, scanMixamo, slug, unzipFbx, REGISTRY_FILE, REGISTRY_SCHEMA } from '../scripts/mixamo-library.mjs';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -69,37 +72,76 @@ it('reads clips, their length, the skeleton and a mesh out of a binary FBX', () 
 });
 
 it('adds files, folders and archives, lists identical bytes once and leaves the sources alone', async () => {
-  const downloads = await temp(), folder = await temp();
+  const downloads = await temp(), folder = await temp(), env = { AGENT_MESHES_HOME: await temp() };
   await writeFile(join(downloads, 'Standard Run.fbx'), clip(0.717));
   await writeFile(join(downloads, 'Standard Run copy.fbx'), clip(0.717));
   await writeFile(join(downloads, 'Pack.zip'), zip({ 'Standing Idle.fbx': clip(1.867), 'Standard Run.fbx': clip(0.733), 'readme.txt': Buffer.from('skip me') }));
   await mkdir(join(downloads, 'More'));
   await writeFile(join(downloads, 'More', 'Dying.fbx'), clip(4.333, { mesh: true }));
   await writeFile(join(downloads, 'More', 'broken.fbx'), 'text');
-  const added = await addMixamo([join(downloads, 'Standard Run.fbx'), join(downloads, 'Standard Run copy.fbx'), join(downloads, 'Pack.zip'), join(downloads, 'More')], folder);
+  const added = await addMixamo([join(downloads, 'Standard Run.fbx'), join(downloads, 'Standard Run copy.fbx'), join(downloads, 'Pack.zip'), join(downloads, 'More')], folder, env);
   expect(added.copied.sort()).toEqual(['More/Dying.fbx', 'More/broken.fbx', 'Pack/Standard Run.fbx', 'Pack/Standing Idle.fbx', 'Standard Run copy.fbx', 'Standard Run.fbx']);
   expect(added.skipped.map(item => item.file).sort()).toEqual(['More/broken.fbx', 'Standard Run.fbx']);
-  const registry = await mixamoRegistry(folder);
+  const registry = await mixamoRegistry(folder, env);
   expect(registry.schema).toBe(REGISTRY_SCHEMA);
   expect(registry.terms).toMatch(/do not redistribute/);
   expect(registry.entries.map(entry => entry.id)).toEqual(['dying', 'standard-run', 'standard-run-copy', 'standing-idle']);
   expect(registry.entries.find(entry => entry.id === 'dying')).toMatchObject({ file: 'More/Dying.fbx', hasMesh: true, clips: [{ seconds: 4.333 }] });
   expect((await readFile(join(downloads, 'Standard Run.fbx'))).length).toBeGreaterThan(0);
   // A second add copies nothing and gives the same registry.
-  const before = await readFile(join(folder, 'registry.json'), 'utf8');
-  expect((await addMixamo([join(downloads, 'Pack.zip')], folder)).copied).toEqual([]);
-  expect(await readFile(join(folder, 'registry.json'), 'utf8')).toBe(before);
+  const before = await readFile(registryFile(env), 'utf8');
+  expect((await addMixamo([join(downloads, 'Pack.zip')], folder, env)).copied).toEqual([]);
+  expect(await readFile(registryFile(env), 'utf8')).toBe(before);
+});
+
+it('keeps the registry in the managed home and registers only Mixamo-skeleton files, so the folder can be a repository', async () => {
+  const folder = await temp(), home = await temp(), env = { AGENT_MESHES_HOME: home };
+  await mkdir(join(folder, 'animations', 'idle'), { recursive: true });
+  await mkdir(join(folder, '.git', 'lfs'), { recursive: true });
+  await writeFile(join(folder, 'animations', 'idle', 'breathing-idle.fbx'), clip(9.917));
+  await writeFile(join(folder, 'animations', 'idle', 'later-download.fbx'), clip(2, { bones: ['mixamorig1:Hips', 'mixamorig1:Spine'] }));
+  await writeFile(join(folder, 'animations', 'idle', 'other-rig.fbx'), clip(1, { bones: ['Hips', 'Spine'] }));
+  await writeFile(join(folder, 'animations', 'idle', 'not-pulled.fbx'), 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 9\n');
+  await writeFile(join(folder, '.git', 'lfs', 'hidden.fbx'), clip(1));
+  const registry = await mixamoRegistry(folder, env);
+  expect(registryFile(env)).toBe(join(home, REGISTRY_FILE));
+  expect(registry.directory).toBe(resolve(folder));
+  expect(registry.entries.map(entry => [entry.id, entry.skeleton])).toEqual([['breathing-idle', 'mixamorig'], ['later-download', 'mixamorig1']]);
+  expect(Object.fromEntries(registry.skipped.map(item => [item.file, item.reason]))).toEqual({
+    'animations/idle/not-pulled.fbx': expect.stringMatching(/Git LFS pointer/),
+    'animations/idle/other-rig.fbx': 'not on the Mixamo skeleton (bone prefix: none)',
+  });
+  // Nothing is written into the folder itself.
+  expect((await readdir(folder)).sort()).toEqual(['.git', 'animations']);
+});
+
+it('refreshes the registry when the folder changes, as after a pull, and when it points at another folder', async () => {
+  const folder = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+  await writeFile(join(folder, 'Rifle Run.fbx'), clip(0.717));
+  expect((await mixamoRegistry(folder, env)).entries.map(entry => entry.id)).toEqual(['rifle-run']);
+  await writeFile(join(folder, 'Rifle Idle.fbx'), clip(2));
+  expect((await mixamoRegistry(folder, env)).entries.map(entry => entry.id)).toEqual(['rifle-idle', 'rifle-run']);
+  await rm(join(folder, 'Rifle Run.fbx'));
+  expect((await mixamoRegistry(folder, env)).entries.map(entry => entry.id)).toEqual(['rifle-idle']);
+  const other = await temp();
+  await writeFile(join(other, 'Jump.fbx'), clip(1));
+  expect((await mixamoRegistry(other, env)).entries.map(entry => entry.id)).toEqual(['jump']);
+  await expect(mixamoRegistry(join(other, 'missing'), env)).rejects.toThrow('No Mixamo folder');
 });
 
 it('gives a path only while the file still matches its registered bytes', async () => {
-  const folder = await temp();
+  const folder = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+  // A whole-second time survives being set again exactly.
   await writeFile(join(folder, 'Rifle Run.fbx'), clip(0.717));
-  await expect(mixamoRegistry(folder)).rejects.toThrow('No Mixamo registry');
-  expect((await scanMixamo(folder)).entries).toBe(1);
-  expect(await mixamoPath('rifle-run', folder)).toBe(join(folder, 'Rifle Run.fbx'));
-  await expect(mixamoPath('rifle-walk', folder)).rejects.toThrow('Unknown Mixamo entry');
+  await utimes(join(folder, 'Rifle Run.fbx'), 1700000000, 1700000000);
+  expect(await mixamoPath('rifle-run', folder, env)).toBe(join(folder, 'Rifle Run.fbx'));
+  await expect(mixamoPath('rifle-walk', folder, env)).rejects.toThrow('Unknown Mixamo entry');
+  // Same size and time but different bytes: the registry looks current, and the path check catches it.
   await writeFile(join(folder, 'Rifle Run.fbx'), clip(0.9));
-  await expect(mixamoPath('rifle-run', folder)).rejects.toThrow('changed since it was registered');
+  await utimes(join(folder, 'Rifle Run.fbx'), 1700000000, 1700000000);
+  await expect(mixamoPath('rifle-run', folder, env)).rejects.toThrow('changed since it was registered');
+  expect((await scanMixamo(folder, env)).entries).toBe(1);
+  expect(await mixamoPath('rifle-run', folder, env)).toBe(join(folder, 'Rifle Run.fbx'));
 });
 
 it('refuses an archive member that would leave the folder', () => {
@@ -112,20 +154,26 @@ it('keeps Mixamo payloads out of the package: no FBX file is tracked', () => {
   expect(tracked).toEqual([]);
 });
 
-it('the Blender-side reader resolves the same folder, registry and checked path', async () => {
-  const folder = await temp();
+it('the Blender-side reader resolves the same folder and registry, and refreshes it after the folder changes', async () => {
+  const folder = await temp(), home = await temp();
   await writeFile(join(folder, 'Rifle Run.fbx'), clip(0.717));
-  await scanMixamo(folder);
-  const script = [
-    'import json, os, sys', `sys.path.insert(0, ${JSON.stringify(resolve('scripts/blender_lib'))})`, 'import agent_meshes_mixamo as m',
-    'out = {"dir": str(m.mixamo_dir()), "ids": [e["id"] for e in m.registry()["entries"]], "path": str(m.clip_path("rifle-run"))}',
-    'try: m.entry("nope")', 'except KeyError as error: out["unknown"] = str(error)', 'print(json.dumps(out))',
-  ].join('\n');
-  const python = spawnSync('python', ['-c', script], { encoding: 'utf8', env: { ...process.env, AGENT_MESHES_MIXAMO_DIR: folder } });
-  expect(python.stderr).toBe('');
-  const out = JSON.parse(python.stdout);
-  expect(resolve(out.dir)).toBe(resolve(folder));
-  expect(out.ids).toEqual(['rifle-run']);
-  expect(resolve(out.path)).toBe(resolve(folder, 'Rifle Run.fbx'));
-  expect(out.unknown).toMatch(/Unknown Mixamo entry: nope/);
+  const read = () => {
+    const script = [
+      'import json, os, sys', `sys.path.insert(0, ${JSON.stringify(resolve('scripts/blender_lib'))})`, 'import agent_meshes_mixamo as m',
+      'out = {"dir": str(m.mixamo_dir()), "registry": str(m.registry_file()), "ids": [e["id"] for e in m.registry()["entries"]], "path": str(m.clip_path("rifle-run"))}',
+      'try: m.entry("nope")', 'except KeyError as error: out["unknown"] = str(error)', 'print(json.dumps(out))',
+    ].join('\n');
+    const python = spawnSync('python', ['-c', script], { encoding: 'utf8', env: { ...process.env, AGENT_MESHES_MIXAMO_DIR: folder, AGENT_MESHES_HOME: home } });
+    expect(python.stderr).toBe('');
+    return JSON.parse(python.stdout);
+  };
+  // No scan has run: the reader builds the registry through Node.
+  const first = read();
+  expect(resolve(first.dir)).toBe(resolve(folder));
+  expect(resolve(first.registry)).toBe(join(home, REGISTRY_FILE));
+  expect(first.ids).toEqual(['rifle-run']);
+  expect(resolve(first.path)).toBe(resolve(folder, 'Rifle Run.fbx'));
+  expect(first.unknown).toMatch(/Unknown Mixamo entry: nope/);
+  await writeFile(join(folder, 'Rifle Idle.fbx'), clip(2));
+  expect(read().ids).toEqual(['rifle-idle', 'rifle-run']);
 });
