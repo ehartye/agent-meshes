@@ -373,7 +373,8 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
 
   app.get('/', (_request, response) => {
     const page = join(webRoot, 'animations.html');
-    if (existsSync(page)) response.sendFile(page);
+    // With `root`, send checks only the file name for dot segments, so an installed runtime under ~/.agent-meshes is served.
+    if (existsSync(page)) response.sendFile('animations.html', { root: webRoot });
     else response.type('html').send(PLACEHOLDER);
   });
   app.use(express.static(webRoot, { index: false }));

@@ -325,6 +325,19 @@ describe('the animations server API', () => {
     expect(await (await fetch(served.url)).text()).toContain('from a temporary build');
   });
 
+  it('serves the page at / when webRoot sits under a dot-named folder, as an installed runtime does', async () => {
+    const { library, downloads, env } = await setup();
+    const web = join(await temp('dotted'), '.agent-meshes', 'releases', 'build', 'dist-web');
+    await mkdir(join(web, 'assets'), { recursive: true });
+    await writeFile(join(web, 'animations.html'), '<!doctype html><title>installed</title><p>from an installed runtime</p>');
+    await writeFile(join(web, 'assets', 'page.js'), 'console.log("installed");');
+    const server = await startServer({ library, downloads, env, webRoot: web });
+    const page = await fetch(server.url);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain('from an installed runtime');
+    expect((await fetch(`${server.url}assets/page.js`)).status).toBe(200);
+  });
+
   it('serves the page at / and rejects a foreign Origin while accepting its own', async () => {
     const { library, downloads, env } = await setup();
     const server = await startServer({ library, downloads, env });
