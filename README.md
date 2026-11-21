@@ -184,6 +184,25 @@ for `bpy`, native modifiers, weights, actions and Meshes helper selection. The
 CLI launches Blender; Python performs the work inside it. Blender 5.2 LTS (5.2.x) is the supported series, verified on 5.2.2; any other version is rejected before work starts with a message naming the version found.
 See [Optional Blender stage](#optional-blender-stage).
 
+## Animation library
+
+Adobe Mixamo downloads are licensed to the account that made them, so they never ship with Meshes or go into an
+agent-meshes checkout. They live in a library folder of your own (`AGENT_MESHES_MIXAMO_DIR`, for example a private
+repository cloned on each machine). The animations page imports them from Downloads, a file picker or drag-and-drop,
+renders a looping 192-pixel GIF of each clip on a mannequin, measures whether it moves in place or travels, and suggests
+tags. Its Library tab filters, tags and titles clips, copies a **move set** for an agent and syncs the library's git
+repository:
+
+```text
+agent-meshes animations serve --open
+agent-meshes animations import Walk.fbx pack.zip --tags hero
+```
+
+The server is one per machine on `127.0.0.1:3390`; a second `serve` reuses it. Agents load clips by id with
+`agent_meshes_mixamo.import_fbx('<id>')` in a Blender source. The [mesh-animations skill](skills/mesh-animations/SKILL.md)
+starts the page for you, and the [Mixamo library reference](scripts/blender_lib/references/mixamo-library.md) covers
+the layout, sidecars, registry, import rules, HTTP API and move-set format.
+
 ## Agent workspace
 
 Use a durable workspace without starting a server. Commands share the same validated authoring engine as the browser:
@@ -328,7 +347,7 @@ pushes and branch deletion remain in place.
 
 ## Claude Code plugin
 
-The repository is also a Claude Code plugin, listed in the [Hartye marketplace](https://github.com/ehartye/hartye-claude-plugins): `/plugin marketplace add ehartye/hartye-claude-plugins`, then `/plugin install agent-meshes@hartye-plugins`. The plugin cache is a bare checkout, so run `/agent-meshes:mesh-setup` once after installing or updating: it copies the runtime to `~/.agent-meshes/releases/<version-hash-platform>`, installs dependencies, builds the workbench, installs Chromium for renders, links the CLI and records a receipt (`npm run setup` does the same from a checkout). Skills (`mesh-setup`, `mesh-authoring`, `mesh-rigging`, `mesh-build`, `mesh-believable`) run every command through `scripts/run-managed.js`, which refuses a missing or modified release instead of falling back to PATH. `AGENT_MESHES_HOME` moves the managed home. Node.js 24 or newer is required; Blender stays optional and setup reports where it found one.
+The repository is also a Claude Code plugin, listed in the [Hartye marketplace](https://github.com/ehartye/hartye-claude-plugins): `/plugin marketplace add ehartye/hartye-claude-plugins`, then `/plugin install agent-meshes@hartye-plugins`. The plugin cache is a bare checkout, so run `/agent-meshes:mesh-setup` once after installing or updating: it copies the runtime to `~/.agent-meshes/releases/<version-hash-platform>`, installs dependencies, builds the workbench, installs Chromium for renders, links the CLI and records a receipt (`npm run setup` does the same from a checkout). Skills (`mesh-setup`, `mesh-authoring`, `mesh-rigging`, `mesh-build`, `mesh-believable`, `mesh-animations`) run every command through `scripts/run-managed.js`, which refuses a missing or modified release instead of falling back to PATH. `AGENT_MESHES_HOME` moves the managed home. Node.js 24 or newer is required; Blender stays optional and setup reports where it found one.
 
 ## Rigging
 

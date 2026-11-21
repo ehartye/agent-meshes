@@ -1,4 +1,5 @@
 import { Command, CommanderError, InvalidArgumentError } from 'commander';
+import { spawn } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,6 +104,33 @@ export async function main(args = process.argv): Promise<void> {
       const shutdown = async () => { await server.close(); process.exitCode = 0; };
       process.once('SIGINT', shutdown);
       process.once('SIGTERM', shutdown);
+    });
+  const animations = program.command('animations').description('The Mixamo animation library page: import downloads, preview, tag, copy move sets and sync');
+  animations.command('serve').description('Start or reuse the one animations page server of this machine on 127.0.0.1 and print {"service":"animations","url"}; stays in the foreground when it starts one')
+    .option('--open', 'Open the page in the default browser')
+    .option('--port <port>', 'Listening port (0 picks a free one)', '3390')
+    .option('--library <directory>', 'The animation library folder (default: AGENT_MESHES_MIXAMO_DIR)')
+    .option('--downloads <directory>', 'The folder the Import tab lists (default: the Downloads folder)')
+    .action(async options => {
+      const port = Number(options.port);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) throw Object.assign(new Error('Port must be an integer from 0 to 65535'), { code: 'CLI_ARGUMENT_ERROR' });
+      const { serveAnimations } = await import('./animation-server.ts');
+      const served = await serveAnimations({ port, ...(options.library ? { library: resolve(options.library) } : {}), ...(options.downloads ? { downloads: resolve(options.downloads) } : {}) });
+      print({ service: 'animations', url: served.url });
+      if (options.open) openBrowser(served.url);
+      if (served.reused) return;
+      const shutdown = async () => { await served.close(); process.exitCode = 0; };
+      process.once('SIGINT', shutdown);
+      process.once('SIGTERM', shutdown);
+    });
+  animations.command('import <paths...>').description('Import FBX files, zip archives or folders into the animation library and print {"results"}: imported, duplicate or rejected, with an id or a reason')
+    .option('--tags <list>', 'Comma-separated tags added to the suggested ones')
+    .option('--library <directory>', 'The animation library folder (default: AGENT_MESHES_MIXAMO_DIR)')
+    .action(async (paths: string[], options) => {
+      const { importAssets } = await import('../scripts/mixamo-library.mjs');
+      const tags = options.tags ? String(options.tags).split(',').map(tag => tag.trim()).filter(Boolean) : [];
+      const { results } = await importAssets(paths.map(path => resolve(path)), { ...(options.library ? { directory: resolve(options.library) } : {}), tags });
+      print({ results });
     });
   program.command('new <name>').description('Replace the project with an empty one named <name> (the exported root node takes this name); in a workspace, undo and redo history start empty and the revision keeps counting up').action(name => request('new', { name }));
   program.command('recipe <kind>').description('Load biped, equine, vulpine, insectoid, arachnid or strandbeest (quadruped aliases vulpine)')
@@ -524,6 +552,15 @@ ${clipReportThresholds()}`)
     process.stderr.write(`${JSON.stringify({ ok: false, error: errorDetails(error) })}\n`);
     process.exitCode = 1;
   }
+}
+
+/** Open a URL in the default browser without waiting for it. */
+function openBrowser(url: string): void {
+  const [command, args, verbatim] = process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', url], true]
+    : process.platform === 'darwin' ? ['open', [url], false] : ['xdg-open', [url], false];
+  const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: verbatim });
+  child.on('error', () => process.stderr.write(`${JSON.stringify({ warning: `Could not open a browser; open ${url}` })}\n`));
+  child.unref();
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

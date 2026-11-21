@@ -1,0 +1,168 @@
+/** @lane merge
+ * @subject src/web/animations.ts
+ */
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { existsSync, statSync } from 'node:fs';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { chromium, type Browser, type Page } from 'playwright';
+import { build } from 'vite';
+import { createAnimationServer, type AnimationServer } from '../src/animation-server.ts';
+import { browserLaunchOptions } from '../src/browser.ts';
+import { animatedFbx } from './helpers/animated-fbx.ts';
+
+/** A 1 x 1 GIF89a, as a stub renderer returns. */
+const TINY_GIF = Buffer.from('47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b', 'hex');
+const stubRender = async () => ({ gif: new Uint8Array(TINY_GIF) });
+
+let browser: Browser, server: AnimationServer, page: Page, library: string, distBefore: string;
+/** The checkout's own build, which this test must leave alone: whether it exists, and when it last changed. */
+const distStamp = () => { try { const info = statSync(resolve('dist-web')); return `${info.mtimeMs}`; } catch { return 'absent'; } };
+const folders: string[] = [];
+const temp = async (label: string) => { const path = await mkdtemp(join(tmpdir(), `mesh-anim-ui-${label}-`)); folders.push(path); return path; };
+const sidecar = async (id: string) => JSON.parse(await readFile(join(library, `mixamo/clips/${id}.json`), 'utf8'));
+const until = async (check: () => Promise<boolean>, ms = 10000) => {
+  const end = Date.now() + ms;
+  while (!await check()) { if (Date.now() > end) throw new Error('timed out'); await new Promise(done => setTimeout(done, 50)); }
+};
+
+beforeAll(async () => {
+  // The page is the second entry of the project's Vite build, built into a temporary web root the server serves.
+  distBefore = distStamp();
+  const web = await temp('web');
+  await build({ configFile: resolve('vite.config.ts'), logLevel: 'error', build: { outDir: web, emptyOutDir: true } });
+  expect(existsSync(join(web, 'animations.html'))).toBe(true);
+  library = await temp('lib');
+  const home = await temp('home'), downloads = await temp('dl');
+  await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+  await writeFile(join(downloads, 'Idle.fbx'), animatedFbx());
+  const env = { ...process.env, AGENT_MESHES_HOME: home, AGENT_MESHES_MIXAMO_DIR: library };
+  server = await createAnimationServer({ port: 0, library, downloads, env, render: stubRender, webRoot: web });
+  browser = await chromium.launch({ headless: true, ...browserLaunchOptions() });
+  page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
+  page.setDefaultTimeout(10000);
+  await page.goto(server.url);
+}, 180000);
+
+afterAll(async () => {
+  await browser?.close();
+  await server?.close();
+  for (const folder of folders) await rm(folder, { recursive: true, force: true });
+});
+
+const cards = () => page.locator('[data-card]');
+const card = (id: string) => page.locator(`[data-card="${id}"]`);
+
+describe('the animations page', () => {
+  it('imports two Downloads, showing a result row and a new card for each', async () => {
+    await page.getByRole('checkbox', { name: 'Walk.fbx' }).check();
+    await page.getByRole('checkbox', { name: 'Idle.fbx' }).check();
+    await page.getByRole('button', { name: 'Import selected' }).click();
+    const rows = page.locator('[data-import-row]');
+    await expect.poll(() => rows.count()).toBe(2);
+    await expect.poll(() => page.locator('[data-import-row][data-status="imported"]').count(), { timeout: 15000 }).toBe(2);
+    await page.getByRole('tab', { name: 'Library' }).click();
+    await expect.poll(() => cards().count()).toBe(2);
+    expect((await cards().evaluateAll(items => items.map(item => item.getAttribute('data-card')))).sort()).toEqual(['idle', 'walk']);
+    expect(distStamp()).toBe(distBefore);
+  });
+
+  it('shows each card length once, in its motion summary, with the id on the meta line', async () => {
+    const walk = await sidecar('walk');
+    expect(walk.motion.summary).toContain(`${walk.motion.seconds.toFixed(1)} s`);
+    await expect.poll(() => card('walk').locator('.card-meta').textContent()).toBe('walk');
+    const text = await card('walk').textContent();
+    expect(text!.split(`${walk.motion.seconds.toFixed(1)} s`)).toHaveLength(2);
+  });
+
+  it('shift-selects both cards and adds a tag to both sidecars', async () => {
+    const [first, second] = await cards().evaluateAll(items => items.map(item => item.getAttribute('data-card')!));
+    await card(first!).click();
+    await card(second!).click({ modifiers: ['Shift'] });
+    await expect.poll(() => page.locator('[data-card][aria-selected="true"]').count()).toBe(2);
+    const input = page.getByLabel('Add tags');
+    await input.fill('ronin');
+    await input.press('Enter');
+    await until(async () => (await sidecar('walk')).tags.includes('ronin') && (await sidecar('idle')).tags.includes('ronin'));
+  });
+
+  it('edits one card title in the sidecar, keeping its id', async () => {
+    await card('walk').click();
+    await expect.poll(() => page.locator('[data-card][aria-selected="true"]').count()).toBe(1);
+    const title = page.getByLabel('Title');
+    await title.fill('Ronin stride');
+    await title.press('Enter');
+    await until(async () => (await sidecar('walk')).title === 'Ronin stride');
+    expect((await sidecar('walk')).id).toBe('walk');
+    expect(existsSync(join(library, 'mixamo/clips/walk.json'))).toBe(true);
+    await expect.poll(() => card('walk').textContent()).toContain('Ronin stride');
+  });
+
+  it('copies the selection as a move set under the heading it asks for', async () => {
+    const order = await cards().evaluateAll(items => items.map(item => item.getAttribute('data-card')!));
+    await card(order[0]!).click();
+    await card(order[1]!).click({ modifiers: ['Shift'] });
+    await page.getByRole('button', { name: 'Copy move set' }).click();
+    const name = page.getByLabel('Heading');
+    expect(await name.inputValue()).toBe('Move set');
+    await name.fill('Ronin');
+    await page.getByRole('button', { name: 'Copy', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => typeof (window as any).__lastCopied)).toBe('string');
+    const text: string = await page.evaluate(() => (window as any).__lastCopied);
+
+    const bullet = async (id: string) => {
+      const meta = await sidecar(id);
+      const motion = meta.motion.inPlace ? 'in place' : `root motion, travels ${meta.motion.travelMeters.toFixed(1)} m`;
+      return `- ${meta.title} (\`${id}\`): ${meta.note ? `${meta.note}. ` : ''}${meta.tags.join(', ')}. ${meta.motion.seconds.toFixed(1)} s, ${motion}.`;
+    };
+    const expected = [
+      '## Ronin',
+      "Mixamo clips from the agent-meshes animation library. Load each by id with `agent_meshes_mixamo.import_fbx('<id>')`, or get its path with `node <runtime>/scripts/mixamo-library.mjs path <id>`.",
+      ...await Promise.all(order.map(bullet)),
+    ].join('\n');
+    expect(text.startsWith('## Ronin')).toBe(true);
+    expect(text.trimEnd()).toBe(expected);
+    expect(text.split('\n').filter(line => line.startsWith('- '))).toHaveLength(2);
+    expect(text).toContain('(`walk`): ');
+    expect(text).toContain('ronin');
+    expect(text).toMatch(/root motion, travels 1\.0 m\./);
+    expect(text).toMatch(/in place\./);
+  });
+
+  it('drops cards hidden by the filter from the selection, so bulk actions only reach visible cards', async () => {
+    await card('idle').click();
+    await card('walk').click({ modifiers: ['Control'] });
+    await expect.poll(() => page.locator('#selection-count').textContent()).toBe('2 selected');
+    await page.getByLabel('Filter', { exact: true }).fill('stride');
+    await expect.poll(() => cards().count()).toBe(1);
+    await expect.poll(() => page.locator('#selection-count').textContent()).toBe('1 selected');
+    await page.getByRole('button', { name: 'Copy move set' }).click();
+    await page.getByLabel('Heading').fill('Solo');
+    await page.getByRole('button', { name: 'Copy', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__lastCopied as string)).toMatch(/^## Solo\n/);
+    const bullets = (await page.evaluate(() => (window as any).__lastCopied as string)).split('\n').filter(line => line.startsWith('- '));
+    expect(bullets).toEqual([expect.stringContaining('(`walk`)')]);
+    await page.getByRole('button', { name: 'Remove', exact: true }).click();
+    const confirm = page.getByRole('dialog');
+    await expect.poll(() => confirm.textContent()).toContain('Ronin stride');
+    expect(await confirm.textContent()).not.toContain('Idle');
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await page.getByLabel('Filter', { exact: true }).fill('');
+    await expect.poll(() => cards().count()).toBe(2);
+    await expect.poll(() => page.locator('#selection-count').textContent()).toBe('1 selected');
+  });
+
+  it('warns on a card whose sidecar is unreadable and still removes it', async () => {
+    await writeFile(join(library, 'mixamo/clips/idle.json'), '{ not json');
+    await page.reload();
+    await page.getByRole('tab', { name: 'Library' }).click();
+    await expect.poll(() => card('idle').locator('.card-warning').textContent()).toMatch(/sidecar unreadable — fix or restore it/);
+    await card('idle').click();
+    await expect.poll(() => card('idle').getAttribute('aria-selected')).toBe('true');
+    await page.getByRole('button', { name: 'Remove', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click();
+    await expect.poll(() => cards().count()).toBe(1);
+    expect(existsSync(join(library, 'mixamo/clips/idle.fbx'))).toBe(false);
+  });
+});

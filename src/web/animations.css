@@ -1,0 +1,102 @@
+/* The animation library page: layout, card grid, selection, import rows and dialogs only. Everything else comes from
+   style.css, and every colour here is one of its tokens. The workbench locks body to the viewport; this page scrolls. */
+body.animations{height:auto;min-height:100vh;overflow:auto}
+body.animations .statusbar{position:sticky;bottom:0;gap:16px}
+body.animations .statusbar span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* style.css has no disabled state; Import and Sync need one on this page. */
+body.animations button:disabled{opacity:.45;cursor:not-allowed}
+
+.anim-main{flex:1;display:flex;flex-direction:column;min-height:0}
+.anim-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 26px;border-bottom:1px solid var(--line);background:var(--stage)}
+.tab-count{font-size:10px;color:var(--muted);margin-left:4px}
+.sync-box{display:flex;align-items:center;gap:12px}
+.sync-box .subtle{text-align:right}
+.anim-panel{padding:22px 26px;flex:1}
+.anim-panel[hidden]{display:none}
+
+/* Import */
+.import-layout{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:32px;align-items:start}
+.import-column .subtle{margin:6px 0 10px;word-break:break-all}
+.download-head{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.download-head .check-label{font-size:11px}
+.download-list,.import-rows{list-style:none;margin:0;padding:0}
+.download-row{display:grid;grid-template-columns:auto minmax(0,1fr) 64px 150px 190px;align-items:center;gap:12px;padding:9px 4px;border-bottom:1px solid var(--line);font-size:12px;font-weight:500;color:var(--ink);cursor:pointer}
+.download-row input{width:auto}
+.download-row:hover{background:var(--stage)}
+.download-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.download-row .subtle{margin:0;font-size:11px}
+.badge{justify-self:end;font-size:10px;font-weight:600;letter-spacing:.3px;color:var(--ocean);border:1px solid var(--ocean);border-radius:10px;padding:1px 8px;white-space:nowrap}
+.drop-zone{display:flex;flex-direction:column;align-items:center;gap:6px;margin:12px 0 24px;padding:26px 16px;border:1px dashed var(--muted);border-radius:6px;background:var(--stage);text-align:center;cursor:pointer}
+.drop-zone strong{font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:500;color:var(--ink)}
+.drop-zone span{font-weight:400}
+.drop-zone input{max-width:260px;background:var(--paper)}
+.drop-zone.dragging{border-style:solid;border-color:var(--ocean);box-shadow:inset 0 0 0 2px var(--ocean)}
+.results-heading{padding-bottom:8px;border-bottom:1px solid var(--line)}
+.import-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;padding:9px 4px 9px 10px;border-bottom:1px solid var(--line);border-left:3px solid var(--line);font-size:12px}
+.import-row .subtle{grid-column:1/-1;margin:0;font-size:11px;line-height:1.4}
+.import-name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.import-status{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted)}
+.import-row[data-status=imported]{border-left-color:var(--ocean)}
+.import-row[data-status=imported] .import-status{color:var(--ocean)}
+.import-row[data-status=duplicate]{border-left-color:var(--sun)}
+.import-row[data-status=rejected],.import-row[data-status=failed]{border-left-color:var(--danger)}
+.import-row[data-status=rejected] .import-status,.import-row[data-status=failed] .import-status{color:var(--danger)}
+
+/* Library: filters, bulk bar and single edit */
+.library-filters{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-bottom:16px}
+.filter-text{width:260px}
+.filter-tags{flex:1;min-width:200px;display:grid;gap:7px}
+.filter-label{font-size:11px;font-weight:600;color:var(--muted)}
+.chip-row{display:flex;flex-wrap:wrap;gap:5px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:600;line-height:1.4;padding:2px 8px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink);cursor:pointer}
+.chip small{color:var(--muted);font-weight:500}
+.chip.active{border-color:var(--ocean);background:var(--ocean);color:var(--paper)}
+.chip.active small{color:var(--paper)}
+.chip.removable:hover{border-color:var(--danger);color:var(--danger);background:var(--paper)}
+.bulk-bar{position:sticky;top:0;z-index:2;display:flex;align-items:flex-end;flex-wrap:wrap;gap:14px;padding:12px 14px;margin-bottom:12px;border:1px solid var(--ocean);border-radius:6px;background:var(--paper);box-shadow:0 2px 8px var(--line)}
+.bulk-bar[hidden],.single-edit[hidden]{display:none}
+.selection-count{align-self:center;font-family:'Barlow Condensed',sans-serif;font-size:20px;font-weight:600;color:var(--ocean);min-width:90px}
+.bulk-field{display:grid;gap:7px;min-width:180px}
+.bulk-field .chip-row{min-height:22px;align-items:center}
+.single-edit{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr) auto;align-items:end;gap:12px;margin:-4px 0 16px;padding:12px 14px;border:1px solid var(--line);border-radius:6px}
+
+/* Library: cards */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px}
+.card{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:6px;background:var(--paper);overflow:hidden;cursor:pointer;user-select:none;transition:border-color .15s,box-shadow .15s}
+.card:hover{border-color:var(--muted)}
+.card:focus-visible{outline:2px solid var(--ocean);outline-offset:2px}
+.card.selected{border-color:var(--ocean);box-shadow:0 0 0 2px var(--ocean)}
+.card-preview{position:relative;aspect-ratio:1;background:var(--stage);display:grid;place-items:center}
+.card-preview img,.card-preview canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;image-rendering:auto}
+.card-preview canvas{visibility:hidden}
+.card-preview.still canvas{visibility:visible}
+.card-preview.still img{visibility:hidden}
+.card-preview.missing{background:repeating-linear-gradient(135deg,var(--stage) 0 10px,var(--paper) 10px 20px)}
+.card-preview.missing span{font-family:'Barlow Condensed',sans-serif;font-size:13px;letter-spacing:2px;text-transform:uppercase;color:var(--muted)}
+.card.selected .card-preview::after{content:'✓';position:absolute;top:8px;right:8px;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;background:var(--ocean);color:var(--paper);font-size:12px;font-weight:700}
+.card-body{display:grid;gap:4px;padding:10px 11px 12px}
+.card-title{font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:600;line-height:1.15;word-break:break-word}
+.card-meta{font-size:11px;line-height:1.3}
+.card-summary{font-size:11px;line-height:1.4;color:var(--ink)}
+.card-tags{margin-top:4px}
+.card-warning{font-size:11px;font-weight:600;line-height:1.4;color:var(--danger)}
+.card-warning[hidden]{display:none}
+
+/* Dialogs */
+.anim-dialog{border:1px solid var(--line);border-radius:8px;padding:22px 24px;width:min(420px,calc(100vw - 32px));color:var(--ink);background:var(--paper)}
+.anim-dialog::backdrop{background:var(--ink);opacity:.35}
+.anim-dialog h2{margin:0 0 14px}
+.anim-dialog form{display:grid;gap:12px}
+.anim-dialog p{margin:0;font-size:13px}
+/* The confirming button comes first in the markup, so Enter picks it, and shows last. */
+.dialog-actions{display:flex;flex-direction:row-reverse;justify-content:flex-start;gap:8px;margin-top:6px}
+.remove-list{margin:0;padding-left:18px;max-height:220px;overflow:auto;font-size:13px;line-height:1.6}
+.copy-buffer{position:fixed;top:0;left:0;opacity:0;pointer-events:none}
+
+@media(max-width:900px){.import-layout{grid-template-columns:1fr}
+.download-row{grid-template-columns:auto minmax(0,1fr) auto auto}
+.download-row time{display:none}
+.single-edit{grid-template-columns:1fr}
+.anim-toolbar,.anim-panel{padding-left:16px;padding-right:16px}
+.sync-box .subtle{display:none}
+}
