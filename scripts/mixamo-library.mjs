@@ -285,6 +285,34 @@ async function writeAtomic(path, data) {
     }
   } catch (error) { await rm(staging, { force: true }); throw error; }
 }
+/** The staging names above: `.<name>.<pid>.<8 hex>.tmp`. */
+const STAGING = /^\..+\.(\d+)\.[0-9a-f]{8}\.tmp$/;
+const STALE_STAGING_MS = 60 * 60 * 1000;
+const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+/** Remove staging files that an import killed part-way left behind in the library layout: those of a process that is no
+ *  longer running, or older than an hour. This process's own are never touched; another import here may be writing them. */
+async function removeStaleStaging(directory) {
+  for (const folder of ['clips', 'characters'].map(name => join(directory, 'mixamo', name))) {
+    let names;
+    try { names = await readdir(folder); } catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+    for (const name of names) {
+      const pid = Number(STAGING.exec(name)?.[1]);
+      if (!pid || pid === process.pid) continue;
+      const path = join(folder, name);
+      try {
+        if (!alive(pid) || Date.now() - (await stat(path)).mtimeMs > STALE_STAGING_MS) await rm(path, { force: true });
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  }
+}
+/** Two spellings of one folder: the same path, or on Windows the same path in another letter case, or the same real
+ *  path (a link, a junction, a short name). The Python reader refreshes with the real-case path. */
+function sameFolder(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a === b || (process.platform === 'win32' && a.toLowerCase() === b.toLowerCase())) return true;
+  try { return realpathSync.native(a) === realpathSync.native(b); } catch { return false; }
+}
+
 /** Create a file whole, failing with EEXIST when it already exists, so two importers cannot claim one id. */
 async function createExclusive(path, data) {
   const staging = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
@@ -309,7 +337,7 @@ const facts = ({ fbxVersion, creator, skeleton, bones, hasMesh, clips }) => ({ f
 export async function scanMixamo(directory, env = process.env, { reuse = null } = {}) {
   directory = resolve(directory ?? mixamoDir(env));
   await mkdir(directory, { recursive: true });
-  const known = new Map((reuse?.directory === directory ? [...reuse.entries, ...reuse.skipped] : []).map(item => [item.file, item]));
+  const known = new Map((sameFolder(reuse?.directory, directory) ? [...reuse.entries, ...reuse.skipped] : []).map(item => [item.file, item]));
   const skipped = [], accepted = [], files = await fbxFiles(directory);
   for (const stamp of files) {
     const { file } = stamp, old = known.get(file);
@@ -370,7 +398,7 @@ export async function mixamoRegistry(directory, env = process.env) {
     throw error;
   }
   const registry = await readRegistry(env);
-  if (registry?.directory === directory) {
+  if (sameFolder(registry?.directory, directory)) {
     const same = (listed, found) => { const map = new Map(listed.map(item => [item.file, `${item.bytes}:${item.mtimeMs}`])); return found.length === map.size && found.every(item => map.get(item.file) === `${item.bytes}:${item.mtimeMs}`); };
     const files = await fbxFiles(directory);
     if (same([...registry.entries, ...registry.skipped], files) && same(registry.sidecars ?? [], await sidecarFiles(directory, files))) return registry;
@@ -465,6 +493,7 @@ export async function importAssets(sources, { directory, env = process.env, tags
   if (!sources?.length) throw new Error('add <file.fbx | pack.zip | folder> ...');
   assertNotMeshesCheckout(directory);
   await mkdir(directory, { recursive: true });
+  await removeStaleStaging(directory);
   let registry = await mixamoRegistry(directory, env);
   const bySha = new Map(registry.entries.map(entry => [entry.sha256, { id: entry.id, file: entry.file }])), ids = new Set(registry.entries.map(entry => entry.id));
   const taken = id => ids.has(id) || ['clips', 'characters'].some(folder => ['fbx', 'json', 'gif'].some(ext => existsSync(join(directory, 'mixamo', folder, `${id}.${ext}`))));

@@ -12,7 +12,7 @@ import { assertNotMeshesCheckout } from '../scripts/mixamo-library.mjs';
 
 export interface SyncStatus {
   available: boolean;
-  /** Why Sync is unavailable: not a git working tree, no upstream, or a library inside an agent-meshes checkout. */
+  /** Why Sync is unavailable: no git on PATH, not a git working tree, no upstream, or a library inside an agent-meshes checkout. */
   reason?: string;
   branch: string | null;
   /** Commits on the branch that its upstream lacks, and the reverse, as of the last fetch. */
@@ -40,6 +40,15 @@ export class SyncUnavailableError extends Error {
 
 interface GitResult { code: number; stdout: string; stderr: string }
 
+/** The reason Sync gives when there is no git to run. */
+export const GIT_MISSING = 'git is not installed or not on PATH';
+/** git could not be started: not installed, or not on PATH. */
+class GitMissingError extends Error {}
+
+/** The library's files, without dotted names: the temporary files the library writes through (`.<name>.<pid>.<hex>.tmp`,
+ *  whole FBX copies while an import runs) are never listed, staged or committed. */
+const LIBRARY = ['mixamo', ':(exclude,glob)mixamo/**/.*'];
+
 /** The environment for git: the library folder alone decides the repository, and git never waits for a prompt. */
 function gitEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_MERGE_AUTOEDIT: 'no' };
@@ -50,7 +59,9 @@ function gitEnv(): NodeJS.ProcessEnv {
 function git(cwd: string, args: string[]): Promise<GitResult> {
   return new Promise((done, fail) => {
     execFile('git', args, { cwd, env: gitEnv(), windowsHide: true, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error && typeof (error as NodeJS.ErrnoException).code === 'string') { fail(new Error(`git could not run: ${error.message}`)); return; }
+      const code = (error as NodeJS.ErrnoException | null)?.code;
+      if (code === 'ENOENT') { fail(new GitMissingError(GIT_MISSING)); return; }
+      if (typeof code === 'string') { fail(new Error(`git could not run: ${error!.message}`)); return; }
       done({ code: error ? Number((error as { code?: number }).code ?? 1) : 0, stdout: String(stdout), stderr: String(stderr) });
     });
   });
@@ -68,7 +79,9 @@ export async function syncStatus(directory: string): Promise<SyncStatus> {
   const dir = resolve(directory);
   const status: SyncStatus = { available: false, branch: null, ahead: 0, behind: 0, changed: [] };
   if (!existsSync(dir)) return { ...status, reason: `the library folder ${dir} does not exist yet` };
-  const result = await git(dir, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', 'mixamo']);
+  let result: GitResult;
+  try { result = await git(dir, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', ...LIBRARY]); }
+  catch (error) { if (error instanceof GitMissingError) return { ...status, reason: GIT_MISSING }; throw error; }
   if (result.code !== 0) return { ...status, reason: `the library folder ${dir} is not a git working tree` };
   try { assertNotMeshesCheckout(dir); } catch (error) { return { ...status, reason: (error as Error).message }; }
   let upstream: string | null = null;
@@ -120,11 +133,11 @@ export async function syncLibrary(directory: string, summary?: string): Promise<
   if (!status.available) throw new SyncUnavailableError(`Sync is unavailable: ${status.reason}`);
   const result: SyncResult = { committed: false, pulled: false, pushed: false };
   // Status lists staged and unstaged changes alike, so with none there is nothing to add or commit.
-  if (status.changed.length) await gitOk(dir, ['add', '-A', '--', 'mixamo']);
-  const staged = status.changed.length ? await gitOk(dir, ['--no-optional-locks', 'diff', '--cached', '--name-status', '--no-renames', '-z', '--', 'mixamo']) : '';
+  if (status.changed.length) await gitOk(dir, ['add', '-A', '--', ...LIBRARY]);
+  const staged = status.changed.length ? await gitOk(dir, ['--no-optional-locks', 'diff', '--cached', '--name-status', '--no-renames', '-z', '--', ...LIBRARY]) : '';
   if (staged) {
     const message = syncMessage(staged, summary);
-    await gitOk(dir, ['commit', '--quiet', '-m', message, '--', 'mixamo']);
+    await gitOk(dir, ['commit', '--quiet', '-m', message, '--', ...LIBRARY]);
     result.committed = true; result.message = message;
   }
   const pull = await git(dir, ['pull', '--rebase', '--no-autostash', '--quiet']);

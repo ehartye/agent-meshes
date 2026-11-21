@@ -90,6 +90,7 @@ body.animations button:disabled{opacity:.45;cursor:not-allowed}
 .anim-dialog p{margin:0;font-size:13px}
 /* The confirming button comes first in the markup, so Enter picks it, and shows last. */
 .dialog-actions{display:flex;flex-direction:row-reverse;justify-content:flex-start;gap:8px;margin-top:6px}
+.remove-list{margin:0;padding-left:18px;max-height:220px;overflow:auto;font-size:13px;line-height:1.6}
 .copy-buffer{position:fixed;top:0;left:0;opacity:0;pointer-events:none}
 
 @media(max-width:900px){.import-layout{grid-template-columns:1fr}

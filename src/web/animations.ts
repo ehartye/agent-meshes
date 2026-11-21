@@ -99,6 +99,7 @@ function visible(): Entry[] {
     return words.every(word => haystack.includes(word));
   });
 }
+/** The selected entries in grid order; `renderLibrary` keeps the selection to the visible cards. */
 const selection = () => visibleOrder(entries).filter(entry => selected.has(entry.id));
 /** The grid order: by title, then id. */
 const visibleOrder = (list: Entry[]) => [...list].sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
@@ -195,7 +196,9 @@ function updateCard(card: HTMLElement, entry: Entry) {
 
 function renderLibrary() {
   const shown = visibleOrder(visible());
-  for (const id of [...selected]) if (!byId(id)) selected.delete(id);
+  // Bulk actions reach only what the owner can see: a card the filter hides (or that is gone) leaves the selection.
+  const shownIds = new Set(shown.map(entry => entry.id));
+  for (const id of [...selected]) if (!shownIds.has(id)) selected.delete(id);
   for (const [id, card] of cards) if (!byId(id)) { card.remove(); cards.delete(id); }
   const nodes = shown.map(entry => {
     let card = cards.get(entry.id);
@@ -367,7 +370,10 @@ const removeDialog = el<HTMLDialogElement>('remove-dialog');
 el('remove-selected').addEventListener('click', () => {
   const list = selection();
   if (!list.length) return;
-  el('remove-summary').textContent = `Remove ${list.length === 1 ? list[0]!.title : plural(list.length, 'clip')} from the library?`;
+  el('remove-summary').textContent = `Remove ${plural(list.length, 'clip')} from the library?`;
+  const named = list.slice(0, 10).map(entry => h('li', { text: `${entry.title} (${entry.id})` }));
+  if (list.length > 10) named.push(h('li', { class: 'subtle', text: `and ${list.length - 10} more` }));
+  el('remove-list').replaceChildren(...named);
   removeDialog.returnValue = '';
   removeDialog.showModal();
 });

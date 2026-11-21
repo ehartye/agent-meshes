@@ -123,12 +123,14 @@ const text = (value: unknown, name: string): string => {
   return value;
 };
 
-/** The HTTP status for an error from the library: the checkout rule is a conflict, an unknown id is not found. */
+/** The HTTP status for an error from the library: the checkout rule and an unreadable sidecar are conflicts, an unknown id is not found. */
 function statusOf(error: unknown): number {
   const status = (error as { status?: unknown })?.status;
   if (typeof status === 'number' && status >= 400 && status < 600) return status;
   const message = error instanceof Error ? error.message : String(error);
   if (/never kept in an agent-meshes checkout/.test(message)) return 409;
+  // An unreadable sidecar (a sync conflict left in it, or another schema) is refused so nothing overwrites it.
+  if (/^sidecar .* (is not valid JSON|does not have the schema \S+); fix or restore it$/.test(message)) return 409;
   if (/^Unknown Mixamo entry/.test(message)) return 404;
   if (/^a title cannot be empty/.test(message)) return 400;
   return 500;
@@ -187,7 +189,8 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
   const clients = new Set<Response>();
   let port = 0;
   let queue: Promise<unknown> = Promise.resolve();
-  /** Library reads and writes run one at a time, so imports are serialized and no two registry scans overlap. */
+  /** Library writes (each imported file, each edit, Sync) run one at a time, in the order they arrive. Reads do not
+   *  wait for them: the library writes each file whole under a temporary name, and the registry the same way. */
   const serial = <T>(task: () => Promise<T>): Promise<T> => { const run = queue.then(task); queue = run.catch(() => {}); return run; };
 
   let session: Promise<PreviewSession> | undefined;
@@ -220,13 +223,14 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
 
   const entries = async () => existsSync(library) ? (await mixamoRegistry(library, env)).entries : [];
   app.get('/api/library', async (_request, response) => {
-    const [list, sync] = await Promise.all([serial(entries), syncStatus(library)]);
+    const [list, sync] = await Promise.all([entries(), syncStatus(library)]);
     response.json({ directory: library, sync: sync.available ? { available: true } : { available: false, reason: sync.reason }, entries: list.map(withPreview) });
   });
 
   /** The FBX members of each download (the file itself, for an FBX), cached by path, size and modification time with
-   *  any hashes already taken. A member is hashed only when its size is the size of some library entry, so a download
-   *  that cannot be in the library is never read (and a cloud-only file in a synced Downloads is never fetched). */
+   *  any hashes already taken. Of a zip, only its end record and central directory are read to list the members, so a
+   *  cloud-only zip in a synced Downloads can still be fetched for that. A member, or an FBX download, is read and
+   *  hashed only when its size is the size of some library entry; an FBX of any other size is never read. */
   const probes = new Map<string, { key: string; members: DownloadMember[] }>();
   const membersOf = async (file: Omit<DownloadFile, 'inLibrary'>) => {
     const key = `${file.bytes}:${file.mtimeMs}`, cached = probes.get(file.path);
@@ -257,7 +261,7 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
     }
     files.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name));
     for (const path of probes.keys()) if (!files.some(file => file.path === path)) probes.delete(path);
-    const known = await serial(entries);
+    const known = await entries();
     const bySha = new Map(known.map(entry => [entry.sha256, entry.id])), sizes = new Set(known.map(entry => entry.bytes));
     const listed: DownloadFile[] = [];
     for (const file of files) {
@@ -283,14 +287,15 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
     response.on('close', () => clients.delete(response));
   });
 
-  /** Import sources one after another, sending one `import-progress` event per result. `label` turns a temporary
-   *  upload path back into the name the page sent. */
-  const runImport = (sources: { path: string; label?: (source: string) => string }[], tags: string[]) => serial(async () => {
+  /** Import sources one after another, sending one `import-progress` event per result. Each source is its own write
+   *  task, queued when the one before it ends, so an edit or Sync sent meanwhile runs between two files. `label` turns a
+   *  temporary upload path back into the name the page sent. */
+  const runImport = async (sources: { path: string; label?: (source: string) => string }[], tags: string[]) => {
     assertNotMeshesCheckout(library);
     const results: MixamoImportResult[] = [], total = sources.length;
     let done = 0;
     for (const source of sources) {
-      let part = (await importAssets([source.path], { directory: library, env, tags, render })).results;
+      let part = (await serial(() => importAssets([source.path], { directory: library, env, tags, render }))).results;
       if (!part.length) part = [{ source: source.path, status: 'rejected', reason: 'no FBX files in this folder' }];
       part.forEach((result, index) => {
         const shown = source.label ? { ...result, source: source.label(result.source) } : result;
@@ -300,7 +305,7 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
       });
     }
     return results;
-  });
+  };
 
   const api = express.json({ limit: '1mb' });
   app.post('/api/import', api, async (request, response) => {
@@ -401,6 +406,10 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
   };
 }
 
+/** Whether two resolved library paths name one folder: case-insensitively on Windows, whose file names ignore case. */
+export const sameLibrary = (a: string | undefined, b: string, platform = process.platform) =>
+  typeof a === 'string' && (platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
+
 interface ServerRecord { pid: number; port: number; url: string; apiVersion: number; library: string }
 export interface ServedAnimations { url: string; port: number; pid: number; reused: boolean; close(): Promise<void> }
 
@@ -464,7 +473,7 @@ export async function serveAnimations(options: AnimationServerOptions = {}): Pro
     const record = await readRecord(file);
     if (record && alive(record.pid)) {
       const identity = await health(record.url);
-      if (identity?.apiVersion === ANIMATIONS_API_VERSION && identity.library === library) {
+      if (identity?.apiVersion === ANIMATIONS_API_VERSION && sameLibrary(identity.library, library)) {
         return { url: record.url, port: record.port, pid: record.pid, reused: true, close: async () => {} };
       }
       if (identity?.apiVersion === ANIMATIONS_API_VERSION) {
@@ -481,7 +490,7 @@ export async function serveAnimations(options: AnimationServerOptions = {}): Pro
       if ((error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
       const port = options.port ?? DEFAULT_ANIMATIONS_PORT, other = await health(`http://127.0.0.1:${port}/`);
       throw new Error(other
-        ? `Port ${port} is held by an animations server for ${other.library === library ? 'this library' : `another library, ${other.library}`} that has no record here; stop it, or pass --port`
+        ? `Port ${port} is held by an animations server for ${sameLibrary(other.library, library) ? 'this library' : `another library, ${other.library}`} that has no record here; stop it, or pass --port`
         : `Port ${port} is in use by another program; pass --port <n> (0 picks a free port)`, { cause: error });
     }
     const mine: ServerRecord = { pid: process.pid, port: server.port, url: server.url, apiVersion: ANIMATIONS_API_VERSION, library };

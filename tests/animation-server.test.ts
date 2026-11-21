@@ -206,6 +206,40 @@ describe('the animations server API', () => {
     expect(Buffer.from(await gif.arrayBuffer()).subarray(0, 6).toString('latin1')).toBe('GIF89a');
   });
 
+  it('answers reads and runs edits between the files of an import, while the import goes one file at a time', async () => {
+    const { library, downloads, env } = await setup();
+    await writeFile(join(downloads, 'Walk.fbx'), WALK);
+    await writeFile(join(downloads, 'Run.fbx'), RUN);
+    await writeFile(join(downloads, 'Jump.fbx'), JUMP);
+    let rendering = 0, overlapped = false;
+    const slowRender = async () => {
+      if (++rendering > 1) overlapped = true;
+      await new Promise(r => setTimeout(r, 1500));
+      rendering--;
+      return stubRender();
+    };
+    const server = await startServer({ library, downloads, env, render: slowRender });
+    const events = await listen(server.url);
+    let batchDone = false;
+    const batch = post(`${server.url}api/import`, { paths: ['Walk.fbx', 'Run.fbx', 'Jump.fbx'].map(name => join(downloads, name)) })
+      .then(async response => { batchDone = true; return json(response); });
+    await until(() => events.some(item => item.event === 'import-progress'), 10000);
+    const started = Date.now();
+    const listing = await json(await fetch(`${server.url}api/library`));
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(batchDone).toBe(false);
+    expect(listing.body.entries.map((entry: any) => entry.id)).toContain('walk');
+    expect((await json(await fetch(`${server.url}api/downloads`))).body.files.find((file: any) => file.name === 'Walk.fbx').inLibrary).toBe('walk');
+    // An edit sent while the second file renders runs before the third.
+    const tagged = await json(await post(`${server.url}api/tags`, { ids: ['walk'], add: ['mid-batch'] }));
+    expect(tagged.status).toBe(200);
+    expect(batchDone).toBe(false);
+    const { body } = await batch;
+    expect(body.results.map((result: any) => result.status)).toEqual(['imported', 'imported', 'imported']);
+    expect(overlapped).toBe(false);
+    expect(JSON.parse(await readFile(join(library, 'mixamo/clips/walk.json'), 'utf8')).tags).toContain('mid-batch');
+  }, 30000);
+
   it('edits tags, titles and notes, removes entries, and reports errors with 4xx', async () => {
     const { library, downloads, env } = await setup();
     await writeFile(join(downloads, 'Walk.fbx'), WALK);
@@ -239,6 +273,24 @@ describe('the animations server API', () => {
     expect(removed.body.removed).toEqual(['idle']);
     expect((await readdir(join(library, 'mixamo/clips'))).sort()).toEqual(['walk.fbx', 'walk.gif', 'walk.json']);
     expect((await json(await fetch(`${server.url}api/library`))).body.entries.map((entry: any) => entry.id)).toEqual(['walk']);
+  });
+
+  it('refuses an edit to an entry whose sidecar is unreadable with 409, and still removes it', async () => {
+    const { library, downloads, env } = await setup();
+    await writeFile(join(downloads, 'Walk.fbx'), WALK);
+    await importAssets([join(downloads, 'Walk.fbx')], { directory: library, env, render: stubRender });
+    const sidecar = join(library, 'mixamo/clips/walk.json');
+    await writeFile(sidecar, '<<<<<<< HEAD\n{ "tags": [] }\n=======\n');
+    const server = await startServer({ library, downloads, env });
+    for (const [route, body] of [['tags', { ids: ['walk'], add: ['ronin'] }], ['title', { id: 'walk', title: 'Walk on' }], ['note', { id: 'walk', note: 'x' }]] as const) {
+      const refused = await json(await post(`${server.url}api/${route}`, body));
+      expect(refused.status).toBe(409);
+      expect(refused.body.error).toMatch(/^sidecar .*walk\.json is not valid JSON; fix or restore it$/);
+    }
+    expect(await readFile(sidecar, 'utf8')).toBe('<<<<<<< HEAD\n{ "tags": [] }\n=======\n');
+    const removed = await json(await post(`${server.url}api/remove`, { ids: ['walk'] }));
+    expect(removed).toEqual({ status: 200, body: { removed: ['walk'] } });
+    expect(await readdir(join(library, 'mixamo/clips'))).toEqual([]);
   });
 
   it('serves previews only from the layout, with 404 for a missing preview, an LFS pointer or a path that leaves it', async () => {
@@ -316,6 +368,15 @@ describe('the animations server API', () => {
 });
 
 describe('the server record', () => {
+  it.skipIf(process.platform !== 'win32')('reuses the server for the same library named in another case on Windows', async () => {
+    const { library, downloads, env } = await setup();
+    const first = await serveAnimations({ port: 0, library, downloads, env, render: stubRender });
+    cleanup.push(() => first.close());
+    const again = await serveAnimations({ port: 0, library: library.toUpperCase(), downloads, env, render: stubRender });
+    cleanup.push(() => again.close());
+    expect(again).toMatchObject({ reused: true, url: first.url });
+  });
+
   it('reuses one live server for the same library, even when two starts race, and removes the record on close', async () => {
     const { library, downloads, env } = await setup();
     const [a, b] = await Promise.all([

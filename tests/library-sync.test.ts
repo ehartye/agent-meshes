@@ -137,6 +137,43 @@ describe('Sync through the server', () => {
     expect(JSON.parse(await git(root, '--git-dir', remote, 'show', 'main:mixamo/clips/walk.json')).tags).not.toContain('from-the-desk');
   }, 60000);
 
+  it('is unavailable, with the reason, when git cannot be found, and the page still lists the library', async () => {
+    const { library } = await remoteAndClone();
+    const { downloads, env } = await environment(library);
+    const server = await createAnimationServer({ port: 0, library, downloads, env, render: stubRender });
+    cleanup.push(() => server.close());
+    const empty = await temp('no-git');
+    const saved = { PATH: process.env.PATH, Path: process.env.Path };
+    // On Windows the variable is Path and names are case-insensitive; set both spellings elsewhere.
+    process.env.PATH = empty; if (process.platform !== 'win32') process.env.Path = empty;
+    try {
+      expect(await syncStatus(library)).toMatchObject({ available: false, reason: 'git is not installed or not on PATH' });
+      const listing = await fetch(`${server.url}api/library`);
+      expect(listing.status).toBe(200);
+      expect((await listing.json() as any).sync).toEqual({ available: false, reason: 'git is not installed or not on PATH' });
+      const synced = await post(`${server.url}api/sync`, {});
+      expect(synced.status).toBe(409);
+      expect(synced.body.error).toContain('git is not installed or not on PATH');
+    } finally {
+      process.env.PATH = saved.PATH; if (process.platform !== 'win32') { if (saved.Path === undefined) delete process.env.Path; else process.env.Path = saved.Path; }
+    }
+  });
+
+  it('never lists or commits dotted temporary files in the library', async () => {
+    const { root, remote, library } = await remoteAndClone();
+    const { downloads, env } = await environment(library);
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 2 }));
+    await importAssets([join(downloads, 'Walk.fbx')], { directory: library, env, render: stubRender });
+    await writeFile(join(library, 'mixamo/clips/.walk.fbx.4242.0a1b2c3d.tmp'), animatedFbx({ travel: 2 }));
+    await writeFile(join(library, 'mixamo/.registry-note.tmp'), 'stray');
+    const status = await syncStatus(library);
+    expect(status.changed.sort()).toEqual(['mixamo/clips/walk.fbx', 'mixamo/clips/walk.gif', 'mixamo/clips/walk.json']);
+    expect(await syncLibrary(library)).toMatchObject({ committed: true, pushed: true });
+    const onRemote = (await git(root, '--git-dir', remote, 'ls-tree', '-r', '--name-only', 'main')).split('\n');
+    expect(onRemote.filter(path => path.startsWith('mixamo/')).sort()).toEqual(['mixamo/clips/walk.fbx', 'mixamo/clips/walk.gif', 'mixamo/clips/walk.json']);
+    expect((await git(library, 'status', '--porcelain', '--untracked-files=all')).split('\n').sort()).toEqual(['?? mixamo/.registry-note.tmp', '?? mixamo/clips/.walk.fbx.4242.0a1b2c3d.tmp']);
+  });
+
   it('names removals and edits in the commit message', async () => {
     const { library } = await remoteAndClone();
     const { downloads, env } = await environment(library);

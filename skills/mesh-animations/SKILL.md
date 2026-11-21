@@ -59,6 +59,8 @@ Mixamo clips from the agent-meshes animation library. Load each by id with `agen
 
    Outside Blender, `node <runtime>/scripts/mixamo-library.mjs path <id>` prints the file's path after checking its
    bytes. `<runtime>` is the `runtimeRoot` that `mesh-setup` reports.
+   When `entry(id)` has a `sidecarError`, its sidecar cannot be read and its tags and note are defaults: tell the
+   owner, who fixes or restores that file.
 3. Note for each clip whether it is **in place** or **root motion** (the bullet says which, and how far it travels). An
    in-place clip loops on the spot, for a controller that moves the character itself. A root-motion clip carries its
    travel in the hips. Keep that travel, or remove it on purpose, and treat every clip of the set the same way.
@@ -75,7 +77,8 @@ When the owner asks for a headless import, run
 `node "<plugin-root>/scripts/run-managed.js" animations import <file.fbx | pack.zip | folder> ... [--tags a,b]`
 (`--library <dir>` names another library). It runs the page's import pipeline, renders the previews and prints
 `{"results":[...]}`: each file is `imported` with its id, `duplicate` with the id it already has, or `rejected` with the
-reason. `--tags` are added to the suggested ones.
+reason. A duplicate whose sidecar or preview was missing is repaired and lists what in `repaired`; a `previewError`
+means the clip was imported without a GIF. `--tags` are added to the suggested ones.
 
 ## Sync
 

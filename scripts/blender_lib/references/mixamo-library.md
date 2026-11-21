@@ -42,9 +42,18 @@ Each asset is three files: the FBX as downloaded, its preview GIF and its sideca
 - **The id** is the slug of the source file name: lower case, with hyphens. `Idle (1).fbx` becomes `idle-1`. When the
   id is already taken by different bytes, the import takes `-2`, `-3` and so on. Ids never change after import, because
   pasted move sets refer to them; the editable title carries the descriptive name.
+- **Ids come from the sidecars.** An imported asset keeps the `id` its sidecar records, whatever is added beside it
+  later. An FBX without a sidecar gets an id from its file name, numbered around the sidecar ids, so a file placed by
+  hand never takes an imported clip's id.
 - **Other FBX files are still registered.** Every FBX under the folder is read, at any depth, so files added by hand
-  outside `mixamo/` keep working. Folders whose names start with a dot (such as `.git`) and `node_modules` are not
-  searched. A second file of the same name found by the scan takes its folder's name in front, then a number.
+  outside `mixamo/` keep working. Files and folders whose names start with a dot (such as `.git`) and `node_modules`
+  are not searched. A second file of the same name found by the scan takes its folder's name in front, then a number.
+  When two files hold the same bytes, the one with a sidecar is listed and the other is skipped.
+- **Writes are whole or not at all.** Each import and edit writes a file under a dotted temporary name beside it
+  (`.<name>.<pid>.<random>.tmp`), then renames it into place; the FBX of a new import is created exclusively, so two
+  importers never claim one id. Scans skip the dotted names and Sync leaves them out of its commits. The next import
+  removes any that an interrupted import left in `mixamo/clips` or `mixamo/characters`: those of a process that is no
+  longer running, or older than an hour.
 - **Git LFS is the repository's concern.** Meshes does not configure it. Track `*.fbx` with LFS and keep the GIFs and
   sidecars as plain git, so a clone made without LFS content still has its previews and tags.
 
@@ -67,8 +76,14 @@ asset, so tag edits made on two machines rarely conflict on a pull.
 | `motion` | the motion summary below, or `null` |
 | `preview` | the GIF's file name, or `null` when the preview failed |
 
-A sidecar with another `schema`, or that is not valid JSON, is ignored. The first tag, title or note edit on an FBX
-that has no sidecar writes one beside it.
+The first tag, title or note edit on an FBX that has no sidecar writes one beside it.
+
+**An unreadable sidecar is kept, never overwritten.** A sidecar that is not valid JSON (as a sync conflict leaves it)
+or has another `schema` is reported on the registry entry as `sidecarError`, and the entry shows the defaults from its
+file (title from the file name, no tags). Tag, title and note edits of that entry are refused with the error, so what
+the file holds is not replaced; **Remove** still works and deletes it. A re-import of the same FBX does not repair it.
+Fix or restore the file (for example with git), and the next read picks it up. The page marks such a card with a
+warning.
 
 ## Import
 
@@ -85,7 +100,7 @@ reason. They are classified in this order:
 | a Git LFS pointer (fetched without its content) | rejected: run `git lfs pull` in its repository |
 | not a binary FBX | rejected with the parse error, such as `not a binary FBX file` |
 | bone names not prefixed `mixamorig`, `mixamorig1`, `mixamorig2` ... | rejected: not on the Mixamo skeleton, naming the prefix found |
-| the same sha256 as an entry already in the library | `duplicate`, with that entry's id; nothing is written |
+| the same sha256 as an entry already in the library | `duplicate`, with that entry's id (see repair below) |
 | a mesh, and every take one frame or shorter (0.05 s or less) | imported as `character` |
 | a mesh and a longer take | imported as `clip-with-skin` |
 | no mesh | imported as `clip` |
@@ -94,7 +109,13 @@ A path that does not exist, or is neither an FBX, a zip nor a folder, is rejecte
 
 **For each accepted file** the pipeline copies the FBX into the layout, computes the motion summary, renders the
 preview, writes the sidecar with the suggested tags, and refreshes the registry. A file whose preview fails is still
-imported, with its motion and tags, `preview: null` and the message in the result's `previewError`.
+imported, with its motion and tags, `preview: null` and the message in the result's `previewError`. A preview that
+takes longer than 60 seconds is stopped (code `PREVIEW_TIMEOUT`), and the import goes on without it.
+
+**A duplicate is repaired when it is incomplete.** When the existing entry has no sidecar, or no usable GIF (missing,
+or still an LFS pointer), as an interrupted import or a failed preview leaves it, the duplicate writes the missing piece
+and keeps the tags, title and note the entry already has. The result then carries `repaired`, listing `sidecar`,
+`preview` or both. A complete duplicate writes nothing, and one whose sidecar cannot be read is left alone.
 
 **The motion summary** is decoded in Node from the hips' `Lcl Translation` curves of the longest take (the bone named
 `Hips` after its prefix). Mixamo files are Y up in centimetres; another `UnitScaleFactor` is scaled.
@@ -168,6 +189,7 @@ size and time of every sidecar it read (`sidecars`). Each entry has:
 - `bones` and `hasMesh`
 - `clips`, with the `name` and `seconds` of each animation stack
 - from its sidecar: `kind`, `title`, `tags`, `note`, `motion` and `preview`
+- `sidecarError`, only when its sidecar is there but cannot be read (not valid JSON, or another schema)
 
 An FBX without a sidecar (added by hand) is still registered: `kind` comes from its header, `title` from its file name,
 `tags` are empty, `note` is empty, and `motion` and `preview` are `null`.
@@ -228,24 +250,34 @@ The page has two tabs, on the workbench's styles:
 
 - **Import:** the Downloads list (FBX and zip files, newest first) with checkboxes, sizes, dates and an "in library"
   badge, a file picker and drag-and-drop for files from anywhere else, **Import selected**, and a row per file with its
-  result or reason. Each new card appears as its import finishes.
+  result or reason. Each import's card is added to the Library tab as that file finishes, not after the whole batch.
+  To mark files already in the library, the list reads only a zip's central directory, and hashes a download (or a zip
+  member) only when its size matches some library entry.
 - **Library:** a grid of GIF cards with the title, length, summary line and tags; text and tag filters; click,
   shift-click and ctrl-click selection and **Select visible**; bulk add and remove of tags; title and note editing;
   **Remove** (after a confirmation; it deletes the FBX, the GIF and the sidecar); **Copy move set**; and **Sync** with
-  its status. Previews honour `prefers-reduced-motion` by showing the first frame until a card is hovered or focused.
+  its status. A filter drops the cards it hides from the selection, so bulk edits, Remove and Copy move set act only
+  on cards you can see. A card whose sidecar cannot be read shows a warning, and its title and note cannot be edited.
+  Previews honour `prefers-reduced-motion` by showing the first frame until a card is hovered or focused.
 
 ### HTTP API, version 1
 
 The contract between the server and the page. Bodies are JSON unless stated; an error answers `{error}` with 400 for
-bad input, 404 for an unknown id, 409 when the checkout rule refuses or Sync is unavailable, and 403 for a foreign
-origin. Imports and edits run one at a time.
+bad input, 404 for an unknown id, and 403 for a foreign origin. It answers 409 when:
+
+- the checkout rule refuses the write;
+- a tag, title or note edit meets a sidecar that cannot be read (`sidecar <path> is not valid JSON; fix or restore it`,
+  or `... does not have the schema agent-meshes/mixamo-asset/1; fix or restore it`). `POST /api/remove` still succeeds;
+- `POST /api/sync` finds Sync unavailable, with the reason, such as `git is not installed or not on PATH`.
+
+Imports and edits run one at a time.
 
 | Route | Body | Answer |
 | --- | --- | --- |
 | `GET /api/health` | | `{service: "agent-meshes-animations", apiVersion, library, pid}` |
 | `GET /api/library` | | `{directory, sync: {available, reason?}, entries: [registry entry + previewUrl]}` |
 | `GET /api/downloads` | | `{directory, files: [{name, path, bytes, mtimeMs, kind: "fbx" or "zip", inLibrary: id or null}]}`, top level only, newest first; a zip is in the library when every FBX in it is |
-| `POST /api/import` | `{paths, tags?}` | `{results: [{source, status, id?, kind?, reason?, previewError?}]}` |
+| `POST /api/import` | `{paths, tags?}` | `{results: [{source, status, id?, kind?, reason?, repaired?, previewError?}]}` |
 | `POST /api/upload?name=<file>&tags=a,b` | the raw file bytes | `{results}`, as above |
 | `GET /api/events` | | server-sent `import-progress` events: one result plus `done` and `total` |
 | `POST /api/tags` | `{ids, add?, remove?}` | `{entries}` |
@@ -266,14 +298,15 @@ origin. Imports and edits run one at a time.
 
 When the rebase conflicts, Sync aborts it, keeps the local commit, leaves the working tree clean and reports the
 conflicting paths; resolve them with git and press Sync again. Sync never force-pushes and does not configure Git LFS.
-It is unavailable, with the reason shown, when the folder is not a git working tree, its branch has no upstream (or
-HEAD is detached), or the checkout rule applies. `ahead` and `behind` are as of the last fetch or pull. Changes outside
+It is unavailable, with the reason shown, when git is not installed, the folder is not a git working tree, its branch
+has no upstream (or HEAD is detached), or the checkout rule applies. The dotted temporary files of an import are never
+committed. `ahead` and `behind` are as of the last fetch or pull. Changes outside
 `mixamo/` are not committed, and uncommitted ones can make the pull fail.
 
 ### Copy move set
 
-**Copy move set** puts a Markdown block on the clipboard naming the selected clips, in grid order, for the owner to
-paste to an agent. The page asks for the heading once per copy; it defaults to `Move set`.
+**Copy move set** puts a Markdown block on the clipboard naming the selected clips, in grid order (by title), for the
+owner to paste to an agent. The page asks for the heading once per copy; it defaults to `Move set`.
 
 ```markdown
 ## <heading>

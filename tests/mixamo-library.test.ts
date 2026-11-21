@@ -602,3 +602,41 @@ it('the CLI add renders a real preview with the default renderer', async () => {
   expect((await sidecar(join(library, 'mixamo/clips/walk.json'))).preview).toBe('walk.gif');
   expect((await readFile(join(library, 'mixamo/clips/walk.gif'))).subarray(0, 6).toString('latin1')).toBe('GIF89a');
 }, 120000);
+
+it('removes staging files left by an import that died, and keeps those of a live one', async () => {
+  const downloads = await temp(), directory = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+  const clips = join(directory, 'mixamo', 'clips');
+  await mkdir(clips, { recursive: true });
+  // A process that has exited: its pid is not live.
+  const dead = spawnSync('node', ['-e', '0']).pid!;
+  const stale = join(clips, `.walk.fbx.${dead}.deadbeef.tmp`), own = join(clips, `.walk-9.fbx.${process.pid}.0badf00d.tmp`);
+  const live = join(clips, `.run.json.${process.ppid}.12345678.tmp`), old = join(clips, `.run.gif.${process.ppid}.87654321.tmp`);
+  const unrelated = join(clips, '.notes.tmp');
+  for (const path of [stale, own, live, old, unrelated]) await writeFile(path, animatedFbx({ travel: 1 }));
+  const hoursAgo = Date.now() / 1000 - 2 * 3600;
+  await utimes(old, hoursAgo, hoursAgo);
+  await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+  await importAssets([join(downloads, 'Walk.fbx')], { directory, env, render: stubRender });
+  const left = (await readdir(clips)).filter(name => name.startsWith('.')).sort();
+  expect(left).toEqual(['.notes.tmp', `.run.json.${process.ppid}.12345678.tmp`, `.walk-9.fbx.${process.pid}.0badf00d.tmp`].sort());
+});
+
+it.skipIf(process.platform !== 'win32')('treats a library path in another letter case as the same folder on Windows, without a rescan', async () => {
+  const folder = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+  await writeFile(join(folder, 'Rifle Run.fbx'), clip(0.717));
+  await mixamoRegistry(folder, env);
+  const before = await readFile(registryFile(env), 'utf8');
+  const recased = folder.toUpperCase() === folder ? folder.toLowerCase() : folder.toUpperCase();
+  expect((await mixamoRegistry(recased, env)).entries.map(entry => entry.id)).toEqual(['rifle-run']);
+  // A rescan would rewrite the registry with the other spelling of the folder.
+  expect(await readFile(registryFile(env), 'utf8')).toBe(before);
+  // The Python reader refreshes through Node with the folder's real case; Node then reads the same registry.
+  const script = [
+    'import json, sys', `sys.path.insert(0, ${JSON.stringify(resolve('scripts/blender_lib'))})`, 'import agent_meshes_mixamo as m',
+    `print(json.dumps([e["id"] for e in m.registry(${JSON.stringify(recased)}, ${JSON.stringify(env)})["entries"]]))`,
+  ].join('\n');
+  const python = spawnSync('python', ['-c', script], { encoding: 'utf8' });
+  expect(python.stderr).toBe('');
+  expect(JSON.parse(python.stdout)).toEqual(['rifle-run']);
+  expect(await readFile(registryFile(env), 'utf8')).toBe(before);
+});

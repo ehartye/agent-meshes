@@ -130,6 +130,29 @@ describe('the animations page', () => {
     expect(text).toMatch(/in place\./);
   });
 
+  it('drops cards hidden by the filter from the selection, so bulk actions only reach visible cards', async () => {
+    await card('idle').click();
+    await card('walk').click({ modifiers: ['Control'] });
+    await expect.poll(() => page.locator('#selection-count').textContent()).toBe('2 selected');
+    await page.getByLabel('Filter', { exact: true }).fill('stride');
+    await expect.poll(() => cards().count()).toBe(1);
+    await expect.poll(() => page.locator('#selection-count').textContent()).toBe('1 selected');
+    await page.getByRole('button', { name: 'Copy move set' }).click();
+    await page.getByLabel('Heading').fill('Solo');
+    await page.getByRole('button', { name: 'Copy', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__lastCopied as string)).toMatch(/^## Solo\n/);
+    const bullets = (await page.evaluate(() => (window as any).__lastCopied as string)).split('\n').filter(line => line.startsWith('- '));
+    expect(bullets).toEqual([expect.stringContaining('(`walk`)')]);
+    await page.getByRole('button', { name: 'Remove', exact: true }).click();
+    const confirm = page.getByRole('dialog');
+    await expect.poll(() => confirm.textContent()).toContain('Ronin stride');
+    expect(await confirm.textContent()).not.toContain('Idle');
+    await confirm.getByRole('button', { name: 'Cancel' }).click();
+    await page.getByLabel('Filter', { exact: true }).fill('');
+    await expect.poll(() => cards().count()).toBe(2);
+    await expect.poll(() => page.locator('#selection-count').textContent()).toBe('1 selected');
+  });
+
   it('warns on a card whose sidecar is unreadable and still removes it', async () => {
     await writeFile(join(library, 'mixamo/clips/idle.json'), '{ not json');
     await page.reload();
