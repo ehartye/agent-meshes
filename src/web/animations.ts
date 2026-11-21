@@ -161,7 +161,7 @@ function setPreview(card: HTMLElement, entry: Entry) {
 function makeCard(entry: Entry): HTMLElement {
   const card = h('div', { class: 'card', role: 'option', 'data-card': entry.id, tabindex: '-1' },
     h('div', { class: 'card-preview' }),
-    h('div', { class: 'card-body' }, h('div', { class: 'card-title' }), h('div', { class: 'card-meta subtle' }), h('div', { class: 'card-summary' }), h('div', { class: 'chip-row card-tags' })));
+    h('div', { class: 'card-body' }, h('div', { class: 'card-title' }), h('div', { class: 'card-meta subtle' }), h('div', { class: 'card-summary' }), h('div', { class: 'card-warning', role: 'note' }), h('div', { class: 'chip-row card-tags' })));
   card.addEventListener('click', event => {
     const chip = (event.target as HTMLElement).closest<HTMLElement>('[data-tag]');
     if (chip) { toggleTagFilter(chip.dataset.tag!); return; }
@@ -179,9 +179,14 @@ function updateCard(card: HTMLElement, entry: Entry) {
   setPreview(card, entry);
   card.querySelector('.card-title')!.textContent = entry.title;
   const seconds = secondsOf(entry);
-  card.querySelector('.card-meta')!.textContent = [seconds === null ? null : `${seconds.toFixed(1)} s`, entry.kind === 'clip' ? null : entry.kind, entry.id].filter(Boolean).join(' · ');
+  // The motion summary already ends with the length, so the meta line names the length only when there is none.
+  card.querySelector('.card-meta')!.textContent = entry.motion || seconds === null ? entry.id : `${seconds.toFixed(1)} s · ${entry.id}`;
   card.querySelector('.card-summary')!.textContent = entry.motion?.summary ?? 'No motion summary';
   card.querySelector('.card-tags')!.replaceChildren(...entry.tags.map(tag => h('span', { class: `chip${tagFilter.has(tag) ? ' active' : ''}`, 'data-tag': tag, title: `Filter by ${tag}`, text: tag })));
+  const warning = card.querySelector<HTMLElement>('.card-warning')!;
+  warning.hidden = !entry.sidecarError;
+  warning.textContent = entry.sidecarError ? 'sidecar unreadable — fix or restore it' : '';
+  warning.title = entry.sidecarError ?? '';
   card.title = entry.note || entry.title;
   const on = selected.has(entry.id);
   card.setAttribute('aria-selected', String(on));
@@ -241,7 +246,8 @@ function renderSelection() {
     return button;
   }) : [h('span', { class: 'subtle', text: 'No tags' })]));
   const form = el<HTMLFormElement>('single-edit');
-  const single = list.length === 1 ? list[0]! : null;
+  // A clip whose sidecar cannot be read refuses edits; it can still be removed.
+  const single = list.length === 1 && !list[0]!.sidecarError ? list[0]! : null;
   form.hidden = !single;
   if (single && single.id !== editingId) {
     el<HTMLInputElement>('edit-title').value = single.title;

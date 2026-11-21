@@ -2,7 +2,7 @@
  * @subject src/web/animations.ts
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -16,7 +16,9 @@ import { animatedFbx } from './helpers/animated-fbx.ts';
 const TINY_GIF = Buffer.from('47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b', 'hex');
 const stubRender = async () => ({ gif: new Uint8Array(TINY_GIF) });
 
-let browser: Browser, server: AnimationServer, page: Page, library: string;
+let browser: Browser, server: AnimationServer, page: Page, library: string, distBefore: string;
+/** The checkout's own build, which this test must leave alone: whether it exists, and when it last changed. */
+const distStamp = () => { try { const info = statSync(resolve('dist-web')); return `${info.mtimeMs}`; } catch { return 'absent'; } };
 const folders: string[] = [];
 const temp = async (label: string) => { const path = await mkdtemp(join(tmpdir(), `mesh-anim-ui-${label}-`)); folders.push(path); return path; };
 const sidecar = async (id: string) => JSON.parse(await readFile(join(library, `mixamo/clips/${id}.json`), 'utf8'));
@@ -26,15 +28,17 @@ const until = async (check: () => Promise<boolean>, ms = 10000) => {
 };
 
 beforeAll(async () => {
-  // The page is the second entry of the project's Vite build, served by the animations server from dist-web.
-  await build({ configFile: resolve('vite.config.ts'), logLevel: 'error' });
-  expect(existsSync(resolve('dist-web/animations.html'))).toBe(true);
+  // The page is the second entry of the project's Vite build, built into a temporary web root the server serves.
+  distBefore = distStamp();
+  const web = await temp('web');
+  await build({ configFile: resolve('vite.config.ts'), logLevel: 'error', build: { outDir: web, emptyOutDir: true } });
+  expect(existsSync(join(web, 'animations.html'))).toBe(true);
   library = await temp('lib');
   const home = await temp('home'), downloads = await temp('dl');
   await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
   await writeFile(join(downloads, 'Idle.fbx'), animatedFbx());
   const env = { ...process.env, AGENT_MESHES_HOME: home, AGENT_MESHES_MIXAMO_DIR: library };
-  server = await createAnimationServer({ port: 0, library, downloads, env, render: stubRender });
+  server = await createAnimationServer({ port: 0, library, downloads, env, render: stubRender, webRoot: web });
   browser = await chromium.launch({ headless: true, ...browserLaunchOptions() });
   page = await (await browser.newContext({ viewport: { width: 1280, height: 800 } })).newPage();
   page.setDefaultTimeout(10000);
@@ -61,6 +65,15 @@ describe('the animations page', () => {
     await page.getByRole('tab', { name: 'Library' }).click();
     await expect.poll(() => cards().count()).toBe(2);
     expect((await cards().evaluateAll(items => items.map(item => item.getAttribute('data-card')))).sort()).toEqual(['idle', 'walk']);
+    expect(distStamp()).toBe(distBefore);
+  });
+
+  it('shows each card length once, in its motion summary, with the id on the meta line', async () => {
+    const walk = await sidecar('walk');
+    expect(walk.motion.summary).toContain(`${walk.motion.seconds.toFixed(1)} s`);
+    await expect.poll(() => card('walk').locator('.card-meta').textContent()).toBe('walk');
+    const text = await card('walk').textContent();
+    expect(text!.split(`${walk.motion.seconds.toFixed(1)} s`)).toHaveLength(2);
   });
 
   it('shift-selects both cards and adds a tag to both sidecars', async () => {
@@ -115,5 +128,18 @@ describe('the animations page', () => {
     expect(text).toContain('ronin');
     expect(text).toMatch(/root motion, travels 1\.0 m\./);
     expect(text).toMatch(/in place\./);
+  });
+
+  it('warns on a card whose sidecar is unreadable and still removes it', async () => {
+    await writeFile(join(library, 'mixamo/clips/idle.json'), '{ not json');
+    await page.reload();
+    await page.getByRole('tab', { name: 'Library' }).click();
+    await expect.poll(() => card('idle').locator('.card-warning').textContent()).toMatch(/sidecar unreadable — fix or restore it/);
+    await card('idle').click();
+    await expect.poll(() => card('idle').getAttribute('aria-selected')).toBe('true');
+    await page.getByRole('button', { name: 'Remove', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Remove', exact: true }).click();
+    await expect.poll(() => cards().count()).toBe(1);
+    expect(existsSync(join(library, 'mixamo/clips/idle.fbx'))).toBe(false);
   });
 });
