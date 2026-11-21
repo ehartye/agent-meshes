@@ -14,7 +14,8 @@ For background execution and completion checks, read the
 For human/animal motion donors, rigging templates, portable retargeting and
 skinning backends, read the [organized rig library](../../scripts/blender_lib/references/rig-library.md).
 For Adobe Mixamo downloads (never committed to agent-meshes or bundled), use the
-[Mixamo folder and registry](../../scripts/blender_lib/references/mixamo-library.md).
+[Mixamo library and registry](../../scripts/blender_lib/references/mixamo-library.md); to import, preview,
+tag or browse them, or to load a pasted move set, use [mesh-animations](../mesh-animations/SKILL.md).
 
 Before placing character joints or binding skin/garments, read the
 [construction checklist](../../scripts/blender_lib/references/character-construction.md).
