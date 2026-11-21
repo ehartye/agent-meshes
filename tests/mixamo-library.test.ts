@@ -3,6 +3,8 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { symlinkSync } from 'node:fs';
 import { mkdtemp, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
@@ -178,6 +180,11 @@ it('suggests one kind tag from the name, in the stated order, and a motion tag',
   expect(kind('Jumping')).toBe('jump');
   expect(suggestTags('Walking', 'clip', moving)).toEqual(['locomotion', 'root-motion']);
   expect(kind('Breathing Idle')).toBe('idle');
+  // Keywords match at the start of a word, not inside one: drunk is not run, elbow is not bow, broadcast is not cast.
+  expect(kind('Drunk Idle Variation')).toBe('idle');
+  expect(kind('Elbow Strike')).toBe('pose-or-emote');
+  expect(kind('Broadcast Wave')).toBe('pose-or-emote');
+  expect(kind('Toe Tap')).toBe('pose-or-emote');
   expect(suggestTags('Samba Dancing', 'clip-with-skin', moving)).toEqual(['pose-or-emote', 'root-motion']);
   expect(suggestTags('Y Bot', 'character', inPlace)).toEqual(['character', 'pose-or-emote']);
 });
@@ -490,3 +497,108 @@ it('the Blender-side reader returns the sidecar fields and sees a pulled sidecar
   await writeFile(path, `${JSON.stringify({ ...meta, tags: ['from-another-machine'] }, null, 2)}\n`);
   expect(read().tags).toEqual(['from-another-machine']);
 });
+
+describe('ids, interrupted imports and damaged sidecars', () => {
+  const imported = async () => {
+    const downloads = await temp(), directory = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+    await importAssets([join(downloads, 'Walk.fbx')], { directory, env, render: stubRender });
+    return { downloads, directory, env };
+  };
+
+  it('keeps an imported id when a file of the same name is added by hand elsewhere', async () => {
+    const { directory, env } = await imported();
+    await mkdir(join(directory, 'animations'));
+    await writeFile(join(directory, 'animations', 'walk.fbx'), animatedFbx({ travel: 2 }));
+    const registry = await mixamoRegistry(directory, env);
+    expect(registry.entries.find(entry => entry.id === 'walk')?.file).toBe('mixamo/clips/walk.fbx');
+    const hand = registry.entries.find(entry => entry.file === 'animations/walk.fbx');
+    expect(hand?.id).toBeDefined();
+    expect(hand?.id).not.toBe('walk');
+  });
+
+  it('gives concurrent imports of different files with one name their own ids, each with its own sidecar', async () => {
+    const downloads = await temp(), directory = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    const folders = ['a', 'b', 'c', 'd', 'e', 'f'], expected = ['walk', 'walk-2', 'walk-3', 'walk-4', 'walk-5', 'walk-6'];
+    for (const [i, folder] of folders.entries()) { await mkdir(join(downloads, folder)); await writeFile(join(downloads, folder, 'Walk.fbx'), animatedFbx({ travel: i + 1 })); }
+    const slow = async () => { await new Promise(done => setTimeout(done, 20)); return stubRender(); };
+    const runs = await Promise.all(folders.map(folder => importAssets([join(downloads, folder, 'Walk.fbx')], { directory, env, render: slow })));
+    expect(runs.map(run => run.results[0].id).sort()).toEqual(expected);
+    for (const id of expected) {
+      const meta = await sidecar(join(directory, `mixamo/clips/${id}.json`));
+      expect(meta.id).toBe(id);
+      expect(meta.sha256).toBe(createHash('sha256').update(await readFile(join(directory, `mixamo/clips/${id}.fbx`))).digest('hex'));
+    }
+    expect((await tree(directory)).filter(file => /\.tmp$|\/\./.test(file))).toEqual([]);
+  });
+
+  it('ignores dotted temporary files in the library, in Node and in the Python reader', async () => {
+    const { directory, env } = await imported();
+    await writeFile(join(directory, 'mixamo/clips/.walk-3.fbx'), animatedFbx({ travel: 3 }));
+    await writeFile(join(directory, 'mixamo/clips/.walk-3.fbx.1234.tmp'), 'partial');
+    expect((await mixamoRegistry(directory, env)).entries.map(entry => entry.file)).toEqual(['mixamo/clips/walk.fbx']);
+    const script = [
+      'import json, sys', `sys.path.insert(0, ${JSON.stringify(resolve('scripts/blender_lib'))})`, 'import agent_meshes_mixamo as m', 'from pathlib import Path',
+      `print(json.dumps(m._describes(m._read(${JSON.stringify(env)}), Path(${JSON.stringify(directory)}))))`,
+    ].join('\n');
+    const python = spawnSync('python', ['-c', script], { encoding: 'utf8' });
+    expect(python.stderr).toBe('');
+    expect(JSON.parse(python.stdout)).toBe(true);
+  });
+
+  it('repairs a duplicate whose preview or sidecar is missing, keeping its tags, title and note', async () => {
+    const downloads = await temp(), directory = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+    await importAssets([join(downloads, 'Walk.fbx')], { directory, env, render: async () => { throw new Error('no GPU here'); } });
+    await setTags(['walk'], ['ronin'], [], { directory, env });
+    await setTitle('walk', 'Forward Walk', { directory, env });
+    const again = await importAssets([join(downloads, 'Walk.fbx')], { directory, env, render: stubRender });
+    expect(again.results).toEqual([{ source: join(downloads, 'Walk.fbx'), status: 'duplicate', id: 'walk', repaired: ['preview'] }]);
+    expect(await sidecar(join(directory, 'mixamo/clips/walk.json'))).toMatchObject({ preview: 'walk.gif', title: 'Forward Walk', tags: ['locomotion', 'ronin', 'root-motion'] });
+    expect((await readFile(join(directory, 'mixamo/clips/walk.gif'))).subarray(0, 6).toString('latin1')).toBe('GIF89a');
+    expect(again.registry.entries[0]).toMatchObject({ id: 'walk', preview: 'walk.gif' });
+    // A crash before the sidecar was written: the next import of the same bytes writes it.
+    await rm(join(directory, 'mixamo/clips/walk.json'));
+    let renders = 0;
+    const third = await importAssets([join(downloads, 'Walk.fbx')], { directory, env, render: async () => { renders++; return stubRender(); } });
+    expect(third.results).toEqual([{ source: join(downloads, 'Walk.fbx'), status: 'duplicate', id: 'walk', repaired: ['sidecar'] }]);
+    expect(renders).toBe(0);
+    expect(await sidecar(join(directory, 'mixamo/clips/walk.json'))).toMatchObject({ id: 'walk', kind: 'clip', title: 'Walk', sourceName: 'Walk.fbx', preview: 'walk.gif', tags: ['locomotion', 'root-motion'], motion: { inPlace: false } });
+  });
+
+  it('refuses to edit a clip whose sidecar is not valid JSON, and lists it with the error', async () => {
+    const { downloads, directory, env } = await imported();
+    const path = join(directory, 'mixamo/clips/walk.json'), broken = '<<<<<<< HEAD\n{"tags": ["a"]}\n=======\n';
+    await writeFile(path, broken);
+    const entry = (await mixamoRegistry(directory, env)).entries.find(item => item.id === 'walk');
+    expect(entry?.sidecarError).toMatch(/not valid JSON/);
+    for (const edit of [() => setTags(['walk'], ['x'], [], { directory, env }), () => setTitle('walk', 'New', { directory, env }), () => setNote('walk', 'n', { directory, env })]) {
+      await expect(edit()).rejects.toThrow(/sidecar .*walk\.json is not valid JSON; fix or restore it/);
+    }
+    // Importing the same bytes again does not paper over it either.
+    expect((await importAssets([join(downloads, 'Walk.fbx')], { directory, env, render: stubRender })).results[0]).toMatchObject({ status: 'duplicate', id: 'walk' });
+    expect(await readFile(path, 'utf8')).toBe(broken);
+  });
+});
+
+it('refuses a library reached through a junction or symlink into an agent-meshes checkout', async () => {
+  const checkout = await temp(), elsewhere = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+  await mkdir(join(checkout, '.git'));
+  await writeFile(join(checkout, 'package.json'), JSON.stringify({ name: 'agent-meshes' }));
+  await mkdir(join(checkout, 'inner'));
+  const link = join(elsewhere, 'library-link');
+  symlinkSync(join(checkout, 'inner'), link, 'junction');
+  expect(() => assertNotMeshesCheckout(link)).toThrow(/never kept in an agent-meshes checkout/);
+  expect(() => assertNotMeshesCheckout(join(link, 'not', 'made', 'yet'))).toThrow(/never kept in an agent-meshes checkout/);
+  await expect(setTags(['walk'], ['x'], [], { directory: link, env })).rejects.toThrow(/never kept in an agent-meshes checkout/);
+});
+
+it('the CLI add renders a real preview with the default renderer', async () => {
+  const downloads = await temp(), library = await temp(), home = await temp();
+  await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1, seconds: 2 }));
+  const run = spawnSync('node', [resolve('scripts/mixamo-library.mjs'), 'add', join(downloads, 'Walk.fbx')], { encoding: 'utf8', env: { ...process.env, AGENT_MESHES_MIXAMO_DIR: library, AGENT_MESHES_HOME: home } });
+  expect(run.stderr).toBe('');
+  expect(JSON.parse(run.stdout).results).toEqual([{ source: join(downloads, 'Walk.fbx'), status: 'imported', id: 'walk', kind: 'clip' }]);
+  expect((await sidecar(join(library, 'mixamo/clips/walk.json'))).preview).toBe('walk.gif');
+  expect((await readFile(join(library, 'mixamo/clips/walk.gif'))).subarray(0, 6).toString('latin1')).toBe('GIF89a');
+}, 120000);

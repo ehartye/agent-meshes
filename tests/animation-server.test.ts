@@ -133,6 +133,41 @@ describe('the animations server API', () => {
     expect(second.body.files.map((file: any) => file.inLibrary)).toEqual(['idle', 'walk', 'walk']);
   });
 
+  it('reads a download only when its size, or a zip member size, matches a library entry, and reads a zip only around its directory', async () => {
+    const { library, downloads, env } = await setup();
+    await writeFile(join(downloads, 'Walk.fbx'), WALK);
+    await importAssets([join(downloads, 'Walk.fbx')], { directory: library, env, render: stubRender });
+    const noise = (bytes: number) => Buffer.from(Array.from({ length: bytes }, () => Math.floor(Math.random() * 256)));
+    await writeFile(join(downloads, 'Big.fbx'), noise(2_000_001));
+    // Same size as the walk, other bytes: read and hashed, and not in the library.
+    const lookalike = Buffer.from(WALK); lookalike[lookalike.length - 1] ^= 0xff;
+    await writeFile(join(downloads, 'Lookalike.fbx'), lookalike);
+    const huge = noise(1_500_000);
+    await writeFile(join(downloads, 'Bundle.zip'), zip({ 'Huge.fbx': huge, 'Walk Copy.fbx': WALK }));
+    await writeFile(join(downloads, 'Pack.zip'), zip({ 'Walk Copy.fbx': WALK }));
+    const reads: { path: string; start: number; length: number }[] = [];
+    const readDownload = async (path: string, start: number, length: number) => {
+      reads.push({ path, start, length });
+      const bytes = await readFile(path);
+      return new Uint8Array(bytes.subarray(start, start + length));
+    };
+    const server = await startServer({ library, downloads, env, readDownload });
+    const listed = await json(await fetch(`${server.url}api/downloads`));
+    const inLibrary = Object.fromEntries(listed.body.files.map((file: any) => [file.name, file.inLibrary]));
+    expect(inLibrary).toEqual({ 'Walk.fbx': 'walk', 'Big.fbx': null, 'Lookalike.fbx': null, 'Bundle.zip': null, 'Pack.zip': 'walk' });
+    const bytesRead = (name: string) => reads.filter(item => item.path === join(resolve(downloads), name)).reduce((sum, item) => sum + item.length, 0);
+    expect(bytesRead('Big.fbx')).toBe(0);
+    expect(bytesRead('Lookalike.fbx')).toBe(WALK.length);
+    expect(bytesRead('Walk.fbx')).toBe(WALK.length);
+    // The zip's directory and its walk member are read, never the large member that matches no entry.
+    expect(bytesRead('Bundle.zip')).toBeGreaterThan(0);
+    expect(bytesRead('Bundle.zip')).toBeLessThan(huge.length / 2);
+    // Unchanged files are not read again.
+    const before = reads.length;
+    await fetch(`${server.url}api/downloads`);
+    expect(reads.length).toBe(before);
+  });
+
   it('imports paths and uploads, pushing import-progress events, and lists entries with their preview URLs', async () => {
     const { library, downloads, env } = await setup();
     await writeFile(join(downloads, 'Walk.fbx'), WALK);
@@ -221,6 +256,23 @@ describe('the animations server API', () => {
     expect((await fetch(`${server.url}previews/clips/walk.gif`)).status).toBe(404);
   });
 
+  it('serves the page and assets from webRoot when given', async () => {
+    const { library, downloads, env } = await setup();
+    const web = await temp('web');
+    await writeFile(join(web, 'animations.html'), '<!doctype html><title>temp build</title><p>from a temporary build</p>');
+    await mkdir(join(web, 'assets')); await writeFile(join(web, 'assets', 'page.js'), 'console.log("temp build");');
+    const server = await startServer({ library, downloads, env, webRoot: web });
+    const page = await fetch(server.url);
+    expect(page.headers.get('content-type')).toMatch(/^text\/html/);
+    expect(await page.text()).toContain('from a temporary build');
+    const script = await fetch(`${server.url}assets/page.js`);
+    expect(script.status).toBe(200);
+    expect(await script.text()).toContain('temp build');
+    const served = await serveAnimations({ port: 0, library, downloads, env, render: stubRender, webRoot: web });
+    cleanup.push(() => served.close());
+    expect(await (await fetch(served.url)).text()).toContain('from a temporary build');
+  });
+
   it('serves the page at / and rejects a foreign Origin while accepting its own', async () => {
     const { library, downloads, env } = await setup();
     const server = await startServer({ library, downloads, env });
@@ -282,18 +334,42 @@ describe('the server record', () => {
     await expect(readFile(serverRecordFile(env), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  /** A stand-in for an animations server of API version 0, whose health reports `reportedPid` (its own pid by default). */
+  async function oldServer(library: string, reportedPid?: number) {
+    const pid = reportedPid === undefined ? 'process.pid' : String(reportedPid);
+    const old = spawn(process.execPath, ['-e', `require('node:http').createServer((q, s) => { s.setHeader('content-type', 'application/json'); s.end(JSON.stringify({ service: 'agent-meshes-animations', apiVersion: 0, library: ${JSON.stringify(resolve(library))}, pid: ${pid} })); }).listen(0, '127.0.0.1', function () { console.log(this.address().port); });`], { stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true });
+    const exited = new Promise(resolveExit => old.once('exit', resolveExit));
+    cleanup.push(async () => { if (old.exitCode === null) { old.kill(); await exited; } });
+    const port = Number(await new Promise<string>(resolveLine => old.stdout!.once('data', chunk => resolveLine(String(chunk).trim()))));
+    return { old, exited, port };
+  }
+
   it('stops a live server of another API version and starts a fresh one', async () => {
     const { library, downloads, env, home } = await setup();
-    const old = spawn(process.execPath, ['-e', `require('node:http').createServer((q, s) => { s.setHeader('content-type', 'application/json'); s.end(JSON.stringify({ service: 'agent-meshes-animations', apiVersion: 0, library: ${JSON.stringify(resolve(library))} })); }).listen(0, '127.0.0.1', function () { console.log(this.address().port); });`], { stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true });
-    const exited = new Promise(resolveExit => old.once('exit', resolveExit));
-    cleanup.push(async () => { if (old.exitCode === null) old.kill(); });
-    const port = Number(await new Promise<string>(resolveLine => old.stdout!.once('data', chunk => resolveLine(String(chunk).trim()))));
+    const { old, exited, port } = await oldServer(library);
     await writeFile(join(home, 'animations-server.json'), JSON.stringify({ pid: old.pid, port, url: `http://127.0.0.1:${port}/`, apiVersion: 0, library: resolve(library) }));
     const fresh = await serveAnimations({ port: 0, library, downloads, env, render: stubRender });
     cleanup.push(() => fresh.close());
     expect(fresh.reused).toBe(false);
     expect(fresh.url).not.toBe(`http://127.0.0.1:${port}/`);
     await exited;
+    expect(JSON.parse(await readFile(serverRecordFile(env), 'utf8'))).toMatchObject({ pid: process.pid, url: fresh.url, apiVersion: ANIMATIONS_API_VERSION });
+  });
+
+  it('never stops the recorded pid when the server answering at the recorded URL reports another pid', async () => {
+    const { library, downloads, env, home } = await setup();
+    // The recorded pid is alive, but the server at the URL is a different process: the record is stale.
+    const bystander = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+    const gone = new Promise(resolveExit => bystander.once('exit', resolveExit));
+    cleanup.push(async () => { if (bystander.exitCode === null) { bystander.kill(); await gone; } });
+    const { old, port } = await oldServer(library, 1);
+    await writeFile(join(home, 'animations-server.json'), JSON.stringify({ pid: bystander.pid, port, url: `http://127.0.0.1:${port}/`, apiVersion: 0, library: resolve(library) }));
+    const fresh = await serveAnimations({ port: 0, library, downloads, env, render: stubRender });
+    cleanup.push(() => fresh.close());
+    expect(fresh.reused).toBe(false);
+    await new Promise(r => setTimeout(r, 300));
+    expect(bystander.exitCode).toBeNull();
+    expect(old.exitCode).toBeNull();
     expect(JSON.parse(await readFile(serverRecordFile(env), 'utf8'))).toMatchObject({ pid: process.pid, url: fresh.url, apiVersion: ANIMATIONS_API_VERSION });
   });
 });

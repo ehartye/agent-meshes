@@ -15,8 +15,9 @@ import { createServer as createHttpServer } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inflateRawSync } from 'node:zlib';
 import {
-  assertNotMeshesCheckout, importAssets, mixamoDir, mixamoRegistry, removeAssets, setNote, setTags, setTitle, unzipFbx,
+  assertNotMeshesCheckout, importAssets, mixamoDir, mixamoRegistry, removeAssets, setNote, setTags, setTitle,
 } from '../scripts/mixamo-library.mjs';
 import type { MixamoEntry, MixamoImportResult, MixamoRender } from '../scripts/mixamo-library.mjs';
 import type { PreviewSession } from './animation-preview.ts';
@@ -32,6 +33,7 @@ const UPLOAD_LIMIT = '512mb';
 const POINTER = 'version https://git-lfs.github.com/spec/';
 const DOWNLOADS_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders';
 const DOWNLOADS_GUID = '{374DE290-123F-4565-9164-39C4925E467B}';
+/** The package's built web pages, served unless `webRoot` names another build. */
 const DIST_WEB = fileURLToPath(new URL('../dist-web/', import.meta.url));
 
 /** An error the API answers with this status and `{ error }`. */
@@ -90,7 +92,12 @@ export interface AnimationServerOptions {
   env?: Env;
   /** Preview renderer; by default one preview browser session, started on the first import. */
   render?: MixamoRender;
+  /** The built web pages to serve: `animations.html` at `/` and the rest statically (default: the package's `dist-web`). */
+  webRoot?: string;
+  /** Reads `length` bytes at `start` of a file in Downloads (default: a positioned file read). Every read of a download goes through it. */
+  readDownload?: ReadDownload;
 }
+export type ReadDownload = (path: string, start: number, length: number) => Promise<Uint8Array>;
 export interface AnimationServer { url: string; port: number; library: string; downloads: string; close(): Promise<void> }
 export interface DownloadFile { name: string; path: string; bytes: number; mtimeMs: number; kind: 'fbx' | 'zip'; inLibrary: string | null }
 export type ImportProgress = MixamoImportResult & { done: number; total: number };
@@ -127,11 +134,54 @@ function statusOf(error: unknown): number {
   return 500;
 }
 
+async function readRange(path: string, start: number, length: number): Promise<Uint8Array> {
+  const handle = await open(path, 'r');
+  try {
+    const bytes = Buffer.alloc(length);
+    let done = 0;
+    while (done < length) { const { bytesRead } = await handle.read(bytes, done, length - done, start + done); if (!bytesRead) break; done += bytesRead; }
+    return bytes.subarray(0, done);
+  } finally { await handle.close(); }
+}
+
+/** One FBX a download holds: its uncompressed size, and how to read its bytes. */
+interface DownloadMember { size: number; read: () => Promise<Buffer>; sha?: string }
+
+/** The FBX members of a zip from its central directory alone (the end record, then the directory), so a large archive
+ *  is never read whole. A member's bytes are read only when asked for. Zip64 and damaged archives list nothing. */
+async function zipMembers(path: string, bytes: number, read: ReadDownload): Promise<DownloadMember[]> {
+  const tailLength = Math.min(bytes, 22 + 0xffff), tail = Buffer.from(await read(path, bytes - tailLength, tailLength));
+  let end = tail.length - 22;
+  while (end >= 0 && tail.readUInt32LE(end) !== 0x06054b50) end--;
+  if (end < 0) return [];
+  const count = tail.readUInt16LE(end + 10), size = tail.readUInt32LE(end + 12), offset = tail.readUInt32LE(end + 16);
+  if (offset === 0xffffffff || offset + size > bytes) return [];
+  const directory = Buffer.from(await read(path, offset, size)), members: DownloadMember[] = [];
+  for (let at = 0, i = 0; i < count && at + 46 <= directory.length; i++) {
+    if (directory.readUInt32LE(at) !== 0x02014b50) return [];
+    const method = directory.readUInt16LE(at + 10), packed = directory.readUInt32LE(at + 20), length = directory.readUInt32LE(at + 24);
+    const nameLength = directory.readUInt16LE(at + 28), extra = directory.readUInt16LE(at + 30), comment = directory.readUInt16LE(at + 32), local = directory.readUInt32LE(at + 42);
+    const name = directory.subarray(at + 46, at + 46 + nameLength).toString('utf8');
+    at += 46 + nameLength + extra + comment;
+    if (extname(name).toLowerCase() !== '.fbx' || (method !== 0 && method !== 8)) continue;
+    members.push({
+      size: length,
+      read: async () => {
+        const header = Buffer.from(await read(path, local, 30));
+        const raw = Buffer.from(await read(path, local + 30 + header.readUInt16LE(26) + header.readUInt16LE(28), packed));
+        return method === 0 ? raw : inflateRawSync(raw);
+      },
+    });
+  }
+  return members;
+}
+
 /** Start the animations page server. Not recorded; `serveAnimations` adds the per-machine record and reuse. */
 export async function createAnimationServer(options: AnimationServerOptions = {}): Promise<AnimationServer> {
   const env = options.env ?? process.env;
   const library = resolve(options.library ?? mixamoDir(env));
   const downloads = downloadsDir({ downloads: options.downloads, env });
+  const webRoot = resolve(options.webRoot ?? DIST_WEB), readDownload = options.readDownload ?? readRange;
   const app = express();
   const server = createHttpServer(app);
   const clients = new Set<Response>();
@@ -174,17 +224,24 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
     response.json({ directory: library, sync: sync.available ? { available: true } : { available: false, reason: sync.reason }, entries: list.map(withPreview) });
   });
 
-  /** SHA-256 of each download (each FBX member, for a zip), cached by path, size and modification time. */
-  const hashes = new Map<string, { key: string; sha: string[] }>();
-  const hashesOf = async (path: string, kind: 'fbx' | 'zip', key: string) => {
-    const cached = hashes.get(path);
-    if (cached?.key === key) return cached.sha;
-    const bytes = await readFile(path);
-    let sha: string[];
-    if (kind === 'fbx') sha = [createHash('sha256').update(bytes).digest('hex')];
-    else { try { sha = unzipFbx(bytes).map(member => createHash('sha256').update(member.bytes).digest('hex')); } catch { sha = []; } }
-    hashes.set(path, { key, sha });
-    return sha;
+  /** The FBX members of each download (the file itself, for an FBX), cached by path, size and modification time with
+   *  any hashes already taken. A member is hashed only when its size is the size of some library entry, so a download
+   *  that cannot be in the library is never read (and a cloud-only file in a synced Downloads is never fetched). */
+  const probes = new Map<string, { key: string; members: DownloadMember[] }>();
+  const membersOf = async (file: Omit<DownloadFile, 'inLibrary'>) => {
+    const key = `${file.bytes}:${file.mtimeMs}`, cached = probes.get(file.path);
+    if (cached?.key === key) return cached.members;
+    const members = file.kind === 'fbx'
+      ? [{ size: file.bytes, read: async () => Buffer.from(await readDownload(file.path, 0, file.bytes)) }]
+      : await zipMembers(file.path, file.bytes, readDownload).catch(() => []);
+    probes.set(file.path, { key, members });
+    return members;
+  };
+  /** The id of the entry with this member's bytes, or null; the member is read only when its size could match. */
+  const idOf = async (member: DownloadMember, sizes: Set<number>, bySha: Map<string, string>) => {
+    if (!sizes.has(member.size)) return null;
+    member.sha ??= createHash('sha256').update(await member.read()).digest('hex');
+    return bySha.get(member.sha) ?? null;
   };
   app.get('/api/downloads', async (_request, response) => {
     let items: import('node:fs').Dirent[];
@@ -199,14 +256,21 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
       catch { /* removed while listing */ }
     }
     files.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name));
-    for (const path of hashes.keys()) if (!files.some(file => file.path === path)) hashes.delete(path);
-    const bySha = new Map((await serial(entries)).map(entry => [entry.sha256, entry.id]));
+    for (const path of probes.keys()) if (!files.some(file => file.path === path)) probes.delete(path);
+    const known = await serial(entries);
+    const bySha = new Map(known.map(entry => [entry.sha256, entry.id])), sizes = new Set(known.map(entry => entry.bytes));
     const listed: DownloadFile[] = [];
     for (const file of files) {
-      let sha: string[] = [];
-      try { sha = await hashesOf(file.path, file.kind, `${file.bytes}:${file.mtimeMs}`); } catch { /* unreadable */ }
-      // A zip is in the library when every FBX in it is.
-      const inLibrary = sha.length && sha.every(hash => bySha.has(hash)) ? bySha.get(sha[0]!)! : null;
+      // A zip is in the library when every FBX in it is; it takes the id of its first.
+      let inLibrary: string | null = null;
+      try {
+        const members = await membersOf(file);
+        for (const member of members) {
+          const id = await idOf(member, sizes, bySha);
+          if (!id) { inLibrary = null; break; }
+          inLibrary ??= id;
+        }
+      } catch { inLibrary = null; /* unreadable */ }
       listed.push({ ...file, inLibrary });
     }
     response.json({ directory: downloads, files: listed });
@@ -303,11 +367,11 @@ export async function createAnimationServer(options: AnimationServerOptions = {}
   });
 
   app.get('/', (_request, response) => {
-    const page = join(DIST_WEB, 'animations.html');
+    const page = join(webRoot, 'animations.html');
     if (existsSync(page)) response.sendFile(page);
     else response.type('html').send(PLACEHOLDER);
   });
-  app.use(express.static(DIST_WEB, { index: false }));
+  app.use(express.static(webRoot, { index: false }));
   app.use('/api', (_request, response) => { response.status(404).json({ error: 'No such API route' }); });
   app.use((error: unknown, _request: Request, response: Response, next: NextFunction) => {
     if (response.headersSent) { next(error); return; }
@@ -349,10 +413,10 @@ async function readRecord(file: string): Promise<ServerRecord | null> {
   try { const record = JSON.parse(await readFile(file, 'utf8')); return record && typeof record === 'object' ? record : null; }
   catch { return null; }
 }
-async function health(url: string): Promise<{ service?: string; apiVersion?: number; library?: string } | null> {
+async function health(url: string): Promise<{ service?: string; apiVersion?: number; library?: string; pid?: number } | null> {
   try {
     const response = await fetch(new URL('api/health', url), { signal: AbortSignal.timeout(3000) });
-    const body = await response.json() as { service?: string; apiVersion?: number; library?: string };
+    const body = await response.json() as { service?: string; apiVersion?: number; library?: string; pid?: number };
     return response.ok && body?.service === ANIMATIONS_SERVICE ? body : null;
   } catch { return null; }
 }
@@ -406,8 +470,10 @@ export async function serveAnimations(options: AnimationServerOptions = {}): Pro
       if (identity?.apiVersion === ANIMATIONS_API_VERSION) {
         throw new Error(`An animations server is already running at ${record.url} (pid ${record.pid}) for another library, ${identity.library}. Stop it first, or serve that library.`);
       }
-      if (identity) await stop(record.pid);
-      // No answer: the pid now belongs to another program and the record is stale.
+      // Another API version: stop it, but only when the process that answered is the recorded one. Otherwise the pid
+      // now belongs to another program (or nothing answers) and the record is stale.
+      if (identity && identity.pid === record.pid) await stop(record.pid);
+      else await rm(file, { force: true });
     }
     let server: AnimationServer;
     try { server = await createAnimationServer({ ...options, library }); }

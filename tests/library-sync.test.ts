@@ -1,9 +1,9 @@
 /** @lane merge */
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { importAssets, setTags } from '../scripts/mixamo-library.mjs';
 import { createAnimationServer } from '../src/animation-server.ts';
@@ -70,6 +70,23 @@ describe('syncStatus', () => {
     const status = await syncStatus(library);
     expect(status).toMatchObject({ available: true, branch: 'main', ahead: 0, behind: 0 });
     expect(status.changed.sort()).toEqual(['mixamo/clips/walk.fbx', 'mixamo/clips/walk.gif', 'mixamo/clips/walk.json']);
+  });
+
+  it('reads without taking optional locks, so it never rewrites the index beside a running Sync', async () => {
+    const { library } = await remoteAndClone();
+    const { downloads, env } = await environment(library);
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 2 }));
+    await importAssets([join(downloads, 'Walk.fbx')], { directory: library, env, render: stubRender });
+    await git(library, 'add', '-A');
+    await git(library, 'commit', '-q', '-m', 'Walk');
+    // A touched file leaves stale stat data in the index, which a plain `git status` refreshes and writes back.
+    const later = Date.now() / 1000 + 120;
+    await utimes(join(library, 'mixamo/clips/walk.json'), later, later);
+    const index = resolve(library, await git(library, 'rev-parse', '--git-path', 'index'));
+    const before = { bytes: await readFile(index), mtimeMs: (await stat(index)).mtimeMs };
+    expect((await syncStatus(library)).changed).toEqual([]);
+    expect((await stat(index)).mtimeMs).toBe(before.mtimeMs);
+    expect((await readFile(index)).equals(before.bytes)).toBe(true);
   });
 });
 

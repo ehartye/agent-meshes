@@ -42,13 +42,15 @@ def registry_file(env=None):
 
 
 def _fbx_files(directory, base=None):
-    """{relative path: (bytes, mtime in ms)} of every FBX, skipping dot folders and node_modules, as the Node scan does."""
+    """{relative path: (bytes, mtime in ms)} of every FBX, skipping dot files and folders (`.git`, the dotted temporary
+    names the Node writer uses) and node_modules, as the Node scan does."""
     base = directory if base is None else base
     found = {}
     with os.scandir(directory) as entries:
         for item in entries:
+            if item.name.startswith('.'): continue
             if item.is_dir(follow_symlinks=False):
-                if not item.name.startswith('.') and item.name != 'node_modules': found.update(_fbx_files(item.path, base))
+                if item.name != 'node_modules': found.update(_fbx_files(item.path, base))
             elif item.is_file(follow_symlinks=False) and item.name.lower().endswith('.fbx'):
                 info = item.stat(follow_symlinks=False)
                 found[Path(os.path.relpath(item.path, base)).as_posix()] = (info.st_size, info.st_mtime_ns // 1_000_000)

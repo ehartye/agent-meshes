@@ -12,13 +12,15 @@ export interface MixamoStamp { file: string; bytes: number; mtimeMs: number }
 export interface MixamoMotion { seconds: number; travelMeters: number; inPlace: boolean; hipsRiseCm: number; hipsDropCm: number; summary: string }
 /** The fields an entry takes from its sidecar, or from the header and file name when it has none. */
 export interface MixamoSidecarFields { kind: MixamoKind; title: string; tags: string[]; note: string; motion: MixamoMotion | null; preview: string | null }
-export interface MixamoEntry extends MixamoFacts, MixamoStamp, MixamoSidecarFields { id: string; sha256: string }
+/** `sidecarError` is set when the sidecar beside the FBX cannot be read (not JSON, or another schema); edits refuse it. */
+export interface MixamoEntry extends MixamoFacts, MixamoStamp, MixamoSidecarFields { id: string; sha256: string; sidecarError?: string }
 export interface MixamoSkip extends MixamoStamp, Partial<MixamoFacts> { sha256: string; reason: string; problem?: string }
 export interface MixamoRegistry { schema: string; source: string; terms: string; directory: string; entries: MixamoEntry[]; skipped: MixamoSkip[]; sidecars: MixamoStamp[] }
 export interface MixamoScan { directory: string; registry: string; entries: number; skipped: { file: string; reason: string }[] }
 /** The sidecar beside each imported FBX (`<id>.json`). */
 export interface MixamoAsset { schema: string; id: string; kind: MixamoKind; title: string; sourceName: string; sha256: string; importedAt: string; tags: string[]; note: string; motion: MixamoMotion | null; preview: string | null }
-export interface MixamoImportResult { source: string; status: 'imported' | 'duplicate' | 'rejected'; id?: string; kind?: MixamoKind; reason?: string; previewError?: string }
+/** `repaired` lists what a duplicate's import put back: a missing sidecar, a missing or unusable preview. */
+export interface MixamoImportResult { source: string; status: 'imported' | 'duplicate' | 'rejected'; id?: string; kind?: MixamoKind; reason?: string; previewError?: string; repaired?: ('sidecar' | 'preview')[] }
 export type MixamoRender = (fbxPath: string) => Promise<{ gif: Uint8Array }>;
 export interface MixamoImportOptions { directory?: string; env?: Env; tags?: string[]; render?: MixamoRender; onProgress?: (result: MixamoImportResult) => void }
 export interface MixamoLibraryOptions { directory?: string; env?: Env }

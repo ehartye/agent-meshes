@@ -6,9 +6,9 @@
 // Layout: `mixamo/clips/<id>.fbx|.gif|.json` for anything with a motion take, `mixamo/characters/<id>.*` for a mesh
 // with only a rest take. The `.json` sidecar (schema agent-meshes/mixamo-asset/1) holds the title, tags, note and
 // motion summary; the registry in the managed home merges the sidecars and refreshes when any FBX or sidecar changes.
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { constants, existsSync, readFileSync, realpathSync } from 'node:fs';
+import { copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -171,10 +171,11 @@ export function motionSummary(bytes) {
   return { seconds, travelMeters: Math.round(travelCm) / 100, inPlace, hipsRiseCm, hipsDropCm, summary: parts.join(' · ') };
 }
 
-/** Kind tags, the first match on the clip name (case-insensitive) wins. */
+/** Kind tags, the first match on the clip name (case-insensitive) wins. A keyword matches at the start of a word, so
+ *  "Running" is locomotion but "Drunk" is not, and `to` matches only as a whole word ("Idle To Walk", not "Toe Tap"). */
 const KIND_TAGS = [
   ['roll', ['roll']],
-  ['transitions', [' to ', 'equip', 'disarm']],
+  ['transitions', ['to', 'equip', 'disarm']],
   ['hit-and-death', ['hit', 'death', 'dying', 'knocked', 'impact']],
   ['magic', ['spell', 'cast', 'magic']],
   ['melee', ['slash', 'stab', 'punch', 'kick', 'attack', 'combo', 'sword']],
@@ -182,13 +183,14 @@ const KIND_TAGS = [
   ['jump', ['jump', 'dodge']],
   ['locomotion', ['walk', 'run', 'jog', 'sprint', 'strafe', 'crouch', 'swim', 'climb']],
   ['idle', ['idle', 'breath', 'stand']],
-];
+].map(([tag, words]) => [tag, new RegExp(`\\b(?:${words.map(word => word === 'to' ? 'to\\b' : word).join('|')})`, 'i')]);
 /** Tags as stored: lower-case kebab, unique, sorted. */
 export const normalizeTags = tags => [...new Set((tags ?? []).map(tag => String(tag).normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')).filter(Boolean))].sort();
 /** The suggested tags for an import: one kind tag from the name, and `in-place`/`root-motion` (or `character`). */
 export function suggestTags(title, kind, motion) {
-  const name = ` ${String(title).toLowerCase()} `;
-  const tags = [KIND_TAGS.find(([, words]) => words.some(word => name.includes(word)))?.[0] ?? 'pose-or-emote'];
+  // Underscores separate words in some download names (`Idle_To_Walk`); a regex word boundary would not see them.
+  const name = String(title).replace(/_/g, ' ');
+  const tags = [KIND_TAGS.find(([, pattern]) => pattern.test(name))?.[0] ?? 'pose-or-emote'];
   if (kind === 'character') tags.push('character');
   else if (motion) tags.push(motion.inPlace ? 'in-place' : 'root-motion');
   return normalizeTags(tags);
@@ -223,12 +225,14 @@ const POINTER_REASON = 'a Git LFS pointer, not the file: run "git lfs pull" in i
 /** Bone-name prefixes of Mixamo's own skeleton: `mixamorig`, and `mixamorig1`, `mixamorig2` ... on later downloads. */
 export const MIXAMO_SKELETON = /^mixamorig\d*$/;
 
-/** Every FBX under the folder with its size and modification time, skipping dot folders such as `.git`, and node_modules. */
+/** Every FBX under the folder with its size and modification time, skipping dot files and folders (`.git`, the
+ *  dotted temporary names this module writes through) and node_modules. */
 export async function fbxFiles(folder, base = folder) {
   const found = [];
   for (const entry of (await readdir(folder, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
     const path = join(folder, entry.name);
-    if (entry.isDirectory()) { if (!entry.name.startsWith('.') && entry.name !== 'node_modules') found.push(...await fbxFiles(path, base)); }
+    if (entry.name.startsWith('.')) continue;
+    if (entry.isDirectory()) { if (entry.name !== 'node_modules') found.push(...await fbxFiles(path, base)); }
     else if (entry.isFile() && extname(entry.name).toLowerCase() === '.fbx') found.push({ file: relative(base, path).split(sep).join('/'), ...await stampOf(path) });
   }
   return found;
@@ -246,11 +250,15 @@ async function sidecarFiles(directory, files) {
   }
   return found;
 }
+/** A sidecar as `{ meta, error }`: `meta` null and no error when there is none; an error when it cannot be used
+ *  (not JSON, as a sync conflict leaves it, or another schema), so nothing overwrites what it holds. */
 async function readSidecar(path) {
-  try {
-    const data = JSON.parse(await readFile(path, 'utf8'));
-    return data && typeof data === 'object' && data.schema === ASSET_SCHEMA ? data : null;
-  } catch (error) { if (error.code === 'ENOENT' || error instanceof SyntaxError) return null; throw error; }
+  let text;
+  try { text = await readFile(path, 'utf8'); } catch (error) { if (error.code === 'ENOENT') return { meta: null, error: null }; throw error; }
+  let data;
+  try { data = JSON.parse(text); } catch { return { meta: null, error: `sidecar ${path} is not valid JSON; fix or restore it` }; }
+  if (!data || typeof data !== 'object' || data.schema !== ASSET_SCHEMA) return { meta: null, error: `sidecar ${path} does not have the schema ${ASSET_SCHEMA}; fix or restore it` };
+  return { meta: data, error: null };
 }
 /** The fields an entry takes from its sidecar, or from the header and file name when it has none. */
 function sidecarFields(meta, file, facts) {
@@ -263,6 +271,29 @@ function sidecarFields(meta, file, facts) {
     preview: typeof meta?.preview === 'string' && meta.preview ? basename(meta.preview) : null,
   };
 }
+const VALID_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Write a file whole or not at all: to a dotted temporary name beside it (which scans skip), then renamed over it. */
+async function writeAtomic(path, data) {
+  const staging = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
+  try {
+    await writeFile(staging, data);
+    // Windows refuses a rename over a file another writer is renaming at that moment; it succeeds a moment later.
+    for (let attempt = 0; ; attempt++) {
+      try { await rename(staging, path); break; }
+      catch (error) { if (attempt >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code)) throw error; await new Promise(done => setTimeout(done, 10 + attempt * 10)); }
+    }
+  } catch (error) { await rm(staging, { force: true }); throw error; }
+}
+/** Create a file whole, failing with EEXIST when it already exists, so two importers cannot claim one id. */
+async function createExclusive(path, data) {
+  const staging = join(dirname(path), `.${basename(path)}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`);
+  await writeFile(staging, data);
+  try {
+    // A hard link appears whole and refuses an existing name; a file system without links gets an exclusive copy.
+    try { await link(staging, path); } catch (error) { if (error.code === 'EEXIST') throw error; await copyFile(staging, path, constants.COPYFILE_EXCL); }
+  } finally { await rm(staging, { force: true }); }
+}
 
 /** The managed home: AGENT_MESHES_HOME, else ~/.agent-meshes. */
 const managedHome = env => env.AGENT_MESHES_HOME ? resolve(env.AGENT_MESHES_HOME) : join(homedir(), '.agent-meshes');
@@ -270,15 +301,16 @@ const managedHome = env => env.AGENT_MESHES_HOME ? resolve(env.AGENT_MESHES_HOME
 export const registryFile = (env = process.env) => join(managedHome(env), REGISTRY_FILE);
 const facts = ({ fbxVersion, creator, skeleton, bones, hasMesh, clips }) => ({ fbxVersion, creator, skeleton, bones, hasMesh, clips });
 
-/** Read every FBX under the folder, merge each one's sidecar, and write the registry. Identical files are listed once,
- *  and files that are not on Mixamo's skeleton are skipped with the reason. `reuse` is an earlier registry of the same
- *  folder: an FBX whose size and modification time are unchanged keeps what that registry read, without being read
- *  again. Sidecars are always read. */
+/** Read every FBX under the folder, merge each one's sidecar, and write the registry. Identical files are listed once
+ *  (the one with a sidecar kept), and files that are not on Mixamo's skeleton are skipped with the reason. An FBX with
+ *  a sidecar keeps the sidecar's id; the others get ids from their file names, numbered around those. `reuse` is an
+ *  earlier registry of the same folder: an FBX whose size and modification time are unchanged keeps what that registry
+ *  read, without being read again. Sidecars are always read. */
 export async function scanMixamo(directory, env = process.env, { reuse = null } = {}) {
   directory = resolve(directory ?? mixamoDir(env));
   await mkdir(directory, { recursive: true });
   const known = new Map((reuse?.directory === directory ? [...reuse.entries, ...reuse.skipped] : []).map(item => [item.file, item]));
-  const entries = [], skipped = [], seen = new Map(), ids = new Set(), files = await fbxFiles(directory);
+  const skipped = [], accepted = [], files = await fbxFiles(directory);
   for (const stamp of files) {
     const { file } = stamp, old = known.get(file);
     let hash, read = null, problem = null;
@@ -292,22 +324,33 @@ export async function scanMixamo(directory, env = process.env, { reuse = null } 
     if (!problem && !MIXAMO_SKELETON.test(read.skeleton ?? '')) problem = `not on the Mixamo skeleton (bone prefix: ${read.skeleton ?? 'none'})`;
     // Skipped files keep what was read, so an unchanged one is not read again on the next scan.
     if (problem) { skipped.push({ ...stamp, sha256: hash, reason: problem, problem, ...(read ?? {}) }); continue; }
-    if (seen.has(hash)) { skipped.push({ ...stamp, sha256: hash, reason: `the same bytes as ${seen.get(hash)}`, ...read }); continue; }
-    seen.set(hash, file);
+    accepted.push({ stamp, hash, read, ...await readSidecar(join(directory, sidecarOf(file))) });
+  }
+  // One entry per set of identical bytes: the first with a sidecar, else the first.
+  const kept = new Map();
+  for (const item of accepted) if (!kept.has(item.hash) || (item.meta && !kept.get(item.hash).meta)) kept.set(item.hash, item);
+  const unique = accepted.filter(item => kept.get(item.hash) === item);
+  for (const item of accepted) if (kept.get(item.hash) !== item) skipped.push({ ...item.stamp, sha256: item.hash, reason: `the same bytes as ${kept.get(item.hash).stamp.file}`, ...item.read });
+  // Ids from sidecars first, so an imported clip keeps its id whatever is added beside it.
+  const ids = new Set();
+  for (const item of unique) if (item.meta && VALID_ID.test(item.meta.id ?? '') && !ids.has(item.meta.id)) { item.id = item.meta.id; ids.add(item.id); }
+  for (const item of unique) {
+    if (item.id) continue;
+    const { file } = item.stamp;
     let id = slug(basename(file)) || 'clip';
     // A second file of the same name is told apart by its folder, then by a number.
     if (ids.has(id) && dirname(file) !== '.') id = `${slug(dirname(file))}-${id}`;
     for (let n = 2, stem = id; ids.has(id); n++) id = `${stem}-${n}`;
-    ids.add(id);
-    entries.push({ id, ...stamp, sha256: hash, ...read, ...sidecarFields(await readSidecar(join(directory, sidecarOf(file))), file, read) });
+    item.id = id; ids.add(id);
   }
+  const entries = unique.map(({ id, stamp, hash, read, meta, error }) => ({ id, ...stamp, sha256: hash, ...read, ...sidecarFields(meta, stamp.file, read), ...(error ? { sidecarError: error } : {}) }));
   entries.sort((a, b) => a.id.localeCompare(b.id));
+  skipped.sort((a, b) => a.file.localeCompare(b.file));
   const sidecars = await sidecarFiles(directory, files);
   const registry = { schema: REGISTRY_SCHEMA, source: 'Adobe Mixamo', terms: TERMS, directory, entries, skipped, sidecars };
-  const target = registryFile(env), staging = `${target}.${process.pid}.tmp`;
+  const target = registryFile(env);
   await mkdir(dirname(target), { recursive: true });
-  await writeFile(staging, `${JSON.stringify(registry, null, 1)}\n`);
-  await rename(staging, target);
+  await writeAtomic(target, `${JSON.stringify(registry, null, 1)}\n`);
   return { directory, registry: target, entries: entries.length, skipped: skipped.map(({ file, reason }) => ({ file, reason })) };
 }
 
@@ -346,16 +389,31 @@ export async function mixamoPath(id, directory, env = process.env) {
   return path;
 }
 
+/** The real path of a folder that may not exist yet: the nearest existing ancestor with links and junctions resolved,
+ *  and the rest of the path after it. */
+function realFolder(directory) {
+  const rest = [];
+  for (let at = resolve(directory); ; at = dirname(at)) {
+    try { return join(realpathSync.native(at), ...rest.reverse()); }
+    catch (error) { if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error; }
+    if (dirname(at) === at) return resolve(directory);
+    rest.push(basename(at));
+  }
+}
+
 /** Refuse a library that is, or is inside, the working tree of an agent-meshes repository: a folder holding `.git`
- *  whose package.json or .claude-plugin/plugin.json is named agent-meshes. Every write to the library checks this. */
+ *  whose package.json or .claude-plugin/plugin.json is named agent-meshes. The folder is checked as written and as its
+ *  real path, so a junction or symbolic link into a checkout is refused too. Every write to the library checks this. */
 export function assertNotMeshesCheckout(directory) {
   const start = resolve(directory);
   const named = path => { try { return JSON.parse(readFileSync(path, 'utf8'))?.name; } catch { return null; } };
-  for (let at = start; ; at = dirname(at)) {
-    if (existsSync(join(at, '.git')) && [join(at, 'package.json'), join(at, '.claude-plugin', 'plugin.json')].some(path => named(path) === 'agent-meshes')) {
-      throw new Error(`Refusing to write the Mixamo library at ${start}: it is inside the agent-meshes checkout ${at}. Mixamo files are never kept in an agent-meshes checkout; set AGENT_MESHES_MIXAMO_DIR to a folder outside it, such as a private repository of your own.`);
+  for (const origin of new Set([start, realFolder(start)])) {
+    for (let at = origin; ; at = dirname(at)) {
+      if (existsSync(join(at, '.git')) && [join(at, 'package.json'), join(at, '.claude-plugin', 'plugin.json')].some(path => named(path) === 'agent-meshes')) {
+        throw new Error(`Refusing to write the Mixamo library at ${start}: it is inside the agent-meshes checkout ${at}. Mixamo files are never kept in an agent-meshes checkout; set AGENT_MESHES_MIXAMO_DIR to a folder outside it, such as a private repository of your own.`);
+      }
+      if (dirname(at) === at) break;
     }
-    if (dirname(at) === at) return;
   }
 }
 
@@ -374,7 +432,11 @@ function defaultRenderer() {
   };
 }
 
-const writeJson = (path, data) => writeFile(path, `${JSON.stringify(data, null, 2)}\n`);
+const writeJson = (path, data) => writeAtomic(path, `${JSON.stringify(data, null, 2)}\n`);
+/** A preview is usable when it is there and is a GIF, not a missing file or a Git LFS pointer. */
+async function hasGif(path) {
+  try { return (await readFile(path)).subarray(0, 4).toString('latin1') === 'GIF8'; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
 /** The inputs behind one source: an FBX, the FBX members of a zip, or every FBX under a folder. */
 async function expand(source) {
   let info;
@@ -393,42 +455,70 @@ async function expand(source) {
 /** Import downloads (FBX files, zip archives, folders) into the library layout. Each FBX is rejected (with the reason),
  *  reported as a duplicate of the entry with the same bytes, or copied in with a preview GIF, its motion summary and a
  *  sidecar of suggested tags plus `tags`. `render(fbxPath)` resolves to `{ gif }`; a render error leaves `preview: null`
- *  and the message in the result. Sources are left alone. Resolves to `{ results, registry }`. */
+ *  and the message in the result. Sources are left alone. Resolves to `{ results, registry }`.
+ *
+ *  Every file is written whole under a dotted temporary name first. The FBX is created exclusively, so two importers
+ *  never take one id. A duplicate whose sidecar or preview is missing (an import that was interrupted, or a preview that
+ *  failed) is repaired, keeping the tags, title and note it has, and reported with `repaired: ['sidecar' | 'preview']`. */
 export async function importAssets(sources, { directory, env = process.env, tags = [], render, onProgress } = {}) {
   directory = resolve(directory ?? mixamoDir(env));
   if (!sources?.length) throw new Error('add <file.fbx | pack.zip | folder> ...');
   assertNotMeshesCheckout(directory);
   await mkdir(directory, { recursive: true });
   let registry = await mixamoRegistry(directory, env);
-  const bySha = new Map(registry.entries.map(entry => [entry.sha256, entry.id])), ids = new Set(registry.entries.map(entry => entry.id));
+  const bySha = new Map(registry.entries.map(entry => [entry.sha256, { id: entry.id, file: entry.file }])), ids = new Set(registry.entries.map(entry => entry.id));
   const taken = id => ids.has(id) || ['clips', 'characters'].some(folder => ['fbx', 'json', 'gif'].some(ext => existsSync(join(directory, 'mixamo', folder, `${id}.${ext}`))));
   const extra = normalizeTags(tags), results = [];
   const fallback = render ? null : defaultRenderer(), renderer = render ?? fallback.render;
   const report = result => { results.push(result); onProgress?.(result); };
+  /** Render the preview beside an FBX as `<stem>.gif`: `{ preview }` or `{ previewError }`. */
+  const preview = async fbxPath => {
+    const name = `${basename(fbxPath, extname(fbxPath))}.gif`;
+    try { const { gif } = await renderer(fbxPath); await writeAtomic(join(dirname(fbxPath), name), gif); return { preview: name }; }
+    catch (error) { return { preview: null, previewError: error?.message ?? String(error) }; }
+  };
+  const newSidecar = (id, kind, name, hash, bytes, shown) => {
+    const title = basename(name, extname(name));
+    let motion = null;
+    try { motion = motionSummary(bytes); } catch { /* a header that reads but curves that do not: no summary */ }
+    return { schema: ASSET_SCHEMA, id, kind, title, sourceName: name, sha256: hash, importedAt: new Date().toISOString(), tags: normalizeTags([...suggestTags(title, kind, motion), ...extra]), note: '', motion, preview: shown };
+  };
+  const repair = async ({ source, name, bytes, hash, header }, { id, file }) => {
+    const fbxPath = join(directory, file), path = join(directory, sidecarOf(file)), gifName = `${basename(file, extname(file))}.gif`;
+    const { meta, error } = await readSidecar(path);
+    // A sidecar that cannot be read is left for the owner to fix; nothing overwrites what it holds.
+    if (error) return { source, status: 'duplicate', id };
+    const repaired = []; let next = meta, previewError = null;
+    if (!next) { next = newSidecar(id, assetKind(header), name, hash, bytes, await hasGif(join(dirname(fbxPath), gifName)) ? gifName : null); repaired.push('sidecar'); }
+    if (!next.preview || !await hasGif(join(dirname(fbxPath), basename(next.preview)))) {
+      const made = await preview(fbxPath);
+      if (made.preview) { next = { ...next, preview: made.preview }; repaired.push('preview'); } else previewError = made.previewError;
+    }
+    if (repaired.length) await writeJson(path, next);
+    return { source, status: 'duplicate', id, ...(repaired.length ? { repaired } : {}), ...(previewError ? { previewError } : {}) };
+  };
   const one = async ({ source, name, read }) => {
     const bytes = Buffer.from(await read()), hash = sha256(bytes);
     if (bytes.subarray(0, POINTER.length).toString('latin1') === POINTER) return { source, status: 'rejected', reason: POINTER_REASON };
     let header;
     try { header = describeFbx(bytes); } catch (error) { return { source, status: 'rejected', reason: error.message }; }
     if (!MIXAMO_SKELETON.test(header.skeleton ?? '')) return { source, status: 'rejected', reason: `not on the Mixamo skeleton (bone prefix: ${header.skeleton ?? 'none'})` };
-    if (bySha.has(hash)) return { source, status: 'duplicate', id: bySha.get(hash) };
-    const kind = assetKind(header), title = basename(name, extname(name));
-    let id = slug(name) || 'clip';
-    for (let n = 2, stem = id; taken(id); n++) id = `${stem}-${n}`;
-    const folder = join(directory, 'mixamo', kind === 'character' ? 'characters' : 'clips'), fbxPath = join(folder, `${id}.fbx`);
+    if (bySha.has(hash)) return repair({ source, name, bytes, hash, header }, bySha.get(hash));
+    const kind = assetKind(header), folder = join(directory, 'mixamo', kind === 'character' ? 'characters' : 'clips');
     await mkdir(folder, { recursive: true });
-    await writeFile(fbxPath, bytes);
-    bySha.set(hash, id); ids.add(id);
-    let motion = null;
-    try { motion = motionSummary(bytes); } catch { /* a header that reads but curves that do not: no summary */ }
-    let preview = null, previewError = null;
-    try { const { gif } = await renderer(fbxPath); await writeFile(join(folder, `${id}.gif`), gif); preview = `${id}.gif`; }
-    catch (error) { previewError = error?.message ?? String(error); }
-    await writeJson(join(folder, `${id}.json`), {
-      schema: ASSET_SCHEMA, id, kind, title, sourceName: name, sha256: hash, importedAt: new Date().toISOString(),
-      tags: normalizeTags([...suggestTags(title, kind, motion), ...extra]), note: '', motion, preview,
-    });
-    return { source, status: 'imported', id, kind, ...(previewError ? { previewError } : {}) };
+    // Claim the id by creating its FBX; another importer that got there first makes this one take the next number.
+    let id = slug(name) || 'clip';
+    for (let n = 2, stem = id; ; n++) {
+      if (!taken(id)) {
+        try { await createExclusive(join(folder, `${id}.fbx`), bytes); break; } catch (error) { if (error.code !== 'EEXIST') throw error; }
+      }
+      id = `${stem}-${n}`;
+    }
+    const fbxPath = join(folder, `${id}.fbx`);
+    bySha.set(hash, { id, file: relative(directory, fbxPath).split(sep).join('/') }); ids.add(id);
+    const made = await preview(fbxPath);
+    await writeJson(join(folder, `${id}.json`), newSidecar(id, kind, name, hash, bytes, made.preview));
+    return { source, status: 'imported', id, kind, ...(made.previewError ? { previewError: made.previewError } : {}) };
   };
   try {
     for (const source of sources.map(path => resolve(path))) {
@@ -437,19 +527,26 @@ export async function importAssets(sources, { directory, env = process.env, tags
       for (const file of files) report(await one(file));
     }
   } finally { await fallback?.close(); }
-  if (results.some(result => result.status === 'imported')) { await scanMixamo(directory, env, { reuse: registry }); registry = await readRegistry(env); }
+  if (results.some(result => result.status === 'imported' || result.repaired)) { await scanMixamo(directory, env, { reuse: registry }); registry = await readRegistry(env); }
   return { results, registry };
 }
 
-/** Change the sidecars of these entries and refresh the registry. An FBX added by hand gets its first sidecar here. */
-async function editSidecars(ids, { directory, env = process.env } = {}, change) {
+/** Change the sidecars of these entries and refresh the registry. An FBX added by hand gets its first sidecar here.
+ *  A sidecar that cannot be read refuses the edit, so its title, note and tags are never replaced by defaults, unless
+ *  `broken` allows it (removal deletes the sidecar anyway). */
+async function editSidecars(ids, { directory, env = process.env } = {}, change, { broken = false } = {}) {
   directory = resolve(directory ?? mixamoDir(env));
   assertNotMeshesCheckout(directory);
   const registry = await mixamoRegistry(directory, env);
   const entries = [...new Set(ids)].map(id => registry.entries.find(item => item.id === id) ?? (() => { throw new Error(`Unknown Mixamo entry: ${id} (see "list")`); })());
+  const sidecars = [];
   for (const entry of entries) {
-    const path = join(directory, sidecarOf(entry.file));
-    let meta = await readSidecar(path);
+    const path = join(directory, sidecarOf(entry.file)), { meta, error } = await readSidecar(path);
+    if (error && !broken) throw new Error(error);
+    sidecars.push({ entry, path, meta });
+  }
+  for (const { entry, path, meta: found } of sidecars) {
+    let meta = found;
     if (!meta) {
       let motion = null;
       try { motion = motionSummary(await readFile(join(directory, entry.file))); } catch { /* no summary */ }
@@ -478,7 +575,7 @@ export function setTitle(id, title, options = {}) {
 export function setNote(id, note, options = {}) {
   return editSidecars([id], options, meta => ({ ...meta, note: String(note ?? '') }));
 }
-/** Delete entries from the library: the FBX, its preview GIF and its sidecar. */
+/** Delete entries from the library: the FBX, its preview GIF and its sidecar (even one that cannot be read). */
 export async function removeAssets(ids, options = {}) {
   const removed = [];
   const { registry } = await editSidecars(ids, options, async (meta, entry, path) => {
@@ -486,7 +583,7 @@ export async function removeAssets(ids, options = {}) {
     for (const file of new Set([fbx, path, join(folder, `${basename(entry.file, extname(entry.file))}.gif`), ...(meta.preview ? [join(folder, basename(meta.preview))] : [])])) await rm(file, { force: true });
     removed.push(entry.id);
     return null;
-  });
+  }, { broken: true });
   return { removed, registry };
 }
 

@@ -97,3 +97,33 @@ describe('renderClipPreview', { timeout: 180_000 }, () => {
     } finally { await session.close(); }
   });
 });
+
+describe('a render that never finishes', { timeout: 120_000 }, () => {
+  it('rejects with PREVIEW_TIMEOUT after timeoutMs, and the next render in the same session succeeds', async () => {
+    const session = await createPreviewSession();
+    try {
+      // Stand in for an FBX that hangs the loader: make the harness page's load spin forever.
+      const page = session.browser.contexts()[0]!.pages()[0]!;
+      await page.evaluate(() => { (window as unknown as { AnimationPreview: { load(): void } }).AnimationPreview.load = () => { for (;;) { /* hang */ } }; });
+      const started = Date.now();
+      const error = await session.render(idle, { size: 32, timeoutMs: 1500 }).then(() => null, (reason: unknown) => reason as Error & { code?: string });
+      expect(error?.code).toBe('PREVIEW_TIMEOUT');
+      expect(error?.message).toMatch(/Idle\.fbx.*1500 ms/);
+      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(page.isClosed()).toBe(true);
+      expect(decodeGif((await session.render(idle, { size: 32, maxFrames: 2 })).gif).frames).toHaveLength(2);
+    } finally { await session.close(); }
+  });
+
+  it('relaunches the browser when it has gone away, and refuses a timeout that is not a positive number', async () => {
+    const session = await createPreviewSession();
+    try {
+      const first = session.browser;
+      await first.close();
+      expect(decodeGif((await session.render(idle, { size: 32, maxFrames: 2 })).gif).frames).toHaveLength(2);
+      expect(session.browser).not.toBe(first);
+      expect(session.browser.isConnected()).toBe(true);
+      await expect(renderClipPreview(idle, { timeoutMs: 0, session })).rejects.toThrow(/timeoutMs/);
+    } finally { await session.close(); }
+  });
+});

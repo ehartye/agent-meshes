@@ -28,12 +28,25 @@ export interface PreviewOptions {
   fps?: number;
   /** Most frames in one GIF (default 96). */
   maxFrames?: number;
+  /**
+   * Longest time one render may take, from opening the page through loading the FBX and capturing every frame
+   * (default 60000 ms). Past it the render rejects with code `PREVIEW_TIMEOUT` and its page is discarded.
+   */
+  timeoutMs?: number;
 }
 
+/** The default limit on one render: far above the seconds a 96-frame preview takes, well below a stalled queue. */
+export const PREVIEW_TIMEOUT_MS = 60_000;
+/** How long discarding a hung page or context may take before the browser itself is closed. */
+const DISCARD_MS = 5_000;
+
 export interface PreviewSession {
-  /** The browser every render in this session shares. */
+  /** The browser every render in this session shares. A browser that has gone away is replaced at the next render. */
   readonly browser: Browser;
-  /** Render one clip. Renders in one session run one at a time. */
+  /**
+   * Render one clip. Renders in one session run one at a time. A render that times out, or whose page crashed, has its
+   * page discarded, so the next render starts on a fresh page.
+   */
   render(fbxPath: string, options?: PreviewOptions): Promise<{ gif: Uint8Array }>;
   /** Close the browser. */
   close(): Promise<void>;
@@ -74,12 +87,19 @@ export function harnessScript(): Promise<string> {
 
 const FBX_MAGIC = Buffer.from('Kaydara FBX Binary  \0', 'latin1');
 
-function checkOptions({ size = 192, fps = 12, maxFrames = 96 }: PreviewOptions): Required<PreviewOptions> {
+function checkOptions({ size = 192, fps = 12, maxFrames = 96, timeoutMs = PREVIEW_TIMEOUT_MS }: PreviewOptions): Required<PreviewOptions> {
   if (!Number.isInteger(size) || size < 8 || size > 2048) throw new Error(`Preview size must be an integer from 8 to 2048 pixels, got ${size}`);
   if (!(fps > 0) || fps > 100) throw new Error(`Preview fps must be above 0 and at most 100, got ${fps}`);
   if (!Number.isInteger(maxFrames) || maxFrames < 2) throw new Error(`Preview maxFrames must be an integer of at least 2, got ${maxFrames}`);
-  return { size, fps, maxFrames };
+  if (!(timeoutMs > 0) || !Number.isFinite(timeoutMs)) throw new Error(`Preview timeoutMs must be a positive number of milliseconds, got ${timeoutMs}`);
+  return { size, fps, maxFrames, timeoutMs };
 }
+
+/** Settle within `ms`, or resolve false: a step that may itself hang on an unresponsive page. */
+const within = (work: Promise<unknown>, ms: number): Promise<boolean> => new Promise(done => {
+  const timer = setTimeout(() => done(false), ms);
+  work.then(() => true, () => false).then(ok => { clearTimeout(timer); done(ok); });
+});
 
 /** Frame count and delay: `fps` over the whole clip, at most `maxFrames` (lowering the rate), at least 2. */
 export function previewTiming(duration: number, { fps = 12, maxFrames = 96 }: PreviewOptions = {}): { frames: number; delayCs: number } {
@@ -111,28 +131,57 @@ async function renderOnPage(page: Page, fbxPath: string, options: PreviewOptions
 /** Start one offline Chromium page for a batch of previews. Close it when done. */
 export async function createPreviewSession(): Promise<PreviewSession> {
   const script = await harnessScript();
-  const browser = await chromium.launch({ headless: true, ...browserLaunchOptions() });
-  let context: BrowserContext | undefined, page: Page | undefined;
+  const launch = () => chromium.launch({ headless: true, ...browserLaunchOptions() });
+  let browser = await launch();
+  let context: BrowserContext | undefined, page: Page | undefined, crashed = false, closed = false;
   const openPage = async () => {
+    if (!browser.isConnected()) { browser = await launch(); context = undefined; }
     context ??= await browser.newContext({ offline: true, viewport: { width: 256, height: 256 }, deviceScaleFactor: 1 });
     const next = await context.newPage();
+    crashed = false;
+    next.on('crash', () => { crashed = true; });
     await next.setContent(`<!doctype html><html lang="en"><meta charset="utf-8"><body style="margin:0"><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`, { waitUntil: 'load' });
     if (!await next.evaluate(() => typeof (window as unknown as HarnessWindow).AnimationPreview?.load === 'function')) throw new Error('The animation preview harness did not load');
     return next;
   };
+  /** Drop a hung or crashed page: close it, else its context, else the browser, which the next render relaunches. */
+  const discard = async (stale: Page | undefined) => {
+    page = undefined;
+    if (stale && await within(stale.close({ runBeforeUnload: false }), DISCARD_MS)) return;
+    const staleContext = context;
+    context = undefined;
+    if (staleContext && await within(staleContext.close(), DISCARD_MS)) return;
+    await within(browser.close(), DISCARD_MS);
+  };
   try { page = await openPage(); } catch (error) { await browser.close(); throw error; }
   let queue: Promise<unknown> = Promise.resolve();
   return {
-    browser,
+    get browser() { return browser; },
     render(fbxPath, options = {}) {
       const run = queue.then(async () => {
-        if (!page || page.isClosed()) page = await openPage();
-        return renderOnPage(page, fbxPath, options);
+        if (closed) throw new Error('The preview session is closed');
+        const { timeoutMs } = checkOptions(options);
+        let timer: ReturnType<typeof setTimeout> | undefined, current: Page | undefined;
+        const work = (async () => {
+          if (!page || page.isClosed() || crashed || !browser.isConnected()) { if (page && !page.isClosed()) await discard(page); page = await openPage(); }
+          current = page;
+          return renderOnPage(current, fbxPath, options);
+        })();
+        // The abandoned render rejects once its page is closed; nothing is waiting for it then.
+        work.catch(() => undefined);
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(Object.assign(new Error(`The preview of ${fbxPath} did not finish within ${timeoutMs} ms, so it was stopped`), { code: 'PREVIEW_TIMEOUT' })), timeoutMs);
+        });
+        try { return await Promise.race([work, timeout]); }
+        catch (error) {
+          if ((error as { code?: string }).code === 'PREVIEW_TIMEOUT' || crashed) await discard(current ?? page);
+          throw error;
+        } finally { clearTimeout(timer); }
       });
       queue = run.catch(() => undefined);
       return run;
     },
-    async close() { await queue; await browser.close(); },
+    async close() { closed = true; await queue; await browser.close(); },
   };
 }
 

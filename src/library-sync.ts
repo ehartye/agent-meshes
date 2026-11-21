@@ -57,7 +57,7 @@ function git(cwd: string, args: string[]): Promise<GitResult> {
 }
 async function gitOk(cwd: string, args: string[]): Promise<string> {
   const result = await git(cwd, args);
-  if (result.code !== 0) throw new Error(`git ${args[0]} failed: ${(result.stderr || result.stdout).trim()}`);
+  if (result.code !== 0) throw new Error(`git ${args.find(arg => !arg.startsWith('-'))} failed: ${(result.stderr || result.stdout).trim()}`);
   return result.stdout;
 }
 const paths = (output: string) => output.split('\0').filter(Boolean);
@@ -68,7 +68,7 @@ export async function syncStatus(directory: string): Promise<SyncStatus> {
   const dir = resolve(directory);
   const status: SyncStatus = { available: false, branch: null, ahead: 0, behind: 0, changed: [] };
   if (!existsSync(dir)) return { ...status, reason: `the library folder ${dir} does not exist yet` };
-  const result = await git(dir, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', 'mixamo']);
+  const result = await git(dir, ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all', '--', 'mixamo']);
   if (result.code !== 0) return { ...status, reason: `the library folder ${dir} is not a git working tree` };
   try { assertNotMeshesCheckout(dir); } catch (error) { return { ...status, reason: (error as Error).message }; }
   let upstream: string | null = null;
@@ -121,7 +121,7 @@ export async function syncLibrary(directory: string, summary?: string): Promise<
   const result: SyncResult = { committed: false, pulled: false, pushed: false };
   // Status lists staged and unstaged changes alike, so with none there is nothing to add or commit.
   if (status.changed.length) await gitOk(dir, ['add', '-A', '--', 'mixamo']);
-  const staged = status.changed.length ? await gitOk(dir, ['diff', '--cached', '--name-status', '--no-renames', '-z', '--', 'mixamo']) : '';
+  const staged = status.changed.length ? await gitOk(dir, ['--no-optional-locks', 'diff', '--cached', '--name-status', '--no-renames', '-z', '--', 'mixamo']) : '';
   if (staged) {
     const message = syncMessage(staged, summary);
     await gitOk(dir, ['commit', '--quiet', '-m', message, '--', 'mixamo']);
@@ -129,7 +129,7 @@ export async function syncLibrary(directory: string, summary?: string): Promise<
   }
   const pull = await git(dir, ['pull', '--rebase', '--no-autostash', '--quiet']);
   if (pull.code !== 0) {
-    const conflicts = paths((await git(dir, ['diff', '--name-only', '--diff-filter=U', '-z'])).stdout);
+    const conflicts = paths((await git(dir, ['--no-optional-locks', 'diff', '--name-only', '--diff-filter=U', '-z'])).stdout);
     // Undo a stopped rebase; when none is in progress this fails harmlessly.
     await git(dir, ['rebase', '--abort']);
     if (conflicts.length) {
@@ -138,7 +138,7 @@ export async function syncLibrary(directory: string, summary?: string): Promise<
     return { ...result, error: `git pull --rebase failed: ${(pull.stderr || pull.stdout).trim()}` };
   }
   result.pulled = true;
-  const [ahead] = (await gitOk(dir, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])).trim().split(/\s+/).map(Number);
+  const [ahead] = (await gitOk(dir, ['--no-optional-locks', 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])).trim().split(/\s+/).map(Number);
   if (ahead) {
     const push = await git(dir, ['push', '--quiet']);
     if (push.code !== 0) return { ...result, error: `git push failed: ${(push.stderr || push.stdout).trim()}` };
