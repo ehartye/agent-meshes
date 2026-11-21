@@ -1,8 +1,8 @@
 # Local Mixamo folder and registry
 
 Adobe Mixamo animations and characters are licensed to the Adobe account that downloads them. They may be used in
-your own work, but the files themselves are not ours to pass on. So Meshes does not ship any, and a project does not
-commit any. Each machine keeps its own downloads in one folder, and a registry beside them says what is there.
+your own work, but the files themselves are not ours to pass on. So never commit any to agent-meshes, and Meshes does
+not ship any. Each machine keeps its own downloads in one folder, and a registry beside them says what is there.
 
 Read Adobe's current terms yourself before shipping work made with them; this page is not legal advice.
 
