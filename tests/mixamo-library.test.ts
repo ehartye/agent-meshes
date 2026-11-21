@@ -1,23 +1,30 @@
 /** @lane merge
  * @subject scripts/blender_lib/agent_meshes_mixamo.py
  */
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { deflateRawSync } from 'node:zlib';
-import { addMixamo, describeFbx, mixamoDir, mixamoPath, mixamoRegistry, registryFile, scanMixamo, slug, unzipFbx, REGISTRY_FILE, REGISTRY_SCHEMA } from '../scripts/mixamo-library.mjs';
+import { join, relative, resolve } from 'node:path';
+import { deflateRawSync, deflateSync } from 'node:zlib';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import {
+  addMixamo, assertNotMeshesCheckout, describeFbx, importAssets, mixamoDir, mixamoPath, mixamoRegistry, motionSummary, registryFile,
+  removeAssets, scanMixamo, setNote, setTags, setTitle, slug, suggestTags, unzipFbx, REGISTRY_FILE, REGISTRY_SCHEMA,
+} from '../scripts/mixamo-library.mjs';
+import { animatedFbx, MIXAMO_BONES } from './helpers/animated-fbx.ts';
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const temp = async () => { const path = await mkdtemp(join(tmpdir(), 'mesh-mixamo-')); directories.push(path); return path; };
 
-type Property = string | number | bigint;
+type Property = string | number | bigint | Buffer;
 type Node = { name: string; properties?: Property[]; children?: Node[] };
-/** A binary FBX 7.4 file holding these nodes: enough of the format for the registry's reader. */
+/** A binary FBX 7.4 file holding these nodes: enough of the format for the registry's reader. A Buffer property is
+ *  written as it is, already encoded. */
 function fbx(nodes: Node[]): Buffer {
   const property = (value: Property) => {
+    if (Buffer.isBuffer(value)) return value;
     if (typeof value === 'string') { const text = Buffer.from(value, 'utf8'), head = Buffer.alloc(5); head.write('S'); head.writeUInt32LE(text.length, 1); return Buffer.concat([head, text]); }
     if (typeof value === 'bigint') { const out = Buffer.alloc(9); out.write('L'); out.writeBigInt64LE(value, 1); return out; }
     const out = Buffer.alloc(5); out.write('I'); out.writeInt32LE(value, 1); return out;
@@ -57,6 +64,21 @@ function zip(members: Record<string, Buffer>): Buffer {
   end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(Object.keys(members).length, 8); end.writeUInt16LE(Object.keys(members).length, 10); end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
   return Buffer.concat([...locals, directory, end]);
 }
+/** A 1 x 1 GIF89a, as a stub renderer returns. */
+const TINY_GIF = Buffer.from('47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b', 'hex');
+const stubRender = async () => ({ gif: new Uint8Array(TINY_GIF) });
+/** Every file under a folder, relative and sorted. */
+async function tree(folder: string, base = folder): Promise<string[]> {
+  let names; try { names = await readdir(folder, { withFileTypes: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+  const out: string[] = [];
+  for (const item of names) {
+    const path = join(folder, item.name);
+    if (item.isDirectory()) out.push(...await tree(path, base)); else out.push(relative(base, path).split('\\').join('/'));
+  }
+  return out.sort();
+}
+const sidecar = async (path: string) => JSON.parse(await readFile(path, 'utf8'));
+const LFS_POINTER = 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 9\n';
 
 it('places the folder by its own variable, then the managed home, then the user home', () => {
   expect(mixamoDir({ AGENT_MESHES_MIXAMO_DIR: 'X:/clips', AGENT_MESHES_HOME: 'X:/home' })).toBe(resolve('X:/clips'));
@@ -71,7 +93,240 @@ it('reads clips, their length, the skeleton and a mesh out of a binary FBX', () 
   expect(slug('Dual Weapon Combo (1).fbx')).toBe('dual-weapon-combo-1');
 });
 
-it('adds files, folders and archives, lists identical bytes once and leaves the sources alone', async () => {
+describe('the synthetic animated FBX helper', () => {
+  it('loads in three.js FBXLoader with the Mixamo bones and a clip whose hips travel as asked', () => {
+    const bytes = animatedFbx({ travel: 1.5, seconds: 2, mesh: true, restTake: true });
+    const group = new FBXLoader().parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, '');
+    const bones: string[] = []; group.traverse(node => { if ((node as { isBone?: boolean }).isBone) bones.push(node.userData.originalName); });
+    expect(bones).toEqual(MIXAMO_BONES.map(bone => `mixamorig:${bone}`));
+    expect(group.animations.map(item => item.name)).toEqual(['Take 001', 'mixamo.com']);
+    const motion = group.animations[1], hips = motion.tracks.find(track => track.name === 'mixamorigHips.position')!;
+    expect(motion.duration).toBeCloseTo(2, 5);
+    const z = (i: number) => hips.values[i * 3 + 2];
+    expect(z(hips.times.length - 1) - z(0)).toBeCloseTo(150, 3);
+    expect(hips.values[1]).toBeCloseTo(100, 3);
+    expect(motion.tracks.some(track => track.name === 'mixamorigLeftUpLeg.quaternion')).toBe(true);
+    expect(animatedFbx({ travel: 1.5, seconds: 2, mesh: true, restTake: true }).equals(bytes)).toBe(true);
+  });
+
+  it('is read by the registry reader as a Mixamo clip', () => {
+    expect(describeFbx(animatedFbx({ seconds: 2 }))).toMatchObject({ skeleton: 'mixamorig', bones: MIXAMO_BONES.length, hasMesh: false, clips: [{ name: 'mixamo.com', seconds: 2 }] });
+    expect(describeFbx(animatedFbx({ mesh: true, restTake: true, prefix: 'mixamorig1' }))).toMatchObject({ skeleton: 'mixamorig1', hasMesh: true, clips: [{ name: 'Take 001', seconds: 0.033 }, { name: 'mixamo.com', seconds: 2 }] });
+    expect(describeFbx(animatedFbx({ prefix: '' })).skeleton).toBeNull();
+  });
+});
+
+describe('motionSummary', () => {
+  it('tells a walk with root motion from an idle in place', () => {
+    const walk = motionSummary(animatedFbx({ travel: 1, seconds: 2 }));
+    expect(walk).toMatchObject({ seconds: 2, inPlace: false });
+    expect(walk.travelMeters).toBeGreaterThan(0.5);
+    expect(walk.travelMeters).toBeCloseTo(1, 2);
+    expect(walk.summary).toBe('root motion · travels 1.0 m · 2.0 s');
+    const idle = motionSummary(animatedFbx({ travel: 0, seconds: 8.3 }));
+    expect(idle).toMatchObject({ seconds: 8.3, travelMeters: 0, inPlace: true, summary: 'in place · 8.3 s' });
+    expect(idle.hipsRiseCm).toBeCloseTo(2, 0);
+    expect(idle.hipsDropCm).toBeCloseTo(2, 0);
+  });
+
+  it('reports a hips rise and drop of 5 cm or more and measures the longest take, not a rest take', () => {
+    const jump = motionSummary(animatedFbx({ bob: 0.5, travel: 0.1, restTake: true, mesh: true }));
+    expect(jump).toMatchObject({ seconds: 2, inPlace: true, hipsRiseCm: 50, hipsDropCm: 50, summary: 'in place · hips rise 50 cm · hips drop 50 cm · 2.0 s' });
+    expect(motionSummary(animatedFbx({ travel: 2, restTake: true })).travelMeters).toBeCloseTo(2, 2);
+  });
+
+  it('decodes zlib-compressed curve arrays and treats a clip without hips curves as in place', () => {
+    const floats = (values: number[]) => { const raw = Buffer.alloc(values.length * 4); values.forEach((v, i) => raw.writeFloatLE(v, i * 4)); return raw; };
+    const array = (type: string, count: number, raw: Buffer) => {
+      const packed = deflateSync(raw), head = Buffer.alloc(13); head.write(type); head.writeUInt32LE(count, 1); head.writeUInt32LE(1, 5); head.writeUInt32LE(packed.length, 9);
+      return Buffer.concat([head, packed]);
+    };
+    const times = Buffer.alloc(16); times.writeBigInt64LE(0n, 0); times.writeBigInt64LE(46186158000n, 8);
+    const curve = (id: bigint, values: number[]) => ({ name: 'AnimationCurve', properties: [id, '\u0000\u0001AnimCurve', ''], children: [
+      { name: 'KeyTime', properties: [array('l', 2, times)] }, { name: 'KeyValueFloat', properties: [array('f', 2, floats(values))] }] });
+    const bytes = fbx([
+      { name: 'Objects', children: [
+        { name: 'Model', properties: [10n, 'mixamorig:Hips\u0000\u0001Model', 'LimbNode'], children: [] },
+        { name: 'AnimationStack', properties: [20n, 'mixamo.com\u0000\u0001AnimStack', ''], children: [{ name: 'Properties70', children: [
+          { name: 'P', properties: ['LocalStop', 'KTime', 'Time', '', 46186158000n] }] }] },
+        { name: 'AnimationLayer', properties: [21n, 'BaseLayer\u0000\u0001AnimLayer', ''] },
+        { name: 'AnimationCurveNode', properties: [30n, 'T\u0000\u0001AnimCurveNode', ''] },
+        curve(31n, [0, 300]), curve(32n, [100, 100]), curve(33n, [0, 400]),
+      ] },
+      { name: 'Connections', children: [
+        { name: 'C', properties: ['OO', 10n, 0n] }, { name: 'C', properties: ['OO', 21n, 20n] }, { name: 'C', properties: ['OO', 30n, 21n] },
+        { name: 'C', properties: ['OP', 30n, 10n, 'Lcl Translation'] },
+        { name: 'C', properties: ['OP', 31n, 30n, 'd|X'] }, { name: 'C', properties: ['OP', 32n, 30n, 'd|Y'] }, { name: 'C', properties: ['OP', 33n, 30n, 'd|Z'] },
+      ] },
+    ]);
+    expect(motionSummary(bytes)).toMatchObject({ seconds: 1, travelMeters: 5, inPlace: false, summary: 'root motion · travels 5.0 m · 1.0 s' });
+    expect(motionSummary(clip(0.717))).toMatchObject({ seconds: 0.717, travelMeters: 0, inPlace: true, hipsRiseCm: 0, hipsDropCm: 0, summary: 'in place · 0.7 s' });
+  });
+});
+
+it('suggests one kind tag from the name, in the stated order, and a motion tag', () => {
+  const inPlace = { inPlace: true }, moving = { inPlace: false };
+  // Without a motion summary there is no motion tag, so the kind tag is the only one.
+  const kind = (name: string) => suggestTags(name, 'clip', null)[0];
+  expect(suggestTags('Dodge Roll', 'clip', inPlace)).toEqual(['in-place', 'roll']);
+  expect(kind('Idle To Walk')).toBe('transitions');
+  expect(kind('Sword And Shield Equip')).toBe('transitions');
+  expect(kind('Hit Reaction')).toBe('hit-and-death');
+  expect(kind('Fireball CAST')).toBe('magic');
+  expect(kind('Sword Slash')).toBe('melee');
+  expect(kind('Rifle Run')).toBe('ranged');
+  expect(kind('Jumping')).toBe('jump');
+  expect(suggestTags('Walking', 'clip', moving)).toEqual(['locomotion', 'root-motion']);
+  expect(kind('Breathing Idle')).toBe('idle');
+  expect(suggestTags('Samba Dancing', 'clip-with-skin', moving)).toEqual(['pose-or-emote', 'root-motion']);
+  expect(suggestTags('Y Bot', 'character', inPlace)).toEqual(['character', 'pose-or-emote']);
+});
+
+describe('importAssets', () => {
+  it('imports a walk into the clip layout with a preview, a sidecar, its motion and suggested tags', async () => {
+    const downloads = await temp(), library = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1, seconds: 2 }));
+    const progress: unknown[] = [];
+    const { results, registry } = await importAssets([join(downloads, 'Walk.fbx')], { directory: library, env, tags: ['Ronin Set', 'locomotion'], render: stubRender, onProgress: (result: unknown) => progress.push(result) });
+    expect(results).toEqual([{ source: join(downloads, 'Walk.fbx'), status: 'imported', id: 'walk', kind: 'clip' }]);
+    expect(progress).toEqual(results);
+    expect(await tree(library)).toEqual(['mixamo/clips/walk.fbx', 'mixamo/clips/walk.gif', 'mixamo/clips/walk.json']);
+    expect((await readFile(join(library, 'mixamo/clips/walk.gif'))).subarray(0, 6).toString('latin1')).toBe('GIF89a');
+    const meta = await sidecar(join(library, 'mixamo/clips/walk.json'));
+    expect(meta).toMatchObject({ schema: 'agent-meshes/mixamo-asset/1', id: 'walk', kind: 'clip', title: 'Walk', sourceName: 'Walk.fbx', note: '', preview: 'walk.gif',
+      tags: ['locomotion', 'ronin-set', 'root-motion'], motion: { inPlace: false, seconds: 2 } });
+    expect(meta.motion.travelMeters).toBeGreaterThan(0.5);
+    expect(meta.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(new Date(meta.importedAt).toISOString()).toBe(meta.importedAt);
+    expect(registry.schema).toBe('agent-meshes/mixamo-registry/3');
+    expect(registry.entries).toEqual([expect.objectContaining({ id: 'walk', file: 'mixamo/clips/walk.fbx', kind: 'clip', title: 'Walk', tags: meta.tags, note: '', motion: meta.motion, preview: 'walk.gif', sha256: meta.sha256 })]);
+    // The source is left alone.
+    expect(await tree(downloads)).toEqual(['Walk.fbx']);
+  });
+
+  it('reports a duplicate by its bytes and rejects what it cannot use, writing nothing for either', async () => {
+    const downloads = await temp(), library = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+    await writeFile(join(downloads, 'Walk again.fbx'), animatedFbx({ travel: 1 }));
+    await writeFile(join(downloads, 'Other Rig.fbx'), animatedFbx({ prefix: '' }));
+    await writeFile(join(downloads, 'Notes.fbx'), 'just some text, not an FBX file');
+    await writeFile(join(downloads, 'Pointer.fbx'), LFS_POINTER);
+    await importAssets([join(downloads, 'Walk.fbx')], { directory: library, env, render: stubRender });
+    const before = await tree(library), registryBefore = await readFile(registryFile(env), 'utf8');
+    let renders = 0;
+    const { results } = await importAssets(['Walk.fbx', 'Walk again.fbx', 'Other Rig.fbx', 'Notes.fbx', 'Pointer.fbx'].map(name => join(downloads, name)),
+      { directory: library, env, render: async () => { renders++; return stubRender(); } });
+    expect(results.map(({ status, id, reason }: { status: string; id?: string; reason?: string }) => ({ status, id, reason }))).toEqual([
+      { status: 'duplicate', id: 'walk', reason: undefined },
+      { status: 'duplicate', id: 'walk', reason: undefined },
+      { status: 'rejected', id: undefined, reason: 'not on the Mixamo skeleton (bone prefix: none)' },
+      { status: 'rejected', id: undefined, reason: 'not a binary FBX file' },
+      { status: 'rejected', id: undefined, reason: expect.stringMatching(/Git LFS pointer/) },
+    ]);
+    expect(renders).toBe(0);
+    expect(await tree(library)).toEqual(before);
+    expect(JSON.parse(await readFile(registryFile(env), 'utf8')).entries).toEqual(JSON.parse(registryBefore).entries);
+  });
+
+  it('detects a character and a clip with skin', async () => {
+    const downloads = await temp(), library = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(downloads, 'Y Bot.fbx'), animatedFbx({ mesh: true, seconds: 1 / 30 }));
+    await writeFile(join(downloads, 'Sword Slash.fbx'), animatedFbx({ mesh: true, restTake: true, seconds: 1.5 }));
+    const { results } = await importAssets([join(downloads, 'Y Bot.fbx'), join(downloads, 'Sword Slash.fbx')], { directory: library, env, render: stubRender });
+    expect(results.map(({ status, id, kind }) => [status, id, kind])).toEqual([['imported', 'y-bot', 'character'], ['imported', 'sword-slash', 'clip-with-skin']]);
+    expect(await tree(library)).toEqual(['mixamo/characters/y-bot.fbx', 'mixamo/characters/y-bot.gif', 'mixamo/characters/y-bot.json',
+      'mixamo/clips/sword-slash.fbx', 'mixamo/clips/sword-slash.gif', 'mixamo/clips/sword-slash.json']);
+    expect((await sidecar(join(library, 'mixamo/characters/y-bot.json'))).tags).toContain('character');
+    expect((await sidecar(join(library, 'mixamo/characters/y-bot.json'))).tags).not.toContain('in-place');
+    expect(await sidecar(join(library, 'mixamo/clips/sword-slash.json'))).toMatchObject({ kind: 'clip-with-skin', tags: ['in-place', 'melee'] });
+  });
+
+  it('numbers an id taken by different bytes, and imports zip members and folders', async () => {
+    const downloads = await temp(), library = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await mkdir(join(downloads, 'Second'));
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+    await writeFile(join(downloads, 'Second', 'walk.fbx'), animatedFbx({ travel: 2 }));
+    await writeFile(join(downloads, 'Pack.zip'), zip({ 'Walk.fbx': animatedFbx({ travel: 3 }), 'Standing Idle.fbx': animatedFbx({ seconds: 3 }), 'readme.txt': Buffer.from('skip me') }));
+    await writeFile(join(downloads, 'notes.txt'), 'not a download');
+    const { results, registry } = await importAssets([join(downloads, 'Walk.fbx'), join(downloads, 'Second'), join(downloads, 'Pack.zip'), join(downloads, 'notes.txt')], { directory: library, env, render: stubRender });
+    expect(results.map(({ status, id }: { status: string; id?: string }) => [status, id])).toEqual([
+      ['imported', 'walk'], ['imported', 'walk-2'], ['imported', 'walk-3'], ['imported', 'standing-idle'], ['rejected', undefined]]);
+    expect(results[4].reason).toMatch(/expected an \.fbx file, a \.zip archive or a folder/);
+    expect(registry.entries.map((entry: { id: string }) => entry.id)).toEqual(['standing-idle', 'walk', 'walk-2', 'walk-3']);
+    expect((await sidecar(join(library, 'mixamo/clips/walk-3.json'))).sourceName).toBe('Walk.fbx');
+    expect((await sidecar(join(library, 'mixamo/clips/standing-idle.json'))).tags).toEqual(['idle', 'in-place']);
+  });
+
+  it('still imports a clip whose preview fails, with its motion and tags and no preview', async () => {
+    const downloads = await temp(), library = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(downloads, 'Run.fbx'), animatedFbx({ travel: 3 }));
+    const { results } = await importAssets([join(downloads, 'Run.fbx')], { directory: library, env, render: async () => { throw new Error('no GPU here'); } });
+    expect(results).toEqual([{ source: join(downloads, 'Run.fbx'), status: 'imported', id: 'run', kind: 'clip', previewError: 'no GPU here' }]);
+    expect(await tree(library)).toEqual(['mixamo/clips/run.fbx', 'mixamo/clips/run.json']);
+    expect(await sidecar(join(library, 'mixamo/clips/run.json'))).toMatchObject({ preview: null, tags: ['locomotion', 'root-motion'], motion: { inPlace: false } });
+  });
+});
+
+describe('editing the library', () => {
+  const library = async () => {
+    const downloads = await temp(), directory = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+    await writeFile(join(downloads, 'Breathing Idle.fbx'), animatedFbx({ seconds: 4 }));
+    await importAssets([join(downloads, 'Walk.fbx'), join(downloads, 'Breathing Idle.fbx')], { directory, env, render: stubRender });
+    return { directory, env };
+  };
+
+  it('adds and removes tags on several clips, and edits a title and a note without changing the id', async () => {
+    const { directory, env } = await library();
+    await setTags(['walk', 'breathing-idle'], ['Ronin', 'favourite'], ['in-place'], { directory, env });
+    expect((await sidecar(join(directory, 'mixamo/clips/walk.json'))).tags).toEqual(['favourite', 'locomotion', 'ronin', 'root-motion']);
+    expect((await sidecar(join(directory, 'mixamo/clips/breathing-idle.json'))).tags).toEqual(['favourite', 'idle', 'ronin']);
+    await setTitle('walk', 'Forward Walk', { directory, env });
+    await setNote('walk', 'Arms swing wide.', { directory, env });
+    const registry = await mixamoRegistry(directory, env);
+    expect(registry.entries.find((entry: { id: string }) => entry.id === 'walk')).toMatchObject({ id: 'walk', file: 'mixamo/clips/walk.fbx', title: 'Forward Walk', note: 'Arms swing wide.', tags: ['favourite', 'locomotion', 'ronin', 'root-motion'] });
+    expect(await sidecar(join(directory, 'mixamo/clips/walk.json'))).toMatchObject({ id: 'walk', title: 'Forward Walk', note: 'Arms swing wide.' });
+    await expect(setTags(['nope'], ['x'], [], { directory, env })).rejects.toThrow('Unknown Mixamo entry');
+  });
+
+  it('removes a clip with its preview and sidecar', async () => {
+    const { directory, env } = await library();
+    await removeAssets(['walk'], { directory, env });
+    expect(await tree(directory)).toEqual(['mixamo/clips/breathing-idle.fbx', 'mixamo/clips/breathing-idle.gif', 'mixamo/clips/breathing-idle.json']);
+    expect((await mixamoRegistry(directory, env)).entries.map((entry: { id: string }) => entry.id)).toEqual(['breathing-idle']);
+  });
+});
+
+describe('the checkout guard', () => {
+  it('refuses to import into or edit a library inside an agent-meshes checkout, and writes nothing', async () => {
+    const downloads = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+    for (const marker of ['package.json', '.claude-plugin/plugin.json']) {
+      const checkout = await temp(), directory = join(checkout, 'deep', 'library');
+      await mkdir(join(checkout, '.git'));
+      await mkdir(join(checkout, '.claude-plugin'));
+      await writeFile(join(checkout, marker), JSON.stringify({ name: 'agent-meshes' }));
+      const before = await tree(checkout);
+      await expect(importAssets([join(downloads, 'Walk.fbx')], { directory, env, render: stubRender })).rejects.toThrow(/Mixamo files are never kept in an agent-meshes checkout/);
+      await expect(setTags(['walk'], ['x'], [], { directory, env })).rejects.toThrow(/Mixamo files are never kept in an agent-meshes checkout/);
+      await expect(removeAssets(['walk'], { directory, env })).rejects.toThrow(/never kept in an agent-meshes checkout/);
+      expect(() => assertNotMeshesCheckout(directory)).toThrow(/never kept in an agent-meshes checkout/);
+      expect(await tree(checkout)).toEqual(before);
+      await expect(stat(registryFile(env))).rejects.toThrow();
+    }
+  });
+
+  it('allows a library inside some other repository', async () => {
+    const checkout = await temp(), downloads = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+    await writeFile(join(checkout, '.git'), 'gitdir: elsewhere');
+    await writeFile(join(checkout, 'package.json'), JSON.stringify({ name: 'animation-library' }));
+    await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+    expect(() => assertNotMeshesCheckout(join(checkout, 'library'))).not.toThrow();
+    expect((await importAssets([join(downloads, 'Walk.fbx')], { directory: checkout, env, render: stubRender })).results[0].status).toBe('imported');
+  });
+});
+
+it('adds through the old wrapper, which keeps its shape and gains the results', async () => {
   const downloads = await temp(), folder = await temp(), env = { AGENT_MESHES_HOME: await temp() };
   await writeFile(join(downloads, 'Standard Run.fbx'), clip(0.717));
   await writeFile(join(downloads, 'Standard Run copy.fbx'), clip(0.717));
@@ -79,18 +334,19 @@ it('adds files, folders and archives, lists identical bytes once and leaves the 
   await mkdir(join(downloads, 'More'));
   await writeFile(join(downloads, 'More', 'Dying.fbx'), clip(4.333, { mesh: true }));
   await writeFile(join(downloads, 'More', 'broken.fbx'), 'text');
-  const added = await addMixamo([join(downloads, 'Standard Run.fbx'), join(downloads, 'Standard Run copy.fbx'), join(downloads, 'Pack.zip'), join(downloads, 'More')], folder, env);
-  expect(added.copied.sort()).toEqual(['More/Dying.fbx', 'More/broken.fbx', 'Pack/Standard Run.fbx', 'Pack/Standing Idle.fbx', 'Standard Run copy.fbx', 'Standard Run.fbx']);
-  expect(added.skipped.map(item => item.file).sort()).toEqual(['More/broken.fbx', 'Standard Run.fbx']);
+  const added = await addMixamo([join(downloads, 'Standard Run.fbx'), join(downloads, 'Standard Run copy.fbx'), join(downloads, 'Pack.zip'), join(downloads, 'More')], folder, env, { render: stubRender });
+  expect(added.copied.sort()).toEqual(['mixamo/clips/dying.fbx', 'mixamo/clips/standard-run-2.fbx', 'mixamo/clips/standard-run.fbx', 'mixamo/clips/standing-idle.fbx']);
+  expect(added.results.map((result: { status: string }) => result.status)).toEqual(['imported', 'duplicate', 'imported', 'imported', 'rejected', 'imported']);
+  expect(added).toMatchObject({ directory: resolve(folder), registry: registryFile(env), entries: 4, skipped: [] });
   const registry = await mixamoRegistry(folder, env);
   expect(registry.schema).toBe(REGISTRY_SCHEMA);
   expect(registry.terms).toMatch(/do not redistribute/);
-  expect(registry.entries.map(entry => entry.id)).toEqual(['dying', 'standard-run', 'standard-run-copy', 'standing-idle']);
-  expect(registry.entries.find(entry => entry.id === 'dying')).toMatchObject({ file: 'More/Dying.fbx', hasMesh: true, clips: [{ seconds: 4.333 }] });
+  expect(registry.entries.map((entry: { id: string }) => entry.id)).toEqual(['dying', 'standard-run', 'standard-run-2', 'standing-idle']);
+  expect(registry.entries.find((entry: { id: string }) => entry.id === 'dying')).toMatchObject({ file: 'mixamo/clips/dying.fbx', kind: 'clip-with-skin', hasMesh: true, clips: [{ seconds: 4.333 }] });
   expect((await readFile(join(downloads, 'Standard Run.fbx'))).length).toBeGreaterThan(0);
   // A second add copies nothing and gives the same registry.
   const before = await readFile(registryFile(env), 'utf8');
-  expect((await addMixamo([join(downloads, 'Pack.zip')], folder, env)).copied).toEqual([]);
+  expect((await addMixamo([join(downloads, 'Pack.zip')], folder, env, { render: stubRender })).copied).toEqual([]);
   expect(await readFile(registryFile(env), 'utf8')).toBe(before);
 });
 
@@ -101,7 +357,7 @@ it('keeps the registry in the managed home and registers only Mixamo-skeleton fi
   await writeFile(join(folder, 'animations', 'idle', 'breathing-idle.fbx'), clip(9.917));
   await writeFile(join(folder, 'animations', 'idle', 'later-download.fbx'), clip(2, { bones: ['mixamorig1:Hips', 'mixamorig1:Spine'] }));
   await writeFile(join(folder, 'animations', 'idle', 'other-rig.fbx'), clip(1, { bones: ['Hips', 'Spine'] }));
-  await writeFile(join(folder, 'animations', 'idle', 'not-pulled.fbx'), 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 9\n');
+  await writeFile(join(folder, 'animations', 'idle', 'not-pulled.fbx'), LFS_POINTER);
   await writeFile(join(folder, '.git', 'lfs', 'hidden.fbx'), clip(1));
   const registry = await mixamoRegistry(folder, env);
   expect(registryFile(env)).toBe(join(home, REGISTRY_FILE));
@@ -113,6 +369,20 @@ it('keeps the registry in the managed home and registers only Mixamo-skeleton fi
   });
   // Nothing is written into the folder itself.
   expect((await readdir(folder)).sort()).toEqual(['.git', 'animations']);
+});
+
+it('registers an FBX added by hand, without a sidecar, with its kind from the header', async () => {
+  const folder = await temp(), env = { AGENT_MESHES_HOME: await temp() };
+  await writeFile(join(folder, 'Dying.fbx'), clip(4.333, { mesh: true }));
+  await writeFile(join(folder, 'T Pose.fbx'), clip(0.033, { mesh: true }));
+  await writeFile(join(folder, 'Dying.gif'), TINY_GIF);
+  await writeFile(join(folder, 'notes.json'), '{}');
+  const registry = await mixamoRegistry(folder, env);
+  expect(registry.entries.map(({ id, kind, title, tags, note, motion, preview }) => ({ id, kind, title, tags, note, motion, preview }))).toEqual([
+    { id: 'dying', kind: 'clip-with-skin', title: 'Dying', tags: [], note: '', motion: null, preview: null },
+    { id: 't-pose', kind: 'character', title: 'T Pose', tags: [], note: '', motion: null, preview: null },
+  ]);
+  expect(registry.skipped).toEqual([]);
 });
 
 it('refreshes the registry when the folder changes, as after a pull, and when it points at another folder', async () => {
@@ -154,6 +424,30 @@ it('keeps Mixamo payloads out of the package: no FBX file is tracked', () => {
   expect(tracked).toEqual([]);
 });
 
+it('the CLI adds with --tags, lists the new fields, and picks up a hand-edited sidecar without a scan', async () => {
+  const downloads = await temp(), library = await temp(), home = await temp(), env = { AGENT_MESHES_HOME: home };
+  await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+  await writeFile(join(downloads, 'Notes.fbx'), 'just text');
+  await importAssets([join(downloads, 'Walk.fbx')], { directory: library, env, render: stubRender });
+  const cli = (...args: string[]) => {
+    const run = spawnSync('node', [resolve('scripts/mixamo-library.mjs'), ...args], { encoding: 'utf8', env: { ...process.env, AGENT_MESHES_MIXAMO_DIR: library, AGENT_MESHES_HOME: home } });
+    expect(run.stderr).toBe('');
+    return JSON.parse(run.stdout);
+  };
+  // Neither a duplicate nor a rejection renders a preview, so the CLI's own renderer is never started here.
+  const added = cli('add', join(downloads, 'Walk.fbx'), join(downloads, 'Notes.fbx'), '--tags', 'ronin,Favourite');
+  expect(added.results.map(({ status, id, reason }: { status: string; id?: string; reason?: string }) => ({ status, id, reason }))).toEqual([
+    { status: 'duplicate', id: 'walk', reason: undefined }, { status: 'rejected', id: undefined, reason: 'not a binary FBX file' }]);
+  const listed = cli('list', '--json');
+  expect(listed.schema).toBe('agent-meshes/mixamo-registry/3');
+  const walk = listed.entries.find((entry: { id: string }) => entry.id === 'walk');
+  expect(walk).toMatchObject({ kind: 'clip', note: '', preview: 'walk.gif', tags: ['locomotion', 'root-motion'], motion: { inPlace: false } });
+  // A pulled tag change: the sidecar is edited by hand, and the next list shows it.
+  const path = join(library, 'mixamo/clips/walk.json'), meta = await sidecar(path);
+  await writeFile(path, `${JSON.stringify({ ...meta, tags: ['locomotion', 'pulled-tag', 'root-motion'] }, null, 2)}\n`);
+  expect(cli('list', '--json').entries.find((entry: { id: string }) => entry.id === 'walk').tags).toEqual(['locomotion', 'pulled-tag', 'root-motion']);
+});
+
 it('the Blender-side reader resolves the same folder and registry, and refreshes it after the folder changes', async () => {
   const folder = await temp(), home = await temp();
   await writeFile(join(folder, 'Rifle Run.fbx'), clip(0.717));
@@ -176,4 +470,23 @@ it('the Blender-side reader resolves the same folder and registry, and refreshes
   expect(first.unknown).toMatch(/Unknown Mixamo entry: nope/);
   await writeFile(join(folder, 'Rifle Idle.fbx'), clip(2));
   expect(read().ids).toEqual(['rifle-idle', 'rifle-run']);
+});
+
+it('the Blender-side reader returns the sidecar fields and sees a pulled sidecar change', async () => {
+  const downloads = await temp(), library = await temp(), home = await temp(), env = { AGENT_MESHES_HOME: home };
+  await writeFile(join(downloads, 'Walk.fbx'), animatedFbx({ travel: 1 }));
+  await importAssets([join(downloads, 'Walk.fbx')], { directory: library, env, render: stubRender });
+  const read = () => {
+    const script = [
+      'import json, sys', `sys.path.insert(0, ${JSON.stringify(resolve('scripts/blender_lib'))})`, 'import agent_meshes_mixamo as m',
+      'e = m.entry("walk")', 'print(json.dumps({"schema": m.registry()["schema"], "tags": e["tags"], "kind": e["kind"], "title": e["title"], "note": e["note"], "preview": e["preview"], "inPlace": e["motion"]["inPlace"]}))',
+    ].join('\n');
+    const python = spawnSync('python', ['-c', script], { encoding: 'utf8', env: { ...process.env, AGENT_MESHES_MIXAMO_DIR: library, AGENT_MESHES_HOME: home } });
+    expect(python.stderr).toBe('');
+    return JSON.parse(python.stdout);
+  };
+  const path = join(library, 'mixamo/clips/walk.json'), meta = await sidecar(path);
+  expect(read()).toEqual({ schema: 'agent-meshes/mixamo-registry/3', tags: meta.tags, kind: 'clip', title: 'Walk', note: '', preview: 'walk.gif', inPlace: false });
+  await writeFile(path, `${JSON.stringify({ ...meta, tags: ['from-another-machine'] }, null, 2)}\n`);
+  expect(read().tags).toEqual(['from-another-machine']);
 });
