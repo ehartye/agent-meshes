@@ -33,7 +33,7 @@ jobs:
           node-version: 24
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: .github/requirements-ci.txt
       - run: python -m pip install -r .github/requirements-ci.txt
@@ -127,7 +127,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - run: pip install numpy
       # Keep each suite as a separate step so failures and timings stay visible.
       - if: matrix.suite == 'face'
@@ -217,7 +217,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - run: pip install numpy
       - if: matrix.suite == 'heads'
         run: python tests/reference_heads.py
